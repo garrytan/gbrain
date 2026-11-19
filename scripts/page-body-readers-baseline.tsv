@@ -27,7 +27,6 @@ src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META
 src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
-src/commands/export.ts	runExport	sql	STREAM	
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/commands/extract-mentions-explain.ts	explainMention	sql	STREAM	
 src/commands/extract-mentions-explain.ts	pageNames	sql	STREAM	
@@ -190,6 +189,8 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/export-reads.ts	listExportPageKeys	sql	STREAM	moved from commands/export.ts runExport unchanged: octet_length of the inline body columns for the batch size; a segmented page reads body_bytes
+src/core/engine-sql/export-reads.ts	readExportPageRows	sql	STREAM	moved from export-snapshot.ts readExportPages unchanged: rowToPage blanks a segmented page's body, which streams through segmentedExportMarkdown (readBodyRange, trusted stored)
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-purge.ts	selectFactsReconcileDrain	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts selectFactsReconcileDrain unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged

@@ -50,6 +50,7 @@ export const RUST_ENGINE_MEMBERS = {
   listExportPageKeys: 'pages',
   readExportWithdrawalLedgerBytes: 'facts',
   listExportWithdrawals: 'facts',
+  readExportPageRows: 'pages',
   listExactIdentityCandidates: 'pages',
   listExtractionPendingPages: 'pages',
   slugsEndingIn: 'pages',

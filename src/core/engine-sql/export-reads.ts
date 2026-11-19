@@ -5,6 +5,8 @@
  * transaction engine reads inside that transaction.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { Page } from '../types.ts';
+import { rowToPage } from '../utils.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -55,4 +57,21 @@ export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<
     FROM fact_withdrawals WHERE source_id=$1
     UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
     ORDER BY visibility,fact_hash,subject`, [sourceId]);
+}
+
+/** A page the export writes, with its tags in tag order. */
+export interface ExportPageRow { page: Page; tags: string[] }
+
+/**
+ * The live pages among `ids`, each with its tags, in no set order. Rows are looked up by primary key (#7618: a join on
+ * the keys let the planner scan the whole source for each key, so a per-page export went quadratic).
+ */
+export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promise<ExportPageRow[]> {
+  const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
+    SELECT * FROM pages WHERE id = ANY($1::bigint[])
+  ) SELECT p.*,
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
+    FROM export_page p WHERE p.deleted_at IS NULL`,
+  [ids]);
+  return rows.map(row => ({ page: rowToPage(row), tags: row.export_tags as string[] }));
 }

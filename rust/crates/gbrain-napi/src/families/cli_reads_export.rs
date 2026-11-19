@@ -47,4 +47,16 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_export_withdrawals(&source_id))
     }
+
+    /// `readExportPageRows(ids)`: the live pages among `ids`, each `{ page, tags }`.
+    #[napi]
+    pub fn read_export_page_rows<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_export_page_rows(&required::<Vec<String>>(ids, "readExportPageRows ids")?)
+        })
+    }
 }

@@ -16,6 +16,7 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
+use crate::pages::read_page_by_id;
 use crate::raw_files::page_raw_rows;
 use crate::trust::withdrawals::source_withdrawals;
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,22 @@ pub struct ExportWithdrawal {
     pub purged: bool,
 }
 
+/// One row of `readExportPageRows`: the page as `getPage` gives it and its tags in byte order.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ExportPageRow {
+    pub page: Value,
+    pub tags: Vec<String>,
+}
+
+/// `$1::bigint`: an id that is not a 64-bit integer refuses as the cast does.
+fn bigint(op: &str, text: &str) -> Result<i64> {
+    text.trim().parse().map_err(|_| {
+        StoreError::invalid(format!(
+            "{op}: invalid input syntax for type bigint: \"{text}\""
+        ))
+    })
+}
+
 /// `left(text, n)`: the first `n` characters.
 fn left(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
@@ -86,12 +103,7 @@ impl Store {
     /// the `::bigint` cast does.
     pub fn list_export_page_keys(&self, q: &ExportPageKeyQuery) -> Result<Vec<ExportPageKey>> {
         const OP: &str = "listExportPageKeys";
-        let after: i64 = q.after_id.trim().parse().map_err(|_| {
-            StoreError::invalid(format!(
-                "{OP}: invalid input syntax for type bigint: \"{}\"",
-                q.after_id
-            ))
-        })?;
+        let after = bigint(OP, &q.after_id)?;
         let mut texts = Vec::new();
         for (name, value) in [
             ("sourceId", &q.source_id),
@@ -207,6 +219,38 @@ impl Store {
                     b.subject.as_bytes(),
                 ))
         });
+        Ok(rows)
+    }
+
+    /// `readExportPageRows`: the live pages among `ids`, in the order given (a repeated id once),
+    /// each as `getPage` gives it with its tags in byte order.
+    pub fn read_export_page_rows(&self, ids: &[String]) -> Result<Vec<ExportPageRow>> {
+        const OP: &str = "readExportPageRows";
+        let ids = ids
+            .iter()
+            .map(|id| bigint(OP, id))
+            .collect::<Result<Vec<i64>>>()?;
+        let read = self.read()?;
+        let mut seen = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        for id in ids {
+            let Ok(id) = u64::try_from(id) else { continue };
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(page) = read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            if page.deleted_at_us.is_some() {
+                continue;
+            }
+            let mut tags = page.tags.clone();
+            tags.sort();
+            rows.push(ExportPageRow {
+                page: page.to_page_with_columns(&*read)?,
+                tags,
+            });
+        }
         Ok(rows)
     }
 }

@@ -7,8 +7,8 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportWithdrawalRow } from '../../engine-sql/export-reads.ts';
-import { withDates } from '../store-codec.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow } from '../../engine-sql/export-reads.ts';
+import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -35,4 +35,10 @@ export const readExportWithdrawalLedgerBytes: StoreMember<[sourceId: string], nu
 export const listExportWithdrawals: StoreMember<[sourceId: string], ExportWithdrawalRow[]> = async (brain, sourceId) => {
   const rows: ExportWithdrawalRow[] = await storeCall({ member: 'listExportWithdrawals', sourceId }, () => brain.listExportWithdrawals(sourceId));
   return rows.map(row => withDates(row, ['withdrawn_at']));
+};
+
+/** The live pages among `ids` with their tags, each page as `getPage` returns it (`cli_reads::export::read_export_page_rows`). */
+export const readExportPageRows: StoreMember<[ids: readonly string[]], ExportPageRow[]> = async (brain, ids) => {
+  const rows: ExportPageRow[] = await storeCall({ member: 'readExportPageRows' }, () => brain.readExportPageRows([...ids]));
+  return rows.map(row => ({ page: toGetPage(row.page), tags: row.tags }));
 };

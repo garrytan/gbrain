@@ -14,6 +14,7 @@ of `src/core/access/policy-transfer.ts`). PGLite and Postgres run the same SQL a
 | `brain.listExportPageKeys({ afterId, sourceId, type, slugPrefix })` | the next 256 live pages after page id `afterId` (a decimal string), by id, within the source, type and slug prefix (`null`: any): `{ id, segmented, slug, source_id, source_path, source_path_bytes, raw_count, bytes }`. `slug` and `source_path` keep their first 4,097 characters; `bytes` is the body (a segmented page's `body_bytes`), frontmatter jsonb text, title, slug, source path, raw rows and tags in bytes, `null` when an inline body column is `null` | `listExportPageKeys` |
 | `brain.readExportWithdrawalLedgerBytes(sourceId)` | the source's withdrawal ledger in bytes: for each withdrawal, the jsonb text of `{ visibility, fact_hash, withdrawn_at, subject }` (keys in jsonb order, the time as `2026-01-03T00:00:00+00:00` in UTC) plus 1, then plus 2 | `readExportWithdrawalLedgerBytes` |
 | `brain.listExportWithdrawals(sourceId)` | the source's withdrawals by `visibility`, `fact_hash`, `subject` (byte order): `{ visibility, fact_hash, withdrawn_at, subject, purged }`, `withdrawn_at` an ISO string (the member makes it a `Date`), `purged` always `false` | `listExportWithdrawals` |
+| `brain.readExportPageRows(ids)` | the live pages among `ids` (decimal strings), in the order given, each `{ page, tags }`: `page` as `getPage` gives it, `tags` in byte order. An id that is not an integer refuses | `readExportPageRows` |
 
 ## What the store does not keep
 

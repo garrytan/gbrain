@@ -91,4 +91,23 @@ describe('engine parity: export reads', () => {
       other: await engine.listExportWithdrawals('nowhere'),
     };
   });
+
+  // The pages the export writes, looked up by id: live ones only, with their tags in tag order.
+  parityTest('readExportPageRows reads live pages by id with their tags', {
+    methods: ['readExportPageRows', 'putPage', 'addTag', 'softDeletePage', 'getPage'],
+  }, async (engine) => {
+    await engine.putPage('export/a', { type: 'note', title: 'A', compiled_truth: 'alpha', timeline: '- 2026: one', frontmatter: { k: 'v', n: 2 } });
+    await engine.putPage('export/b', { type: 'person', title: 'B', compiled_truth: 'beta' });
+    await engine.putPage('export/gone', { type: 'note', title: 'Gone', compiled_truth: 'deleted' });
+    await engine.addTag('export/a', 'zeta');
+    await engine.addTag('export/a', 'alpha');
+    const ids = await Promise.all(['export/a', 'export/b', 'export/gone'].map(async slug => String((await engine.getPage(slug))!.id)));
+    await engine.softDeletePage('export/gone');
+    const rows = await engine.readExportPageRows(ids);
+    expect(rows.every(row => ids.includes(String(row.page.id)))).toBe(true);
+    return rows
+      .map(({ page, tags }) => ({ slug: page.slug, source_id: page.source_id, type: page.type, title: page.title,
+        compiled_truth: page.compiled_truth, timeline: page.timeline, frontmatter: page.frontmatter, tags }))
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+  });
 });

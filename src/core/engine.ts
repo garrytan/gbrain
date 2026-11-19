@@ -1,4 +1,4 @@
-import type { ExportPageKey, ExportPageKeyQuery, ExportWithdrawalRow } from './engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
@@ -3218,6 +3218,8 @@ export interface BrainEngine {
   readExportWithdrawalLedgerBytes(sourceId: string): Promise<number>;
   /** gbrain export: the source's withdrawals and purge tombstones, by visibility, fact hash and subject (engine-sql/export-reads.ts). */
   listExportWithdrawals(sourceId: string): Promise<ExportWithdrawalRow[]>;
+  /** gbrain export: the live pages among `ids` with their tags in tag order, in no set order (engine-sql/export-reads.ts). */
+  readExportPageRows(ids: readonly string[]): Promise<ExportPageRow[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
   /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */
