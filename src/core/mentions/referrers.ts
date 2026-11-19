@@ -29,7 +29,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { typeAliasPairs, type PackTypes } from './policy.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { dateText, referrersCte, referrersCteBatched } from './referrers-sql.ts';
+import { referrersCte } from './referrers-sql.ts';
 import { trustFields, type TrustFields } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 
@@ -139,21 +139,11 @@ export async function readReferrerPage(engine: BrainEngine, scope: ReferrerScope
   opts: { type?: string; limit: number; cursor?: [string | null, string, string] | null; recordMetadata?: boolean; pageStatus?: boolean }): Promise<{ rows: Array<ReferenceRow & RecordMetadata>; total: number; truncated: boolean; cursor: string | null }> {
   const t = await targetPages(engine, scope);
   const pairs = typeAliasPairs(scope.pack);
-  const params: unknown[] = [t.sources, t.slugs, scope.referrerSources, pairs.stored, pairs.canonical, opts.type ?? null];
-  const typeFilter = `($6::text IS NULL OR canonical_type = $6 OR type = $6)`;
-  const [count] = await engine.executeRaw<{ n: number }>(`${referrersCte(scope)} SELECT count(*)::int AS n FROM typed WHERE ${typeFilter}`, params);
-  let after = '';
-  if (opts.cursor) {
-    params.push(opts.cursor[0], opts.cursor[1], opts.cursor[2]);
-    after = ` AND ((d IS NOT DISTINCT FROM $7::timestamptz AND (source_id, slug) > ($8::text, $9::text))
-                OR ($7::timestamptz IS NOT NULL AND (d < $7::timestamptz OR d IS NULL)))`;
-  }
-  params.push(opts.limit + 1);
-  const raw = await engine.executeRaw<RawRow>(
-    `${referrersCte(scope)}
-     SELECT id, slug, source_id, type, canonical_type, ${dateText('d')} AS d FROM typed
-      WHERE ${typeFilter}${after}
-      ORDER BY d DESC NULLS LAST, source_id, slug LIMIT $${params.length}`, params);
+  // The total and one page (engine-sql/link-temporal.ts countReferrerRows, readReferrerRows).
+  const rowScope = { referrerSources: scope.referrerSources, storedTypes: pairs.stored, canonicalTypes: pairs.canonical,
+    excludePrivate: scope.excludePrivate, eligibility: scope.eligibility, includeQuarantined: scope.includeQuarantined, type: opts.type ?? null };
+  const count = await engine.countReferrerRows(t, rowScope);
+  const raw: RawRow[] = await engine.readReferrerRows(t, { ...rowScope, cursor: opts.cursor ?? null, limit: opts.limit + 1 });
   const truncated = raw.length > opts.limit;
   const page = raw.slice(0, opts.limit);
   const rows: Array<ReferenceRow & RecordMetadata> = await hydrate(engine, page, scope.keepVisibility);
@@ -164,7 +154,7 @@ export async function readReferrerPage(engine: BrainEngine, scope: ReferrerScope
     const status = await readPageStatusByRef(engine, rows, scope);
     rows.forEach(r => { const value = status.get(`${r.source_id}:${r.slug}`); if (value) r.page_status = value; });
   }
-  return { rows, total: Number(count?.n ?? 0), truncated, cursor: truncated ? encodeCursor(rows[rows.length - 1]!) : null };
+  return { rows, total: count, truncated, cursor: truncated ? encodeCursor(rows[rows.length - 1]!) : null };
 }
 
 export interface ReferenceGroup {
@@ -358,23 +348,16 @@ export async function readTargetReferences(engine: BrainEngine,
   expanded.forEach((e, i) => e.slugs.forEach((slug, j) => { sources.push(e.sources[j]!); slugs.push(slug); idx.push(i); }));
   const pairs = typeAliasPairs(scope.pack);
   const recordTypes = canonicalRecordTypes(opts.recordTypes, scope.pack);
-  const base = [sources, slugs, idx, scope.referrerSources, pairs.stored, pairs.canonical];
   const expired = () => opts.isExpired?.() === true;
-  // Per-target totals and record-type totals (engine-sql/link-temporal.ts readReferrerTargetCounts).
-  const counts = await engine.readReferrerTargetCounts({ sources, slugs, indexes: idx }, {
-    referrerSources: scope.referrerSources, storedTypes: pairs.stored, canonicalTypes: pairs.canonical,
-    excludePrivate: scope.excludePrivate, eligibility: scope.eligibility, includeQuarantined: scope.includeQuarantined, recordTypes,
-  });
+  // Per-target totals and record-type totals, then the newest records per target (engine-sql/link-temporal.ts
+  // readReferrerTargetCounts, readReferrerRecordCandidates).
+  const target = { sources, slugs, indexes: idx };
+  const countScope = { referrerSources: scope.referrerSources, storedTypes: pairs.stored, canonicalTypes: pairs.canonical,
+    excludePrivate: scope.excludePrivate, eligibility: scope.eligibility, includeQuarantined: scope.includeQuarantined, recordTypes };
+  const counts = await engine.readReferrerTargetCounts(target, countScope);
   if (expired()) throw new ReferencesDeadlineError();
   const perTarget = opts.perTarget ?? RECORD_ROWS_PER_TARGET;
-  const candidates = recordTypes.length ? await engine.executeRaw<RecordCandidate>(
-    `${referrersCteBatched(scope)}
-     SELECT x.i, x.id, x.slug, x.source_id, x.canonical_type, ${dateText('x.d')} AS d
-       FROM (SELECT DISTINCT i FROM tgt) q CROSS JOIN LATERAL (
-         SELECT * FROM typed t WHERE t.i = q.i AND t.canonical_type = ANY($7::text[])
-          ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $8
-       ) x
-      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id, x.slug`, [...base, recordTypes, perTarget]) : [];
+  const candidates: RecordCandidate[] = recordTypes.length ? await engine.readReferrerRecordCandidates(target, { ...countScope, perTarget }) : [];
   if (expired()) throw new ReferencesDeadlineError();
   let left = opts.perCall ?? RECORD_ROWS_PER_CALL;
   const kept: RecordCandidate[] = [];
@@ -412,9 +395,7 @@ async function hydrateRecords(engine: BrainEngine, rows: RecordCandidate[],
   if (!rows.length) return [];
   const ids = [...new Set(rows.map(r => Number(r.id)))];
   const [pages, meta] = await Promise.all([
-    engine.executeRaw<{ id: number; title: string | null; date_source: string }>(
-      `SELECT id, title, CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source
-         FROM pages WHERE id = ANY($1::int[])`, [ids]),
+    engine.readReferrerRecordPages(ids),
     readRecordMetadata(engine, ids, scope),
   ]);
   const byId = new Map(pages.map(p => [Number(p.id), p]));

@@ -235,6 +235,7 @@ test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/referrer-reads.test.ts
 test/engine-parity/remember-meta.test.ts
 test/engine-parity/remember-whole.test.ts
 test/engine-parity/remote-policy.test.ts

@@ -1660,6 +1660,14 @@ export interface BrainEngine {
   readReferrerPageDetails(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerPageDetailRow[]>;
   readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
     scope: LinkTemporalSql.ReferrerTargetCountScope): Promise<LinkTemporalSql.ReferrerTargetCountRow[]>;
+  /** The referrer page (get_backlinks group "page") and the card's record rows (mentions/referrers.ts). */
+  listReferrerTargetSources(slug: string, sources: readonly string[]): Promise<string[]>;
+  countReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerRowScope): Promise<number>;
+  readReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] },
+    scope: LinkTemporalSql.ReferrerRowScope & { cursor: readonly [string | null, string, string] | null; limit: number }): Promise<LinkTemporalSql.ReferrerRow[]>;
+  readReferrerRecordCandidates(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+    scope: LinkTemporalSql.ReferrerRecordCandidateScope): Promise<LinkTemporalSql.ReferrerRecordCandidateRow[]>;
+  readReferrerRecordPages(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerRecordPageRow[]>;
   /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
   countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
   replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;

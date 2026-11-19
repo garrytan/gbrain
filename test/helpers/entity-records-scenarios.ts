@@ -296,6 +296,9 @@ export async function readFailureGivesUnavailable(engine: BrainEngine): Promise<
   // The referrer reads that moved to typed members (engine-sql/link-temporal.ts) fail the same way.
   broken.readReferrerGroupRows = fail as never;
   broken.readReferrerTargetCounts = fail as never;
+  broken.readReferrerRecordCandidates = fail as never;
+  broken.countReferrerRows = fail as never;
+  broken.readReferrerRows = fail as never;
   const card = await call(broken, 'entity', { name: 'crm/acme-example' });
   expect(card.body.card.references_unavailable).toBe('read_failed');
   expect(card.body.card.referenced_by).toBeUndefined();

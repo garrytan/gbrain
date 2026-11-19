@@ -1,8 +1,11 @@
 /**
- * The SQL text of the referrer reads (mentions/referrers.ts): the shared `typed` CTE, its filters, and the full
- * statements the engines run for the entity card's referrer groups and their page details and the batched card counts
- * (engine-sql/link-temporal.ts readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts). The text is master's, byte for byte: the single-target CTE numbers its parameters by hand
- * ($1..$5 fixed, $6 the per-group cap), so it is spliced as constant text, never rebuilt with sqlFragment (which
+ * The SQL text of the referrer reads (mentions/referrers.ts, ops/backlinks-paged.ts): the shared `typed` CTE, its
+ * filters, and the full statements the engines run for the entity page's live sources, the entity card's referrer
+ * groups and their page details, the referrer page and its count, the batched card counts, the record candidates and
+ * their titles (engine-sql/link-temporal.ts listReferrerTargetSources, readReferrerGroupRows, readReferrerPageDetails,
+ * countReferrerRows, readReferrerRows, readReferrerTargetCounts, readReferrerRecordCandidates,
+ * readReferrerRecordPages). The text is master's, byte for byte: the CTEs number their parameters by hand
+ * ($1..$5 fixed, then the statement's own), so they are spliced as constant text, never rebuilt with sqlFragment (which
  * would renumber a repeated parameter). Every builder here takes only code-provided aliases and the caller's read
  * scope flags; no value reaches the text. scripts/check-engine-sql-dynamic.ts vets the builders engine-sql calls.
  */
@@ -96,6 +99,48 @@ export function referrerTargetCountsSql(scope: ReferrerSqlScope): string {
 
 /** A timestamp as UTC ISO text with microseconds (a cursor compares at full precision). */
 export const dateText = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+/** The live pages with this slug (`$1`) in these sources (`$2`, text[]): the entity page's candidate sources. */
+export const REFERRER_TARGET_SOURCES_SQL = 'SELECT source_id FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL';
+
+/** The referrer page's type filter: `$6` a canonical or stored type, or null for every type. */
+const REFERRER_TYPE_FILTER = `($6::text IS NULL OR canonical_type = $6 OR type = $6)`;
+
+/** The referrer page's total. Params: the five of `referrersCte`, then $6 the type (or null). */
+export function referrerCountSql(scope: ReferrerSqlScope): string {
+  return `${referrersCte(scope)} SELECT count(*)::int AS n FROM typed WHERE ${REFERRER_TYPE_FILTER}`;
+}
+
+/**
+ * One referrer page, newest first by `(d DESC, source_id, slug)`. Params: the five of `referrersCte`, $6 the type (or
+ * null); with a cursor $7 its date (or null), $8 its source and $9 its slug; then the row limit, last.
+ */
+export function referrerRowsSql(scope: ReferrerSqlScope, cursor: boolean): string {
+  const after = cursor ? ` AND ((d IS NOT DISTINCT FROM $7::timestamptz AND (source_id, slug) > ($8::text, $9::text))
+                OR ($7::timestamptz IS NOT NULL AND (d < $7::timestamptz OR d IS NULL)))` : '';
+  return `${referrersCte(scope)}
+     SELECT id, slug, source_id, type, canonical_type, ${dateText('d')} AS d FROM typed
+      WHERE ${REFERRER_TYPE_FILTER}${after}
+      ORDER BY d DESC NULLS LAST, source_id, slug LIMIT $${cursor ? 10 : 7}`;
+}
+
+/**
+ * The batched record candidates: per target index the newest referrers of the record types. Params: the six of
+ * `referrersCteBatched`, then $7 the canonical record types and $8 the rows kept per index.
+ */
+export function referrerRecordCandidatesSql(scope: ReferrerSqlScope): string {
+  return `${referrersCteBatched(scope)}
+     SELECT x.i, x.id, x.slug, x.source_id, x.canonical_type, ${dateText('x.d')} AS d
+       FROM (SELECT DISTINCT i FROM tgt) q CROSS JOIN LATERAL (
+         SELECT * FROM typed t WHERE t.i = q.i AND t.canonical_type = ANY($7::text[])
+          ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $8
+       ) x
+      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id, x.slug`;
+}
+
+/** The titles and date sources of the record pages kept (`$1` the page ids, as int[]). */
+export const REFERRER_RECORD_PAGES_SQL = `SELECT id, title, CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source
+         FROM pages WHERE id = ANY($1::int[])`;
 
 /**
  * The card's groups: per-type totals by hash aggregate, then a bounded top-N per canonical type (no full sort of the

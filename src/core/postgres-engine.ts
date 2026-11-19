@@ -2114,6 +2114,11 @@ export class PostgresEngine implements BrainEngine {
   readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: linkTemporalImpl.ReferrerGroupScope) { return linkTemporalImpl.readReferrerGroupRows(this.linkTemporal, target, scope); }
   readReferrerPageDetails(ids: readonly number[]) { return linkTemporalImpl.readReferrerPageDetails(this.linkTemporal, ids); }
   readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] }, scope: linkTemporalImpl.ReferrerTargetCountScope) { return linkTemporalImpl.readReferrerTargetCounts(this.linkTemporal, target, scope); }
+  listReferrerTargetSources(slug: string, sources: readonly string[]) { return linkTemporalImpl.listReferrerTargetSources(this.linkTemporal, slug, sources); }
+  countReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: linkTemporalImpl.ReferrerRowScope) { return linkTemporalImpl.countReferrerRows(this.linkTemporal, target, scope); }
+  readReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: Parameters<typeof linkTemporalImpl.readReferrerRows>[2]) { return linkTemporalImpl.readReferrerRows(this.linkTemporal, target, scope); }
+  readReferrerRecordCandidates(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] }, scope: linkTemporalImpl.ReferrerRecordCandidateScope) { return linkTemporalImpl.readReferrerRecordCandidates(this.linkTemporal, target, scope); }
+  readReferrerRecordPages(ids: readonly number[]) { return linkTemporalImpl.readReferrerRecordPages(this.linkTemporal, ids); }
   countSearchVectorRows() { return searchVectorImpl.countSearchVectorRows(this.linkTemporal); }
   replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string) { return searchVectorImpl.replaceSearchVectorTriggerFunction(this.linkTemporal, target, lang); }
   backfillSearchVectors(target: 'pages' | 'chunks', opts: Pick<VectorBackfillOpts, 'lang' | 'checkpoint' | 'tick'>) { return target === 'pages' ? backfillPageVectors(this, opts) : backfillChunkVectors(this, opts); }

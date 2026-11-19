@@ -321,6 +321,11 @@ export const RUST_ENGINE_MEMBERS = {
   readReferrerGroupRows: 'links',
   readReferrerPageDetails: 'links',
   readReferrerTargetCounts: 'links',
+  listReferrerTargetSources: 'links',
+  countReferrerRows: 'links',
+  readReferrerRows: 'links',
+  readReferrerRecordCandidates: 'links',
+  readReferrerRecordPages: 'links',
   // reindex-search-vector's steps (engine-sql/search-vector.ts): no-ops under the store's one language
   countSearchVectorRows: 'keyword_search',
   replaceSearchVectorTriggerFunction: 'keyword_search',
