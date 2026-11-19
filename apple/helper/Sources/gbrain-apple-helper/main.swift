@@ -61,12 +61,13 @@ func printJSON<T: Encodable>(_ value: T) {
     if let data = try? encoder.encode(value) { print(String(decoding: data, as: UTF8.self)) }
 }
 
-func admin(_ fields: [String: String], timeout: TimeInterval = 30) -> Never {
+func admin(_ fields: [String: String], timeout: TimeInterval = 30, success: String? = nil) -> Never {
     let port = loadConfig().1.port
-    guard let (status, body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
+    guard case .answered(let status, let body) = AdminClient.post(port: port, fields: fields, timeout: timeout) else {
         fail("GBrain Helper isn't answering on 127.0.0.1:\(port). Check it is running: launchctl print gui/\(getuid())/\(HelperIdentity.bundleId)", code: 69)
     }
     print(String(decoding: body, as: UTF8.self))
+    if status == 200, let success { print(success) }
     exit(status == 200 ? 0 : 1)
 }
 
@@ -118,30 +119,15 @@ case "token":
     }
 
 case "send-setup":
-    let configLock = lockConfigFile()
-    var config = loadConfig().0
-    let off = arguments.contains("--off")
-    if !off, config.send?.enabled != true, AdminClient.post(port: UInt16(config.port), fields: ["action": "off"], timeout: 40)?.0 != 200 {
-        fail("GBrain Helper isn't answering on 127.0.0.1:\(config.port). Start it, then run send-setup again.", code: 69)
-    }
-    config.send = SendSetting(enabled: !off)
-    save(config)
-    Darwin.close(configLock)
-    if off {
-        print("sending is off in \(configPath)")
-        let port = config.port
-        guard let (status, body) = AdminClient.post(port: UInt16(port), fields: ["action": "off"], timeout: 40) else {
-            fail("GBrain Helper didn't confirm within 40 seconds. The config switch stops every new send, but a text it was already handing to Messages may still go out.", code: 69)
-        }
-        guard status == 200 else {
-            let code = ((try? JSONSerialization.jsonObject(with: Data(body))) as? [String: Any])?["code"] as? String ?? "HTTP \(status)"
-            let answer = code == "overloaded" ? "GBrain Helper was busy (overloaded)" : "GBrain Helper answered \(code)"
-            fail("\(answer) and didn't record sending off in its keychain item. The config switch already stops every send.", code: 1)
-        }
-        print("GBrain Helper confirmed sending is off")
-        exit(0)
-    }
-    admin(["action": "setup"], timeout: 300)
+    let setup = SendSetup(configPath: configPath,
+                          lockConfig: { let lockFile = lockConfigFile(); return { Darwin.close(lockFile) } },
+                          loadConfig: { loadConfig().0 },
+                          saveConfig: save,
+                          post: { fields, timeout in AdminClient.post(port: loadConfig().1.port, fields: fields, timeout: timeout) })
+    let result = arguments.contains("--off") ? setup.off() : setup.on()
+    result.out.forEach { print($0) }
+    if let err = result.err { FileHandle.standardError.write(Data("\(name): \(err)\n".utf8)) }
+    exit(result.code)
 
 case "send-key":
     guard let keyName = value("--name") else { fail(usage, code: 64) }
@@ -152,7 +138,8 @@ case "send-key":
         guard let data, let key = String(data: data, encoding: .utf8) else { fail("could not read the public key", code: 66) }
         admin(["action": "add_key", "name": keyName, "public_key": key.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: LocalOwnerPresence.wait + 60)
     case "remove":
-        admin(["action": "remove_key", "name": keyName], timeout: 40)
+        admin(["action": "remove_key", "name": keyName], timeout: 40,
+              success: "No new text signed with the key \(keyName) will be handed to Messages. A text Messages has already accepted may still be delivered.")
     default:
         fail(usage, code: 64)
     }
