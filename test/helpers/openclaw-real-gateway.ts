@@ -69,7 +69,7 @@ export class RealOpenclaw {
   private inbox: TelegramMessage[] = [];
   private updateId = 1000;
   private messageId = 1;
-  private gateway: { proc: ReturnType<typeof Bun.spawn>; out: PumpedText; err: PumpedText } | null = null;
+  private gateway: { proc: ReturnType<typeof Bun.spawn>; out: PumpedText; err: PumpedText; grouped: boolean } | null = null;
   gatewayPort = 0;
 
   constructor(bin: string, label: string) {
@@ -202,10 +202,11 @@ export class RealOpenclaw {
 
   async startGateway(): Promise<void> {
     if (this.gateway) return;
-    const proc = Bun.spawn(['setsid', this.bin, 'gateway', 'run'], { env: this.env, cwd: this.workspace, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' });
+    const grouped = Bun.which('setsid') !== null;
+    const proc = Bun.spawn([...(grouped ? ['setsid'] : []), this.bin, 'gateway', 'run'], { env: this.env, cwd: this.workspace, stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' });
     const out = pumpText(proc.stdout as ReadableStream<Uint8Array>);
     const err = pumpText(proc.stderr as ReadableStream<Uint8Array>);
-    this.gateway = { proc, out, err };
+    this.gateway = { proc, out, err, grouped };
     if (!(await waitForText(out, '[gateway] ready', 120_000))) throw new Error('the OpenClaw gateway did not get ready:\n' + out.text.slice(-3000) + '\n' + err.text.slice(-3000));
   }
 
@@ -214,13 +215,13 @@ export class RealOpenclaw {
 
   async stopGateway(): Promise<void> {
     if (!this.gateway) return;
-    const { proc } = this.gateway;
-    const group = (signal: NodeJS.Signals) => { try { process.kill(-proc.pid, signal); } catch { /* the group is gone */ } };
+    const { proc, grouped } = this.gateway;
+    const group = (signal: NodeJS.Signals) => { try { process.kill(grouped ? -proc.pid : proc.pid, signal); } catch { /* the group is gone */ } };
     group('SIGTERM');
     const killer = setTimeout(() => group('SIGKILL'), 10_000);
     await proc.exited;
     clearTimeout(killer);
-    for (let i = 0; i < 50; i++) { group('SIGKILL'); if (!Bun.spawnSync(['sh', '-c', 'pgrep -g ' + proc.pid]).stdout.toString().trim()) break; await Bun.sleep(200); }
+    for (let i = 0; grouped && i < 50; i++) { group('SIGKILL'); if (!Bun.spawnSync(['sh', '-c', 'pgrep -g ' + proc.pid]).stdout.toString().trim()) break; await Bun.sleep(200); }
     this.gateway = null;
   }
 
@@ -236,7 +237,7 @@ export class RealOpenclaw {
   /** Resolver log lines from the plugin's daily logs (turns and reads), oldest first. */
   logLines(): Array<Record<string, unknown>> {
     try {
-      return Bun.spawnSync(['sh', '-c', 'cat "$0"/openclaw-*.jsonl 2>/dev/null', this.logDir]).stdout.toString().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      return Bun.spawnSync(['sh', '-c', 'cat "$0"/openclaw-*.jsonl 2>/dev/null', this.logDir]).stdout.toString().split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Record<string, unknown>]; } catch { return []; } });
     } catch { return []; }
   }
 
@@ -251,7 +252,7 @@ export class RealOpenclaw {
 
   async close(): Promise<void> {
     await this.stopGateway();
-    if (this.server) await new Promise<void>((r) => this.server!.close(() => r()));
+    if (this.server) { this.server.closeAllConnections(); await new Promise<void>((r) => this.server!.close(() => r())); }
     this.server = null;
     if (this.telegram) { this.telegram.closeAllConnections(); await new Promise<void>((r) => this.telegram!.close(() => r())); }
     this.telegram = null;
