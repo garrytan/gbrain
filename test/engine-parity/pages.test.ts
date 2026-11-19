@@ -734,6 +734,42 @@ describe('engine parity: pages', () => {
     },
   );
 
+  parityTest(
+    'page reads under excludePrivate for a remote caller on a brain with no access restrictions hide pages that name readers',
+    { methods: ['getPage', 'readPageSnapshot', 'listPages', 'resolveSlugs', 'findPages', 'putPage', 'softDeletePage'] },
+    async (engine, backend) => {
+      await seedPrivate(engine, backend);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess({ ...access, hidePrivate: true, restricted: false }, async () => {
+        const got: Record<string, string | null> = {};
+        for (const slug of PRIVATE_SLUGS) {
+          const page = await engine.getPage(slug, { excludePrivate: true });
+          const snapshot = await engine.readPageSnapshot(slug, { excludePrivate: true, sourceIds: ['alt', 'default'] });
+          got[slug] = `${page ? `${page.source_id}:${page.slug}` : null}|${snapshot?.page.source_id ?? null}`;
+        }
+        const listed = (await engine.listPages({ sort: 'slug', excludePrivate: true, listColumnsOnly: true })).map((p) => `${p.source_id}:${p.slug}`);
+        const resolved = await engine.resolveSlugs('people/alice-example', { excludePrivate: true });
+        // resolve_slugs passes the caller's whole read policy; only the source scope and excludePrivate apply.
+        const resolvedUnderPolicy = await engine.resolveSlugs('people/alice-example',
+          { excludePrivate: true, requireSafeChunks: true, minTrust: 'operator_curated', suppressFlagged: true });
+        expect(resolvedUnderPolicy).toEqual(resolved);
+        const found = (await engine.findPages({ pattern: parseFindPattern('people/*'), limit: 50, excludeSlugPrefixes: [], untrusted: { excludePrivate: true } }))
+          .rows.map((r) => `${r.source_id}:${r.slug}`);
+        return { got, listed, resolved, found };
+      });
+      const anonymous = await read({ identity: [] });
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'] });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'] });
+      for (const out of [anonymous, member, granted]) {
+        expect(out.listed).not.toContain('default:people/readers-example');
+        expect(out.found).not.toContain('default:people/team-example');
+        expect(out.listed).not.toContain('default:people/pinned-example');
+      }
+      expect(anonymous.listed).not.toContain('default:people/private-example');
+      expect(granted.listed).toContain('default:people/private-example');
+      return { anonymous, member, granted };
+    },
+  );
+
   parityTest('same slug in two sources stays separate', { methods: ['putPage', 'getPage', 'deletePage', 'resolveSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await engine.putPage('notes/a', NOTE);

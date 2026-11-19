@@ -16,8 +16,8 @@ const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate',
  * The store scope of a page read: `excludePrivate` becomes the page policy (`privatePagesFilterForCaller('p')`, with the
  * caller's reader identity and private-readable grant), under which a hidden page reads as missing.
  */
-function pageScope(member: string, opts: object | undefined, allowed: readonly string[]): Record<string, unknown> {
-  const scope = takeOptions(member, opts, allowed);
+function pageScope(member: string, opts: object | undefined, allowed: readonly string[], ignored: readonly string[] = []): Record<string, unknown> {
+  const scope = takeOptions(member, opts, allowed, ignored);
   if ('excludePrivate' in scope) scope.excludePrivate = storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null;
   return scope;
 }
@@ -107,7 +107,9 @@ export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (br
  * exact half; a name it cannot find exactly is refused, since "no exact page" is not "nothing resembles it".
  */
 export const resolveSlugs: StoreMember<[partial: string, opts?: PageReadScope], string[]> = async (brain, partial, opts) => {
-  const found: string[] = await storeCall({ member: 'resolveSlugs' }, () => brain.resolveSlugs(partial, pageScope('resolveSlugs', opts, ['sourceId', 'sourceIds', 'excludePrivate'])));
+  // PGLite's resolveSlugs reads only the source scope and excludePrivate; the rest of a read policy has no effect there.
+  const scope = pageScope('resolveSlugs', opts, ['sourceId', 'sourceIds', 'excludePrivate'], ['requireSafeChunks', 'minTrust', 'suppressFlagged']);
+  const found: string[] = await storeCall({ member: 'resolveSlugs' }, () => brain.resolveSlugs(partial, scope));
   if (found.length === 0) refuseMember('resolveSlugs', 'a name with no exact page needs trigram matching');
   return found;
 };

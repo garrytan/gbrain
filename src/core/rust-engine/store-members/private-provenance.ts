@@ -162,6 +162,17 @@ export function storePageTextPolicy(
     const canonical = withoutCallerAccess(() =>
       withCallerAccess({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p')));
     if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers };
+    // A remote read on a brain with no access restrictions (CallerAccess.restricted false) renders the open form: a
+    // page passes when it names no readers and no folder rule, whoever the caller is. The store judges that page by
+    // the empty identity, which hides every page that names readers, as the open form does.
+    if (access.restricted === false) {
+      const open = withoutCallerAccess(() => withCallerAccess(
+        { identity: [], privateReadableSources: readers.privateReadableSources, hidePrivate: true, restricted: false },
+        () => privatePagesFilterForCaller('p')));
+      if (text === normalizeConceptInputs(open)) {
+        return { ...pagePolicyFlags(open), identity: [], privateReadableSources: readers.privateReadableSources };
+      }
+    }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }
