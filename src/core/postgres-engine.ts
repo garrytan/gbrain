@@ -1080,8 +1080,8 @@ export class PostgresEngine implements BrainEngine {
     return identityDecisionsImpl.readAutoLinkState(unscopedExecutor(this.engineSql, 'identity decisions: brain-wide, trusted local only'), members);
   }
 
-  async replaceAutoLinks(rows: ReadonlyArray<identityDecisionsImpl.AutoLinkWrite>): Promise<void> {
-    await this.transaction(tx => identityDecisionsImpl.replaceAutoLinks((tx as PostgresEngine).engineSql, rows));
+  async replaceAutoLinks(input: identityDecisionsImpl.ReplaceAutoLinksInput): Promise<{ stale?: true }> {
+    return this.transaction(tx => identityDecisionsImpl.replaceAutoLinks((tx as PostgresEngine).engineSql, input));
   }
 
   // Sources SQL lives once in ./engine-sql/sources.ts (refactor wave 1, W1-extended).

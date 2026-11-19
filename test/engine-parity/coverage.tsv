@@ -64,7 +64,7 @@ countPagesBy	pages	yes	1	no	yes	yes	refuses:pages
 resolveSlugs	pages	yes	2	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	refuses:pages
 listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
-listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
+listIdentityDecisions	pages	yes	2	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 readAutoLinkState	pages	yes	1	no	yes	yes	refuses:pages

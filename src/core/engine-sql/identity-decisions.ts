@@ -199,14 +199,23 @@ export async function readAutoLinkState(exec: LegacyUnscopedRead, members: Reado
   };
 }
 
+export interface ReplaceAutoLinksInput { rows: ReadonlyArray<AutoLinkWrite>; /** The decisions' revision the rows were planned from: a different one writes nothing. */ expectRevision?: string }
+
 /**
  * Replaces every 'dedupe:auto' row with `rows`, under the identity-decisions advisory lock; the engine runs it in one
- * transaction. A row whose page is gone or already sits in an identity group is skipped.
+ * transaction. Given the revision of the decisions the rows were planned from, it writes nothing when they changed since
+ * (a reject recorded meanwhile is never linked again). A row whose page is gone or already sits in an identity group is skipped.
  */
-export async function replaceAutoLinks(exec: SqlExecutor, rows: ReadonlyArray<AutoLinkWrite>): Promise<void> {
+export async function replaceAutoLinks(exec: SqlExecutor, input: ReplaceAutoLinksInput): Promise<{ stale?: true }> {
   if (exec.capabilities.transactionAdvisoryLocks) await exec.run(sqlFragment`SELECT pg_advisory_xact_lock(hashtextextended('gbrain:identity-decisions', 0))`);
+  if (input.expectRevision !== undefined) {
+    const { rows } = await exec.run<Pick<IdentityDecision, 'decision_id' | 'verdict' | 'entity_id' | 'origin' | 'git_blob'>>(sqlFragment`
+      SELECT decision_id, verdict, entity_id, origin, git_blob FROM entity_identity_reviews`);
+    if (decisionsRevision(rows) !== input.expectRevision) return { stale: true };
+  }
   await exec.run(sqlFragment`DELETE FROM entity_identities WHERE established_by = 'dedupe:auto'`);
-  if (!rows.length) return;
+  const rows = input.rows;
+  if (!rows.length) return {};
   await exec.run(sqlFragment`
     INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
     SELECT t.entity_id, t.source_id, t.page_id, 1.0, 'dedupe:auto', t.canonical
@@ -214,4 +223,5 @@ export async function replaceAutoLinks(exec: SqlExecutor, rows: ReadonlyArray<Au
                   ${rows.map(r => (r.canonical ? 'true' : 'false'))}::text[]::boolean[]) AS t(entity_id, source_id, page_id, canonical)
       JOIN pages p ON p.id = t.page_id AND p.source_id = t.source_id AND p.deleted_at IS NULL
     ON CONFLICT (source_id, page_id) DO NOTHING`);
+  return {};
 }

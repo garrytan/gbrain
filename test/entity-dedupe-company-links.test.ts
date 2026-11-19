@@ -8,7 +8,8 @@
  *    to be confirmed on its own with a hint line, and is left out of confirm --clean; the first sweep after an upgrade
  *    writes no automatic row for a person; reject removes the automatic rows and no later sweep recreates them; a page
  *    linked by hand or an unverified stub keeps its group out of the sweep; a confirm takes the pages over from the
- *    automatic link; the hand-link ops refuse an automatic row; doctor's reject suggestion for a decision with no group id
+ *    automatic link; the hand-link ops refuse an automatic row; an id a person page also carries keeps a company pair
+ *    unlinked; enrichment counts a linked company once; doctor's reject suggestion for a decision with no group id
  *    names its identity, which reject accepts.
  * 2. Fails when: a person is linked without the owner; a rejected company pair comes back; the sweep moves a hand link.
  * 3. Real seams: both engines (Postgres with DATABASE_URL), the sync hook, the CLI module, the rank_entities and
@@ -28,6 +29,8 @@ import { entityDuplicatesEntry } from '../src/commands/doctor/checks/entity-dupl
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { enrichEntity } from '../src/core/enrichment-service.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 
 for (const backend of testBackends()) describe(backend, () => {
 let engine: BrainEngine;
@@ -140,13 +143,37 @@ test('reject removes the automatic rows and no later sweep links the pair again'
     { source_id: 'source-b', slug: 'companies/acme-example' }]), 'different']]);
 });
 
-test('a page linked by hand, or an unverified stub, keeps its company group out of the sweep', async () => {
+test('a page linked by hand, an unverified stub, a quarantined or a flagged page keeps its company group out of the sweep', async () => {
   await seed();
   await linkEntityIdentity(engine, { entityId: 'acme-by-hand', slug: 'companies/acme-example', sourceId: 'default', canonical: true });
-  await put('company', 'companies/beta-example', 'Beta Example', { github: 'beta-example' }, 'default');
-  await put('company', 'companies/beta-example', 'Beta Example', { github: 'beta-example', provenance: 'auto-extracted', status: 'unverified' }, 'source-b');
+  for (const [name, extra] of [['beta', { provenance: 'auto-extracted', status: 'unverified' }], ['gamma', { quarantine: { reason: 'junk', detail: 'test' } }],
+    ['delta', { content_flag: { reason: 'markup_heavy', detail: 'test' } }]] as const) {
+    const title = `${name[0]!.toUpperCase()}${name.slice(1)} Example`;
+    await put('company', `companies/${name}-example`, title, { github: `${name}-example` }, 'default');
+    await put('company', `companies/${name}-example`, title, { github: `${name}-example`, ...extra }, 'source-b');
+  }
   await sweep();
   expect(await identities()).toEqual([{ entity_id: 'acme-by-hand', source_id: 'default', slug: 'companies/acme-example', established_by: 'manual', canonical: true }]);
+});
+
+test('a company id a person page also carries keeps the company pair out of the sweep, as the preview keeps it out of clean', async () => {
+  await seed();
+  await put('person', 'people/bob-sample', 'Bob Sample', { github: 'acme-example' }, 'default');
+  expect((await cliJson(['--preview'])).groups.find((g: { members: Array<{ slug: string }> }) => g.members[0]!.slug === 'companies/acme-example')?.class).not.toBe('clean');
+  await sweep();
+  expect(await identities()).toEqual([]);
+});
+
+test('enrichment tiering counts the mentions in every source of an automatically linked company', async () => {
+  await seed();
+  const note = (slug: string, sourceId: string) => importFromContent(engine, slug, `---\ntype: note\ntitle: ${slug}\n---\nMet the Acme Example team at the conference.\n`, { sourceId, noEmbed: true });
+  await note('notes/m0', 'default');
+  for (const n of ['notes/m1', 'notes/m2']) await note(n, 'source-b');
+  const tier = async () => (await enrichEntity(engine, { entityName: 'Acme Example', entityType: 'company', context: 'test', sourceSlug: 'notes/m1' }, { sourceId: 'default' })).mentionCount;
+  const before = await tier();
+  await sweep();
+  expect(before).toBe(1);
+  expect(await tier()).toBe(3);
 });
 
 test('a confirm takes the pages over from the automatic link; the hand-link ops refuse an automatic row', async () => {

@@ -90,8 +90,6 @@ export interface FindDuplicatesOptions {
   kind?: DuplicateKind;
   /** Keep groups with at least one member in this source (every source is still read). */
   sourceId?: string;
-  /** Read only pages of these kinds (default: people and companies). */
-  entityKinds?: EntityKind[];
   /** Declared id fields per entity kind; replaces the schema packs' `identity_keys` when set. */
   identityKeys?: Partial<Record<EntityKind, string[]>>;
   matchers?: DuplicateMatcher[];
@@ -184,8 +182,7 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
   const sources = await engine.listAllSources();
   const typesBySource = new Map<string, SourceTypes>();
   for (const s of sources) typesBySource.set(s.id, await sourceTypes(engine, s.id, opts.identityKeys));
-  const kinds = opts.entityKinds ?? ['person', 'company'];
-  const types = [...new Set([...typesBySource.values()].flatMap(t => kinds.flatMap(k => [...t[k]])))].sort();
+  const types = [...new Set([...typesBySource.values()].flatMap(t => [...t.person, ...t.company]))].sort();
   const declaredFields = [...new Set([...typesBySource.values()].flatMap(t => [...t.declared.person, ...t.declared.company]))];
   const keyFields = [...new Set([...KEY_SPECS.flatMap(s => s.fields), ...declaredFields, 'distinct_from'])].sort();
 
@@ -201,7 +198,7 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
   for (const row of rows) {
     const st = typesBySource.get(row.source_id);
     const type: EntityKind | null = st?.person.has(row.type) ? 'person' : st?.company.has(row.type) ? 'company' : null;
-    if (!st || !type || !kinds.includes(type)) continue;
+    if (!st || !type) continue;
     const title = row.title ?? '';
     const keys = new Map<string, PageKey>();
     const add = (key: KeyType, field: string, key_class: KeyClass, value: string | null) => {
