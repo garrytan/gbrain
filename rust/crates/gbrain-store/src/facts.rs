@@ -2012,9 +2012,8 @@ fn drop_rekey_duplicates(
 /// row_num a row at `old` holds (they belong to a purged page), drop the ontology rows the fence
 /// move would duplicate, then move `source_markdown_slug` (statements 1 to 6 of "Rename slug
 /// rows" in docs/designs/RUST_ENGINE_INTERFACES.md). Statement 1 moves the `fact_withdrawals`
-/// rows by `subject`; it is not run here: a caller that records withdrawals moves them with
-/// `moveFactWithdrawalSubject` (`trust::withdrawals`), and no TypeScript member records one on
-/// this engine. Called by `cascade::rename_slug_rows`.
+/// rows by `subject` (`trust::withdrawals::move_subject_in`), so a withdrawn claim stays withdrawn
+/// under the new slug. Called by `cascade::rename_slug_rows`.
 pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
     trust: &WriteTrust,
@@ -2025,6 +2024,7 @@ pub(crate) fn rename_slug_rows(
     if old == new {
         return Ok(());
     }
+    crate::trust::withdrawals::move_subject_in(tx, source_id, old, new)?;
     let about = entity_rows(tx, source_id, old)?;
     let moving = about
         .iter()

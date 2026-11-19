@@ -132,7 +132,8 @@ impl OntologyQuery {
     /// `life/diary/` provenance under `exclude_diary`, the visibility list and the confidence
     /// floor.
     fn admits(&self, read: &dyn KvRead, r: &FactRecord) -> Result<bool> {
-        if f64::from(r.confidence) < self.min_confidence || self.min_confidence.is_nan() {
+        // `confidence` is a REAL column and the SQL engines compare it with the floor as a REAL, so 0.7 meets a 0.7 floor.
+        if r.confidence < self.min_confidence as f32 || self.min_confidence.is_nan() {
             return Ok(false);
         }
         if self

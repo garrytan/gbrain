@@ -138,3 +138,25 @@ fn a_bare_name_key_reads_under_the_privacy_of_the_page_written_at_its_directory(
         1
     );
 }
+
+#[test]
+fn a_withdrawn_claim_stays_withdrawn_when_its_page_is_renamed() {
+    let b = brain("facts-withdrawal-rename");
+    put_page(&b, "people/a", json!({}));
+    b.insert_fact_withdrawal("default", "world", "x", "people/a", Some(WITHDRAWN_AT))
+        .unwrap();
+    b.update_slug("people/a", "people/b", Some("default"))
+        .unwrap();
+    assert!(
+        !b.has_fact_withdrawal_for_subject("default", "people/a")
+            .unwrap()
+    );
+    insert(
+        &b,
+        json!([{ "fact": "x", "source": "s", "entity_slug": "people/b", "visibility": "world" }]),
+    );
+    let rows = by_entity(&b, "people/b", json!({}));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["expired_at"], json!(WITHDRAWN_AT), "{rows:?}");
+    assert!(by_entity(&b, "people/b", json!({ "activeOnly": true })).is_empty());
+}
