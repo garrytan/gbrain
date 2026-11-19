@@ -10,7 +10,7 @@ import { isWriteCapacityWait } from './admission-retry.ts';
 import { readBackgroundPauseShare, resolveAdmissionOrigin } from './admission-origin.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { linkStreamSlugs } from './page-purge.ts';
+import { linkStreamSlugs, redactExpiredPageJournal } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
 import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
@@ -54,7 +54,6 @@ import { keptReason, readHeldConcepts, type RebuildKept } from './concept-rebuil
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
-import { findRequestsForSlugs, redactRequestIntents } from './intent-redaction.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { maintenanceTransaction } from './attribution.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -176,16 +175,6 @@ interface RecordedExpiry { slugs: string[]; exclude: number[]; blocked: DeletedP
  * delete (`exclude`). A content failure counts toward the shared purge park (purge-parks.ts), so after
  * PURGE_PARK_LIMIT failures it is parked and skipped, like the managed purge's; a transient one is retried next run.
  */
-/**
- * F4: an unmanaged expiry redacts the journal rows a managed brain wrote for the purged pages (their intents carry the body),
- * in the purge's transaction (which declared the persistence protocol first), as the coordinated purge does; a request still
- * pending keeps its intent and fails on the missing page.
- */
-async function redactPurgedPageRequests(tx: BrainEngine, sourceId: string, slugs: readonly string[]): Promise<void> {
-  const targets = await findRequestsForSlugs(tx, sourceId, slugs);
-  if (targets.length) await redactRequestIntents(tx, targets, undefined, { skipPending: true });
-}
-
 async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: number, retryParked: boolean, held: ReadonlySet<number>, only?: PurgeFilter): Promise<RecordedExpiry> {
   const hours = String(Math.max(0, Math.floor(olderThanHours)));
   const { parkUncarriedInPurge } = await import('../repair/origin-carry.ts');
@@ -220,7 +209,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
               await scrubPurgedNameStores(tx, row.source_id, [row.slug]);
               await scrubPurgedSlugStores(tx, row.source_id, [row.slug], { secretOccurrences: secrets.map(o => o.id) });
               await scrubPurgedSlugHolds(tx, row.source_id, [{ slug: row.slug, deletedAt: gone[0].deleted_at }]);
-              await redactPurgedPageRequests(tx, row.source_id, [row.slug]);
+              await redactExpiredPageJournal(tx, row.source_id, [row.slug]);
             }
             return gone.length > 0;
           });
@@ -508,7 +497,7 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
       const purged = await tx.purgeDeletedPages(olderThanHours, excludeIds.length ? { excludeIds } : undefined);
       const bySource = new Map<string, string[]>();
       for (const page of purged.pages ?? []) bySource.set(page.source_id, [...bySource.get(page.source_id) ?? [], page.slug]);
-      for (const [sourceId, slugs] of bySource) await redactPurgedPageRequests(tx, sourceId, slugs);
+      for (const [sourceId, slugs] of bySource) await redactExpiredPageJournal(tx, sourceId, slugs);
       return purged;
     });
     const owner = await purgeOwedPages(engine, config, olderThanHours, owed, opts.only);

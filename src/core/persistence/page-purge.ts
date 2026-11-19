@@ -286,6 +286,44 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
 /** The page's add_timeline_entry receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
 const TIMELINE_RECEIPT_CAP = 10_000;
 
+type TimelineReceipt = IntentRedactionTarget & { sequence: string; summary: string | null; source: string | null; bullet: string | null };
+
+/** The add_timeline_entry receipts of `slugs`, compacted ones included, in sequence order after `after`; their outcome keeps the entry text. */
+async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0'): Promise<TimelineReceipt[]> {
+  return tx.executeRaw<TimelineReceipt>(`SELECT id::text AS id, principal_kind, principal_id, sequence::text AS sequence, outcome->'entry'->>'summary' AS summary,
+    outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
+    WHERE source_id=$1 AND slug=ANY($2::text[]) AND operation='add_timeline_entry' AND outcome ? 'entry' AND sequence > $4::bigint ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit, after]);
+}
+
+const receiptText = (rows: readonly TimelineReceipt[]) => rows.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean);
+
+/** Rows one lookup of the unmanaged expiry's journal redaction reads at a time. */
+const EXPIRY_JOURNAL_BATCH = 1_000;
+
+/**
+ * F4: on a brain without a write owner, the journal redaction of pages a purge hard-deletes, in its transaction (which
+ * declared the persistence protocol first). The pages' add_timeline_entry receipts lose their entry text, compacted ones
+ * included, and their own requests lose their intents and any of that text, batch by batch until every row is read. A
+ * request still pending keeps its intent and fails on the missing page; other pages' requests that quote these are not swept.
+ */
+export async function redactExpiredPageJournal(tx: BrainEngine, sourceId: string, slugs: readonly string[]): Promise<void> {
+  if (!slugs.length) return;
+  const exact = new Set<string>();
+  for (let after = '0'; ;) {
+    const batch = await timelineReceipts(tx, sourceId, slugs, EXPIRY_JOURNAL_BATCH, after);
+    for (const text of receiptText(batch)) exact.add(text);
+    await redactRequestIntents(tx, batch, undefined, { skipPending: true, exact });
+    if (batch.length < EXPIRY_JOURNAL_BATCH) break;
+    after = batch[batch.length - 1]!.sequence;
+  }
+  for (let after = '0'; ;) {
+    const batch = await findRequestsForSlugs(tx, sourceId, slugs, EXPIRY_JOURNAL_BATCH, after);
+    await redactRequestIntents(tx, batch, undefined, { skipPending: true, exact });
+    if (batch.length < EXPIRY_JOURNAL_BATCH) break;
+    after = batch[batch.length - 1]!.sequence;
+  }
+}
+
 /** The journal census a page purge redacts: the requests carrying its claims, and whether the search covered every one. */
 export interface PurgeCensus { targets: IntentRedactionTarget[]; complete: boolean }
 
@@ -355,11 +393,9 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
     // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`), compacted
     // ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
     // the cap leaves the journal sweep incomplete instead of claiming every receipt.
-    const timelineRows = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; source: string | null; bullet: string | null }>(`SELECT id::text AS id,
-      principal_kind, principal_id, outcome->'entry'->>'summary' AS summary, outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
-      WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, timelineCap + 1]));
+    const timelineRows = await lookup('slug_lookup', () => timelineReceipts(tx, sourceId, [slug], timelineCap + 1));
     const timeline = timelineRows.slice(0, timelineCap);
-    const timelineText = new Set(timeline.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
+    const timelineText = new Set(receiptText(timeline));
     const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
     const own = new Set(forSlug.map(r => r.id));
     const requests = [...new Map([...forSlug, ...census.targets].map(r => [r.id, r])).values()];

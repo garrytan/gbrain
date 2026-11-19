@@ -8,6 +8,7 @@ import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
+import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 
 const SLUG = 'notes/journal-example';
 const CANARY = 'canaryjournalbody';
@@ -37,6 +38,13 @@ async function journalCopies(engine: BrainEngine): Promise<number> {
 async function writtenWhileManaged(engine: BrainEngine, ctx: OperationContext): Promise<void> {
   await put(engine, ctx, SLUG, `A note whose body says ${CANARY}.`);
   await put(engine, ctx, SLUG, `An edit that still says ${CANARY}.`);
+  for (const date of ['2026-02-03', '2026-02-04']) {
+    await submitPageMutation(ctx, { operation: 'add_timeline_entry', params: { slug: SLUG, date, summary: `Met about ${CANARY} on ${date}`, request_id: randomUUID() } });
+  }
+  await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
+    await tx.executeRaw("UPDATE persistence_requests SET intent=NULL, compacted=true WHERE operation='add_timeline_entry' AND outcome->'entry'->>'summary' LIKE '%2026-02-04'");
+  });
   await deletePage(engine, ctx, SLUG);
   expect(await journalCopies(engine)).toBeGreaterThan(0);
 }

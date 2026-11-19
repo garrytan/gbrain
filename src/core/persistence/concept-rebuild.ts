@@ -16,7 +16,8 @@ import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { loadConfig } from '../config.ts';
 import { submitPageMutation } from './page-mutations.ts';
-import { linkStreamSlugs } from './page-purge.ts';
+import { linkStreamSlugs, redactExpiredPageJournal } from './page-purge.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -209,6 +210,7 @@ async function purgeHeldConcept(tx: BrainEngine, sourceId: string, slug: string,
   }
   const purged = await tx.purgeDeletedPages(0, { onlyIds: [rebuild.page_id] });
   if (purged.count !== 1 || !access) return 'The tombstone is held by another purge rule, so the rebuild wrote nothing and it stays held.';
+  await redactExpiredPageJournal(tx, sourceId, [slug]);
   return { access, incoming, oldId: rebuild.page_id };
 }
 
@@ -233,6 +235,7 @@ export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, 
   const publicationId = randomUUID(), report = { appended: 0 };
   let parked: string | undefined;
   await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     const slugs = [...new Set([slug, ...await linkStreamSlugs(tx, sourceId, rebuild.page_id)])].sort();
     await tx.lockPageKeys(slugs.map(key => ({ sourceId, slug: key })));
     await withBeliefBatch(tx, { sourceId, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report }, async () => {
