@@ -169,4 +169,8 @@ store is backed up, and warns when:
 - It does not erase bytes physically: dead database rows and WAL can hold old text until the database reclaims them.
 - An original an older gbrain left an occurrence for after its page was purged stays: that occurrence still names it,
   so the cascade and doctor's count treat it as referenced.
+- A restore from a backup taken before a rename can tie an original to a different page that has since taken the
+  renamed page's old slug, and that page's readers then pass the `reveal_secret` read check for it. It needs both: an
+  older backup and another page now at that slug. After a restore, `gbrain secrets list` shows the pages each original
+  is tied to. A backup taken after the rename names the new slug.
 - Markers written before the store existed (`<REDACTED:rule>` with no id) stay unrecoverable.
