@@ -531,6 +531,7 @@ export const RUST_ENGINE_MEMBERS = {
   renewWriteClaim: 'persistence_journal',
   expireStaleWriteClaims: 'persistence_journal',
   hasClaimableWrite: 'persistence_journal',
+  selectClaimableWrite: 'persistence_journal',
   listHostConsumerRows: 'persistence_journal',
   probeLiveConsumerRows: 'persistence_journal',
   renewConsumerRow: 'persistence_journal',

@@ -34,7 +34,7 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OutstandingBySource, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest } from './engine-sql/persistence-effect-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
@@ -3348,6 +3348,8 @@ export interface BrainEngine {
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
+  selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */
   listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;
   probeLiveConsumerRows(probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<ConsumerRowRead[]>;

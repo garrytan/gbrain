@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 630/630
+# covered: 631/631
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 11/11
-# persistence_journal: 43/43
+# persistence_journal: 44/44
 # entity_reads: 6/6
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -70,7 +70,7 @@ reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
 transaction	lifecycle	yes	39	no	yes	yes	serves
-transactionDirect	lifecycle	yes	2	no	yes	yes	serves
+transactionDirect	lifecycle	yes	3	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	63	yes	yes	yes	serves
@@ -363,18 +363,19 @@ countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	2	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	20	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	20	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	15	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	21	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	21	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	16	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	2	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	12	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	21	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	22	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
+selectClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
 listHostConsumerRows	persistence_journal	yes	2	no	yes	yes	serves
 probeLiveConsumerRows	persistence_journal	yes	1	no	yes	yes	serves
 renewConsumerRow	persistence_journal	yes	1	no	yes	yes	serves

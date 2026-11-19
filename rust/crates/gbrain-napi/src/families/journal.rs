@@ -272,6 +272,19 @@ impl Brain {
         })
     }
 
+    /// `selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })`: the request row
+    /// `claimNextWrite` claims next, or `null`.
+    #[napi]
+    pub fn select_claimable_write<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.select_claimable_write(&required(spec, "selectClaimableWrite spec")?)
+        })
+    }
+
     /// `readCounterRows(keys)`: the counter rows that exist, in key order, unlocked.
     #[napi]
     pub fn read_counter_rows<'env>(

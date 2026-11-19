@@ -4073,6 +4073,39 @@
         ],
         "flagOnScopes": []
       },
+      "selectClaimableWrite#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#fifo-holder": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#priority": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "selectProjectionWindowJobs#default": {
         "flagOffLanes": [
           "pool"
@@ -5193,6 +5226,7 @@
         "searchTitles": "direct",
         "searchVector": "direct",
         "selectClaimableEffect": "none",
+        "selectClaimableWrite": "none",
         "selectProjectionWindowJobs": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",

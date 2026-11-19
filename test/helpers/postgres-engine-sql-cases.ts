@@ -530,7 +530,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
-  'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
+  'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,
   'claimHousekeepingTurn': OOS.journal, 'completeHousekeepingTurn': OOS.journal, 'readReceiptBudget': OOS.journal,
   'listCompactableReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal,
@@ -1311,6 +1311,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     (e: any) => e.expireStaleWriteClaims({ hostId: JOURNAL_REQUEST, charge: true, deadOwners: [] }, { direct })])),
   ...variants('hasClaimableWrite', ([null, true] as const).map((priority) => [priority === null ? 'default' : 'priority',
     (e: any) => e.hasClaimableWrite(JOURNAL_REQUEST, [], { priority })])),
+  ...variants('selectClaimableWrite', ([[null, false], [true, false], [false, true]] as const).map(([priority, holder]) => [
+    `${priority === null ? 'default' : priority ? 'priority' : 'fifo'}${holder ? '-holder' : ''}`,
+    (e: any) => e.transaction((tx: any) => tx.selectClaimableWrite({ hostId: JOURNAL_REQUEST, excludeRoots: [], fifoRoots: [], laneRoots: [], nonce: 'n', syncSeen: {},
+      priority, leaseHolder: holder ? { lockPrefix: 'gbrain-sync:', pid: 1, host: 'h' } : null }))])),
   ...variants('readTopologyChange', [['default', (e) => e.readTopologyChange(JOURNAL_REQUEST, JOURNAL_REQUEST)]]),
   ...variants('insertTopologyChange', [['default', (e) => e.transaction((tx: any) => tx.insertTopologyChange({
     principalId: JOURNAL_REQUEST, requestId: JOURNAL_REQUEST, digest: 'd'.repeat(64), operation: 'remove', sourceId: SRC,
