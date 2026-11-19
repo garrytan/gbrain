@@ -121,7 +121,7 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
          FROM pages p
         WHERE ${openPageSql('p')} AND p.source_id = ANY($1::text[])
           AND (p.frontmatter ?| $2::text[] OR p.type = ANY($3::text[]))
-        ORDER BY p.source_id, p.slug`, [sources, [...PROPOSAL_FIELDS], [...SENSITIVE_PAGE_TYPES]]));
+        ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`, [sources, [...PROPOSAL_FIELDS], [...SENSITIVE_PAGE_TYPES]]));
     return found.filter(row => membersReadOpen(scope, row.source, row.visible));
   });
   const groups = new Map<string, { source: string; readers: string[]; slugs: string[] }>();
