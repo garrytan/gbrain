@@ -5,7 +5,8 @@
       17,
       18,
       19,
-      100
+      100,
+      328
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -109,7 +110,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 328,
+    "latest": 329,
     "records": [
       {
         "handler": {
@@ -5374,7 +5375,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "701f0fcb53da171b84344fb48b8abf981938d1557cab6711270a22ba66dc7de3"
+          "sha256": "152f6a24db50c4a75274a446d9c3ae12020456d7b638a480267d914711e5ef82"
         },
         "idempotent": true,
         "name": "projection_jobs_byte_order_index",
@@ -5385,7 +5386,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 328
+        "version": 329
       }
     ],
     "versions": [
@@ -5711,7 +5712,7 @@
       325,
       326,
       327,
-      328
+      329
     ]
   },
   "normalizer": "migrations-record-v1"
