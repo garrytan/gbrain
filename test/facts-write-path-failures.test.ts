@@ -9,7 +9,7 @@
  *     reported instead of silent.
  *   - A failed page-cache mirror after a fence write is reported.
  *
- * Real PGLite; failures injected by wrapping executeRaw / refreshPageBody.
+ * Real PGLite; failures injected by wrapping executeRaw, a typed lookup member or refreshPageBody.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -82,9 +82,9 @@ describe('facts write-path failures (B-21)', () => {
   });
 
   test('a fuzzy lookup error is not a fallback slug, but a missing pg_trgm still degrades', async () => {
-    const broken = failing(/similarity\(/, new Error('connection reset'));
+    const broken = failingMember('findFuzzyEntityCandidates', new Error('connection reset'));
     await expect(resolveEntitySlugWithSource(broken, 'default', 'Alice Example')).rejects.toThrow('connection reset');
-    const noTrgm = failing(/similarity\(/, Object.assign(new Error('function similarity(text, unknown) does not exist'), { code: '42883' }));
+    const noTrgm = failingMember('findFuzzyEntityCandidates', Object.assign(new Error('function similarity(text, unknown) does not exist'), { code: '42883' }));
     expect(await resolveEntitySlugWithSource(noTrgm, 'default', 'Alice Example'))
       .toEqual({ slug: 'alice-example', source: 'fallback_slugify' });
   });

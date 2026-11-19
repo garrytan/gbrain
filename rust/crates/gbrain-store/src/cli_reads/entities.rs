@@ -187,7 +187,7 @@ impl Store {
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or
 /// `status` contains the word alias, redirect or redirected.
-fn is_retired(p: &PageRecord) -> bool {
+pub(crate) fn is_retired(p: &PageRecord) -> bool {
     let text = |key: &str| {
         p.frontmatter
             .get(key)

@@ -36,6 +36,7 @@
 
 mod arm;
 mod chunk_search;
+mod entity_fuzzy;
 mod filters;
 mod page_search;
 pub(crate) mod parser;

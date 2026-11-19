@@ -750,6 +750,17 @@
         ],
         "flagOnScopes": []
       },
+      "findFuzzyEntityCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "findOntologyConflicts#default": {
         "flagOffLanes": [
           "pool"
@@ -4973,6 +4984,7 @@
         "findDuplicatePage": "direct",
         "findDuplicatePages": "direct",
         "findExactSlug": "none",
+        "findFuzzyEntityCandidates": "none",
         "findOntologyConflicts": "none",
         "findOrphanPages": "none",
         "findPages": "direct",

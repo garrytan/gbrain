@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 748/748
+# covered: 749/749
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 12/12
 # persistence_journal: 56/56
-# entity_reads: 6/6
+# entity_reads: 7/7
 # cycle_locks: 7/7
 # minion_jobs: 8/8
 # minion_queue: 80/80
@@ -372,7 +372,7 @@ readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
-readWriteRequestById	persistence_journal	yes	8	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	9	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
@@ -381,13 +381,13 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	2	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	25	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	30	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	18	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	26	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	31	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	19	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	13	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	14	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	34	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	35	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -426,6 +426,7 @@ readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
+findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	11	no	yes	yes	serves

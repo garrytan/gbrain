@@ -62,6 +62,21 @@ impl Brain {
         self.run(env, move |s| s.find_exact_slug(&source_id, &slugs, retired))
     }
 
+    /// `findFuzzyEntityCandidates(sourceId, title, fragment)`: up to five `{ slug, title, type,
+    /// score }` rows, best pg_trgm score first.
+    #[napi]
+    pub fn find_fuzzy_entity_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        title: String,
+        fragment: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_fuzzy_entity_candidates(&source_id, &title, &fragment)
+        })
+    }
+
     /// `readIgnoredPrivacyLabelPages(sourceId, { slugs } | { since })`: labelled candidate pages.
     #[napi]
     pub fn read_ignored_privacy_label_pages<'env>(
