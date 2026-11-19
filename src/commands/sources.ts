@@ -73,7 +73,6 @@ import {
   sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
@@ -836,7 +835,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   class SourceReferencedError extends Error {}
   try {
     await engine.transaction(async (tx) => {
-      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
+      const cols = await preflightOauthClientColumns(tx);
       if (cols.has('source_id')) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
         const rows = await tx.executeRaw<{ n: string }>(

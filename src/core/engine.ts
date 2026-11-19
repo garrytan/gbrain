@@ -9,7 +9,7 @@ import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
-import type { DeletedOAuthClient } from './engine-sql/access-credentials.ts';
+import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, OauthClientGrantInsert, OauthClientProbe, ScopeSourceLock } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -69,7 +69,7 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -1431,8 +1431,6 @@ export interface BrainEngine {
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;
-  /** Every legacy access token (`auth list`), revoked ones too, newest first. */
-  listAccessTokens(): Promise<AccessTokenRow[]>;
   /**
    * Whether a resident notifier recorded coverage for some source (freshnessReported). A schema from before the
    * notifier tables rejects with the missing-table error its caller catches; a Rust brain keeps no notifier state and
@@ -3840,6 +3838,24 @@ export interface BrainEngine {
   revokeAccessToken(id: string): Promise<string | null>;
   /** Delete an OAuth client, its tokens and codes cascading; the deleted client, or null when none has this id. */
   deleteOAuthClient(clientId: string): Promise<DeletedOAuthClient | null>;
+  /** Every access token, newest first, without its hash. */
+  listAccessTokens(): Promise<AccessTokenListRow[]>;
+  /** One grant column (`private_pages` or `permissions`) of the active token with this id (a UUID): `{ value }`, or null. */
+  readActiveAccessTokenGrant(id: string, field: ActiveTokenGrantField): Promise<{ value: unknown } | null>;
+  /** Whether an active access token has this id (compared as text). */
+  accessTokenLive(id: string): Promise<boolean>;
+  /** Whether an OAuth client not deleted has this id. */
+  oauthClientLive(clientId: string): Promise<boolean>;
+  /** Which of the probe's optional `oauth_clients` columns this brain has (a store that keeps them all names them all). */
+  readOauthClientColumns(probe: OauthClientProbe): Promise<string[]>;
+  /** Set one OAuth client's access-token lifetime in seconds; false when no client has this id. */
+  setOauthClientTokenTtl(clientId: string, ttlSeconds: number): Promise<boolean>;
+  /** Insert a scoped OAuth client with its register audit row (a store that keeps no grant audit writes the client only). */
+  insertOauthClientGrant(row: OauthClientGrantInsert): Promise<void>;
+  /** The clients an upgrade migration clamped the token lifetime of; a brain with no grant audit table raises its error. */
+  readTokenLifetimeClampedClients(): Promise<string[]>;
+  /** The id and config of each source among `ids`; `lock` takes the rows in id order FOR SHARE or FOR UPDATE (a single-writer store takes none). */
+  readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]>;
 
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;

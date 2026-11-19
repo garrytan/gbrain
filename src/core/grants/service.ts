@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import type { OauthClientGrantInsert } from '../engine-sql/access-credentials.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { GrantError, grantFromRow, normalizeGrantBrain, validateClientGrant, type ClientGrant, type GrantPatch, type GrantValidationContext } from './model.ts';
 import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profiles.ts';
@@ -110,6 +111,25 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
     ) INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
       SELECT client_id, ${actor}, 'register', ${grant.revision}, NULL, ${auditDocument(grant, null)}::text::jsonb FROM created
   `;
+}
+
+/**
+ * The engine-neutral row `BrainEngine.insertOauthClientGrant` writes: the same columns and audit row insertClientGrant
+ * sends (engine-sql/access-credentials.ts CREDENTIAL_SQL.client_grant_insert is its text). The caller checks scope
+ * sources first (assertScopeSourceGrant), as insertClientGrant does.
+ */
+export function clientGrantInsert(grant: ClientGrant, metadata: GrantClientMetadata, actor = 'operator'): OauthClientGrantInsert {
+  return {
+    client_id: grant.clientId, client_name: grant.clientName, client_secret_hash: metadata.secretHash,
+    redirect_uris: metadata.redirectUris, grant_types: metadata.grantTypes, token_endpoint_auth_method: metadata.authMethod,
+    client_id_issued_at: metadata.issuedAt, scope: grant.scopes.join(' '), source_id: grant.sourceId, federated_read: grant.federatedRead,
+    bound_slug_prefixes: grant.boundSlugPrefixes, allowed_operations: grant.allowedOperations, bound_tools: grant.boundTools,
+    bound_source_id: grant.boundSourceId, bound_brain_id: grant.boundBrainId, delegated_slug_prefixes: grant.delegatedSlugPrefixes,
+    delegated_namespace: grant.delegatedNamespace, bound_max_concurrent: grant.boundMaxConcurrent, budget_usd_per_day: grant.budgetUsdPerDay,
+    surface: grant.surface, surface_set_by: grant.surfaceSetBy, token_ttl: grant.tokenTtlSeconds, grant_profile: grant.profile,
+    grant_revision: grant.revision, grant_repair_reasons: grant.repairReasons,
+    audit: { actor, after_grant: auditDocument(grant, null) },
+  };
 }
 
 /** Caller may supply a transaction engine; use the InTransaction export there. */

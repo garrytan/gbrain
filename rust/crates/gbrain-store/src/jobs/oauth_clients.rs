@@ -2,7 +2,8 @@
 //! `spend-log.ts` run them (rust/docs/store/spend-log.md, rust/docs/store/oauth-clients.md).
 //!
 //! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, and the client reads the
-//! admission and the agent spend view make (`budget_cents`, `agent_clients`).
+//! admission and the agent spend view make (`budget_cents`, `agent_clients`); and the credential members of
+//! `src/core/engine-sql/access-credentials.ts`: deleteOAuthClient, oauthClientLive and setOauthClientTokenTtl.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2A (this file only):
 //! - `m 0x2A client_id -> ClientRecord`: one client, the full row (the 41 columns of the table after every migration,
@@ -13,7 +14,9 @@
 //! key. A refusal is `constraint_violation` with the Postgres message (`new row for relation "oauth_clients" violates
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
 //! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
-//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here).
+//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps no
+//! `oauth_tokens` and no `oauth_codes`, so the `ON DELETE CASCADE` a client delete runs on Postgres has nothing to
+//! remove here.
 
 use super::spend::numeric_fixed;
 use super::*;
@@ -598,6 +601,39 @@ impl Store {
                 .cmp(&(b.client_name.as_bytes(), b.client_id.as_bytes()))
         });
         Ok(Value::Array(clients.iter().map(|c| c.to_row()).collect()))
+    }
+}
+
+impl Store {
+    /// `deleteOAuthClient(clientId)`: removes the client row in one write; `(client_id, client_name)` of the row it
+    /// removed, or None.
+    pub fn delete_oauth_client(&self, client_id: &str) -> Result<Option<(String, String)>> {
+        self.write(|tx| {
+            let Some(record) = load_client(tx, client_id)? else {
+                return Ok(None);
+            };
+            tx.delete(&client_key(client_id))?;
+            Ok(Some((record.client_id, record.client_name)))
+        })
+    }
+
+    /// `oauthClientLive(clientId)`: whether a client not deleted (`deleted_at IS NULL`) has this id.
+    pub fn oauth_client_live(&self, client_id: &str) -> Result<bool> {
+        let read = self.read()?;
+        Ok(load_client(&*read, client_id)?.is_some_and(|c| c.deleted_at.is_none()))
+    }
+
+    /// `setOauthClientTokenTtl(clientId, ttl)`: sets the client's `token_ttl`; whether the client exists. The row is
+    /// held to the table's constraints (`constraint_violation`), and then is untouched.
+    pub fn set_oauth_client_token_ttl(&self, client_id: &str, ttl: i32) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = load_client(tx, client_id)? else {
+                return Ok(false);
+            };
+            record.token_ttl = Some(ttl);
+            put_client(tx, &record)?;
+            Ok(true)
+        })
     }
 }
 

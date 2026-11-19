@@ -188,9 +188,8 @@ export function carryLegacyGrant(priorRaw: unknown, fresh: {
 export async function readActiveTokenPrivatePages(engine: BrainEngine, id: string): Promise<PrivatePagesGrant> {
   if (!TOKEN_ID_RE.test(id)) return 'none';
   try {
-    const [row] = await engine.executeRaw<{ private_pages: unknown }>(
-      'SELECT private_pages FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL', [id]);
-    return privatePagesFromColumn(row?.private_pages);
+    const row = await engine.readActiveAccessTokenGrant(id, 'private_pages');
+    return privatePagesFromColumn(row?.value);
   } catch (e) {
     if (isUndefinedColumnError(e, 'private_pages')) return 'none';
     throw e;
@@ -205,7 +204,6 @@ export function uncarriedPrivatePagesNote(name: string, mode: Exclude<PrivatePag
 /** The stored grant of an active token, or undefined when it is gone or revoked. */
 export async function readActiveTokenPermissions(engine: BrainEngine, id: string): Promise<unknown> {
   if (!TOKEN_ID_RE.test(id)) return undefined;
-  const [row] = await engine.executeRaw<{ permissions: unknown }>(
-    'SELECT permissions FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL', [id]);
-  return row ? row.permissions ?? {} : undefined;
+  const row = await engine.readActiveAccessTokenGrant(id, 'permissions');
+  return row ? row.value ?? {} : undefined;
 }

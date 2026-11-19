@@ -22,6 +22,8 @@
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { OAUTH_CLIENT_PROBE_COLUMNS } from '../core/engine-sql/access-credentials.ts';
+import type { ManualClientPlan } from '../core/oauth-provider.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
 import { isTrustTier, TRUST_TIERS, type TrustTier } from '../core/trust/tier.ts';
 import { setMinTrust } from '../core/trust/min-trust.ts';
@@ -175,7 +177,7 @@ export function renderTokenScopes(scopes: unknown): string {
 
 async function list(json: boolean) {
   await withConfiguredSql(async (sql, engine) => {
-    // The engine read is SELECT *, so every schema generation reads (private_pages and private_facts arrive with their migrations; absent reads as none).
+    // Every schema generation lists (private_pages and private_facts arrive with their migrations; absent reads as none).
     const rows = await engine.listAccessTokens();
     const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(sql, rows);
     if (json) {
@@ -193,10 +195,10 @@ async function list(json: boolean) {
     console.log('─'.repeat(158));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
-      const name = (r.name as string).padEnd(20);
+      const name = r.name.padEnd(20);
       const scopes = renderTokenScopes(r.scopes).padEnd(21);
-      const created = new Date(r.created_at as string).toISOString().slice(0, 19);
-      const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
+      const created = r.created_at.toISOString().slice(0, 19);
+      const lastUsed = r.last_used_at ? r.last_used_at.toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = (r.revoked_at ? 'REVOKED' : (memberStatus(r) ?? 'enabled') !== 'enabled' ? 'refused' : 'active').padEnd(7);
       const facts = privatePagesFromColumn(r.private_facts) === 'granted_sources' ? 'granted-sources' : 'none';
       console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${facts.padEnd(15)}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
@@ -573,14 +575,8 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
  * is impossible inside a tx — optional-column degrades must be decided here,
  * outside, once.
  */
-export async function preflightOauthClientColumns(sql: SqlQuery): Promise<Set<string>> {
-  const rows = await sql`
-    SELECT column_name FROM information_schema.columns
-    WHERE table_name = 'oauth_clients'
-      AND table_schema = current_schema()
-      AND column_name IN ('token_ttl', 'surface', 'federated_read', 'source_id', 'deleted_at')
-  `;
-  return new Set(rows.map(r => String(r.column_name)));
+export async function preflightOauthClientColumns(engine: Pick<BrainEngine, 'readOauthClientColumns'>): Promise<Set<string>> {
+  return new Set(await engine.readOauthClientColumns('preflight'));
 }
 
 export interface RegisterScopedClientOpts {
@@ -599,6 +595,10 @@ export interface RegisterScopedClientOpts {
   /** Result of preflightOauthClientColumns — decides which optional-column
    * writes are attempted. Absent → attempt everything (caller owns errors). */
   columns?: Set<string>;
+  /** The engine `sql` runs on. When set, the client insert and its token_ttl write go through the typed engine
+   * members (one statement text on Postgres and PGLite, the store on a Rust brain); the surface write still goes
+   * through the provider. `transaction` then runs the insert in `engine.transaction`. */
+  engine?: BrainEngine;
 }
 
 /**
@@ -623,6 +623,24 @@ export interface RegisteredClient {
   surfaceOld?: string | null;
   /** Optional-column writes skipped by the pre-flight (pre-migration brain). */
   skipped?: { tokenTtl?: boolean; surface?: boolean };
+}
+
+/**
+ * The up-to-date-schema branch of registerClientManual over typed engine members: the grant validated against the
+ * active sources, the scope-source check, then the client and its register audit row in one insert (in one engine
+ * transaction when `inTransaction`).
+ */
+async function insertScopedClientGrant(engine: BrainEngine, plan: ManualClientPlan, inTransaction: boolean): Promise<{ clientId: string; clientSecret?: string }> {
+  const { grantValidationContext, clientGrantInsert } = await import('../core/grants/service.ts');
+  const { assertScopeSourceGrant, clientGrantReads } = await import('../core/access/attest-sources.ts');
+  const grant = plan.grant(await grantValidationContext(engine));
+  const row = clientGrantInsert(grant, plan.metadata);
+  const write = async (db: BrainEngine) => {
+    await assertScopeSourceGrant(db, null, clientGrantReads(grant));
+    await db.insertOauthClientGrant(row);
+  };
+  await (inTransaction ? engine.transaction(write) : write(engine));
+  return { clientId: plan.clientId, ...(plan.clientSecret ? { clientSecret: plan.clientSecret } : {}) };
 }
 
 /**
@@ -655,11 +673,17 @@ export async function registerScopedClient(
       budgetUsdPerDay: parsed.budgetUsdPerDay,
     }
     : undefined;
-  const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-  const provider = new GBrainOAuthProvider({ sql, transaction: opts.transaction });
-  const { clientId, clientSecret } = await provider.registerClientManual(
-    name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
-  );
+  const { GBrainOAuthProvider, planManualClient } = await import('../core/oauth-provider.ts');
+  const provider = () => new GBrainOAuthProvider({ sql, transaction: opts.transaction });
+  const engine = opts.engine;
+  const grantColumns = engine ? await engine.readOauthClientColumns('grant') : [];
+  const { clientId, clientSecret } = engine && grantColumns.length === OAUTH_CLIENT_PROBE_COLUMNS.grant.length
+    ? await insertScopedClientGrant(engine, planManualClient(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
+    ), opts.transaction !== undefined)
+    : await provider().registerClientManual(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
+    );
 
   const ttl = parsed.tokenTtlSeconds ?? opts.tokenTtlSeconds;
   let tokenTtl: number | undefined;
@@ -670,12 +694,14 @@ export async function registerScopedClient(
       // OUTSIDE any transaction — nothing here throws-and-continues.
       ttlSkipped = true;
     } else {
-      const updated = await sql`
+      const updated = engine
+        ? await engine.setOauthClientTokenTtl(clientId, ttl)
+        : (await sql`
         UPDATE oauth_clients SET token_ttl = ${ttl}
         WHERE client_id = ${clientId}
         RETURNING client_id
-      `;
-      if (updated.length === 0) {
+      `).length > 0;
+      if (!updated) {
         throw new Error(`token_ttl update matched no row for client ${clientId}`);
       }
       tokenTtl = ttl;
@@ -689,7 +715,7 @@ export async function registerScopedClient(
     if (opts.columns && !opts.columns.has('surface')) {
       surfaceSkipped = true;
     } else {
-      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
+      const rescoped = await provider().rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
       surfaceApplied = opts.surface;
       surfaceOld = rescoped.surfaceOld ?? null;
     }
@@ -779,9 +805,9 @@ async function registerClient(name: string, args: string[]) {
       await checkBindingTarget(engine, binding.patch);
       await assertCredentialScoped(engine, binding.patch, 'client', name);
       const columns = parsed.tokenTtlSeconds !== undefined
-        ? await preflightOauthClientColumns(sql)
+        ? await preflightOauthClientColumns(engine)
         : undefined;
-      const registered = await registerScopedClient(sql, name, parsed, { columns, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const registered = await registerScopedClient(sql, name, parsed, { columns, engine, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (bound) auditReadsUnscoped(bound, `OAuth client ${registered.clientId}`, false);
       if (registered.skipped?.tokenTtl) {
@@ -1104,10 +1130,7 @@ export function clientOperationsLines(row: ClientRow): string[] {
 /** Clients whose stored or outstanding access-token lifetime an upgrade brought inside the 90-day maximum. */
 export async function tokenLifetimeClampedClients(engine: BrainEngine): Promise<Set<string>> {
   try {
-    const rows = await engine.executeRaw<{ client_id: string }>(
-      `SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`,
-    );
-    return new Set(rows.map(r => r.client_id));
+    return new Set(await engine.readTokenLifetimeClampedClients());
   } catch (e) {
     if (isMissingSchemaObject(e, 'table', 'oauth_grant_audit')) return new Set();
     throw e;

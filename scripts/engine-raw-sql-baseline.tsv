@@ -13,8 +13,7 @@ src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	2
 src/commands/agent-register.ts	sql_template	7
 src/commands/agent.ts	execute_raw	1
-src/commands/auth.ts	execute_raw	1
-src/commands/auth.ts	sql_template	2
+src/commands/auth.ts	sql_template	1
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
 src/commands/autopilot-fanout.ts	execute_raw	2
@@ -1013,7 +1012,6 @@ src/core/think/persist-take.ts	execute_raw	1
 src/core/timeline-dedup-repair.ts	execute_raw	11
 src/core/timeline-extract.ts	execute_raw	9
 src/core/timeline-write-through.ts	execute_raw	1
-src/core/token-mint.ts	execute_raw	2
 src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
 src/core/transcripts/hermes.ts	driver_call	1
@@ -1053,7 +1051,6 @@ src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
-src/core/wakeshift/drain.ts	execute_raw	2
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
