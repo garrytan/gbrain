@@ -5,9 +5,11 @@
 mod common;
 
 use common::{TempDir, open};
-use gbrain_store::Store;
 use gbrain_store::pages::{PageInput, PutPageOptions};
+use gbrain_store::redb_kv::RedbKv;
+use gbrain_store::{Kv, OpenOptions, Store, SystemEnv, keys};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 const FLAG: &str = "access.restrictions_present";
 
@@ -60,4 +62,106 @@ fn a_flag_set_to_another_value_is_set_to_one() {
         json!({"readable_by": "group:team-a"}),
     );
     assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+}
+
+// The open-time scan. A brain written by a build before the page write hook set the flag (or by
+// any path that skipped the hook) holds a `readable_by` page and no flag. Opening it sets the flag
+// once, as schema migration v282 sets it once from the pages already in the table.
+
+/// The meta record the open-time scan leaves behind (`access_flag::SCAN_DONE`).
+const SCAN_DONE: &str = "access_flag_scan";
+
+fn raw_store(dir: &TempDir) -> (Arc<dyn Kv>, Store) {
+    let kv: Arc<dyn Kv> = Arc::new(RedbKv::open_path(&dir.path().join("records.redb")).unwrap());
+    let store = Store::open_kv(kv.clone(), Arc::new(SystemEnv), OpenOptions::default()).unwrap();
+    (kv, store)
+}
+
+fn reopen(kv: &Arc<dyn Kv>) -> Store {
+    Store::open_kv(kv.clone(), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+}
+
+/// Drops the flag and the scan record with a raw write: the state a brain written before the hook
+/// existed is in.
+fn forget_flag(kv: &Arc<dyn Kv>) {
+    let mut tx = kv.begin_write().unwrap();
+    tx.delete(&keys::text(keys::CONFIG, &[FLAG])).unwrap();
+    tx.delete(&keys::meta(SCAN_DONE)).unwrap();
+    tx.commit().unwrap();
+}
+
+#[test]
+fn opening_a_brain_with_an_unflagged_reader_page_sets_the_flag() {
+    let dir = TempDir::new("access-flag-open");
+    let (kv, store) = raw_store(&dir);
+    put(&store, "notes/open", json!({"tags": ["a"]}));
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    drop(store);
+    forget_flag(&kv);
+    let store = reopen(&kv);
+    assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+}
+
+#[test]
+fn a_soft_deleted_reader_page_counts_as_v282_counts_it() {
+    let dir = TempDir::new("access-flag-open");
+    let (kv, store) = raw_store(&dir);
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": "group:team-a"}),
+    );
+    store
+        .soft_delete_page("notes/closed", Some("default"))
+        .unwrap();
+    drop(store);
+    forget_flag(&kv);
+    let store = reopen(&kv);
+    assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+}
+
+#[test]
+fn opening_a_brain_with_no_reader_page_leaves_the_flag_unset() {
+    let dir = TempDir::new("access-flag-open");
+    let (kv, store) = raw_store(&dir);
+    put(
+        &store,
+        "notes/open",
+        json!({"meta": {"readable_by": ["x"]}}),
+    );
+    drop(store);
+    forget_flag(&kv);
+    let store = reopen(&kv);
+    assert_eq!(store.get_config(FLAG).unwrap(), None);
+    drop(store);
+    assert!(
+        kv.snapshot()
+            .unwrap()
+            .get(&keys::meta(SCAN_DONE))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn the_scan_runs_once_so_a_flag_unset_by_hand_stays_unset() {
+    let dir = TempDir::new("access-flag-open");
+    let (kv, store) = raw_store(&dir);
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    drop(store);
+    forget_flag(&kv);
+    let store = reopen(&kv);
+    assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+    store.set_config(FLAG, "0").unwrap();
+    drop(store);
+    let store = reopen(&kv);
+    assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("0"));
 }
