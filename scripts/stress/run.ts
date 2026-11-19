@@ -362,8 +362,9 @@ export function skipReason(file: string): string | null {
   const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
   if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
   const required = [...new Set([...text.matchAll(/process\.env\.(GBRAIN_TEST_REQUIRE_[A-Z0-9_]+)/g)].map(m => m[1]!))];
-  const requiring = required.length ? readdirSync(join(ROOT, '.github/workflows')).find(w => { const t = readFileSync(join(ROOT, '.github/workflows', w), 'utf8'); return t.includes(file) && t.split('\n').some(l => required.some(v => l.trim().startsWith(v + ':') && /^['"]?1['"]?$/.test(l.trim().slice(v.length + 1).trim()))); }) : undefined;
-  if (requiring) return `every test skipped here: its owning job in .github/workflows/${requiring} supplies the prerequisite and sets ${required.join(', ')}; not stressed`;
+  const sets = (job: string) => job.split('\n').some(l => required.some(v => l.trim().startsWith(v + ':') && /^['"]?1['"]?$/.test(l.trim().slice(v.length + 1).trim())));
+  const requiring = required.length ? readdirSync(join(ROOT, '.github/workflows')).find(w => workflowJobs(readFileSync(join(ROOT, '.github/workflows', w), 'utf8').split('\n')).some(job => job.includes(file) && sets(job) && job.includes('scripts/require-executed-tests.ts'))) : undefined;
+  if (requiring) return `every test skipped here: its owning job in .github/workflows/${requiring} supplies the prerequisite, sets ${required.join(', ')} and fails on zero executed tests; not stressed`;
   if (/process\.env\.GBRAIN_PGBOUNCER_URL/.test(text) && !process.env.GBRAIN_PGBOUNCER_URL) {
     const workflow = readdirSync(join(ROOT, '.github/workflows')).map(w => `.github/workflows/${w}`).find(p => requiresPooler(file, p, workflowJobs));
     if (workflow) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in ${workflow} requires it; not stressed`;

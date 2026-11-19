@@ -135,7 +135,17 @@ describe('test:stress runner', () => {
   });
 
   test('test/e2e/openclaw-skill-resolver-real.test.ts is owned by the e2e.yml job that sets GBRAIN_TEST_REQUIRE_OPENCLAW', () => {
-    expect(skipReason('test/e2e/openclaw-skill-resolver-real.test.ts')).toContain('.github/workflows/e2e.yml supplies the prerequisite and sets GBRAIN_TEST_REQUIRE_OPENCLAW');
+    expect(skipReason('test/e2e/openclaw-skill-resolver-real.test.ts')).toContain('.github/workflows/e2e.yml supplies the prerequisite, sets GBRAIN_TEST_REQUIRE_OPENCLAW and fails on zero executed tests');
+  });
+
+  test('a file whose require variable no job sets beside require-executed-tests is still a zero-executed failure', () => {
+    const root = tree({
+      'test/needs-bin.test.ts': "import { test } from 'bun:test';\nif (process.env.GBRAIN_TEST_REQUIRE_FIXTURE_BIN === '1') throw new Error('missing');\ntest.skipIf(true)('needs a binary', () => {});\n",
+      '.github/workflows/claims.yml': "jobs:\n  claims:\n    steps:\n      - run: bun test test/needs-bin.test.ts\n        env:\n          GBRAIN_TEST_REQUIRE_FIXTURE_BIN: '1'\n",
+    });
+    const r = stress(root, 'test/needs-bin.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('zero tests executed');
   });
 
   test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {

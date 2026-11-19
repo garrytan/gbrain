@@ -4,7 +4,7 @@
  * set. A bench, not a test: it reports numbers and gates nothing.
  *
  *   bun scripts/bench/openclaw-skill-resolver-real.ts [--openclaw <bin>] [--data <dir>] [--size 750]
- *       [--limit N] [--load N] [--out summary.json]   (--out also writes <name>.turns.jsonl, one row per turn)
+ *       [--limit N] [--load N] [--top-gate G] [--out summary.json]   (--out also writes <name>.turns.jsonl, one row per turn)
  *
  * Data: the public labelled set from gbrain-evals' offline skill-ranker eval
  * (docs/benchmarks/2026-11-07-skill-ranker-offline/data at EVALS_COMMIT): the
@@ -28,6 +28,8 @@
  *   - the plugin's own ms per turn (p50, p95) from its log line, and the whole
  *     turn's wall time (p95).
  * --load N runs N busy-loop processes for the whole run (a loaded machine).
+ * --top-gate G sets skills.resolver.per_harness.openclaw.top_gate before setup
+ * (0 turns the no-skill gate off); without it the resolver's default applies.
  * The summary names the OpenClaw version, gbrain commit, CPU count, catalog,
  * request set and load beside every number.
  */
@@ -46,6 +48,7 @@ const opt = (f: string, d = '') => { const i = args.indexOf(f); return i >= 0 &&
 const size = Number(opt('--size', '750'));
 const limit = Number(opt('--limit', '0'));
 const load = Number(opt('--load', '0'));
+const topGate = opt('--top-gate');
 const out = opt('--out');
 const bin = opt('--openclaw') || openclawBin();
 if (!bin) { console.error('no OpenClaw CLI: pass --openclaw <bin> or put openclaw on PATH'); process.exit(2); }
@@ -93,6 +96,7 @@ try {
   }
   const version = (await oc.openclaw(['--version'])).stdout.trim().split('\n').at(-1) ?? '';
   if ((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code !== 0) throw new Error('gbrain init failed');
+  if (topGate && (await oc.gbrain(['config', 'set', 'skills.resolver.per_harness.openclaw.top_gate', topGate])).code !== 0) throw new Error('gbrain config set top_gate failed');
   const setup = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
   if (setup.code !== 0) throw new Error('gbrain setup openclaw failed:\n' + setup.stderr.slice(-3000));
   const listed = JSON.parse(setup.stdout).skill_resolver.agents?.[0]?.skills;
@@ -133,7 +137,7 @@ try {
   };
   const gitHead = Bun.spawnSync(['git', '-C', REPO, 'rev-parse', 'HEAD']).stdout.toString().trim();
   const summary = {
-    openclaw: version, gbrain_commit: gitHead, cpus: cpus().length, load_processes: load,
+    openclaw: version, gbrain_commit: gitHead, cpus: cpus().length, load_processes: load, top_gate: topGate ? Number(topGate) : 'resolver default',
     catalog: { source: 'garrytan/gbrain-evals@' + EVALS_COMMIT + ' ' + EVALS_DIR + '/catalog.jsonl.gz', skills: catalog.length, listed_by_setup: listed, all_listed: listed === catalog.length },
     requests: { source: 'test.jsonl + stress-test.jsonl (frozen labelled split)', turns: run.length },
     all: summarize(rows),
