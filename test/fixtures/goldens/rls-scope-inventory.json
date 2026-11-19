@@ -6436,7 +6436,6 @@
         "readSourceJobCounts": "none",
         "readSourceLocalPath": "none",
         "readSourceMembership": "none",
-        "readSourcePurgeEpoch": "none",
         "readSourcePurgeFlags": "none",
         "readSourceRow": "none",
         "readSourceState": "none",

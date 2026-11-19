@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 915/915
+# covered: 914/914
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -49,7 +49,7 @@
 # facts_purge: 18/18
 # facts_repair: 10/10
 # facts_trust: 10/10
-# belief_ledger: 12/12
+# belief_ledger: 11/11
 # trust_tier_reads: 14/14
 # memory_mutation_reads: 12/12
 # withdrawal_discovery: 1/1
@@ -735,7 +735,6 @@ readBeliefTombstones	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
 readBeliefRedactions	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
 insertBeliefRedaction	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
 releaseBeliefRedactions	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
-readSourcePurgeEpoch	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
 insertBeliefEvents	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
 markBeliefCommits	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger
 readOpenBeliefLifetimes	belief_ledger	yes	1	no	yes	yes	refuses:belief_ledger

@@ -986,7 +986,6 @@ export const RUST_ENGINE_MEMBERS = {
   readBeliefRedactions: 'belief_ledger',
   insertBeliefRedaction: 'belief_ledger',
   releaseBeliefRedactions: 'belief_ledger',
-  readSourcePurgeEpoch: 'belief_ledger',
   insertBeliefEvents: 'belief_ledger',
   markBeliefCommits: 'belief_ledger',
   readOpenBeliefLifetimes: 'belief_ledger',

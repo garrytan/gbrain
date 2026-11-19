@@ -151,7 +151,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'readBeliefRedactions': OOS.beliefLedger,
   'insertBeliefRedaction': OOS.beliefLedger,
   'releaseBeliefRedactions': OOS.beliefLedger,
-  'readSourcePurgeEpoch': OOS.beliefLedger,
   'insertBeliefEvents': OOS.beliefLedger,
   'markBeliefCommits': OOS.beliefLedger,
   'readOpenBeliefLifetimes': OOS.beliefLedger,

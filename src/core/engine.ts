@@ -3880,8 +3880,6 @@ export interface BrainEngine {
   insertBeliefRedaction(row: BeliefLedgerSql.BeliefRedactionInsert): Promise<number>;
   /** An owner release: binds the suppressions `ids` to `publicationId` and the hash of the value that replaced the redacted text. */
   releaseBeliefRedactions(ids: readonly number[], publicationId: string, releasedHash: string): Promise<void>;
-  /** The source's purge epoch, or null for an unknown source. */
-  readSourcePurgeEpoch(sourceId: string): Promise<number | null>;
   /** Inserts the event rows in `ord` order, skipping an event key already recorded; returns how many were inserted. */
   insertBeliefEvents(rows: readonly BeliefLedgerSql.BeliefEventInsertRow[]): Promise<number>;
   /** The post-commit mark of each publication with a committed event: one observation time, never below its newest event, never replaced. */

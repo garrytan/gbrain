@@ -26,9 +26,8 @@ const L2 = '00000000-0000-4000-8000-0000000000a2';
 const PUB1 = '00000000-0000-4000-8000-0000000000b1';
 const PUB2 = '00000000-0000-4000-8000-0000000000b2';
 const PURGE = '00000000-0000-4000-8000-0000000000c1';
-const REFUSAL = /the belief ledger, which the store does not keep/;
 
-/** Every member of the domain, called with harmless input; on Rust each must refuse. */
+/** Every member of the domain, called with harmless input; on Rust each must refuse for the belief_ledger capability. */
 async function refusals(engine: BrainEngine): Promise<unknown[]> {
   const fail = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
   return [
@@ -36,7 +35,6 @@ async function refusals(engine: BrainEngine): Promise<unknown[]> {
     await fail(engine.readBeliefRedactions('default', [], [])),
     await fail(engine.insertBeliefRedaction({ sourceId: 'default', subjectKey: 'k', field: 'value', purgeRequest: PURGE, fieldHash: 'h' })),
     await fail(engine.releaseBeliefRedactions([], PUB1, 'h')),
-    await fail(engine.readSourcePurgeEpoch('default')),
     await fail(engine.insertBeliefEvents([])),
     await fail(engine.markBeliefCommits([])),
     await fail(engine.readOpenBeliefLifetimes([])),
@@ -48,7 +46,11 @@ async function refusals(engine: BrainEngine): Promise<unknown[]> {
 }
 
 function refuseAll(errors: unknown[]): never {
-  expect(errors.map(e => (e instanceof Error ? REFUSAL.test(e.message) : e))).toEqual(errors.map(() => true));
+  const refused = (e: unknown) => {
+    const err = (e ?? {}) as { code?: unknown; reason?: unknown; capability?: unknown };
+    return err.code === 'engine_capability_missing' && (err.reason === 'belief_ledger' || err.capability === 'belief_ledger');
+  };
+  expect(errors.map(refused)).toEqual(errors.map(() => true));
   throw errors[0];
 }
 
@@ -122,8 +124,8 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
-    'redactions: copies read by subject or by field hash, a release binds the publication and hash; a fact purge tombstone and the purge epochs read back',
-    { methods: ['insertFactPurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones', 'readSourcePurgeEpoch'] },
+    'redactions: copies read by subject or by field hash, a release binds the publication and hash; a fact purge tombstone reads back',
+    { methods: ['insertFactPurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones'] },
     async (engine, backend) => {
       // A fact purge tombstone of the source (subject '*'), so the tombstone read has a row to find.
       await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'fp1', requestId: PURGE, actor: 'owner:local', reason: 'parity' });
@@ -148,8 +150,6 @@ describe('engine parity: belief ledger writes', () => {
         tombstones: await engine.readBeliefTombstones('default', ['fp1', 'fp2'], ['tp1']),
         tombstonesOtherSource: await engine.readBeliefTombstones('missing', ['fp1'], []),
         tombstonesEmpty: await engine.readBeliefTombstones('default', [], []),
-        epoch: await engine.readSourcePurgeEpoch('default'),
-        epochMissing: await engine.readSourcePurgeEpoch('missing'),
       };
     },
   );

@@ -57,12 +57,6 @@ export async function releaseBeliefRedactions(exec: SqlExecutor, ids: readonly n
     [[...ids], publicationId, releasedHash]);
 }
 
-/** The source's purge epoch, or null for an unknown source. */
-export async function readSourcePurgeEpoch(exec: LegacyUnscopedRead, sourceId: string): Promise<number | null> {
-  const [source] = await exec.executeRaw<{ purge_epoch: string | number }>('SELECT purge_epoch FROM sources WHERE id = $1', [sourceId]);
-  return source ? Number(source.purge_epoch) : null;
-}
-
 /** Inserts the rows in `ord` order, skipping an event key already recorded; returns how many were inserted. */
 export async function insertBeliefEvents(exec: SqlExecutor, rows: readonly BeliefEventInsertRow[]): Promise<number> {
   const inserted = await exec.executeRaw<{ id: number }>(`INSERT INTO belief_events (event_key, source_id, source_incarnation, page_lifetime, slug, subject_kind,

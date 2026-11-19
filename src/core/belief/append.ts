@@ -145,9 +145,11 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
   const ordered = orderDrafts(drafts);
   const sourceId = ordered[0]!.sourceId;
   if (ctx.preparedEpoch !== undefined) {
-    const epoch = await tx.readSourcePurgeEpoch(sourceId);
-    if ((epoch ?? 0) !== ctx.preparedEpoch) {
-      throw Object.assign(new Error(`belief_stale_preparation: a purge committed in source ${sourceId} since this payload was prepared (epoch ${ctx.preparedEpoch}, now ${epoch ?? undefined}); prepare it again from current state`),
+    // The purge epoch read stays raw here until rust-engine/main carries the shared readSourcePurgeEpoch member
+    // (engine-sql/sync-reason-reads.ts, same SQL text); the belief ledger then calls that member, not a second one.
+    const [source] = await tx.executeRaw<{ purge_epoch: string | number }>('SELECT purge_epoch FROM sources WHERE id = $1', [sourceId]);
+    if (Number(source?.purge_epoch ?? 0) !== ctx.preparedEpoch) {
+      throw Object.assign(new Error(`belief_stale_preparation: a purge committed in source ${sourceId} since this payload was prepared (epoch ${ctx.preparedEpoch}, now ${source?.purge_epoch}); prepare it again from current state`),
         { code: 'belief_stale_preparation' });
     }
   }
