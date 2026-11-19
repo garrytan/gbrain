@@ -1,5 +1,5 @@
 /**
- * GST-3189: the whole sharing-contract matrix (13 scenarios, 7 callers, 9 items, 10 read paths: 10,624 cells) on PGLite.
+ * GST-3189: the whole sharing-contract matrix (14 scenarios, 7 callers, 9 items, 10 read paths: 11,392 cells) on PGLite.
  * Slow lane: it takes about three minutes, so pull requests run the sample in test/sharing-contract-sample.test.ts and
  * this file runs in the full CI run and nightly. Keyless. Matrix and pinned cells: test/helpers/sharing-contract.ts.
  */
@@ -26,7 +26,7 @@ for (const s of SCENARIOS) {
   });
 }
 
-test('the whole matrix ran: 10,624 cells, 24 of them pinned', () => {
-  expect(cells).toBe(10_624);
+test('the whole matrix ran: 11,392 cells, 24 of them pinned', () => {
+  expect(cells).toBe(11_392);
   expect(bad).toBe(24);
 });
