@@ -5,6 +5,7 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
@@ -122,5 +123,49 @@ fn the_live_slug_read_names_live_pages_once_and_stops_at_its_cap() {
             .read_live_slugs("default", &[], None)
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn the_live_page_type_read_applies_the_page_policy() {
+    let dir = TempDir::new("resolve-live-types");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/hidden-example",
+        page("person", "Hidden Example", json!({"visibility": "private"})),
+    );
+    let slugs = strings(&[
+        "organizations/acme",
+        "people/gone",
+        "orgs/widget",
+        "people/hidden-example",
+        "organizations/acme",
+    ]);
+    let read = |policy: Option<PrivacyPolicy>| -> Vec<(String, String)> {
+        store
+            .read_live_page_types("default", &slugs, policy.as_ref())
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.slug, r.page_type))
+            .collect()
+    };
+    let company = "company".to_string();
+    assert_eq!(
+        read(None),
+        [
+            ("organizations/acme".to_string(), company.clone()),
+            ("people/hidden-example".to_string(), "person".to_string()),
+        ]
+    );
+    let policy = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        read(Some(policy)),
+        [("organizations/acme".to_string(), company)]
     );
 }

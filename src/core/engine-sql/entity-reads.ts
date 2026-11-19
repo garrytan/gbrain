@@ -222,3 +222,19 @@ export async function readLiveSlugs(exec: LegacyUnscopedRead, sourceId: string, 
       'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, [...slugs]]);
   return rows.map(row => row.slug);
 }
+
+/** The entity resolver's privacy on a page read: none, the caller page policy, or the remote read floor. */
+export type ResolverPrivacy = Exclude<RetirementPrivacy, 'member_access'>;
+
+/** A live page the entity resolver weighs: its slug and type. */
+export interface LivePageTypeRow { slug: string; type: string | null }
+
+/**
+ * The live pages of the source among `slugs`, retired or not, with their types, that `privacy` admits, each once, in
+ * no set order (entities/resolve.ts `resolveStrictEntityReference`).
+ */
+export async function readLivePageTypes(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy): Promise<LivePageTypeRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug, p.type FROM pages p
+      WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND p.slug = ANY(${[...slugs]}::text[]) ${retirementPrivacySql(privacy)}`);
+  return exec.executeRaw<LivePageTypeRow>(text, params);
+}

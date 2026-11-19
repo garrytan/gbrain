@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -45,8 +45,7 @@ export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly strin
  * text or the canonical one for its reader identities, as the page visibility guards serve it (page-visibility.ts).
  * Any other caller refuses before the read.
  */
-function retirementHopPolicy(privacy: RetirementPrivacy): StorePrivacyPolicy | undefined {
-  const member = 'readRetirementHop';
+function retirementHopPolicy(privacy: RetirementPrivacy, member = 'readRetirementHop'): StorePrivacyPolicy | undefined {
   if (privacy === 'none') return undefined;
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
   if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
@@ -64,6 +63,13 @@ export const readRetirementHop: StoreMember<[sourceId: string, slug: string, pri
   (brain, sourceId, slug, privacy) => {
     const policy = retirementHopPolicy(privacy);
     return storeCall({ member: 'readRetirementHop', slug, sourceId }, () => brain.readRetirementHop(sourceId, slug, policy ?? null));
+  };
+
+/** entities/resolve.ts: the live pages among the slugs with their types, under the resolver privacy (retirementHopPolicy). */
+export const readLivePageTypes: StoreMember<[sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy], LivePageTypeRow[]> =
+  (brain, sourceId, slugs, privacy) => {
+    const policy = retirementHopPolicy(privacy, 'readLivePageTypes');
+    return storeCall({ member: 'readLivePageTypes', sourceId }, () => brain.readLivePageTypes(sourceId, [...slugs], policy ?? null)) as Promise<LivePageTypeRow[]>;
   };
 
 /** The store reads the page policy as readIdentitySiblingCandidates does; a widening caller refuses typed. */

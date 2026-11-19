@@ -16,6 +16,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -61,6 +62,32 @@ describe('engine parity: entity resolver reads', () => {
         capped: 2,
         cappedOne: ['people/alice-example'],
       });
+      return result;
+    });
+
+  parityTest('readLivePageTypes reads the live pages among the slugs with their types under the resolver privacy',
+    { methods: ['readLivePageTypes'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      await engine.putPage('people/hidden-example', page('person', 'Hidden Example', { visibility: 'private' }), { sourceId: 'default' });
+      await engine.putPage('people/readers-example', page('person', 'Readers Example', { readable_by: ['bob-example'] }), { sourceId: 'default' });
+      const slugs = ['companies/acme', 'organizations/acme', 'people/gone', 'orgs/widget', 'people/hidden-example', 'people/readers-example', 'people/missing'];
+      const read = async (privacy: 'none' | 'caller' | 'floor') => sorted(await engine.readLivePageTypes('default', slugs, privacy), r => r.slug);
+      const result = {
+        none: await read('none'),
+        caller: await read('caller'),
+        floor: await read('floor'),
+        other: await engine.readLivePageTypes('other', ['orgs/widget'], 'none'),
+        // The read floor under a caller is its own case: the store refuses it typed (retirementHopPolicy).
+        bob: await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, () => read('caller')),
+        granted: await withCallerAccess({ identity: ['member:carol-example'], privateReadableSources: ['default'], hidePrivate: true }, () => read('caller')),
+      };
+      const acme = [{ slug: 'companies/acme', type: 'company' }, { slug: 'organizations/acme', type: 'company' }];
+      expect(result.none).toEqual([...acme, { slug: 'people/hidden-example', type: 'person' }, { slug: 'people/readers-example', type: 'person' }]);
+      expect(result.caller.map(r => r.slug)).not.toContain('people/hidden-example');
+      expect(result.floor.map(r => r.slug)).not.toContain('people/hidden-example');
+      expect(result.other).toEqual([{ slug: 'orgs/widget', type: 'company' }]);
+      expect(result.bob.map(r => r.slug)).toContain('people/readers-example');
+      expect(result.granted.map(r => r.slug)).toContain('people/hidden-example');
       return result;
     });
 });

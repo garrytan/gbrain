@@ -22,7 +22,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { RetirementPrivacy } from '../engine-sql/entity-reads.ts';
+import type { ResolverPrivacy, RetirementPrivacy } from '../engine-sql/entity-reads.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { slugifySegment } from '../sync.ts';
@@ -474,12 +474,8 @@ export async function resolveStrictEntityReference(
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
   const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
-  const retirementPrivacy: RetirementPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
-  const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.executeRaw<{ slug: string; type: string | null }>(
-    `SELECT p.slug, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
-    [source_id, [...new Set(slugs)]],
-  );
+  const retirementPrivacy: ResolverPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
+  const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.readLivePageTypes(source_id, [...new Set(slugs)], retirementPrivacy);
   // The source pack's linkable entity types (accounts, CRM records, ...) are fact entities too.
   let linkable: Set<string> | null = null;
   const isEntity = async (r: { slug: string; type: string | null }) => {

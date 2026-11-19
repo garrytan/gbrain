@@ -581,7 +581,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
-  'findExactSlug': OOS.entityReads, 'readLiveSlugs': OOS.callerRawSql, 'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'findExactSlug': OOS.entityReads, 'readLiveSlugs': OOS.callerRawSql, 'readLivePageTypes': OOS.callerRawSql, 'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'hasClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
   'readTopologyChange': OOS.journal, 'insertTopologyChange': OOS.journal,

@@ -77,6 +77,26 @@ impl Brain {
         })
     }
 
+    /// `readLivePageTypes(sourceId, slugs, policy)`: the live pages among `slugs` with their types
+    /// that the policy admits, each once; a `null` policy reads every page.
+    #[napi]
+    pub fn read_live_page_types<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(v, "readLivePageTypes policy")
+                })
+                .transpose()?;
+            s.read_live_page_types(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]
