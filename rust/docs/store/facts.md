@@ -328,7 +328,7 @@ locks the row `FOR SHARE` for the rest of the transaction. On Rust the read runs
 and sees its writes; that transaction holds the store's single writer from begin to commit, so no other writer changes
 the page before the settle commits. Outside a transaction it reads the last commit. The extract_facts commit step
 (lock, then the `complete` settle, in one transaction) runs whole on Rust.
-`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
+`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below).
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
@@ -394,7 +394,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 
 | Member | Site | Served | Notes |
 |---|---|---|---|
-| `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
+| `listSingleFactMetadata` | `facts/purge.ts` | yes | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. With `remoteFloor: true` the member passes the floor policy (`storeFloorPolicy`) and the store drops a row whose provenance page fails it, as `remoteProvenanceFloorSql('facts')` does. The member refuses an id that is not an `int4`. |
 | `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)

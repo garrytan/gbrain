@@ -644,21 +644,25 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
+    await engine.putPage('notes/readers', note('Readers', 'kept to one member', { readable_by: ['alice-example'] }));
     const plain = await seed.one('plain', { fact: 'plain', entity_slug: 'people/a', claim_metric: 'arr', claim_value: 3, claim_unit: 'usd', claim_period: 'q3' });
     const [fenced, hidden] = await seed.fence([
       { label: 'fenced', fact: 'fenced', row_num: 1, source_markdown_slug: 'notes/open', entity_slug: 'people/a' },
       { label: 'hidden', fact: 'hidden', row_num: 2, source_markdown_slug: 'notes/private', entity_slug: 'people/a' },
     ]) as [number, number];
+    const [readers] = await seed.fence([
+      { label: 'readers', fact: 'readers', row_num: 1, source_markdown_slug: 'notes/readers', entity_slug: 'people/a' },
+    ]) as [number];
     const read = async (ids: number[], remoteFloor: boolean) => {
       const rows = await engine.listSingleFactMetadata({ sourceId: SRC, ids, remoteFloor });
       return sorted(rows.map(({ id, ...row }) => ({ ...row, id: seed.name(id) })), (r) => r.id);
     };
     const all = await read([plain, fenced, hidden, plain + 100_000], false);
-    const floored = await read([plain, fenced, hidden], true);
+    const floored = await read([plain, fenced, hidden, readers], true);
     expect(all.map((r) => r.id)).toEqual(['fenced', 'hidden', 'plain']);
     expect(all.find((r) => r.id === 'plain')).toMatchObject({ source_markdown_slug: null, row_num: null, claim_metric: 'arr', claim_unit: 'usd', claim_period: 'q3' });
     expect(all.find((r) => r.id === 'fenced')).toMatchObject({ source_markdown_slug: 'notes/open', row_num: 1 });
-    expect(floored.map((r) => r.id)).not.toContain('hidden');
+    expect(floored.map((r) => r.id)).toEqual(['fenced', 'plain']);
     return { all, floored };
   });
 
