@@ -116,3 +116,43 @@ test('disconnect retains the native owner until an abort-ignoring provider settl
   await engine.connect({ database_path: path });
   expect((await engine.executeRaw<{ n: number }>('SELECT 1 AS n'))[0].n).toBe(1);
 }), 60_000);
+
+test('a brain whose database row disables embedding drains as keyless, not as a failure (#9715)', async () => fixture(async make => {
+  const { engine } = await make('disabled');
+  await seed(engine, 'alpha');
+  await engine.setConfig('embedding_disabled', 'true');
+  let sent = 0;
+  __setEmbedTransportForTests(async ({ values }) => { sent += values.length; return vectors(values); });
+  scheduleDeferredSyncEmbeds(engine, 'alpha');
+  const stderr: string[] = [], originalWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try { await maybeDrainDeferredEmbeds(engine); }
+  finally { process.stderr.write = originalWrite; }
+  const lines = stderr.join('').split('\n').filter(line => line.startsWith('[serve-sync] embed-drain'));
+  expect(lines.some(line => line.includes('failed'))).toBe(false);
+  expect(lines.at(-1)).toMatch(/decision=keyless/);
+  expect(sent).toBe(0);
+  expect(await embedded(engine, 'alpha')).toBe(false);
+}), 60_000);
+
+test('a drain that cannot read embedding_disabled keeps its sources pending and retries, sending nothing (#9715)', async () => fixture(async make => {
+  const { engine } = await make('unreadable');
+  await seed(engine, 'alpha');
+  const original = engine.getConfig.bind(engine);
+  engine.getConfig = async (key: string) => {
+    if (key === 'embedding_disabled') throw new Error('synthetic config read failure');
+    return original(key);
+  };
+  let sent = 0;
+  __setEmbedTransportForTests(async ({ values }) => { sent += values.length; return vectors(values); });
+  scheduleDeferredSyncEmbeds(engine, 'alpha');
+  const stderr: string[] = [], originalWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try { await maybeDrainDeferredEmbeds(engine); }
+  finally { process.stderr.write = originalWrite; engine.getConfig = original; }
+  const lines = stderr.join('').split('\n').filter(line => line.startsWith('[serve-sync] embed-drain'));
+  expect(lines.at(-1)).toMatch(/decision=retry/);
+  expect(__deferredEmbedsPendingForTests(engine)).toBe(true);
+  expect(sent).toBe(0);
+  expect(await embedded(engine, 'alpha')).toBe(false);
+}), 60_000);

@@ -69,8 +69,11 @@ import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
+/** #9743: the most unreferenced segment text one claim-sweep statement lowers and scans (one text is at most 1 MiB). */
+const CLAIM_SWEEP_CHUNK_BYTES = 4 * 1024 * 1024;
+
 export const PURGE_RESIDUALS = 'Removed from live stores: the page row with its chunks, versions, takes, timeline, links and raw data, the facts filed on it (tombstoned), '
-  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, the volunteer log rows and mention-gazetteer names for it, stored write intents for the slug and its attached file records. Still out of reach: the brain repository\'s '
+  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, the volunteer log rows and mention-gazetteer names for it, stored write intents for the slug and its attached file records, and the sealed secret store originals only this page referenced. Still out of reach: the brain repository\'s '
   + 'git history and every other clone or remote, Markdown exports and compiled context files, backups, provider copies (embeddings, decisions), and deleted rows '
   + 'in database pages and the write-ahead log until vacuum. Rotate any exposed credential.';
 
@@ -345,7 +348,7 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
   removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
-  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present }));
+  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present, pageIds: [pageId] }));
   let complete = true;
   if (has('persistence_requests')) {
     const census = await input.census();
@@ -564,11 +567,30 @@ export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, 
   const texts = shas.length ? (await tx.executeRaw(`DELETE FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256=ANY(SELECT decode(h,'hex') FROM unnest($2::text[]) AS h)
     AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) AND NOT ${stagingNeedsTextSql('t')} RETURNING 1`, [sourceId, shas])).length : 0;
   const forms = claimTextForms(claims), carrying: string[] = [];
-  for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
-    carrying.push(...(await tx.executeRaw<{ sha: string }>(`DELETE FROM page_segment_texts d WHERE (d.source_id,d.sha256) IN (SELECT t.source_id,t.sha256
-      FROM page_segment_texts t WHERE t.source_id=$1 AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) OFFSET 0)
-    AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS n WHERE strpos(lower(convert_from(d.body,'UTF8')),n)>0) AND NOT ${stagingNeedsTextSql('d')}
-    RETURNING encode(d.sha256,'hex') AS sha`, [sourceId, forms.slice(at, at + CLAIM_FORMS_BATCH)])).map(r => r.sha));
+  // #9743: sweep the unreferenced texts CLAIM_SWEEP_CHUNK_BYTES at a time in sha order, each text lowered once per
+  // statement (MATERIALIZED) instead of once per claim form, so every statement fits the publication's statement_timeout.
+  // Each statement picks its chunk after `cursor` and re-checks unreferenced and staging status, as the single sweep did;
+  // every form batch re-runs on the same cursor, so each text meets every form.
+  for (let cursor: string | null = forms.length ? '' : null; cursor !== null;) {
+    let next: string | null = null;
+    for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
+      const [swept] = await tx.executeRaw<{ last: string | null; deleted: string[] }>(`WITH chunk AS MATERIALIZED (
+          SELECT u.sha256 FROM (SELECT t.sha256, sum(t.byte_len) OVER (ORDER BY t.sha256) - t.byte_len AS before
+            FROM (SELECT t.sha256, t.byte_len FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256 > decode($2,'hex')
+              AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) ORDER BY t.sha256 LIMIT 4096) t) u
+          WHERE u.before < $4),
+        lowered AS MATERIALIZED (SELECT t.sha256, lower(convert_from(t.body,'UTF8')) AS body FROM page_segment_texts t
+          WHERE t.source_id=$1 AND t.sha256 IN (SELECT sha256 FROM chunk)),
+        gone AS (DELETE FROM page_segment_texts d WHERE d.source_id=$1
+            AND d.sha256 IN (SELECT l.sha256 FROM lowered l WHERE EXISTS (SELECT 1 FROM unnest($3::text[]) AS n WHERE strpos(l.body,n)>0))
+            AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=d.source_id AND m.sha256=d.sha256) AND NOT ${stagingNeedsTextSql('d')}
+          RETURNING d.sha256)
+        SELECT (SELECT encode(sha256,'hex') FROM chunk ORDER BY sha256 DESC LIMIT 1) AS last, ARRAY(SELECT encode(sha256,'hex') FROM gone) AS deleted`,
+        [sourceId, cursor, forms.slice(at, at + CLAIM_FORMS_BATCH), CLAIM_SWEEP_CHUNK_BYTES]);
+      carrying.push(...(swept?.deleted ?? []));
+      if (at === 0) next = swept?.last ?? null;
+    }
+    cursor = next;
   }
   return { shas: [...shas, ...carrying], page_body_manifest: manifest, page_body_stagings: stagings, page_segment_texts: texts + carrying.length };
 }

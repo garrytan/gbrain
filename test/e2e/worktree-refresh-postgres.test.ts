@@ -6,4 +6,5 @@ import { registerPostgresTests } from '../helpers/test-backends.ts';
 await registerPostgresTests(
   () => import('../persistence-worktree-refresh.test.ts'),
   () => import('../refresh-source-changed-retry-8617.test.ts'),
+  () => import('../refresh-link-backlog-gst3107.test.ts'),
 );

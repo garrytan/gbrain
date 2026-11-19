@@ -26,7 +26,7 @@ import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence, type EvidenceOpts } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
-import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+import { ownerWidened, resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 
@@ -542,7 +542,13 @@ export function opAllowedForBoundClient(
  * `gbrain auth rescope-token <name> --sources none`) refuses every operation:
  * it never falls back to the `default` floor for reads or writes.
  */
-export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal'>): OperationError {
+export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal' | 'archivedSources'>): OperationError {
+  if (auth?.archivedSources?.length) {
+    return opError('unknown_source',
+      `${operation ? `${operation}: ` : ''}the source this token writes to, or every source it reads, is archived or removed (${auth.archivedSources.join(', ')}), so it reads nothing until one is restored.`,
+      `Ask the brain host's operator to restore it if it was archived (gbrain sources restore ${auth.archivedSources[0]}), or to grant this token a live source.`,
+      { fix: sourcesListFix('Lists the live sources.') });
+  }
   const fix = sourceGrantFix(auth);
   const err = opError('permission_denied',
     `${operation ? `${operation}: ` : ''}this token is granted no sources (its source grant is an explicit empty list).`,
@@ -743,9 +749,14 @@ export function assertSourceInCallerWriteScope(ctx: OperationContext, id: string
   }
 }
 
-/** Holder permissions are independent of the operator's page-visibility opt-out. */
+/**
+ * The take holders a read returns; undefined reads every holder. Holder permissions are independent of the operator's
+ * page-visibility opt-out. A remote credential with no stored list reads world takes, except the brain owner's own
+ * direct remote call (ownerWidened, GST-3058, R94), which reads every holder; a stored list is always honoured.
+ */
 export function readHolders(ctx: OperationContext): string[] | undefined {
-  return ctx.remote === false ? ctx.takesHoldersAllowList : ctx.takesHoldersAllowList ?? ['world'];
+  if (ctx.remote === false) return ctx.takesHoldersAllowList;
+  return ctx.takesHoldersAllowList ?? (ownerWidened() ? undefined : ['world']);
 }
 
 /** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */
@@ -840,6 +851,7 @@ export function resolveRequestedScope(
     return ctx.remote === false ? {} : sourceScopeOpts(ctx);
   }
   if (sourceIdParam !== undefined) {
+    if (ctx.auth?.archivedSources?.includes(sourceIdParam)) throw archivedSourceError(ctx, sourceIdParam);
     const scope = sourceScopeOpts(ctx);
     const granted = scope.sourceIds !== undefined
       ? scope.sourceIds.includes(sourceIdParam)
@@ -1037,8 +1049,13 @@ export async function assertExplicitSourceLive(
     [sourceIdParam],
   );
   if (live.length > 0) return;
+  throw archivedSourceError(ctx, sourceIdParam);
+}
+
+/** The #4620 refusal for an explicit source_id that names no live source; also a granted source archived since (GST-3163). */
+function archivedSourceError(ctx: OperationContext, sourceIdParam: string): OperationError {
   const clientId = safeClientId(ctx.auth);
-  throw opError(
+  return opError(
     'unknown_source',
     `source '${sourceIdParam}' does not exist (removed or archived)`,
     'Omit source_id to read within your grant, or pick an id from sources_list. ' +
