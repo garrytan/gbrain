@@ -77,11 +77,11 @@ transaction	lifecycle	yes	54	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	82	yes	yes	yes	serves
+getPage	pages	yes	83	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	366	yes	yes	yes	serves
+putPage	pages	yes	367	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -205,7 +205,7 @@ countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	87	yes	yes	yes	serves
-addLinksBatch	links	yes	14	yes	yes	yes	serves
+addLinksBatch	links	yes	15	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
@@ -340,7 +340,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	25	no	yes	yes	serves
+setConfig	config	yes	26	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -588,7 +588,7 @@ listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
 pickValidTimeEdition	trust_tier_reads	yes	7	no	yes	yes	serves
-listAmendmentsNotApplied	trust_tier_reads	yes	2	no	yes	yes	serves
+listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	2	no	yes	yes	serves

@@ -24,8 +24,8 @@
  *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
  *    it records (TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
  *    `introduced_because` read null where PGLite may have one (TODOS.md `rust-version-change-reason`);
- *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the no-caller page
- *    policy, and on dates that are not `YYYY-MM-DD`;
+ *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the page policy of
+ *    no readers (a labelled-only caller), and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -154,7 +154,7 @@ export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (bra
   if (validDate(spec.editionFrom) !== spec.editionFrom || validDate(spec.asOf) !== spec.asOf) {
     refuseMember(member, 'an edition or as-of date that is not YYYY-MM-DD');
   }
-  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p')) : null;
+  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true }) : null;
   return storeCall({ member }, () => brain.listAmendmentsNotApplied({
     pageId: spec.pageId, editionFrom: spec.editionFrom, asOf: spec.asOf, excludePrivate,
     sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, limit: spec.limit,

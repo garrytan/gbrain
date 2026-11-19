@@ -194,8 +194,9 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
   one (TODOS.md `rust-belief-ledger`).
-- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller page
-  policy other than the no-caller one. A failure is an error: the old read answered an empty list for any failure.
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
+  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
+  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
   kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
