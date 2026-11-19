@@ -14,7 +14,7 @@
  *    so the embedding effect only settles as skipped there. Nothing runs a configured embedding effect on Rust.
  * 4. Seams: the gateway's existing test transport (__setEmbedTransportForTests); no new production seam.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,25 +72,34 @@ async function putAndEmbed(engine: BrainEngine, home: string) {
 
 describe('the effect worker embeds a put on a Rust brain as on PGLite', () => {
   const run = addonReady || required ? test : test.skip;
-  run('a put with embedding configured reaches the same final effect state', async () => {
-    const dirs: string[] = [];
-    const pgHome = mkdtempSync(join(tmpdir(), 'gbrain-ew-pg-')); dirs.push(pgHome);
-    const pg = new PGLiteEngine();
+  const dirs: string[] = [];
+  let pg: PGLiteEngine;
+  let pgHome: string;
+
+  beforeAll(async () => {
+    pgHome = mkdtempSync(join(tmpdir(), 'gbrain-ew-pg-')); dirs.push(pgHome);
+    pg = new PGLiteEngine();
     await pg.connect({ database_path: join(pgHome, 'db') } as never); await pg.initSchema();
+  });
+
+  afterAll(async () => {
+    await disposePersistenceConsumer(pg).catch(() => {});
+    await pg.disconnect();
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  run('a put with embedding configured reaches the same final effect state', async () => {
+    const expected = await putAndEmbed(pg, pgHome);
+    expect(expected.effects.find(e => e.kind === 'embedding')?.state).toBe('committed');
+    expect(expected.embedded).toBe(expected.chunks);
     const rust = await openRustBrain(); dirs.push(rust.dir);
     const rustHome = mkdtempSync(join(tmpdir(), 'gbrain-ew-rust-')); dirs.push(rustHome);
     try {
-      const expected = await putAndEmbed(pg, pgHome);
-      expect(expected.effects.find(e => e.kind === 'embedding')?.state).toBe('committed');
-      expect(expected.embedded).toBe(expected.chunks);
       const got = await putAndEmbed(rust.engine as unknown as BrainEngine, rustHome);
       expect(got).toEqual(expected);
     } finally {
-      await disposePersistenceConsumer(pg).catch(() => {});
       await disposePersistenceConsumer(rust.engine as unknown as BrainEngine).catch(() => {});
-      await pg.disconnect();
       await rust.engine.disconnect();
-      for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
 });
