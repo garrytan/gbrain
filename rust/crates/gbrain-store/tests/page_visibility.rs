@@ -125,3 +125,37 @@ fn access_names_each_page_row_once() {
             .is_empty()
     );
 }
+
+#[test]
+fn the_open_form_hides_every_page_that_names_readers_and_reads_the_store_flag_for_origins() {
+    let dir = TempDir::new("visibility-open");
+    let store = seeded(&dir);
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "atom", "title": "atom", "compiled_truth": "body",
+        "frontmatter": {"source_slug": "notes/alice"}
+    }))
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+    store.put_page("atoms/from-alice", &input, &opts).unwrap();
+    let open = |identity: &[&str]| PrivacyPolicy {
+        open: true,
+        ..access_policy(identity)
+    };
+    let hidden = |slug: &str, policy: &PrivacyPolicy| {
+        store
+            .read_page_hidden_from_caller("default", slug, policy)
+            .unwrap()
+    };
+    // The short form ignores the identity: a page that names readers is hidden from its own reader.
+    assert!(hidden("notes/alice", &open(&["member:alice"])));
+    assert!(!hidden("notes/alice", &access_policy(&["member:alice"])));
+    assert!(!hidden("notes/open", &open(&[])));
+    // The flag is set, so the origin walk still hides the atom derived from a page with readers.
+    assert!(hidden("atoms/from-alice", &open(&[])));
+    // With the flag unset by hand (the premise the short form trusts), the walk is skipped.
+    store
+        .set_config("access.restrictions_present", "0")
+        .unwrap();
+    assert!(!hidden("atoms/from-alice", &open(&[])));
+    assert!(hidden("atoms/from-alice", &access_policy(&[])));
+}

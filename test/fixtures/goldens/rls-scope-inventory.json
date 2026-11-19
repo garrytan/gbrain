@@ -2467,6 +2467,28 @@
         ],
         "flagOnScopes": []
       },
+      "listFiles#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFiles#page_slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFilesForPage#default": {
         "flagOffLanes": [
           "pool"
@@ -4923,6 +4945,7 @@
         "backfillSearchVectors": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
+        "beginSnapshotRead": "none",
         "bindPageOrigin": "none",
         "cancelJobs": "none",
         "chunkRead": "none",
@@ -5132,6 +5155,7 @@
         "hasSegmentStorage": "none",
         "hasSubagentToolExecution": "none",
         "hasSupersedeEdges": "none",
+        "hasUnsealedPages": "none",
         "hasWakeCron": "none",
         "hasWakeTermsAcceptance": "none",
         "holdSchemaMigrationLock": "none",
@@ -5164,11 +5188,13 @@
         "linkRelationshipKeysForOrigin": "none",
         "linkRelationshipKeysForPages": "none",
         "linkTemporal": "none",
+        "listAccessTokens": "none",
         "listActiveAccessMembers": "none",
         "listActiveFactsForEntity": "none",
         "listActiveTakesForPages": "none",
         "listAllPageRefs": "none",
         "listAllSources": "none",
+        "listAmendmentsNotApplied": "none",
         "listAppliedPolicyRevisions": "none",
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
@@ -5190,6 +5216,7 @@
         "listEvalCandidates": "none",
         "listEvalCaptureFailures": "none",
         "listExactIdentityCandidates": "none",
+        "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
         "listFactRelinkOutcomes": "none",
@@ -5207,10 +5234,12 @@
         "listFenceFactRows": "none",
         "listFenceRetireCandidates": "none",
         "listFenceRowGroups": "none",
+        "listFiles": "none",
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",
         "listGuestSourceIds": "none",
+        "listHeldFenceCells": "none",
         "listHeldFenceFactRows": "none",
         "listHostConsumerRows": "none",
         "listJobAttachmentNames": "none",
@@ -5230,6 +5259,7 @@
         "listOriginClaims": "none",
         "listOutsideContentFenceCounts": "none",
         "listOwnedPrivateQueues": "none",
+        "listPageRefsByIds": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
         "listPagesTitledIn": "none",
@@ -5336,6 +5366,7 @@
         "openBodyStaging": "none",
         "openWakeWatch": "none",
         "ownsSchemaTables": "none",
+        "pageAwaitsRederive": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "pauseJob": "none",
@@ -5372,6 +5403,7 @@
         "readChildCompletions": "none",
         "readClientOpUsage": "none",
         "readCounterRows": "none",
+        "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",
@@ -5381,6 +5413,7 @@
         "readEntityIdentityIdsForPages": "none",
         "readEntityInboundEdges": "none",
         "readEntityOpenLoops": "none",
+        "readExactSnippetChunks": "none",
         "readExtractionLagCounts": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
@@ -5425,6 +5458,7 @@
         "readPageSnapshotsBatch": "direct",
         "readPageTitle": "none",
         "readPageTrustRows": "none",
+        "readPageVersionEdition": "none",
         "readPersistenceBrainId": "none",
         "readPlainSyncSource": "none",
         "readPrivateQueueState": "none",
@@ -5435,6 +5469,7 @@
         "readQueueHealthSignals": "none",
         "readQueuedPageChars": "none",
         "readQueuedSpendRows": "none",
+        "readRankCoverage": "none",
         "readReceiptBudget": "none",
         "readRetirementHop": "none",
         "readRowTrustRows": "none",

@@ -21,6 +21,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
+| `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), member callers and callers with a private-facts grant included. See "Held fence cells". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
 Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the
@@ -61,6 +62,11 @@ compared as one token. The store knows two fact forms: `privateProvenanceFilterU
 fact lists, the relevance pool and `listSimilarActiveFacts`) and `privateFactFilterForCaller` (what
 `privateFactFilterForReader` renders for a caller that is not the owner: `countWorldFacts` and the
 ontology reads). With no caller the two are the same policy in a different order.
+
+A caller read while the config flag `access.restrictions_present` was unset (`CallerAccess.restricted` false)
+renders the short member-access form. The member renders its comparison texts under that form and sends
+`open: true`. The store then hides every page that names readers, whatever the identity, and runs the origin walk
+only when its own flag ([access-flag.md](access-flag.md)) is `'1'`, so a stale flag read fails closed.
 
 Every fact family opts in with `callerReaders`: a caller whose text equals the rendering for a
 record of only its reader identity and private-readable grant is served, and the member sends
@@ -249,7 +255,7 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `listRelinkCandidateRows` | Active rows of the source with no entity and no fence key (`row_num`, `source_markdown_slug`) after `afterId`, from `since` when set, in id order, at most `limit`. |
 | `countRelinkCandidates` | Active no-entity rows of the source that hold a fence key. |
 | `listSimilarActiveFacts` | `{ anchor, rows }`: the anchor's `has_embedding` and entity (null for an unknown id), then, when it has a vector, the other active rows of its entity and visibility with the same `embedding_model` and cosine at least `minCosine`, nearest first then by id, at most `limit`. `remote` keeps world rows. `excludePrivate` takes the store's privacy policy, serves a caller with a reader identity and a private-readable grant (`callerReaders`, with the member-page CASE) and refuses any other caller whose policy widens it. A NaN similarity goes out as the string `NaN`; vectors of different lengths are `invalid_argument`. |
-| `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. Refuses with `remoteFloor`. |
+| `findActiveSingleFact` | The lowest-id active row with the same entity (null matches null), visibility, fingerprint and speaker slot (a null speaker on either side matches) on `pageSlug`, or, with a null `pageSlug`, on no owned memory page; an empty `pageSlug` matches nothing. The row has every column of `SELECT *`. `remoteFloor` takes the store's privacy policy with `provenanceOnly` (`remoteProvenanceFloorSql`: the provenance page, `source_markdown_slug`, alone, judged with the empty identity, and no entity or holding-page gate); a labelled-only caller or an owner read, whose floor differs, refuses. |
 | `listUnfencedFactRows` | Active rows with no fence key and no `dimension`, of one source or all, by source, entity (bytewise, no entity last) and id, with `page_exists` (a live page of the entity). |
 | `listHeldFenceFactRows` | A page's active fence rows by `row_num` then id, less rows whose `source` starts with `cli:extract-conversation-facts`. |
 | `listWithdrawalSlugs` | Sorted distinct `COALESCE(source_markdown_slug, entity_slug)` of the active rows with the fingerprint and visibility that the subject covers: `*`, the subject's entity, an unbacked-entity row unless the subject is an owned memory page, or a row on that page. |
@@ -265,9 +271,10 @@ Refused with `engine_capability_missing`: `listFactsReconcileBacklog` (its recon
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
-Ten members (`src/core/engine-sql/facts-repair.ts`). Four read only `facts` and `pages` and are served; six read a
-table the store does not hold and refuse with `engine_capability_missing` (they are absent from
-`store-members/facts-repair.ts`, so the capability named in `members.ts` is `facts`).
+Ten members (`src/core/engine-sql/facts-repair.ts`). Seven are served: four read only `facts` and `pages`, the two loop
+reads come from `facts/loops.rs`, and `countLabelFacts` reads facts, pages, loops and withdrawals. Three read a table the
+store does not hold and refuse with `engine_capability_missing` (they are absent from `store-members/facts-repair.ts`,
+so the capability named in `members.ts` is `facts`).
 
 | Member | What it answers | Rust |
 | --- | --- | --- |
@@ -275,12 +282,12 @@ table the store does not hold and refuse with `engine_capability_missing` (they 
 | `listSessionFactTwins` | For each named fact: whether an owner twin exists outside the lanes and the sessions of its lane twins (`twin_sessions`: distinct, `''` for no session, in text order). By id. | Served |
 | `listCapturedFactsForClassification` | The same lane facts with their fingerprint and `legit_twin` (another non-expired fact of the source with the same visibility, entity and fingerprint outside the lanes). By (source, id). | Served |
 | `listWorldFactsFromPrivateSources` | Active `world` facts held in, or extracted from, a page that is private by `visibility`, a privacy alias or `readable_by`, with `readable`. By id. | Served |
-| `loopFactDrift` | Closed loops whose commitment fact is still active. | Refused: needs `open_loops` |
+| `loopFactDrift` | Closed loops whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop of the named sources whose fact is in its own source with no `expired_at` and no `open` loop references it, by id |
 | `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
-| `countLabelFacts` | The bounded count of evidenced label facts. | Refused: needs `open_loops` and `fact_withdrawals` (it also matches a regular expression with `~*` over page text) |
-| `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs `persistence_requests` and `fact_withdrawals` |
-| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges`, `fact_withdrawals` and `open_loops` |
-| `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Refused: needs `derived_generations`, `derived_generation_items` and `fact_withdrawals` |
+| `countLabelFacts` | The bounded count of evidenced label facts. | Served: the active facts of `segmentSource` whose context holds the `%text%` of `contextLike`, on a live page whose body or timeline has a line that opens with `**`, a label, any `[[:space:]]` and `:**` (ASCII case folding; `[[:space:]]` is the musl `iswspace` set PGLite reads, where Postgres on glibc also counts U+1680), on a page no active `extractor_version=N`-stamped audit fact decided, unsuperseded and no row's successor, named by no loop and covered by no withdrawal. The store counts up to `cap + 1` and the member caps it. `store-members/label-line.ts` reads the label line into its literal labels; any other pattern, a context pattern other than `%text%` and a cap that is not an integer refuse |
+| `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Refused: needs the `persistence_requests` receipts of the write journal |
+| `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Refused: needs `page_purges` |
+| `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Refused: needs `derived_generations` and `derived_generation_items` |
 
 Rules of the four served members:
 
@@ -320,7 +327,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 |---|---|---|---|
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
-| `matchSavedFacts` | `search/saved-facts-match.ts` | refused | Reads `trust_tier` (`trustRankSql`). |
+| `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member refuses another correction cue, a non-`english` FTS language and a `worldOnly` read a private-facts grant widens. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | refused | `trust_tier` is hashed into the owner binding. |
 | `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |
@@ -342,6 +349,13 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   `halfvec`) column and a non-`english` FTS language refuse in the member.
 - `countUncomparableFacts` keeps SQL's three-valued logic: with an undeclared column width a row counts
   only when a conjunct of the comparable test is false, so a vector with a NULL model is not counted.
+- `matchSavedFacts` reads its own candidates: active rows (a superseded row stays), no audit source,
+  `worldOnly`, the private-provenance policy, then `projectionEligibleSql` (a soft-deleted page, a live
+  quarantined provenance page, the trust floor). Each term is `plainto_tsquery` on the facts FTS document,
+  or a lowered `LIKE` for a CJK pattern; a term with no lexeme and no pattern is dropped. The cue is
+  `CORRECTION_CUE` written out as its 20 phrases, each matched case-insensitively between word boundaries
+  (the store has no regular-expression engine). `trust_rank` is 0 for a tier name it does not know, as
+  `trustRankSql` is.
 - `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
@@ -349,9 +363,9 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 ## Open loops (`facts/loops.rs`)
 
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
-`loops_close` retry read `closedLoopWithActiveFact`. The other loop statements (thread auto-close,
-the staleness pass, mutes and the other loop-fact reads) still run through `executeRaw`, so they
-refuse on this engine.
+`loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
+`loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
+staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
 
 | Member | What it does |
 |---|---|
@@ -360,6 +374,7 @@ refuse on this engine.
 | `readEntityOpenLoops` | The shim's entity-card read over `listOpenLoops`: status `open`, the card's slug in its source, slug matches only (an email equal to the slug drops), first `limit` rows in `listOpenLoops` order (newest activity, then newest id), the order the SQL sorts in. |
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
 | `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
+| `loopFactDrift` | `{ loop_id, source_id, fact_id, status, slug }` of each `done` or `dropped` row of the named sources (only `loopId` when given) whose fact is in the row's own source, has no `expired_at`, and no `open` row references; `slug` is the fact's `source_markdown_slug`. By id. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
@@ -402,6 +417,45 @@ opened ids (`gbrain.write_open_facts`). Both napi members take it from the store
 cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
 names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
 before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
+
+## Held fence cells (`facts/held_cells.rs`)
+
+`list_held_fence_cells({ keys, member, grantSources })` (`engine-sql/cli-reads-ops.ts` `listHeldFenceCells`): which facts-fence
+row lines of a page's text a caller with world-only fact reads may not see. get_page, get_chunks, think
+and search_exact ask it through `eligibility/stamp.ts` `heldFenceLines` and drop the held lines. A key
+is `{ sourceId, slug, rowNum, claim, partial }`: the page, the line's row number (-1 when the line names
+none), its claim, and whether a chunk boundary cut it.
+
+The store answers `eligibility/fence-overlay.ts` `heldRowSql`. Over the page's live rows (by-page index,
+`expired_at` null), a key is held when a narrower row sits at its row number, or when a narrower row
+states its claim and no `world` row states it. A row states a claim when its fact equals it, or, for a
+cut claim, contains it (`strpos(fact, claim) > 0`).
+
+A row that is not `world` is narrower unless the member admission (`memberFactAdmitSql`) or the grant
+admission (`grantedPrivateFactSql`) takes it. For a
+member caller (`callerMember()`) the TypeScript member passes `member: { slug, principal, policy }`: the
+caller's page `memory/members/<member>`, its principal `member:<member>`, and its page policy, which
+`storePageTextPolicy` reads from `privatePagesFilterForCaller` with the caller's readers (a policy the
+store does not render refuses, and every line is held). A `private` row of that page is admitted when
+the page is live (`deleted_at` null), its readers (`readable_by`, as `page_readers`) name the principal,
+and the policy shows the page (`page_hidden`). Every other page, and every page for a caller with no
+member identity, admits nothing.
+
+For a caller with a private-facts grant the TypeScript member passes `grantSources`, the sources of
+`privateFactSources()`. A `private` row is admitted when its source is granted, its `source_markdown_slug` is set,
+it is not a transcript-lane row (a `source` of the conversation prefix, `hook:writeback`, `hook:compact`,
+`sweep:corpus`, `transcript:…` or `connector:…`), none of its holding, entity and provenance slugs is a member page
+(`memory/members/…`), and none of those pages keeps its facts private: the stored page row (soft-deleted too) is a
+private derivation (`derivation_private`), or, for a page other than the entity page, there is no live row or the
+live row carries the quarantine key. A row that a `confirm` or `supersede_fact` proposal with a `visibility` key in
+its before state names as the related fact is admitted only when every target copy of those proposals is itself
+admitted by the member or grant admission (`trust::proposals::visibility_proposal_targets`). With no grant, a grant
+on another source, or a soft-deleted page, the rows stay held.
+
+The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
+held cell, in first-key order (SQL leaves the order open). A NUL character or a row number outside
+`integer` refuses with `invalid_argument`, as Postgres raises for the same parameters. No keys answer
+`[]` without a read.
 
 ## Not modeled
 

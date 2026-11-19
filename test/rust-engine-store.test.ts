@@ -17,6 +17,8 @@ import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
 import { servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
+import { labelsOf } from '../src/core/rust-engine/store-members/label-line.ts';
+import { METADATA_LABELS } from '../src/core/conversation-parser/builtins.ts';
 import { toGetPage, toListPage } from '../src/core/rust-engine/store-codec.ts';
 import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -259,7 +261,8 @@ describe('Rust engine on the store', () => {
     const [row] = await engine.getRawData('notes/a');
     expect(row!.data).toEqual({ keep: 1, at: '1970-01-01T00:00:00.000Z' });
     expect(row!.fetched_at).toBeInstanceOf(Date);
-    expect(await code(() => engine.getRawData('notes/a', undefined, { excludePrivate: true }))).toBe('engine_capability_missing');
+    // excludePrivate applies the page policy: a public page keeps its raw data.
+    expect((await engine.getRawData('notes/a', undefined, { excludePrivate: true })).map((r) => r.data)).toEqual([row!.data]);
     // A size past 2^31 crosses N-API as a double and comes back whole.
     const spec = { page_id: created.id, filename: 'a.png', storage_path: 'f/a.png', content_hash: 'h', size_bytes: 5_000_000_000 };
     expect((await engine.upsertFile(spec)).created).toBe(true);
@@ -335,6 +338,32 @@ describe('Rust store members', () => {
     expect(error).toBeInstanceOf(OperationError);
     expect((error as OperationError).code).toBe('page_body_segmented');
     expect((error as Error).message).toBe('Page notes/a or its version 7 is stored in segments, so revert_version cannot restore it yet; nothing was changed.');
+  });
+
+  test('countLabelFacts reads the label line into its literal labels, caps the store count, and refuses any other pattern', async () => {
+    const line = (alts: string) => `(^|\\n)\\*\\*(${alts})[[:space:]]*:\\*\\*`;
+    const labels = labelsOf(line(METADATA_LABELS.join('|')))!;
+    expect(labels).toContain('organiser');
+    expect(labels).toContain('organizer');
+    expect(labels).toContain('action item');
+    expect(labels).toContain('action items');
+    expect(labels).not.toContain('dates');
+    expect(labelsOf(line('Date|Time'))).toEqual(['date', 'time']);
+    for (const bad of ['Date|', 'Dat.', 'Da+te', '[^a]te', 'd??', '(date)', 'déjà', 'x\\y']) expect(labelsOf(line(bad))).toBeNull();
+    expect(labelsOf(`(^|\\n)\\*\\*(Date):\\*\\*`)).toBeNull();
+    const sent: unknown[] = [];
+    const brain = { countLabelFacts: async (q: unknown) => { sent.push(q); return 3; } };
+    const count = STORE_MEMBERS.countLabelFacts as unknown as (brain: unknown, sourceIds: string[], cap: number, args: Record<string, string>) => Promise<unknown>;
+    const args = { segmentSource: 's', contextLike: '%seg 1%', labelLine: line('Date'), terminalSource: 't', nonExtractableSource: 'n' };
+    expect(await count(brain, ['default'], 2, args)).toEqual({ count: 2, capped: true });
+    expect(await count(brain, ['default'], 3, args)).toEqual({ count: 3, capped: false });
+    expect(sent[0]).toEqual({ sourceIds: ['default'], limit: 3, segmentSource: 's', contextContains: 'seg 1', labels: ['date'], terminalSource: 't', nonExtractableSource: 'n' });
+    const code = async (run: () => Promise<unknown>) => { try { await run(); return 'ran'; } catch (e) { return (e as { code?: string }).code; } };
+    expect(await code(() => count(brain, ['default'], 1.5, args))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], -2, args))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], 2, { ...args, labelLine: line('Da.e') }))).toBe('engine_capability_missing');
+    for (const contextLike of ['seg%', '%se_g%', '%a%b%', '%a\\b%']) expect(await code(() => count(brain, ['default'], 2, { ...args, contextLike }))).toBe('engine_capability_missing');
+    expect(sent).toHaveLength(2);
   });
 });
 

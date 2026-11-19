@@ -1,12 +1,12 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
+ * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember and readFolderAccess; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
 import type { AppliedPolicyRevision, FolderAccessRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -63,6 +63,13 @@ export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async (
 
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
+
+/**
+ * The store keeps no access tokens: minting, revoking and the bearer check are raw SQL on `access_tokens`, which this
+ * engine refuses, so no Rust brain holds a token and `auth list` lists none, as PGLite lists none on a brain with no
+ * tokens.
+ */
+export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [];
 
 /** The store keeps no access members, so none is active. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];

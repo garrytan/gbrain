@@ -284,6 +284,17 @@ pub struct ReadScope {
     pub include_deleted: bool,
 }
 
+/// Options of `getTags`: the scope, `liveOnly` (a soft-deleted page has no tags) and the page
+/// policy `excludePrivate` names (a page it hides has no tags), as `engine-sql/tags.ts` reads them.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TagsQuery {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+    pub live_only: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
+}
+
 /// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -348,6 +359,9 @@ pub struct VersionsOptions {
     pub limit: Option<usize>,
     /// `false` leaves `compiled_truth` and `timeline` out. Default true.
     pub include_body: Option<bool>,
+    /// The page policy `excludePrivate` names: a page it hides has no versions, and a version
+    /// whose own readers or fields the caller may not read is left out before `limit`.
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// A page key given to `lock_page_keys`.
@@ -1434,6 +1448,30 @@ impl Store {
         Ok(tags)
     }
 
+    /// `getTags(slug, { sourceId?, sourceIds?, liveOnly?, excludePrivate? })`, sorted: no tags for
+    /// a page `liveOnly` or the page policy drops.
+    pub fn get_tags_query(&self, slug: &str, query: &TagsQuery) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let page = find_in_scope(
+            &*read,
+            &slug.to_lowercase(),
+            &query.source_id,
+            &query.source_ids,
+            !query.live_only,
+        )?;
+        let Some(page) = page else {
+            return Ok(Vec::new());
+        };
+        if let Some(policy) = &query.exclude_private
+            && crate::facts::page_hidden(&*read, &page, policy)?
+        {
+            return Ok(Vec::new());
+        }
+        let mut tags = page.tags;
+        tags.sort();
+        Ok(tags)
+    }
+
     /// `addTag`: `page_not_found` when the page does not exist. An explicit add claims the tag
     /// (`added`); a `frontmatter` add claims a new tag and adopts only an unclaimed one. A tag the
     /// page has keeps the page revision.
@@ -1553,7 +1591,8 @@ impl Store {
         })
     }
 
-    /// `getVersions(slug, opts)`, newest first.
+    /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
+    /// and version policies keep.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
@@ -1562,12 +1601,27 @@ impl Store {
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
+                let policy = options.exclude_private.as_ref();
+                if let Some(policy) = policy
+                    && crate::facts::page_hidden(&*read, &page, policy)?
+                {
+                    continue;
+                }
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
+                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
+                            && policy.is_none_or(|policy| {
+                                !crate::facts::caller_version_hidden(
+                                    &page,
+                                    &row.page_type,
+                                    &row.frontmatter,
+                                    policy,
+                                )
+                            })
+                        {
                             rows.push(row);
                         }
                         true

@@ -1,8 +1,13 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
- * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`.
+ * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
+ * `listPageRefsByIds`; and the
+ * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
+ * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
+ * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
+ * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets nothing: a store transaction is one snapshot
+ * already, and `READ ONLY` is not enforced.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
@@ -18,6 +23,8 @@
  *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
  *    it records (TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
  *    `introduced_because` read null where PGLite may have one (TODOS.md `rust-version-change-reason`);
+ *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the no-caller page
+ *    policy, and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -28,6 +35,8 @@ import {
   remoteReadFloorSql, withoutCallerAccess,
 } from '../../search/private-visibility.ts';
 import { validDate } from '../../valid-time.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
@@ -89,6 +98,15 @@ export const listVersionReasonWriters: Member<'listVersionReasonWriters'> = (bra
   return storeCall({ member }, () => brain.listVersionReasonWriters({ ids: [...ids] }));
 };
 
+export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids) => {
+  const member = 'listPageRefsByIds';
+  if (ids.length === 0) return [];
+  for (const id of ids) requireInteger(member, 'page id', id);
+  const rows: Array<{ id: number; source_id: string; slug: string; type: string | null }> =
+    await storeCall({ member }, () => brain.listPageRefsByIds({ ids: [...ids] }));
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+};
+
 /** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
 const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
 
@@ -128,4 +146,46 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (!got.row) return null;
   const row = got.row;
   return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at) };
+};
+
+export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (brain, spec) => {
+  const member = 'listAmendmentsNotApplied';
+  requireInteger(member, 'page id', spec.pageId);
+  requireCount(member, 'limit', spec.limit);
+  if (validDate(spec.editionFrom) !== spec.editionFrom || validDate(spec.asOf) !== spec.asOf) {
+    refuseMember(member, 'an edition or as-of date that is not YYYY-MM-DD');
+  }
+  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p')) : null;
+  return storeCall({ member }, () => brain.listAmendmentsNotApplied({
+    pageId: spec.pageId, editionFrom: spec.editionFrom, asOf: spec.asOf, excludePrivate,
+    sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, limit: spec.limit,
+  }));
+};
+
+export const readPageVersionEdition: Member<'readPageVersionEdition'> = (brain, spec) => {
+  const member = 'readPageVersionEdition';
+  requireInteger(member, 'page id', spec.pageId);
+  requireInteger(member, 'version id', spec.versionId);
+  return storeCall({ member }, () => brain.readPageVersionEdition({ pageId: spec.pageId, versionId: spec.versionId }));
+};
+
+export const readCursorEdition: Member<'readCursorEdition'> = (brain, spec) => {
+  const member = 'readCursorEdition';
+  requireInteger(member, 'page id', spec.pageId);
+  return storeCall({ member }, () => brain.readCursorEdition({ pageId: spec.pageId, revision: String(spec.revision) }));
+};
+
+/** No page awaits re-derivation: the store keeps no `needs_rederive` queue (rust/docs/store/takes.md). */
+export const pageAwaitsRederive: Member<'pageAwaitsRederive'> = async (_brain, pageId) => {
+  requireInteger('pageAwaitsRederive', 'page id', pageId);
+  return false;
+};
+
+/**
+ * `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ [READ ONLY]`: nothing to set. A store transaction holds the
+ * store's one writer from its start, so its reads already see one state. `READ ONLY` is not enforced: a write in the
+ * transaction still lands. Refuses on a transaction that has ended, as the other transaction members do.
+ */
+export const beginSnapshotRead = async function beginSnapshotRead(this: RustEngine): Promise<void> {
+  if (this._txScope?.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'beginSnapshotRead' });
 };

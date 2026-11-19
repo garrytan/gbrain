@@ -24,6 +24,7 @@ import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import { SEARCH_OPTION_KEYS } from './search-options.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -38,9 +39,9 @@ function checkBatch(member: string, n: number): void {
  * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
  * nothing on these reads.
  */
-function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
+function readScope(member: string, opts: PageReadScope | undefined, unread: readonly string[] = []): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...unread]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -48,6 +49,9 @@ function readScope(member: string, opts: PageReadScope | undefined): Record<stri
     suppressFlagged: taken.suppressFlagged === true,
   };
 }
+
+/** The `WhoknowsOpts` keys and the read-policy holder list that getEffectiveDates is handed but never reads. */
+const WHOKNOWS_UNREAD = ['topic', 'limit', 'explain', 'types', 'onMeta', 'takesHoldersAllowList'] as const;
 
 const reviveDate = (value: unknown): Date => new Date(String(value));
 
@@ -229,6 +233,9 @@ export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankR
   return rows.map(toDomainBankRow);
 };
 
+/** What hybrid search hands the stamp reads as their policy (search-options.ts): its search options and the takes-holder list, which `pageReadFilter` never reads. */
+const HYBRID_UNREAD = [...SEARCH_OPTION_KEYS, 'takesHoldersAllowList'];
+
 /** Page ids as the store reads them: integers only, as Postgres's `int[]` cast requires. */
 function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
@@ -241,7 +248,7 @@ export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: Pa
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getContentFlagsByPageIds', opts);
+  const scope = readScope('getContentFlagsByPageIds', opts, HYBRID_UNREAD);
   const rows: Array<{ id: number; reason: string; detail: string }> = await storeCall({ member: 'getContentFlagsByPageIds' }, () =>
     brain.getContentFlagsByPageIds(pageIds('getContentFlagsByPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { reason: r.reason, detail: r.detail }]));
@@ -253,7 +260,7 @@ export const getUnverifiedExtractionPageIds: StoreMember<[pageIds: number[], opt
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getUnverifiedExtractionPageIds', opts);
+  const scope = readScope('getUnverifiedExtractionPageIds', opts, HYBRID_UNREAD);
   const rows: Array<{ id: number; status: string; unverified: boolean }> = await storeCall({ member: 'getUnverifiedExtractionPageIds' }, () =>
     brain.getUnverifiedExtractionPageIds(pageIds('getUnverifiedExtractionPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { unverified: r.unverified === true, status: r.status }]));
@@ -271,7 +278,8 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  const scope = readScope('getEffectiveDates', opts);
+  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
+  const scope = readScope('getEffectiveDates', opts, WHOKNOWS_UNREAD);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, reviveDate(r.ts)]));

@@ -15,7 +15,7 @@ src/commands/agent-register.ts	sql_template	8
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
 src/commands/auth.ts	execute_raw	1
-src/commands/auth.ts	sql_template	6
+src/commands/auth.ts	sql_template	5
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
 src/commands/autopilot-fanout.ts	execute_raw	2
@@ -134,7 +134,7 @@ src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
-src/commands/export.ts	execute_raw	3
+src/commands/export.ts	execute_raw	2
 src/commands/extract-conversation-facts.ts	execute_raw	1
 src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-mentions-explain.ts	execute_raw	6
@@ -143,7 +143,7 @@ src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
 src/commands/extract.ts	execute_raw	3
 src/commands/files.ts	execute_raw	4
-src/commands/files.ts	sql_template	6
+src/commands/files.ts	sql_template	4
 src/commands/frontmatter-install-hook.ts	execute_raw	3
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
@@ -372,7 +372,7 @@ src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	4
-src/core/eligibility/stamp.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
+src/core/eligibility/stamp.ts	execute_raw	1
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
@@ -569,30 +569,24 @@ src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
-src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
-src/core/ops/get-page-projection.ts	execute_raw	1
-src/core/ops/graph-rank.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
-src/core/ops/pages.ts	execute_raw	1
 src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/request-tools.ts	execute_raw	2
-src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/search-type-filter.ts	execute_raw	1
-src/core/ops/search.ts	execute_raw	2
+src/core/ops/search.ts	execute_raw	1
 src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
-src/core/ops/valid-time-read.ts	execute_raw	4
 src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
@@ -984,7 +978,7 @@ src/core/search/relational-recall.ts	execute_raw	3
 src/core/search/safe-chunks.ts	execute_raw	2
 src/core/search/saved-facts-match.ts	execute_raw	1
 src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
-src/core/search/transcript-quote.ts	execute_raw	3
+src/core/search/transcript-quote.ts	execute_raw	2
 src/core/search/two-pass.ts	execute_raw	5
 src/core/serve-sync-runner.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3

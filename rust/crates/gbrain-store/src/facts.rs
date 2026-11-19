@@ -40,19 +40,22 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 mod fence;
+mod held_cells;
 pub mod loops;
 mod privacy;
 pub mod purge;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod saved_match;
 pub mod trust;
 pub mod trust_reads;
 
 pub use fence::{FenceContext, FenceTarget};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::{page_hidden, version_hidden};
+pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -936,6 +939,13 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility (`eligibilityClause`): `projectionEligibleSql('facts')`
+    /// replaces the deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1257,6 +1267,7 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?)
             && !hidden_by_policy(read, row, &self.exclude_private)?)
     }
 
@@ -1305,11 +1316,16 @@ impl Store {
     ) -> Result<Vec<Value>> {
         q.check(op)?;
         let limit = count_arg(op, "limit", q.limit)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now)? {
+            if q.source_id == row.source_id
+                && extra(&row)
+                && q.admits(&*read, &row, now)?
+                && trust.admits(&*read, "facts", row.id, row.tier())?
+            {
                 rows.push(row);
             }
         }

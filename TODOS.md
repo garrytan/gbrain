@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine lane 13 follow-ups (filed 2026-11-19)
+
+- [ ] **P3 — rust-access-token-keyspace: a Rust brain keeps no access tokens.** **What:** `listAccessTokens` answers `[]` on Rust (`src/core/rust-engine/store-members/write-misc.ts`), because the store has no `access_tokens` keyspace: minting, revoking, rescoping and the bearer check are raw SQL on `access_tokens`, which the Rust engine refuses. So `gbrain auth list` lists no tokens on a Rust brain, and no token can be created there. **Fix:** add an access-token keyspace to the Rust store with typed members for mint, revoke, rescope, last-used and the bearer lookup, then serve `listAccessTokens` from it; the `listAccessTokens` parity cases in `test/engine-parity/write-misc.test.ts` then move the minted-token case from stopped to equal. **Effort:** M. **Priority:** P3.
+
 ## Rust engine relink lane follow-ups (filed 2026-11-18)
 
 - [ ] **P3 — timeline-row-delete-dedupe: one SQL helper for the two timeline row deletes.** **What:** `deleteTimelineRows` (`src/core/engine-sql/timeline-reads.ts`) and `removeTimelineRows` (`src/core/engine-sql/timeline.ts`) run the same guarded `DELETE FROM timeline_entries` (a page's non-event rows that still match on id, date, source, summary and detail, returning each date and its `removed` mark) as two copies. **Fix:** make both members call one shared SQL helper, with no change in output on any engine (the parity and engine-sql cases of both members stay green unchanged). **Effort:** S. **Priority:** P3.

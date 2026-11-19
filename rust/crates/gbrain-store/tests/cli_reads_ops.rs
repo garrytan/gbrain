@@ -1,13 +1,20 @@
-//! The CLI search and graph reads (cli_reads/reads.rs): what each answers from the store's records.
+//! The CLI search and graph reads (cli_reads/reads.rs) and the remote-caller reads around them
+//! (cli_reads/remote_reads.rs): what each answers from the store's records.
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::cli_reads::reads::{
     EntityTypeFilter, ExactBatchInput, ExactIdentityInput, ExactIdentityProbes,
     ExtractionPendingInput, RankEntitiesInput, RemoteCaller,
 };
+use gbrain_store::cli_reads::remote_reads::{
+    ExactRescanInput, ExactSnippetChunksInput, ExactSnippetKey, RankCoverageInput, RankCoverageRow,
+};
+use gbrain_store::extraction::ExtractedRef;
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
@@ -93,8 +100,10 @@ fn exact_batch_needs_a_word_and_a_non_negative_limit() {
 fn identity_and_rank_refuse_private_filters_the_store_does_not_keep() {
     let dir = TempDir::new("cli-reads-ops-private");
     let store = open(&dir);
+    // excludePrivate with no page policy is refused: the store never guesses the caller.
     let remote = Some(RemoteCaller {
         exclude_private: true,
+        policy: None,
     });
     let identity = ExactIdentityInput {
         probes: ExactIdentityProbes::default(),
@@ -223,4 +232,200 @@ fn identity_finds_a_live_page_by_its_alias_rows_in_the_named_sources_and_refuses
     assert!(err.to_string().contains("invalid byte sequence"), "{err}");
     let err = read(&["alice"], &["def\0ault"]).unwrap_err();
     assert!(err.to_string().contains("invalid byte sequence"), "{err}");
+}
+
+/// Seals one compiled-truth chunk holding `text` on the page.
+fn seal_chunk(store: &Store, slug: &str, source_id: &str, text: &str) {
+    let chunk: ChunkInput = serde_json::from_value(json!({
+        "chunk_index": 0, "chunk_text": text, "chunk_source": "compiled_truth",
+    }))
+    .unwrap();
+    let options: UpsertChunksOptions =
+        serde_json::from_value(json!({"seal": true, "sourceId": source_id})).unwrap();
+    store.upsert_chunks(slug, &[chunk], &options).unwrap();
+}
+
+fn hide_labels() -> PrivacyPolicy {
+    PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn rank_coverage_counts_only_the_pages_the_caller_may_read() {
+    let dir = TempDir::new("cli-reads-ops-coverage");
+    let store = open(&dir);
+    page(&store, "default", "notes/open", "note", json!({}));
+    page(
+        &store,
+        "default",
+        "notes/secret",
+        "note",
+        json!({"visibility": "private"}),
+    );
+    let input = |policy: Option<PrivacyPolicy>, mentions: Option<Vec<String>>| RankCoverageInput {
+        source_id: "default".into(),
+        version_ts: Some("2020-01-01T00:00:00Z".into()),
+        mention_types: mentions,
+        exclude_private: policy,
+    };
+    // Both pages are unstamped: the open one owes link extraction.
+    assert!(
+        store
+            .read_rank_coverage(&input(Some(hide_labels()), None))
+            .unwrap()
+            .link_behind
+    );
+    let stamp = |slug: &str| ExtractedRef {
+        slug: slug.into(),
+        source_id: "default".into(),
+        extracted_at: Some("2999-01-01T00:00:00Z".into()),
+    };
+    store
+        .mark_pages_extracted_batch(&[stamp("notes/open")], "2999-01-01T00:00:00Z")
+        .unwrap();
+    // Only the private page is still stale: it moves coverage for a trusted read, not for the caller.
+    let hidden = store
+        .read_rank_coverage(&input(Some(hide_labels()), None))
+        .unwrap();
+    assert_eq!(
+        hidden,
+        RankCoverageRow {
+            link_behind: false,
+            mention_due: false
+        }
+    );
+    assert!(
+        store
+            .read_rank_coverage(&input(None, None))
+            .unwrap()
+            .link_behind
+    );
+    // The store keeps no mention state: any readable page owes a mention pass.
+    let mentions = store
+        .read_rank_coverage(&input(Some(hide_labels()), Some(vec!["person".into()])))
+        .unwrap();
+    assert!(mentions.mention_due);
+    // An archived or unknown source reads as covered.
+    let mut unknown = input(None, Some(vec![]));
+    unknown.source_id = "nowhere".into();
+    assert_eq!(
+        store.read_rank_coverage(&unknown).unwrap(),
+        RankCoverageRow::default()
+    );
+}
+
+#[test]
+fn exact_snippet_chunks_read_visible_chunks_in_key_order_and_hide_private_pages() {
+    let dir = TempDir::new("cli-reads-ops-snippets");
+    let store = open(&dir);
+    let open_id = page(&store, "default", "notes/open", "note", json!({}));
+    let secret_id = page(
+        &store,
+        "default",
+        "notes/secret",
+        "note",
+        json!({"visibility": "private"}),
+    );
+    seal_chunk(&store, "notes/open", "default", "zephyr open text");
+    seal_chunk(&store, "notes/secret", "default", "zephyr secret text");
+    let key = |page_id: u64, snippet: &str| ExactSnippetKey {
+        page_id: page_id as i64,
+        chunk_index: 0,
+        snippet: snippet.into(),
+    };
+    let keys = vec![
+        key(secret_id, "zephyr"),
+        key(open_id, "absent"),
+        key(open_id, "open"),
+        key(9_999, "zephyr"),
+    ];
+    let rows = |policy: Option<PrivacyPolicy>| {
+        store
+            .read_exact_snippet_chunks(&ExactSnippetChunksInput {
+                keys: keys.clone(),
+                exclude_private: policy,
+            })
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.i, r.chunk_text))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rows(Some(hide_labels())),
+        vec![(3, "zephyr open text".to_string())]
+    );
+    assert_eq!(
+        rows(None),
+        vec![
+            (1, "zephyr secret text".to_string()),
+            (3, "zephyr open text".to_string())
+        ]
+    );
+}
+
+#[test]
+fn exact_rescan_chunks_keep_safe_fenced_pages_the_caller_may_read() {
+    let dir = TempDir::new("cli-reads-ops-rescan");
+    let store = open(&dir);
+    let open_id = page(&store, "default", "notes/open", "note", json!({}));
+    let secret_id = page(
+        &store,
+        "default",
+        "notes/secret",
+        "note",
+        json!({"visibility": "private"}),
+    );
+    let unsafe_id = page(&store, "default", "notes/unsafe", "note", json!({}));
+    for slug in ["notes/open", "notes/secret", "notes/unsafe"] {
+        seal_chunk(&store, slug, "default", &format!("text of {slug}"));
+    }
+    store
+        .set_chunker_version("notes/unsafe", "3", Some("default"))
+        .unwrap();
+    let ids = vec![
+        unsafe_id as i64,
+        secret_id as i64,
+        open_id as i64,
+        open_id as i64,
+        -1,
+    ];
+    let pages = |policy: Option<PrivacyPolicy>| {
+        store
+            .list_exact_rescan_chunks(&ExactRescanInput {
+                page_ids: ids.clone(),
+                exclude_private: policy,
+            })
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.page_id, r.chunk_index, r.chunk_source, r.chunk_text))
+            .collect::<Vec<_>>()
+    };
+    let open_row = (
+        open_id,
+        0,
+        "compiled_truth".to_string(),
+        "text of notes/open".to_string(),
+    );
+    assert_eq!(pages(Some(hide_labels())), vec![open_row.clone()]);
+    assert_eq!(
+        pages(None),
+        vec![
+            open_row,
+            (
+                secret_id,
+                0,
+                "compiled_truth".to_string(),
+                "text of notes/secret".to_string()
+            )
+        ]
+    );
+    assert!(
+        store
+            .list_exact_rescan_chunks(&ExactRescanInput::default())
+            .unwrap()
+            .is_empty()
+    );
 }

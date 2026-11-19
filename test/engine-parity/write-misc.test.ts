@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, isFolderRestricted,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, listAccessTokens, isFolderRestricted,
  *    listAppliedPolicyRevisions, readLiveMember, readFolderAccess, expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -13,7 +13,7 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, folder rules, writer bindings or memory proposals, so those cases
+ *    Rust store keeps no skillpacks, chronicle state, access members, access tokens, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md).
  */
 import { describe, expect } from 'bun:test';
@@ -116,6 +116,33 @@ describe('engine parity: write misc', () => {
     const members = await engine.listActiveAccessMembers();
     expect(members).toEqual([]);
     return { members };
+  });
+
+  // `gbrain auth list` reads listAccessTokens: the census found the Rust engine refused it (its SQL ran through
+  // sqlQueryForEngine).
+  parityTest('listAccessTokens lists no token on a fresh brain', { methods: ['listAccessTokens'] }, async (engine) => {
+    const tokens = await engine.listAccessTokens();
+    expect(tokens).toEqual([]);
+    return { tokens };
+  });
+
+  // listAccessTokens is constant empty on Rust only because no Rust brain can hold a token: the token mint (raw SQL on
+  // access_tokens, token-mint.ts) must stop on the typed raw_sql refusal there and leave the list empty.
+  parityTest('a minted token refuses on Rust and lists newest first on the SQL engines', { methods: ['listAccessTokens'] }, async (engine, backend) => {
+    const mint = await engine.executeRaw(
+      `INSERT INTO access_tokens (name, token_hash, scopes, created_at, revoked_at) VALUES
+         ('old-client', 'hash-old', ARRAY['read'], '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z'),
+         ('new-client', 'hash-new', NULL, '2026-03-01T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(mint, 'raw_sql')).toBe(true);
+      expect(await engine.listAccessTokens()).toEqual([]);
+      throw mint;
+    }
+    expect(mint).toBeNull();
+    const rows = await engine.listAccessTokens();
+    const tokens = rows.map(r => ({ name: r.name, scopes: r.scopes, revoked: r.revoked_at !== null, id: UUID.test(String(r.id)) }));
+    expect(tokens.map(t => t.name)).toEqual(['new-client', 'old-client']);
+    return { tokens };
   });
 
   // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer

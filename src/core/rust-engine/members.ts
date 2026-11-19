@@ -32,6 +32,7 @@ export const RUST_ENGINE_MEMBERS = {
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
+  beginSnapshotRead: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
@@ -195,6 +196,7 @@ export const RUST_ENGINE_MEMBERS = {
   countOrphanChunks: 'chunks',
   countCodeChunkPages: 'chunks',
   codeChunksExist: 'chunks',
+  hasUnsealedPages: 'chunks',
   currentCodeChunksExist: 'chunks',
   listQualifiedSymbolNames: 'chunks',
   listWithdrawalChunks: 'chunks',
@@ -217,6 +219,8 @@ export const RUST_ENGINE_MEMBERS = {
   // keyword_search
   searchKeyword: 'keyword_search',
   scanExactBatch: 'keyword_search',
+  readExactSnippetChunks: 'keyword_search',
+  listExactRescanChunks: 'keyword_search',
   countKeywordPages: 'keyword_search',
   searchKeywordPages: 'keyword_search',
   searchTitles: 'keyword_search',
@@ -303,6 +307,7 @@ export const RUST_ENGINE_MEMBERS = {
   // graph
   traverseGraph: 'graph',
   rankEntities: 'graph',
+  readRankCoverage: 'graph',
   traversePaths: 'graph',
   traversePathsDetailed: 'graph',
   relationalFanout: 'graph',
@@ -324,6 +329,7 @@ export const RUST_ENGINE_MEMBERS = {
   countUnconsolidatedFacts: 'facts',
   listFenceRetireCandidates: 'facts',
   listFenceFactRows: 'facts',
+  listHeldFenceCells: 'facts',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
   findTrajectory: 'facts',
@@ -424,6 +430,7 @@ export const RUST_ENGINE_MEMBERS = {
   upsertFile: 'files',
   getFile: 'files',
   listFilesForPage: 'files',
+  listFiles: 'files',
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
@@ -576,6 +583,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLiveMember: 'access_control',
   readFolderAccess: 'access_control',
   listActiveAccessMembers: 'access_control',
+  listAccessTokens: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',
@@ -746,8 +754,13 @@ export const RUST_ENGINE_MEMBERS = {
   listVisibleBeliefLifetimes: 'belief_ledger',
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
+  listPageRefsByIds: 'pages',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
+  listAmendmentsNotApplied: 'links',
+  readPageVersionEdition: 'page_versions',
+  readCursorEdition: 'page_versions',
+  pageAwaitsRederive: 'pages',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

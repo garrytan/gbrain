@@ -1,6 +1,6 @@
 //! Typed reads of stamped trust tiers: `listCorePageRows`, `listTrustScanRows`,
 //! `countUnscannedTrustRows`, `listVersionTrustTiers`, `listVersionReasonWriters`, and the valid-time
-//! reads `listValidTimeIdentities` and `pickValidTimeEdition`.
+//! reads `listValidTimeIdentities`, `pickValidTimeEdition` and `listAmendmentsNotApplied`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::trust::tier_reads` (or
 //! `trust::valid_time`) call on
@@ -13,8 +13,13 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
-use gbrain_store::trust::valid_time::{ValidTimeIdentityQuery, ValidTimePickQuery};
+use gbrain_store::trust::tier_reads::{
+    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+};
+use gbrain_store::trust::valid_time::{
+    AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
+    VersionEditionQuery,
+};
 
 #[napi]
 impl Brain {
@@ -83,6 +88,19 @@ impl Brain {
         })
     }
 
+    /// `listPageRefsByIds({ ids })`: resolves the source, slug and type of each listed page.
+    #[napi]
+    pub fn list_page_refs_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageIdsQuery = required(args, "listPageRefsByIds args")?;
+            s.list_page_refs_by_ids(&a)
+        })
+    }
+
     /// `listValidTimeIdentities(spec)`: resolves the live pages with a slug a valid-time read may follow.
     #[napi]
     pub fn list_valid_time_identities<'env>(
@@ -106,6 +124,45 @@ impl Brain {
         self.run(env, move |s| {
             let a: ValidTimePickQuery = required(spec, "pickValidTimeEdition spec")?;
             s.pick_valid_time_edition(&a)
+        })
+    }
+
+    /// `listAmendmentsNotApplied(spec)`: resolves the amendment records an as-of edition does not fold in.
+    #[napi]
+    pub fn list_amendments_not_applied<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: AmendmentsQuery = required(spec, "listAmendmentsNotApplied spec")?;
+            s.list_amendments_not_applied(&a)
+        })
+    }
+
+    /// `readPageVersionEdition(spec)`: resolves one version of the page as an edition, or null.
+    #[napi]
+    pub fn read_page_version_edition<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: VersionEditionQuery = required(spec, "readPageVersionEdition spec")?;
+            s.read_page_version_edition(&a)
+        })
+    }
+
+    /// `readCursorEdition(spec)`: resolves where a window cursor's revision stands, or null.
+    #[napi]
+    pub fn read_cursor_edition<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: CursorEditionQuery = required(spec, "readCursorEdition spec")?;
+            s.read_cursor_edition(&a)
         })
     }
 }

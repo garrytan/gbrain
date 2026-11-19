@@ -34,6 +34,7 @@ use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::{LinkRecord, in_links, out_links, put_link};
 use crate::pages::{PageRecord, all_pages, next_id, read_page, read_page_by_id};
+use crate::trust::valid_time::AmendmentsQuery;
 use crate::{Store, keys, put_json};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -1779,6 +1780,64 @@ impl Store {
             status,
             links: links.into_iter().collect(),
         })
+    }
+
+    /// `listAmendmentsNotApplied`: the live pages with an `amends` link to the page whose relationship
+    /// (scope `world` under a policy, else `all`) starts after the edition took effect and on or before the date,
+    /// or has no start; each once, with the earliest start, by slug then source bytewise, at most `limit`.
+    pub fn list_amendments_not_applied(&self, q: &AmendmentsQuery) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let read = &*read;
+        let Ok(page_id) = u64::try_from(q.page_id) else {
+            return Ok(Vec::new());
+        };
+        let scope = if q.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let mut pages = Pages::new(read);
+        let mut found: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+        for link in in_links(read, page_id)? {
+            if link.link_type != "amends" {
+                continue;
+            }
+            let Some(from) = pages.get(link.from_page_id)?.filter(|p| live(p)) else {
+                continue;
+            };
+            if q.source_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&from.source_id))
+            {
+                continue;
+            }
+            if let Some(policy) = &q.exclude_private
+                && (page_hidden(read, &from, policy)?
+                    || !link_origin_shown(&mut pages, &link, policy)?)
+            {
+                continue;
+            }
+            let start = relationship(read, &RelationshipKey::of_link(&link), scope)?
+                .and_then(|r| r.first_start);
+            if let Some(start) = &start
+                && !(start.as_str() > q.edition_from.as_str() && start.as_str() <= q.as_of.as_str())
+            {
+                continue;
+            }
+            let since = found
+                .entry((from.slug.clone(), from.source_id.clone()))
+                .or_insert(None);
+            if let Some(start) = start
+                && since.as_ref().is_none_or(|s| start < *s)
+            {
+                *since = Some(start);
+            }
+        }
+        Ok(found
+            .into_iter()
+            .take(usize::try_from(q.limit).unwrap_or(usize::MAX))
+            .map(|((slug, source_id), since)| serde_json::json!({ "slug": slug, "source_id": source_id, "since": since }))
+            .collect())
     }
 
     /// `countSearchVectorRows`: the pages and chunks a keyword reindex would touch.

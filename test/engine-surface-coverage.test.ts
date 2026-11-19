@@ -101,11 +101,11 @@ const INTERFACE_METHODS: readonly string[] = [
   'readProjectionReadinessGeneration', 'readProjectionReadiness',
   // Code, doctor, withdrawal, repair and evidence chunk reads (engine-sql/chunk-reads.ts)
   'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks',
-  'countCodeChunkPages', 'codeChunksExist', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
+  'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
   'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits',
   // CLI reads (engine-sql/cli-reads-ops.ts; covered by test/engine-parity/cli-reads-ops.test.ts)
   'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
-  'listUnattributedFacts', 'listWantedPages',
+  'listUnattributedFacts', 'listWantedPages', 'readRankCoverage', 'readExactSnippetChunks', 'listExactRescanChunks', 'listHeldFenceCells',
   // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
   'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
@@ -128,7 +128,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listRestatedPrivateCopies', 'countDerivedFactTaint',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
-  'listVersionTrustTiers', 'listVersionReasonWriters', 'listValidTimeIdentities', 'pickValidTimeEdition',
+  'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',
+  'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive',
   // Timeline site reads (engine-sql/timeline-reads.ts)
   'sampleEffectiveDates', 'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered',
   'deleteTimelineRows', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows',
@@ -181,7 +182,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
-  'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage',
+  'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',
@@ -209,7 +210,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'declarePersistence', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'listAppliedPolicyRevisions', 'readLiveMember', 'readFolderAccess', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readRetirementHop', 'readEntityCardRows', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'declarePersistence', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readLedgerSource', 'isFolderRestricted', 'listAppliedPolicyRevisions', 'readLiveMember', 'readFolderAccess', 'readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'readRetirementHop', 'readEntityCardRows', 'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
@@ -217,7 +218,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect',
   // The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts).
-  'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'isSourceClaimed', 'hasExtractedEvents', 'listActiveAccessMembers', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath',
+  'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'isSourceClaimed', 'hasExtractedEvents', 'listActiveAccessMembers', 'listAccessTokens', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
