@@ -4,6 +4,7 @@
  * Each statement is the one its call site ran, with the same parameters; the call site keeps its own fallbacks.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { SqlExecutor } from './executor.ts';
 import { extractionLagStatement } from './pages.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
@@ -37,6 +38,66 @@ export interface MentionDueQuery {
   mentionVersion: number;
   /** Also count pages of these types whose derived aliases are behind their content or `version`. */
   aliases?: { types: readonly string[]; version: number };
+}
+
+/** One source's mention-index status row (mentions/coverage.ts); the times are what the driver returns. */
+export interface MentionIndexStatusRow {
+  source_id: string;
+  state: string;
+  pending: number;
+  counted_at: Date | string | null;
+  last_pass_at: Date | string | null;
+  policy_fingerprint: string | null;
+}
+
+/** The mention-index status rows of `sourceIds`, in no defined order; a source with no row has none. */
+export async function readMentionIndexStatus(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]> {
+  return exec.executeRaw<MentionIndexStatusRow>(
+    `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
+}
+
+/** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
+export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId: string): Promise<number> {
+  const [n] = await exec.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
+  return Number(n?.n ?? 0);
+}
+
+/**
+ * Live pages of one source written at or after `since` (a timestamptz text, `-infinity` for no
+ * bound) that are not scanned at their current content or at `mentionVersion`: what mention
+ * coverage adds to a status row's saved count. The bound binds as text: postgres.js serializes a
+ * timestamptz parameter through `new Date()`, which cannot hold `-infinity`.
+ */
+export async function countMentionDueSince(exec: LegacyUnscopedRead, sourceId: string, since: string, mentionVersion: number): Promise<number> {
+  const [n] = await exec.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = $1 AND p.updated_at >= $2::text::timestamptz AND p.deleted_at IS NULL
+          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
+      [sourceId, since, mentionVersion]);
+  return Number(n?.n ?? 0);
+}
+
+/** A recount mention coverage saves on a source's status row (`recountMentionIndexStatus`). */
+export interface MentionIndexRecount {
+  /** The recounted pending pages. */
+  pending: number;
+  /** The fingerprint to store: the policy hash and this binary's index version stamp. */
+  fingerprint: string;
+  /** The fingerprint the caller read; the row is updated only while it still holds this one. */
+  expectedFingerprint: string | null;
+}
+
+/**
+ * Saves a recount on one source's mention-index status row: pending, counted_at, the fingerprint,
+ * and `complete` becomes `pending` when the recount is above 0. A compare-and-set on the stored
+ * fingerprint, so a pass that finished meanwhile is not overwritten; a source with no row is untouched.
+ */
+export async function recountMentionIndexStatus(exec: SqlExecutor, sourceId: string, r: MentionIndexRecount): Promise<void> {
+  await exec.executeRaw(
+        `UPDATE mention_index_status SET pending = $2, counted_at = now(), policy_fingerprint = $3, updated_at = now(),
+                state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
+          WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`,
+        [sourceId, r.pending, r.fingerprint, r.expectedFingerprint]);
 }
 
 /** Live pages due for the mention pass: no mention state, or state behind the page's content or the extractor version. */

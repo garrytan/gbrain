@@ -5,7 +5,10 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::cli_reads::entities::{MentionDueQuery, SiblingCandidateQuery};
+use gbrain_store::cli_reads::entities::{
+    MentionDueQuery, MentionDueSinceQuery, MentionIndexRecount, MentionIndexStatusQuery,
+    SiblingCandidateQuery,
+};
 use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -135,6 +138,44 @@ fn mention_state_is_absent_so_every_live_page_is_due() {
     assert_eq!(due(Some("other")), 1);
     assert_eq!(due(Some("ghost")), 0);
     assert_eq!(due(None), 12);
+}
+
+#[test]
+fn mention_coverage_reads_see_no_status_rows() {
+    let dir = TempDir::new("cli-mention-coverage");
+    let store = seeded(&dir);
+    let status = |ids: &[&str]| {
+        store
+            .read_mention_index_status(&MentionIndexStatusQuery {
+                source_ids: ids.iter().map(|s| s.to_string()).collect(),
+            })
+            .unwrap()
+    };
+    assert!(status(&["default", "other", "ghost"]).is_empty());
+    assert!(status(&[]).is_empty());
+    let since = |source: &str, since: &str| {
+        store.count_mention_due_since(&MentionDueSinceQuery {
+            source_id: source.into(),
+            since: since.into(),
+        })
+    };
+    assert_eq!(since("default", "-infinity").unwrap(), 11);
+    assert_eq!(since("other", "-infinity").unwrap(), 1);
+    assert_eq!(since("ghost", "-infinity").unwrap(), 0);
+    assert_eq!(since("default", "2999-01-01T00:00:00.000Z").unwrap(), 0);
+    assert_eq!(since("default", "1970-01-01T00:00:00.000Z").unwrap(), 11);
+    assert_eq!(since("default", "infinity").unwrap(), 0);
+    assert!(since("default", "yesterday").is_err());
+    // The recount's compare-and-set finds no row, so nothing changes.
+    store
+        .recount_mention_index_status(&MentionIndexRecount {
+            source_id: "default".into(),
+            pending: 4,
+            fingerprint: "h;v".into(),
+            expected_fingerprint: None,
+        })
+        .unwrap();
+    assert!(status(&["default"]).is_empty());
 }
 
 #[test]
@@ -371,6 +412,26 @@ fn entity_card_rows_match_the_title_slugs_and_like_pattern() {
     let body = rows[0].compiled_truth.as_deref().unwrap();
     assert_eq!(body.chars().count(), 65_536);
     assert_eq!(rows[0].last_retrieved_at, None);
+    // A recorded retrieval (`bumpPageRetrievals`) shows on the card row as an ISO time.
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "person", "title": "Read", "compiled_truth": "Read."}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+    let read = store.put_page("people/read", &input, &opts).unwrap();
+    let id = read["id"].as_i64().unwrap();
+    assert_eq!(store.bump_page_retrievals(&[id]).unwrap(), 1);
+    let rows = store
+        .read_entity_card_rows(
+            "default",
+            &EntityCardMatch::Slugs {
+                slugs: vec!["people/read".into()],
+            },
+            None,
+        )
+        .unwrap();
+    let at = rows[0].last_retrieved_at.as_deref().unwrap();
+    assert!(at.ends_with('Z') && at.len() > 20, "{at}");
     assert!(
         store
             .read_entity_card_rows(

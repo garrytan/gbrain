@@ -19,6 +19,44 @@ const PRIVACY_LABEL_KEYS: &[&str] = &["access", "confidentiality"];
 /// The frontmatter key that marks a quarantined page (`QUARANTINE_KEY`).
 const QUARANTINE_KEY: &str = "quarantine";
 
+/// `readMentionIndexStatus(sourceIds)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionIndexStatusQuery {
+    pub source_ids: Vec<String>,
+}
+
+/// One `mention_index_status` row as `readMentionIndexStatus` returns it. The store writes none.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MentionIndexStatusRow {
+    pub source_id: String,
+    pub state: String,
+    pub pending: i64,
+    pub counted_at: Option<String>,
+    pub last_pass_at: Option<String>,
+    pub policy_fingerprint: Option<String>,
+}
+
+/// `countMentionDueSince(sourceId, since, mentionVersion)`: the version does not matter, since no
+/// page has mention state.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionDueSinceQuery {
+    pub source_id: String,
+    /// A `timestamptz` text, or `-infinity` for no lower bound.
+    pub since: String,
+}
+
+/// `recountMentionIndexStatus(sourceId, recount)`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionIndexRecount {
+    pub source_id: String,
+    pub pending: i64,
+    pub fingerprint: String,
+    pub expected_fingerprint: Option<String>,
+}
+
 /// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,8 +118,8 @@ pub enum EntityCardMatch {
 }
 
 /// One entity-card candidate row (`readEntityCardRows`). `compiled_truth` is the bounded body
-/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is always
-/// NULL: the store records no retrievals.
+/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is the page's
+/// retrieval record (`page_ops/retrievals.rs`, the `page_retrievals` LEFT JOIN), NULL when none.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EntityCardRow {
     pub slug: String,
@@ -119,6 +157,45 @@ impl Store {
     /// it is always `None`.
     pub fn read_mention_last_pass(&self, _source_id: Option<&str>) -> Result<Option<String>> {
         Ok(None)
+    }
+
+    /// `readMentionIndexStatus(sourceIds)`: the status rows of those sources. The store keeps no
+    /// mention-index status, so it is always empty and mention coverage counts each source's live
+    /// pages, as on a PGLite brain where the pass never ran.
+    pub fn read_mention_index_status(
+        &self,
+        _q: &MentionIndexStatusQuery,
+    ) -> Result<Vec<MentionIndexStatusRow>> {
+        Ok(Vec::new())
+    }
+
+    /// `countMentionDueSince(sourceId, since)`: the source's live pages with `updated_at >= since`.
+    /// With no mention state every page is unscanned. `-infinity` has no bound; `infinity` matches
+    /// nothing; other text must be the ISO time coverage passes (`toIso`), or the read is refused.
+    pub fn count_mention_due_since(&self, q: &MentionDueSinceQuery) -> Result<u64> {
+        let since = match q.since.trim() {
+            "-infinity" => i64::MIN,
+            "infinity" => return Ok(0),
+            text => parse_iso(text).ok_or_else(|| {
+                StoreError::invalid(format!(
+                    "countMentionDueSince: since is not an ISO time: {text:?}"
+                ))
+            })?,
+        };
+        let read = self.read()?;
+        let n = all_pages(&*read)?
+            .iter()
+            .filter(|p| p.deleted_at_us.is_none() && p.source_id == q.source_id)
+            .filter(|p| p.updated_at_us >= since)
+            .count();
+        Ok(n as u64)
+    }
+
+    /// `recountMentionIndexStatus(sourceId, recount)`: the SQL updates the source's status row
+    /// only while its fingerprint is `expected_fingerprint`. The store keeps no status rows, so the
+    /// update matches nothing and nothing is written; it returns `null` as the engines do.
+    pub fn recount_mention_index_status(&self, _q: &MentionIndexRecount) -> Result<()> {
+        Ok(())
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is
@@ -274,7 +351,7 @@ impl Store {
                         .map_or(b.clone(), |(at, _)| b[..at].to_string())
                 }),
                 updated_at: iso(p.updated_at_us),
-                last_retrieved_at: None,
+                last_retrieved_at: crate::page_ops::last_retrieved_us(&*read, p.id)?.map(iso),
                 frontmatter: Value::Object(p.frontmatter.clone()),
                 slug: p.slug,
                 source_id: p.source_id,

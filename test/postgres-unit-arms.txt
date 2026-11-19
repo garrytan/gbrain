@@ -145,6 +145,7 @@ test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
+test/engine-parity/entity-card-option-reads.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
@@ -185,6 +186,7 @@ test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
+test/engine-parity/mention-coverage.test.ts
 test/engine-parity/oauth-clients.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-reads.test.ts
@@ -198,6 +200,7 @@ test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/referrer-reads.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
@@ -506,6 +509,7 @@ test/managed-sync-stale-group-head.test.ts
 test/mcp-sources-not-readable.test.ts
 test/member-forget-refusal-9101.test.ts
 test/member-read-access.test.ts
+test/mention-coverage-members.test.ts
 test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
