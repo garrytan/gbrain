@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 647/647
+# covered: 651/651
 # lifecycle: 9/9
-# pages: 36/36
+# pages: 39/39
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 10/10
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 9/9
 # persistence_journal: 40/40
-# entity_reads: 7/7
+# entity_reads: 8/8
 # cycle_locks: 7/7
 # minion_jobs: 8/8
 # minion_queue: 70/70
@@ -102,6 +102,9 @@ updateSourceConfig	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
+readPlainSyncSource	pages	yes	1	no	yes	yes	serves
+readOwnerOnlySourcesPresent	pages	yes	1	no	yes	yes	serves
+readOwnerOnlySourceConfig	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
@@ -399,6 +402,7 @@ countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	3	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	11	no	yes	yes	serves

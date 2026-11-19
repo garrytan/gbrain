@@ -946,9 +946,6 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
-  ...variants('readPlainSyncSource', [['default', (e) => e.readPlainSyncSource(SRC)]]),
-  ...variants('readOwnerOnlySourcesPresent', [['default', (e) => e.readOwnerOnlySourcesPresent()]]),
-  ...variants('readOwnerOnlySourceConfig', [['default', (e) => e.readOwnerOnlySourceConfig(SRC)]]),
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
@@ -1380,4 +1377,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listGatedMirrorRequests', [['default', (e) => e.listGatedMirrorRequests(JOURNAL_REQUEST, 'segmented_mirror_writer_gate', ['segmented_mirror_writer_gate', 'withdrawal_mirror_failed'])]]),
   ...variants('listEffectRecoveries', [['default', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, null, 10)], ['after', (e) => e.listEffectRecoveries(JOURNAL_REQUEST, '12', 10)]]),
   ...variants('selectClaimableEffect', [['default', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, []))], ['dead', (e) => e.transaction((tx: any) => tx.selectClaimableEffect(JOURNAL_REQUEST, ['1:n:2']))]]),
+  ...variants('readPlainSyncSource', [['default', (e) => e.readPlainSyncSource(SRC)]]),
+  ...variants('readOwnerOnlySourcesPresent', [['default', (e) => e.readOwnerOnlySourcesPresent()]]),
+  ...variants('readOwnerOnlySourceConfig', [['default', (e) => e.readOwnerOnlySourceConfig(SRC)]]),
 ];
