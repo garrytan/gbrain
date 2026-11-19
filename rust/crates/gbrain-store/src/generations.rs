@@ -5,7 +5,9 @@
 //! heldGenerationRowsForInput, readHeldGenerationContext, liveGenerationForOperation,
 //! countGenerationAttempt, clearGenerationAttempts, readGenerationValve and bumpGenerationValve
 //! (the statements of `engine-sql/derived-generations.ts`), listFenceHoldRows and
-//! clearFenceHoldRows (the held fence statements of `engine-sql/fence-holds.ts`).
+//! clearFenceHoldRows (the held fence statements of `engine-sql/fence-holds.ts`), and
+//! scrubGenerationPageRows and scrubGenerationTextRows (the purge scrub of
+//! `engine-sql/generation-ledger.ts`).
 //!
 //! Keys, all under `keys::DERIVED_GENERATION` (`h`):
 //! - `h 0x01 id(8) -> GenerationRecord`, one row of `derived_generations`. Ids come from the
@@ -36,6 +38,7 @@
 //! family writes no page record, so it never sets the member-access flag itself; a page write in the
 //! same write closure still does.
 
+use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
 use crate::dream::{int4, jsonb, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
@@ -956,19 +959,141 @@ impl Store {
             )
         })
     }
+
+    /// `scrubGenerationPageRows(sourceId, kinds, slug)`, the page purge scrub, in the order of
+    /// its four statements: deletes the held rows of `kinds` owned by `page:<slug>`; nulls the
+    /// preimage of the item `slug` in every generation of the source; nulls every proposal whose
+    /// owner key ends in `:<slug>` or that proposes an object with `"key": slug`; drops the
+    /// `fence` key of the completeness of every row owned by `page:<slug>`. Resolves
+    /// `{ derived_generation_items, derived_generations }`, each the rows its statements changed.
+    pub fn scrub_generation_page_rows(
+        &self,
+        source_id: &str,
+        kinds: &[String],
+        slug: &str,
+    ) -> Result<Value> {
+        const OP: &str = "scrubGenerationPageRows";
+        no_nul(OP, &[("source_id", source_id), ("slug", slug)])?;
+        for kind in kinds {
+            no_nul(OP, &[("kind", kind)])?;
+        }
+        let now = self.env.now_micros();
+        let owner = format!("page:{slug}");
+        let suffix = format!(":{slug}");
+        self.write(|tx| {
+            let (mut items, mut generations) = (0u64, 0u64);
+            let mut kept = Vec::new();
+            for record in source_records(&*tx, source_id)? {
+                if record.state == "held"
+                    && record.owner_key == owner
+                    && kinds.contains(&record.kind)
+                {
+                    delete_row(tx, &record)?;
+                    generations += 1;
+                } else {
+                    kept.push(record);
+                }
+            }
+            for record in &kept {
+                let at = item_key(record.id, slug);
+                if let Some(mut item) = get_json::<ItemRecord>(&*tx, &at)?
+                    && item.preimage.is_some()
+                {
+                    item.preimage = None;
+                    put_json(tx, &at, &item)?;
+                    items += 1;
+                }
+            }
+            for record in &mut kept {
+                let named = record.proposal.as_ref().is_some_and(|proposal| {
+                    record.owner_key.ends_with(&suffix) || proposes_key(proposal, slug)
+                });
+                if named {
+                    record.proposal = None;
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            for record in &mut kept {
+                if record.owner_key == owner && drop_fence(&mut record.completeness) {
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            Ok(json!({ "derived_generation_items": items, "derived_generations": generations }))
+        })
+    }
+
+    /// `scrubGenerationTextRows(sourceId, needles)`, the fact purge scrub, in the order of its
+    /// three statements: nulls every item preimage of the source whose jsonb text, lowered,
+    /// contains a needle; nulls both the proposal and the held context of every row where either
+    /// does; drops the `fence` key of every completeness whose `fence` value does. The needles
+    /// arrive lowercase. Resolves `{ derived_generation_items, derived_generations }`.
+    pub fn scrub_generation_text_rows(&self, source_id: &str, needles: &[String]) -> Result<Value> {
+        const OP: &str = "scrubGenerationTextRows";
+        no_nul(OP, &[("source_id", source_id)])?;
+        for needle in needles {
+            no_nul(OP, &[("needle", needle)])?;
+        }
+        let carries = |value: &Value| {
+            let text = pg_lower(&jsonb_text_of(value));
+            needles.iter().any(|needle| text.contains(needle.as_str()))
+        };
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let (mut items, mut generations) = (0u64, 0u64);
+            let mut records = source_records(&*tx, source_id)?;
+            for record in &records {
+                for (k, v) in collect_prefix(&*tx, &item_prefix(record.id), false, usize::MAX)? {
+                    let mut item: ItemRecord = serde_json::from_slice(&v)?;
+                    if item.preimage.as_ref().is_some_and(&carries) {
+                        item.preimage = None;
+                        put_json(tx, &k, &item)?;
+                        items += 1;
+                    }
+                }
+            }
+            for record in &mut records {
+                if record.proposal.as_ref().is_some_and(&carries)
+                    || record.held_context.as_ref().is_some_and(&carries)
+                {
+                    record.proposal = None;
+                    record.held_context = None;
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            for record in &mut records {
+                let fenced = record
+                    .completeness
+                    .as_object()
+                    .and_then(|o| o.get("fence"))
+                    .is_some_and(&carries);
+                if fenced && drop_fence(&mut record.completeness) {
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            Ok(json!({ "derived_generation_items": items, "derived_generations": generations }))
+        })
+    }
 }
 
-/// `ON DELETE CASCADE` of `derived_generations.source_id` (and of the items with their row).
-pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
-    let mut doomed = Vec::new();
+/// The `derived_generations` rows of `source_id`, in id order (the records carry no source index).
+fn source_records(read: &dyn KvRead, source_id: &str) -> Result<Vec<GenerationRecord>> {
+    let mut rows = Vec::new();
     let mut failure = None;
     scan_prefix(
-        &*tx,
+        read,
         &[keys::DERIVED_GENERATION, RECORD],
         false,
         &mut |_, v| {
             match serde_json::from_slice::<GenerationRecord>(v) {
-                Ok(record) if record.source_id == source_id => doomed.push(record),
+                Ok(record) if record.source_id == source_id => rows.push(record),
                 Ok(_) => {}
                 Err(e) => {
                     failure = Some(StoreError::from(e));
@@ -978,9 +1103,32 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
             true
         },
     )?;
-    if let Some(e) = failure {
-        return Err(e);
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(rows),
     }
+}
+
+/// `proposal @> jsonb_build_array(jsonb_build_object('key', slug))`: the proposal is an array
+/// with an object element whose `key` is the string `slug`.
+fn proposes_key(proposal: &Value, slug: &str) -> bool {
+    proposal.as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| item.get("key").and_then(Value::as_str) == Some(slug))
+    })
+}
+
+/// `completeness - 'fence'` where `completeness->'fence' IS NOT NULL`: true when the key was there.
+fn drop_fence(completeness: &mut Value) -> bool {
+    completeness
+        .as_object_mut()
+        .is_some_and(|o| o.remove("fence").is_some())
+}
+
+/// `ON DELETE CASCADE` of `derived_generations.source_id` (and of the items with their row).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let doomed = source_records(&*tx, source_id)?;
     for record in &doomed {
         delete_row(tx, record)?;
     }
@@ -1267,6 +1415,119 @@ mod tests {
             collect_prefix(&*read, &[keys::DERIVED_GENERATION], false, 10)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    fn scrub_fixture(store: &Store) -> (GenerationKey, GenerationKey) {
+        store
+            .record_held_generation_row(&key(), &held("h1", "no_proof"))
+            .unwrap();
+        let live = GenerationKey {
+            kind: "other".into(),
+            ..key()
+        };
+        let mut row = activation("op1", 1.0);
+        row.completeness = r#"{"fence":{"text":"Hello World"},"complete":true}"#.into();
+        let mut a = owned("notes/a");
+        a.preimage = Some(json!({"body": "Hello World"}));
+        let mut b = owned("notes/b");
+        b.preimage = Some(json!({"body": "other"}));
+        store
+            .activate_generation_rows(&live, None, &row, &[a, b])
+            .unwrap();
+        let input = GenerationKey {
+            kind: "other".into(),
+            owner_key: "input:q".into(),
+            ..key()
+        };
+        let mut proposing = held("h2", "no_proof");
+        proposing.proposal = Some(r#"[{"key":"notes/a","n":1}]"#.into());
+        proposing.context = r#"{"note":"HELLO world"}"#.into();
+        store
+            .record_held_generation_row(&input, &proposing)
+            .unwrap();
+        (live, input)
+    }
+
+    fn row_of(store: &Store, key: &GenerationKey, state: &str) -> Option<GenerationRecord> {
+        pointed_record(&*store.read().unwrap(), key, state).unwrap()
+    }
+
+    fn preimage_of(store: &Store, id: u64, item: &str) -> Option<Value> {
+        get_json::<ItemRecord>(&*store.read().unwrap(), &item_key(id, item))
+            .unwrap()
+            .unwrap()
+            .preimage
+    }
+
+    #[test]
+    fn the_page_scrub_deletes_holds_and_clears_preimages_proposals_and_fences() {
+        let store = store();
+        let (live, input) = scrub_fixture(&store);
+        let kinds = vec!["facts_fence".to_string()];
+        let counts = store
+            .scrub_generation_page_rows("default", &kinds, "notes/a")
+            .unwrap();
+        assert_eq!(
+            counts,
+            json!({"derived_generation_items": 1, "derived_generations": 3})
+        );
+        assert!(row_of(&store, &key(), "held").is_none());
+        let live_row = row_of(&store, &live, "live").unwrap();
+        assert_eq!(live_row.completeness, json!({"complete": true}));
+        assert_eq!(preimage_of(&store, live_row.id, "notes/a"), None);
+        assert_eq!(
+            preimage_of(&store, live_row.id, "notes/b"),
+            Some(json!({"body": "other"}))
+        );
+        let input_row = row_of(&store, &input, "held").unwrap();
+        assert_eq!(input_row.proposal, None);
+        assert!(input_row.held_context.is_some());
+        // A second scrub finds nothing left to change.
+        let again = store
+            .scrub_generation_page_rows("default", &kinds, "notes/a")
+            .unwrap();
+        assert_eq!(
+            again,
+            json!({"derived_generation_items": 0, "derived_generations": 0})
+        );
+        // Another source is untouched.
+        let other = store
+            .scrub_generation_page_rows("elsewhere", &kinds, "notes/b")
+            .unwrap();
+        assert_eq!(
+            other,
+            json!({"derived_generation_items": 0, "derived_generations": 0})
+        );
+    }
+
+    #[test]
+    fn the_text_scrub_matches_the_lowered_jsonb_text() {
+        let store = store();
+        let (live, input) = scrub_fixture(&store);
+        let counts = store
+            .scrub_generation_text_rows("default", &["hello world".to_string()])
+            .unwrap();
+        // The preimage of notes/a, the held context of h2 and the fence of the live row.
+        assert_eq!(
+            counts,
+            json!({"derived_generation_items": 1, "derived_generations": 2})
+        );
+        let live_row = row_of(&store, &live, "live").unwrap();
+        assert_eq!(live_row.completeness, json!({"complete": true}));
+        assert_eq!(preimage_of(&store, live_row.id, "notes/a"), None);
+        let input_row = row_of(&store, &input, "held").unwrap();
+        assert_eq!((input_row.proposal, input_row.held_context), (None, None));
+        assert!(row_of(&store, &key(), "held").unwrap().proposal.is_some());
+        // The jsonb text separators count: `"body": "other"` matches, `"body":"other"` does not.
+        let spaced = store
+            .scrub_generation_text_rows("default", &["\"body\": \"other\"".to_string()])
+            .unwrap();
+        assert_eq!(spaced["derived_generation_items"], json!(1));
+        assert!(
+            store
+                .scrub_generation_text_rows("default", &["a\0b".to_string()])
+                .is_err()
         );
     }
 }

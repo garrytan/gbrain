@@ -52,6 +52,7 @@ import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts'
 import type { FenceFactRow, FenceRowsTarget } from './engine-sql/trust-fence.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from './engine-sql/fence-holds.ts';
 import type { GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow, HeldInputRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
+import type { LedgerScrubCounts } from './engine-sql/generation-ledger.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -3420,6 +3421,9 @@ export interface BrainEngine {
   clearGenerationAttempts(holdId: string): Promise<void>;
   readGenerationValve(key: GenerationRowKey, windowKey: string): Promise<GenerationValveRow>;
   bumpGenerationValve(key: GenerationRowKey, windowKey: string, retired: number): Promise<void>;
+  /** The purge scrub of the generation ledger (generations/ledger-scrub.ts, engine-sql/generation-ledger.ts): one page's rows, or every row whose text carries a needle. */
+  scrubGenerationPageRows(sourceId: string, fenceKinds: readonly string[], slug: string): Promise<LedgerScrubCounts>;
+  scrubGenerationTextRows(sourceId: string, needles: readonly string[]): Promise<LedgerScrubCounts>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */

@@ -557,6 +557,8 @@ export const RUST_ENGINE_MEMBERS = {
   clearGenerationAttempts: 'persistence_journal',
   readGenerationValve: 'persistence_journal',
   bumpGenerationValve: 'persistence_journal',
+  scrubGenerationPageRows: 'persistence_journal',
+  scrubGenerationTextRows: 'persistence_journal',
   hasPersistenceTable: 'persistence_journal',
   listManagedRootBindings: 'persistence_journal',
   readGraduationGateRow: 'persistence_journal',

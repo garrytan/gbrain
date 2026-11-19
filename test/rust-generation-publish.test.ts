@@ -19,7 +19,7 @@
  *    engine; its publishItems throws on request. The PGLite pin wraps PGLiteEngine.prototype.executeRaw to record each
  *    statement and restores it in `finally`. Postgres runs when DATABASE_URL is set (testBackends) and checks the database
  *    name first. The Rust half needs the addon: skipped without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1.
- *  - Not covered: the producers' own adapters (fence evidence, repair, fence restore, ledger scrub, managed publication),
+ *  - Not covered: the producers' own adapters (fence evidence, repair, fence restore, managed publication),
  *    which still read through `executeRaw` (TODOS.md).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

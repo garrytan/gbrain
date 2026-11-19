@@ -9,6 +9,7 @@ import type {
   GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow,
   HeldInputRow, LiveGenerationRow,
 } from '../../engine-sql/derived-generations.ts';
+import type { LedgerScrubCounts } from '../../engine-sql/generation-ledger.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The live generation of `key` with its owned items, or null. */
@@ -56,3 +57,12 @@ export const readGenerationValve: StoreMember<[key: GenerationRowKey, windowKey:
 export const bumpGenerationValve: StoreMember<[key: GenerationRowKey, windowKey: string, retired: number], void> = async (brain, key, windowKey, retired) => {
   await storeCall({ member: 'bumpGenerationValve', sourceId: key.sourceId }, () => brain.bumpGenerationValve(key, windowKey, retired));
 };
+
+/** The page purge scrub of `slug` (held fence rows of `fenceKinds`, preimages, proposals and fence blocks). */
+export const scrubGenerationPageRows: StoreMember<[sourceId: string, fenceKinds: readonly string[], slug: string], LedgerScrubCounts> =
+  async (brain, sourceId, fenceKinds, slug) =>
+    storeCall({ member: 'scrubGenerationPageRows', sourceId }, () => brain.scrubGenerationPageRows(sourceId, [...fenceKinds], slug));
+
+/** The fact purge scrub: every preimage, held proposal, held context and fence block that carries a lowercase needle. */
+export const scrubGenerationTextRows: StoreMember<[sourceId: string, needles: readonly string[]], LedgerScrubCounts> = async (brain, sourceId, needles) =>
+  storeCall({ member: 'scrubGenerationTextRows', sourceId }, () => brain.scrubGenerationTextRows(sourceId, [...needles]));

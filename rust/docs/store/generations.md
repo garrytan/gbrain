@@ -20,6 +20,8 @@ The key layout is in the module header of `rust/crates/gbrain-store/src/generati
 | `brain.clearGenerationAttempts(holdId)` | `null`. Deletes the attempt row `holdId` | `clearGenerationAttempts` |
 | `brain.readGenerationValve(key, windowKey)` | `{ retired, owned }`: the retirements of the source and kind's valve window (`null`: no row), and the count of items the source and kind's live generations own | `readGenerationValve` |
 | `brain.bumpGenerationValve(key, windowKey, retired)` | `null`. Adds `retired` to the window (a new window starts at `retired`) | `bumpGenerationValve` |
+| `brain.scrubGenerationPageRows(sourceId, kinds, slug)` | `{ derived_generation_items, derived_generations }`. Deletes the held rows of `kinds` owned by `page:<slug>`, nulls the preimage of item `slug` in the source's generations, nulls every held proposal of an owner ending in `:<slug>` or naming `slug` as an element `key`, and drops the `fence` block of the completeness of rows owned by `page:<slug>`; the counts are the items and rows changed | `scrubGenerationPageRows` (engine-sql/generation-ledger.ts) |
+| `brain.scrubGenerationTextRows(sourceId, needles)` | the same counts. Nulls the source's item preimages, held proposals and contexts (a row's both together), and completeness `fence` blocks whose lowered jsonb text contains a needle | `scrubGenerationTextRows` |
 | `brain.listFenceHoldRows(sourceIds, kinds, ownerKey?)` | the held rows of those sources and kinds (one owner when given), `{ source_id, kind, owner_key, held_reason, held_context, created_at }`, oldest first; `created_at` is Postgres `timestamptz` text | `listFenceHoldRows` |
 | `brain.clearFenceHoldRows(key)` | `null`. Deletes the key's held row when its reason is `fence_absent` or `no_proof` | `clearFenceHoldRows` |
 
@@ -36,6 +38,8 @@ The store also keeps `derived_generation_attempts` (one row per hold id, with an
 the key's counters as the Postgres statement does) and `derived_generation_valve` (one row per source, kind and
 window). An unknown source is `source_not_found` for a new attempt or valve row; an attempt or valve total past the
 `int4` range, and a fractional `retired`, are `invalid_argument`.
+
+The scrub reads the jsonb text Postgres prints (`cli_reads::pg_text::jsonb_text`) and lowers it as Postgres `lower()` does in a UTF-8 database with the C.UTF-8 ctype. One difference stays: a stored JSON `null` and an absent value are the same in the store, and numbers print in their shortest form (`1.0` reads `1`).
 
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all four tables (`cascade.rs`).

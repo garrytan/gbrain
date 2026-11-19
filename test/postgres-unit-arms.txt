@@ -737,6 +737,7 @@ test/retrieval-coverage-notices.test.ts
 test/rust-derived-generations.test.ts
 test/rust-fence-generations.test.ts
 test/rust-generation-publish.test.ts
+test/rust-generation-scrub.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

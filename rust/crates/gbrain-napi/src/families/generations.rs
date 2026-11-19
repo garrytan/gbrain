@@ -178,4 +178,33 @@ impl Brain {
             s.bump_generation_valve(&key, &window_key, retired)
         })
     }
+
+    /// `scrubGenerationPageRows(sourceId, kinds, slug)`: resolves
+    /// `{ derived_generation_items, derived_generations }`.
+    #[napi]
+    pub fn scrub_generation_page_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        kinds: Vec<String>,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.scrub_generation_page_rows(&source_id, &kinds, &slug)
+        })
+    }
+
+    /// `scrubGenerationTextRows(sourceId, needles)`: resolves
+    /// `{ derived_generation_items, derived_generations }`.
+    #[napi]
+    pub fn scrub_generation_text_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        needles: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.scrub_generation_text_rows(&source_id, &needles)
+        })
+    }
 }

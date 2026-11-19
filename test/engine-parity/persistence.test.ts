@@ -276,6 +276,31 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('a purge scrubs the generation ledger by page and by text', {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'readHeldGenerationContext', 'scrubGenerationPageRows', 'scrubGenerationTextRows'],
+  }, async (engine) => {
+    const live = { sourceId: 'default', kind: 'scrub_parity', ownerKey: 'page:notes/x' };
+    const asking = { sourceId: 'default', kind: 'scrub_parity', ownerKey: 'input:x' };
+    const fence = { sourceId: 'default', kind: 'fact_fence', ownerKey: 'page:notes/x' };
+    const held = (holdId: string, context: string, proposal: string) => ({ holdId, runId: null, inputPin: holdId, inputSize: 1, setHash: 'h', reason: 'no_proof',
+      context, proposal, proposalBytes: 2 });
+    await engine.transaction(tx => tx.recordHeldGenerationRow(fence, held('hold-f', '{}', '[]')));
+    await engine.transaction(tx => tx.recordHeldGenerationRow(asking, held('hold-a', '{"note":"Secret Words"}', '[{"key":"notes/x"}]')));
+    await engine.transaction(tx => tx.activateGenerationRows(live, null, { generation: 1, runId: null, operationId: 'scrub-parity', inputPin: 'p', inputSize: 1,
+      completeness: '{"fence":{"text":"secret words"}}', setHash: 'h', restoreOf: null, activationId: null, locator: null },
+      [{ item_key: 'notes/x', identity_hash: 'x', action: 'published', preimage: { body: 'SECRET words' }, preimage_bytes: 9, pending: false }]));
+    const byText = await engine.transaction(tx => tx.scrubGenerationTextRows('default', ['secret words']));
+    const context = await engine.readHeldGenerationContext(asking, 'hold-a');
+    const textAgain = await engine.transaction(tx => tx.scrubGenerationTextRows('default', ['secret words']));
+    const byPage = await engine.transaction(tx => tx.scrubGenerationPageRows('default', ['fact_fence', 'take_fence'], 'notes/x'));
+    const pageAgain = await engine.transaction(tx => tx.scrubGenerationPageRows('default', ['fact_fence', 'take_fence'], 'notes/x'));
+    const answers = { byText, context, textAgain, byPage, pageAgain };
+    expect(answers).toEqual({ byText: { derived_generation_items: 1, derived_generations: 2 }, context: { held_context: null },
+      textAgain: { derived_generation_items: 0, derived_generations: 0 }, byPage: { derived_generation_items: 0, derived_generations: 1 },
+      pageAgain: { derived_generation_items: 0, derived_generations: 0 } });
+    return answers;
+  });
+
   parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
     methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
   }, async (engine) => {
