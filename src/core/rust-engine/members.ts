@@ -36,6 +36,7 @@ export const RUST_ENGINE_MEMBERS = {
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
+  readCurrentWriteTrust: 'transactions',
   transaction: 'transactions',
   transactionDirect: 'transactions',
   lockPageKeys: 'transactions',
@@ -511,6 +512,7 @@ export const RUST_ENGINE_MEMBERS = {
   // persistence_journal
   readManagedModeRows: 'persistence_journal',
   readPersistenceBrainId: 'persistence_journal',
+  setWriteContext: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',
   readJournalLimitRows: 'persistence_journal',
@@ -543,6 +545,7 @@ export const RUST_ENGINE_MEMBERS = {
   renewWriteClaim: 'persistence_journal',
   expireStaleWriteClaims: 'persistence_journal',
   hasClaimableWrite: 'persistence_journal',
+  selectClaimableWrite: 'persistence_journal',
   listHostConsumerRows: 'persistence_journal',
   probeLiveConsumerRows: 'persistence_journal',
   renewConsumerRow: 'persistence_journal',
@@ -558,6 +561,9 @@ export const RUST_ENGINE_MEMBERS = {
   listEffectRecoveries: 'persistence_journal',
   selectClaimableEffect: 'persistence_journal',
   readCapacityForecastInputs: 'persistence_journal',
+  readWriterVersionCutoff: 'persistence_journal',
+  listWriterVersions: 'persistence_journal',
+  recentWriterVersions: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
   // access_control

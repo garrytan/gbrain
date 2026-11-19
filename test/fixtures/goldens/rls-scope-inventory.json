@@ -2919,6 +2919,17 @@
         ],
         "flagOnScopes": []
       },
+      "listWriterVersions#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "loadContradictionsTrend#default": {
         "flagOffLanes": [
           "pool"
@@ -3139,6 +3150,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readCurrentWriteTrust#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
         ],
         "flagOnScopes": []
       },
@@ -3499,6 +3521,28 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriterVersionCutoff#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "recentWriterVersions#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4051,6 +4095,39 @@
         ],
         "flagOnScopes": []
       },
+      "selectClaimableWrite#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#fifo-holder": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableWrite#priority": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "selectProjectionWindowJobs#default": {
         "flagOffLanes": [
           "pool"
@@ -4121,6 +4198,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "setWriteContext#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
         ],
         "flagOnScopes": []
       },
@@ -4970,6 +5058,7 @@
         "listWorldFactsFromPrivateSources": "none",
         "listWriteGateHoldRows": "none",
         "listWriteGateReceiptsFor": "none",
+        "listWriterVersions": "none",
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
@@ -5036,6 +5125,7 @@
         "readChildCompletions": "none",
         "readClientOpUsage": "none",
         "readCounterRows": "none",
+        "readCurrentWriteTrust": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readEmbedBackfillBySource": "none",
@@ -5109,6 +5199,8 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriterVersionCutoff": "none",
+        "recentWriterVersions": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordSearchTelemetry": "none",
@@ -5174,6 +5266,7 @@
         "searchTitles": "direct",
         "searchVector": "direct",
         "selectClaimableEffect": "none",
+        "selectClaimableWrite": "none",
         "selectProjectionWindowJobs": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
@@ -5182,6 +5275,7 @@
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
         "setSourceChunkerVersion": "none",
+        "setWriteContext": "none",
         "settleSpendReservation": "none",
         "settleWakeForget": "none",
         "settleWakeWatch": "none",

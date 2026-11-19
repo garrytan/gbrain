@@ -198,6 +198,7 @@ test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
+test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts

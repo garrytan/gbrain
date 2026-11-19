@@ -152,7 +152,7 @@ for (const kind of testBackends()) {
 
     check('doctor never throws: an unreadable brain reports unknown health', async engine => {
       const broken = new Proxy(engine, { get(target, property) {
-        if (property === 'executeRaw') return async () => { throw new Error('simulated read failure'); };
+        if (property === 'readWriterVersionCutoff') return async () => { throw new Error('simulated read failure'); };
         const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
       } }) as BrainEngine;
       const result = await writerVersionCheck(broken);
