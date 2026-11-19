@@ -33,9 +33,10 @@ import { storePagePolicy } from './private-provenance.ts';
 import { toChunk } from '../store-codec.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
-// The SQL engines never read these PageReadScope keys in these statements, so the store ignores them too.
+// The SQL engines never read these read-policy keys in these statements, so the store ignores them too. An MCP
+// caller's policy carries `takesHoldersAllowList` into get_chunks; chunk reads have no takes to filter.
 // `excludePrivate` (the page privacy filter) and `requireSafeChunks` (the chunker-version fence) are served.
-const UNREAD_SCOPE = ['minTrust', 'suppressFlagged'] as const;
+const UNREAD_SCOPE = ['minTrust', 'suppressFlagged', 'takesHoldersAllowList'] as const;
 
 type ChunkPage = { chunks: Chunk[]; total_chunks: number; max_chunk_index: number | null };
 

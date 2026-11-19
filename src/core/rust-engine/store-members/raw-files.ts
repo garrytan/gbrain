@@ -11,7 +11,8 @@
 import type { FileRow, FileSpec } from '../../engine.ts';
 import type { PageReadScope, RawData } from '../../types.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 /** `JSON.stringify(value)`, or null where it gives `undefined` (PGLite then binds SQL NULL). */
 function jsonText(value: unknown): string | null {
@@ -37,10 +38,12 @@ export const putRawData: StoreMember<[slug: string, source: string, data: object
 
 export const getRawData: StoreMember<[slug: string, source?: string, opts?: PageReadScope & { includeDeleted?: boolean }], RawData[]> =
   async (brain, slug, source, opts) => {
-    // PGLite's getRawData reads only these four options; the rest of PageReadScope changes nothing there.
-    if (opts?.excludePrivate) refuseMember('getRawData', 'option excludePrivate');
-    const scope = takeOptions('getRawData', opts, ['sourceId', 'sourceIds', 'includeDeleted'], ['excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged']);
-    const rows: RawData[] = await storeCall({ member: 'getRawData', slug }, () => brain.getRawData(slug, source || null, scope));
+    // PGLite's getRawData reads only these four options; the rest of the read policy (the MCP tool passes all of it,
+    // the takes-holder allow-list included) changes nothing there.
+    const scope = takeOptions('getRawData', opts, ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate'],
+      ['requireSafeChunks', 'minTrust', 'suppressFlagged', 'takesHoldersAllowList']);
+    const excludePrivate = storePagePolicy('getRawData', scope.excludePrivate, { callerReaders: true }) ?? null;
+    const rows: RawData[] = await storeCall({ member: 'getRawData', slug }, () => brain.getRawData(slug, source || null, { ...scope, excludePrivate }));
     return rows.map((row) => withDates(row, ['fetched_at']));
   };
 

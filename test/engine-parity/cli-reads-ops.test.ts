@@ -466,7 +466,6 @@ describe('engine parity: read-command statements', () => {
     await seedWantedLinks(engine, 'notes/closed', [{ target: 'people/closed-missing', refKind: 'slug' }]);
     const all = await engine.listWantedPages({ sourceId: 'default', limit: 10, offset: 0 });
     expect(all.rows.map(r => r.target).sort()).toEqual(['people/closed-missing', 'people/open-missing']);
-    // The Rust store has no visibility filter: this call is its typed refusal (engine_capability_missing).
     const open = await engine.listWantedPages({ sourceId: 'default', excludePrivate: true, limit: 10, offset: 0 });
     expect(open.rows.map(r => r.target)).toEqual(['people/open-missing']);
     return { total: open.total, targets: open.rows.map(r => r.target) };
