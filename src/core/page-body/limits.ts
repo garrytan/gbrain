@@ -12,7 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { PAGE_INLINE_MAX_BYTES, PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import type { SegmentedGateWriter } from '../persistence/writer-versions.ts';
-import { sqlEngineKind, type EngineKind } from '../sql-engine-kind.ts';
+import type { EngineKind } from '../sql-engine-kind.ts';
 
 export { PAGE_INLINE_MAX_BYTES };
 
@@ -63,14 +63,16 @@ export const SEGMENTED_PAGE_CEILING_BYTES: Readonly<Record<'postgres' | 'pglite'
  * (driver hex text, protocol buffers, decoded texts, chunk strings): at 16 MiB a 100 MiB Postgres import peaked
  * ~400 MB above one at 4 MiB (scripts/bench-large-pages.ts), for 3% more ingest time.
  */
-export const STAGE_BATCH_BYTES: Readonly<Record<'postgres' | 'pglite', number>> = {
+export const STAGE_BATCH_BYTES: Readonly<Record<EngineKind, number>> = {
   postgres: 4 * 1024 ** 2,
   pglite: 4 * 1024 ** 2,
+  // The Rust store takes the same batches (its staging members serve them; the bound is payload bytes, not a SQL statement).
+  rust: 4 * 1024 ** 2,
 };
 
-/** STAGE_BATCH_BYTES for the engine's kind; a Rust brain stages no SQL rows, so it is refused (`engine_capability_missing`). */
+/** STAGE_BATCH_BYTES for the engine's kind. */
 export function stageBatchBytes(kind: EngineKind): number {
-  return STAGE_BATCH_BYTES[sqlEngineKind(kind, 'page body staging')];
+  return STAGE_BATCH_BYTES[kind];
 }
 
 /**

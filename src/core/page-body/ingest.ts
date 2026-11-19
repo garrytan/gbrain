@@ -170,8 +170,8 @@ export function rowUnchanged(live: ManifestRow, next: ManifestRowInput): boolean
     && live.dateMin === next.dateMin && live.dateMax === next.dateMax;
 }
 
-async function sourceIncarnation(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<string> {
-  const [row] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+async function sourceIncarnation(engine: Pick<BrainEngine, 'readSourceIncarnation'>, sourceId: string): Promise<string> {
+  const row = await engine.readSourceIncarnation(sourceId);
   if (!row) throw new Error(`Source ${sourceId} not found.`);
   return row.incarnation;
 }
