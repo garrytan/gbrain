@@ -455,6 +455,8 @@ describe.skipIf(!HAVE_ADDON)('a page write sent whole to a real Rust owner on th
       // A capability refusal repeats on every attempt, so the caller gets it typed, never write_pending or committed.
       expect(error).toBeInstanceOf(OperationError);
       expect(error?.code).toBe('engine_capability_missing');
+      // Ember ruling A: the envelope's write_error names the refusal, never the generic storage_error.
+      expect(error?.writeError).toBe('engine_capability_missing');
       const receipt = (error as unknown as { writeRequest?: Record<string, unknown> }).writeRequest;
       expect(receipt).toMatchObject({ request_id: requestId, state: 'failed', write_error: 'engine_capability_missing',
         write_error_detail: { origin: 'engine_capability', stage: 'publication' } });
@@ -801,7 +803,10 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
       // The JSON refusal envelope every typed caller error carries.
       const envelope = JSON.parse(result.stdout.slice(result.stdout.indexOf('{'), result.stdout.lastIndexOf('}') + 1)) as Record<string, unknown>;
       expect(envelope).toMatchObject({ error: 'engine_capability_missing', code: 'engine_capability_missing', class: 'caller', retryable: false,
-        contract_version: 1, docs_cmd: ['gbrain', 'errors', 'engine_capability_missing'], write_request: { state: 'failed' } });
+        contract_version: 1, docs_cmd: ['gbrain', 'errors', 'engine_capability_missing'], write_request: { state: 'failed' },
+        // Ember ruling A: the envelope's write_error names the capability refusal, not the generic storage_error.
+        write_error: 'engine_capability_missing' });
+      expect(result.output).not.toContain('storage_error');
       expect(dispatched).toEqual(['put_page']);
       expect(refusals[0]).toMatchObject({ code: 'engine_capability_missing' });
       expect(await owner.getPage('notes/rust-journal')).toBeNull();
