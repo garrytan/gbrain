@@ -152,6 +152,8 @@ export async function hasDrainableProjectionJob(raw: EngineRawRead, opts: { medi
 
 /** #7172: `<claim>:<token>`, the reason while a continuation holds a deferred chunk replacement (renewed each step). */
 export const DEFERRED_CHUNK_CLAIM = 'chunk_replacement_continuing';
+/** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */
+export const DEFERRED_CHUNK_REPLACEMENT = 'chunk_replacement_deferred';
 
 /**
  * The page's chunk rows as (id, index) pairs, hashed; no chunk text is read. The value is opaque: a caller compares
@@ -247,6 +249,14 @@ export async function isDeferredReplacementHeld(raw: EngineRawRead, sourceId: st
 export async function renewDeferredReplacementClaim(raw: EngineRawRead, job: ProjectionJobKey, claim: string): Promise<void> {
   await raw('UPDATE page_projection_jobs SET reason=$4,updated_at=now() WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid',
     [job.sourceIncarnation, job.slug, job.revision, claim]);
+}
+
+/**
+ * Hands a continuation's claim back: every job of `slug` whose reason is still `claim` gets DEFERRED_CHUNK_REPLACEMENT
+ * again, its time unchanged, so the next drain resumes it at once.
+ */
+export async function releaseDeferredReplacementClaim(raw: EngineRawRead, slug: string, claim: string): Promise<void> {
+  await raw(`UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3`, [DEFERRED_CHUNK_REPLACEMENT, slug, claim]);
 }
 
 /** Whether the page is a live segmented page. */

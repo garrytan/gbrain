@@ -1025,6 +1025,19 @@ impl Brain {
         })
     }
 
+    /// `releaseDeferredReplacementClaim(slug, claim)`.
+    #[napi]
+    pub fn release_deferred_replacement_claim<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_deferred_replacement_claim(&slug, &claim)
+        })
+    }
+
     /// `hasSegmentedPage(sourceId, slug)`.
     #[napi]
     pub fn has_segmented_page<'env>(

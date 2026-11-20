@@ -715,6 +715,26 @@ pub(crate) fn renew_deferred_replacement_claim_in(
     Ok(())
 }
 
+/// `DEFERRED_CHUNK_REPLACEMENT`: the reason of a revision whose chunk replacement a continuation finishes.
+const DEFERRED_CHUNK_REPLACEMENT: &str = "chunk_replacement_deferred";
+
+/// `releaseDeferredReplacementClaim`: every job of `slug`, in any source, whose reason is still
+/// `claim` goes back to `chunk_replacement_deferred`. Its time stays, as the statement sets only the reason.
+pub(crate) fn release_deferred_replacement_claim_in(
+    tx: &mut dyn KvWrite,
+    slug: &str,
+    claim: &str,
+) -> Result<()> {
+    for job in all_jobs(&*tx)? {
+        if job.slug == slug && job.record.reason == claim {
+            let mut record = job.record;
+            record.reason = DEFERRED_CHUNK_REPLACEMENT.into();
+            put_job(tx, &job_key(&job.incarnation, &job.slug), &record)?;
+        }
+    }
+    Ok(())
+}
+
 /// `rekeyProjectionJob`: the job moves to `revision` at now.
 pub(crate) fn rekey_projection_job_in(
     tx: &mut dyn KvWrite,
@@ -869,6 +889,11 @@ impl Store {
         claim: &str,
     ) -> Result<()> {
         self.write(|tx| renew_deferred_replacement_claim_in(tx, job, claim))
+    }
+
+    /// `releaseDeferredReplacementClaim(slug, claim)`.
+    pub fn release_deferred_replacement_claim(&self, slug: &str, claim: &str) -> Result<()> {
+        self.write(|tx| release_deferred_replacement_claim_in(tx, slug, claim))
     }
 
     /// `rekeyProjectionJob(job, revision)`.
@@ -1228,7 +1253,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rebuild_stamps_renews_rekeys_and_defers_a_job_at_its_revision() {
+    fn the_rebuild_stamps_renews_releases_rekeys_and_defers_a_job_at_its_revision() {
         let store = crate::test_support::store();
         put(&store, "notes/a");
         let job = |store: &Store| {
@@ -1275,6 +1300,23 @@ mod tests {
                 .is_deferred_replacement_held("no-such-source", "notes/a", &revision, mine)
                 .unwrap()
         );
+        // A release matches the claim only, and keeps the job's time.
+        let before = job(&store).updated_at_us;
+        store
+            .release_deferred_replacement_claim("notes/a", mine)
+            .unwrap();
+        store
+            .release_deferred_replacement_claim("notes/b", theirs)
+            .unwrap();
+        assert_eq!(job(&store).reason, theirs);
+        store
+            .release_deferred_replacement_claim("notes/a", theirs)
+            .unwrap();
+        assert_eq!(job(&store).reason, DEFERRED_CHUNK_REPLACEMENT);
+        assert_eq!(job(&store).updated_at_us, before);
+        store
+            .renew_deferred_replacement_claim(&at(&revision), theirs)
+            .unwrap();
         // An expired claim holds nothing.
         set_job(&store, "notes/a", theirs, CLAIM_US + 1);
         assert!(!held(mine, &revision));

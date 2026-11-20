@@ -27,7 +27,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ProjectionJobKey } from '../../src/core/engine-sql/projection-rebuild.ts';
-import { continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT,
+import { continueDeferredProjection, continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT,
   rebuildPendingPageProjections, resealSafeChunks } from '../../src/core/page-state/projections.ts';
 import { newProjectionScanCursor } from '../../src/core/page-state/projection-window.ts';
 import { basisEmbedding, parityArms } from './harness.ts';
@@ -135,6 +135,49 @@ describe('engine parity: the rebuild loop on a deferred job', () => {
       const rebuild = await rebuildPendingPageProjections(engine, 10);
       const out = { rebuild, kept: (await engine.readProjectionJobReason(job)) === claim };
       expect(out).toEqual({ rebuild: { rebuilt: 0, superseded: 1 }, kept: true });
+      return out;
+    });
+});
+
+describe('engine parity: a continuation hands its claim back', () => {
+  // continueDeferredProjection releases its claim when it stops early or fails, so the next drain resumes the page.
+  parityTest('the release gives back only the matching claim, in any source',
+    { methods: ['putPage', 'upsertChunks', 'listQueuedPageProjections', 'renewDeferredReplacementClaim', 'readProjectionJobReason',
+      'releaseDeferredReplacementClaim'] },
+    async (engine) => {
+      await movingPage(engine, 'notes/moving');
+      const job = await jobOf(engine, 'notes/moving');
+      const claim = `${DEFERRED_CHUNK_CLAIM}:mine`;
+      await engine.renewDeferredReplacementClaim(job, claim);
+      await engine.releaseDeferredReplacementClaim('notes/moving', `${DEFERRED_CHUNK_CLAIM}:theirs`);
+      await engine.releaseDeferredReplacementClaim('notes/other', claim);
+      const kept = await engine.readProjectionJobReason(job);
+      await engine.releaseDeferredReplacementClaim('notes/moving', claim);
+      const out = { kept: kept === claim, released: await engine.readProjectionJobReason(job) };
+      expect(out).toEqual({ kept: true, released: DEFERRED_CHUNK_REPLACEMENT });
+      return out;
+    });
+
+  parityTest('a continuation that its time budget stops hands its claim back to the drain',
+    { methods: ['putPage', 'upsertChunks', 'getChunks', 'listQueuedPageProjections', 'readProjectionJobReason', 'transaction', 'lockPageKeys',
+      'readProjectionHead', 'isDeferredReplacementHeld', 'readChunkRowsFingerprint', 'renewDeferredReplacementClaim',
+      'releaseDeferredReplacementClaim', 'deleteProjectionJob'] },
+    async (engine) => {
+      // A body of many chunks, stored again each one index later than the body puts it: more moves than one step's budget.
+      const words = 'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa'.split(' ');
+      const para = (seed: number) => Array.from({ length: 300 }, (_, i) => words[(seed * 7 + i * 5) % words.length]).join(' ') + '.';
+      const text = Array.from({ length: 10 }, (_, i) => para(i)).join('\n\n');
+      await engine.putPage('notes/long-move', PAGE('Long move', text));
+      await rebuildPendingPageProjections(engine, 10);
+      const sealed = await engine.getChunks('notes/long-move');
+      await engine.putPage('notes/long-move', PAGE('Long move again', text));
+      await engine.upsertChunks('notes/long-move', [chunk(0, 'an old opening passage.'),
+        ...sealed.map(c => chunk(c.chunk_index + 1, c.chunk_text, { embedding: basisEmbedding(c.chunk_index + 1) }))]);
+      const body = sealed.length > 5;
+      const job = await jobOf(engine, 'notes/long-move');
+      const stopped = await continueDeferredProjection(engine, 'default', 'notes/long-move', () => true);
+      const out = { body, stopped, reason: await engine.readProjectionJobReason(job) };
+      expect(out).toEqual({ body: true, stopped: 'more', reason: DEFERRED_CHUNK_REPLACEMENT });
       return out;
     });
 });

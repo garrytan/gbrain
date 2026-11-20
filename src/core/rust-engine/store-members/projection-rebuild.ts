@@ -92,6 +92,10 @@ export const renewDeferredReplacementClaim: Member<'renewDeferredReplacementClai
   await storeCall({ member: 'renewDeferredReplacementClaim', slug: job.slug }, () => brain.renewDeferredReplacementClaim(jobKey(job), claim));
 };
 
+export const releaseDeferredReplacementClaim: Member<'releaseDeferredReplacementClaim'> = async (brain, slug, claim) => {
+  await storeCall({ member: 'releaseDeferredReplacementClaim', slug }, () => brain.releaseDeferredReplacementClaim(slug, claim));
+};
+
 export const hasSegmentedPage: Member<'hasSegmentedPage'> = (brain, sourceId, slug) =>
   storeCall({ member: 'hasSegmentedPage', slug, sourceId }, () => brain.hasSegmentedPage(sourceId, slug));
 

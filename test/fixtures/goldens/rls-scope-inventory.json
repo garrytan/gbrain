@@ -7104,6 +7104,7 @@
         "relationalFanout": "none",
         "releaseBeliefRedactions": "none",
         "releaseCycleLock": "none",
+        "releaseDeferredReplacementClaim": "none",
         "releasePageEmbeddingLease": "none",
         "releasePurgeRedactionsForField": "none",
         "releaseSegmentedProjectionClaim": "none",

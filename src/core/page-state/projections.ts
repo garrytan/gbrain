@@ -28,7 +28,7 @@ import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, s
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
-import { DEFERRED_CHUNK_CLAIM, projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
+import { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT, projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
 import { lacksRawSql } from '../engine-capabilities.ts';
 
 export { sealPageTextProjection } from './text-seal.ts';
@@ -160,10 +160,10 @@ async function readGuardedProjectionSnapshot(tx: BrainEngine, slug: string, sour
     ...(fenceOverlay ? { fenceOverlay } : {}) };
 }
 
-/** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */
-export const DEFERRED_CHUNK_REPLACEMENT = 'chunk_replacement_deferred';
-/** #7172: `<claim>:<token>`, the reason while a continuation holds the replacement (renewed each step, as a segmented projection claim is). */
-export { DEFERRED_CHUNK_CLAIM };
+/** #7172: DEFERRED_CHUNK_REPLACEMENT is the queue reason of a revision whose publication left its chunk replacement to
+ * `continueDeferredProjection`; `<claim>:<token>` is the reason while a continuation holds the replacement (renewed each
+ * step, as a segmented projection claim is). */
+export { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT };
 
 /**
  * Which stored rows a projection of `chunks` keeps (#5553, A4): each row holding a new chunk at its own index, and
@@ -287,8 +287,7 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
  */
 export async function continueDeferredProjection(engine: BrainEngine, sourceId: string, slug: string, until: () => boolean = () => false): Promise<'sealed' | 'more' | 'skipped' | 'held'> {
   const state: { token?: string } = {};
-  const release = () => engine.executeRaw(`UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3`,
-    [DEFERRED_CHUNK_REPLACEMENT, slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`]).catch(() => undefined);
+  const release = () => engine.releaseDeferredReplacementClaim(slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`).catch(() => undefined);
   try {
     for (;;) {
       const step = await continueDeferredProjectionStep(engine, sourceId, slug, state);

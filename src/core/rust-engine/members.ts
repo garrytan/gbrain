@@ -1047,6 +1047,7 @@ export const RUST_ENGINE_MEMBERS = {
   readProjectionHead: 'persistence_journal',
   isDeferredReplacementHeld: 'persistence_journal',
   renewDeferredReplacementClaim: 'persistence_journal',
+  releaseDeferredReplacementClaim: 'persistence_journal',
   hasSegmentedPage: 'persistence_journal',
   rekeyProjectionJob: 'persistence_journal',
   stampDeferredProjectionJob: 'persistence_journal',

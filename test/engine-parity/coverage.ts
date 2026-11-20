@@ -252,7 +252,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   projection_rebuild: ['listQueuedPageProjections', 'readProjectionJobReason', 'readChunkKeepState',
     'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob',
     'readChunkRowsFingerprint', 'deleteUnkeptChunks', 'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead',
-    'isDeferredReplacementHeld', 'renewDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob',
+    'isDeferredReplacementHeld', 'renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob',
     'stampDeferredProjectionJob', 'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks',
     'probeProjectionWindowCandidates'],
 

@@ -4005,6 +4005,8 @@ export interface BrainEngine {
   isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string): Promise<boolean>;
   /** Gives the job still queued at `job.revision` the reason `claim` at now. */
   renewDeferredReplacementClaim(job: ProjectionRebuildSql.ProjectionJobKey, claim: string): Promise<void>;
+  /** Hands a continuation's claim back: every job of `slug` whose reason is still `claim` gets the deferred replacement reason, its time unchanged. */
+  releaseDeferredReplacementClaim(slug: string, claim: string): Promise<void>;
   /** Whether the page is a live segmented page. */
   hasSegmentedPage(sourceId: string, slug: string): Promise<boolean>;
   /** Moves the job still queued at `job.revision` to `revision` at now. */

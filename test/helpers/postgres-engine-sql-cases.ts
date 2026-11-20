@@ -276,6 +276,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readProjectionHead': OOS.projectionRebuild,
   'isDeferredReplacementHeld': OOS.projectionRebuild,
   'renewDeferredReplacementClaim': OOS.projectionRebuild,
+  'releaseDeferredReplacementClaim': OOS.projectionRebuild,
   'hasSegmentedPage': OOS.projectionRebuild,
   'rekeyProjectionJob': OOS.projectionRebuild,
   'stampDeferredProjectionJob': OOS.projectionRebuild,

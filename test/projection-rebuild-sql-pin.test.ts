@@ -70,6 +70,7 @@ const OLD_STEP = {
   head: "SELECT id, knowledge_revision::text AS revision,\n      text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL",
   held: "SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation\n      WHERE s.id=$1 AND j.slug=$2 AND j.revision=$3::uuid AND split_part(j.reason,':',1)=$4 AND j.reason<>$5\n        AND j.updated_at>=now()-interval '60 seconds'",
   renew: "UPDATE page_projection_jobs SET reason=$4,updated_at=now() WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
+  release: "UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3",
   clearVectors: "UPDATE content_chunks SET \"embedding\"=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,\n        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])",
   segmented: "SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND body_storage='segmented' AND deleted_at IS NULL",
   rekey: "UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()\n          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
@@ -183,6 +184,8 @@ test('the deferred replacement writes send the recorded statements', async () =>
   expect(last()).toEqual({ text: OLD_STEP.clearVectors, params: [9, [3]] });
   await engine.renewDeferredReplacementClaim(KEY, `${DEFERRED_CHUNK_CLAIM}:t`);
   expect(last()).toEqual({ text: OLD_STEP.renew, params: [...KEY_PARAMS, `${DEFERRED_CHUNK_CLAIM}:t`] });
+  await engine.releaseDeferredReplacementClaim('notes/a', `${DEFERRED_CHUNK_CLAIM}:t`);
+  expect(last()).toEqual({ text: OLD_STEP.release, params: ['chunk_replacement_deferred', 'notes/a', `${DEFERRED_CHUNK_CLAIM}:t`] });
 });
 
 test('the rebuild loop queue stamps send the recorded statements', async () => {
