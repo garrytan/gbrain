@@ -4140,6 +4140,10 @@ export class PostgresEngine implements BrainEngine {
   async insertPinnedQuestion(row: collateStoreReads.PinnedQuestionInsert) { return collateStoreReads.insertPinnedQuestion(this, row); }
   async readPinnedQuestion(sourceId: string, slug: string) { return collateStoreReads.readPinnedQuestion(this, sourceId, slug); }
   async listPinnedQuestions(filter: collateStoreReads.PinnedQuestionFilter) { return collateStoreReads.listPinnedQuestions(this, filter); }
+  async insertRetrievalEvents(events: collateStoreReads.RetrievalEventInsert[]) { return collateStoreReads.insertRetrievalEvents(this, events); }
+  async readRetrievalEvent(id: string) { return collateStoreReads.readRetrievalEvent(this, id); }
+  async applyRetrievalRatings(args: collateStoreReads.RetrievalRatingBatch) { return collateStoreReads.applyRetrievalRatings(this, args); }
+  async readFeedbackStatus() { return collateStoreReads.readFeedbackStatus(this); }
   async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }

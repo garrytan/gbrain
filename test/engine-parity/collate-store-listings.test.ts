@@ -26,8 +26,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { PageInput } from '../../src/core/types.ts';
 import { clientsReferencingSource } from '../../src/core/destructive-guard.ts';
-import { feedbackStatus, getRetrievalEvent, insertRetrievalEvents } from '../../src/core/feedback/store.ts';
+import { applyRatings, feedbackStatus, getRetrievalEvent, insertRetrievalEvents } from '../../src/core/feedback/store.ts';
 import { listPins, insertPin } from '../../src/core/questions/store.ts';
 import { insertCalibration, listCalibrations, receiptStats, slotUsage } from '../../src/core/ai/decide/store.ts';
 import { readCandidateRecords, upsertCandidatePart } from '../../src/core/fence-repair/census-store.ts';
@@ -76,6 +77,28 @@ async function seedSources(engine: BrainEngine, backend: ParityBackend) {
   for (const id of MIXED_SOURCES) await createSource(engine, backend, id);
 }
 
+/** A page whose source and slug are the key of a retrieval weight. */
+function page(slug: string): PageInput {
+  return { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' };
+}
+
+/**
+ * Every (MIXED_SOURCES, MIXED_SLUGS) page, each rated `rating` by one explicit rating batch of one event: with alpha 0.6 a
+ * rating of 1 moves the weight from neutral to 0.2 and a rating of 5 to 0.8.
+ */
+async function ratedPages(engine: BrainEngine, backend: ParityBackend, rating: number) {
+  await seedSources(engine, backend);
+  const targets = [];
+  for (const source of MIXED_SOURCES) {
+    for (const key of MIXED_SLUGS) {
+      await engine.putPage(key, page(key), { sourceId: source });
+      targets.push({ kind: 'page' as const, source_id: source, key, rating, content_hash: null });
+    }
+  }
+  await insertRetrievalEvents(engine, [{ id: 'evt-w', client_id: 'local', op: 'query', pages: [], links: [] }]);
+  await applyRatings(engine, { eventId: 'evt-w', clientId: 'local', signal: 'explicit', alpha: 0.6, targets });
+}
+
 describe('store listings come out by byte', () => {
   parityTest('listCalibrations lists a slot tie by byte', { methods: ['insertDecideCalibration', 'listDecideCalibrations'] }, async (engine) => {
     for (const slot of MIXED_SLUGS) {
@@ -100,35 +123,24 @@ describe('store listings come out by byte', () => {
     expect((await clientsReferencingSource(engine, 'guest-src')).map(c => c.clientId)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('feedbackStatus lists the lowest weights by byte of source and key', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
-    await seedSources(engine, backend);
-    for (const source of MIXED_SOURCES) {
-      for (const key of MIXED_SLUGS) {
-        await engine.executeRaw(`INSERT INTO retrieval_weights (source_id, element_kind, element_key, weight) VALUES ($1, 'page', $2, 0.2)`, [source, key]);
-      }
-    }
+  parityTest('feedbackStatus lists the lowest weights by byte of source and key', { methods: ['putPage', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readFeedbackStatus'] }, async (engine, backend) => {
+    await ratedPages(engine, backend, 1);
     expect((await feedbackStatus(engine)).lowest.map(r => [r.source_id, r.slug])).toEqual(byteTuples(MIXED_SOURCES, MIXED_SLUGS));
   });
 
-  parityTest('feedbackStatus lists the highest weights by byte of source and key', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
-    await seedSources(engine, backend);
-    for (const source of MIXED_SOURCES) {
-      for (const key of MIXED_SLUGS) {
-        await engine.executeRaw(`INSERT INTO retrieval_weights (source_id, element_kind, element_key, weight) VALUES ($1, 'page', $2, 0.8)`, [source, key]);
-      }
-    }
+  parityTest('feedbackStatus lists the highest weights by byte of source and key', { methods: ['putPage', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readFeedbackStatus'] }, async (engine, backend) => {
+    await ratedPages(engine, backend, 5);
     expect((await feedbackStatus(engine)).highest.map(r => [r.source_id, r.slug])).toEqual(byteTuples(MIXED_SOURCES, MIXED_SLUGS));
   });
 
-  parityTest('getRetrievalEvent lists links by byte of source, edge key and target', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('getRetrievalEvent lists links by byte of source, edge key and target', { methods: ['putPage', 'insertRetrievalEvents', 'readRetrievalEvent'] }, async (engine, backend) => {
     await seedSources(engine, backend);
-    await insertRetrievalEvents(engine, [{ id: 'evt-1', client_id: 'local', op: 'query', pages: [], links: [] }]);
     const rows: string[][] = [];
     for (const source of MIXED_SOURCES) for (const key of MIXED_SLUGS) rows.push([source, key, 'to']);
     for (const target of MIXED_SLUGS) rows.push(['a-z', 'same-edge', target]);
-    for (const [source, edge, target] of rows) {
-      await engine.executeRaw(`INSERT INTO retrieval_event_links (event_id, source_id, edge_key, to_slug) VALUES ('evt-1', $1, $2, $3)`, [source, edge, target]);
-    }
+    // An event keeps a link only when the pages at both ends of its edge and the target exist.
+    for (const source of MIXED_SOURCES) for (const slug of [...MIXED_SLUGS, 'to', 'same-edge']) await engine.putPage(slug, page(slug), { sourceId: source });
+    await insertRetrievalEvents(engine, [{ id: 'evt-1', client_id: 'local', op: 'query', pages: [], links: rows.map(([source_id, edge_key, to_slug]) => ({ source_id: source_id!, edge_key: edge_key!, to_slug: to_slug! })) }]);
     const event = await getRetrievalEvent(engine, 'evt-1');
     expect(event?.links.map(l => [l.source_id, l.edge_key, l.to_slug])).toEqual(byteRows(rows));
   });

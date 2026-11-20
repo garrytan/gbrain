@@ -21,3 +21,15 @@ export const readPinnedQuestion: Member<'readPinnedQuestion'> = (brain, sourceId
 
 export const listPinnedQuestions: Member<'listPinnedQuestions'> = (brain, filter) =>
   storeCall({ member: 'listPinnedQuestions' }, () => brain.listPinnedQuestions(filter)) as Promise<Awaited<ReturnType<BrainEngine['listPinnedQuestions']>>>;
+
+export const insertRetrievalEvents: Member<'insertRetrievalEvents'> = (brain, events) =>
+  storeCall({ member: 'insertRetrievalEvents' }, () => brain.insertRetrievalEvents(events)) as Promise<Awaited<ReturnType<BrainEngine['insertRetrievalEvents']>>>;
+
+export const readRetrievalEvent: Member<'readRetrievalEvent'> = (brain, id) =>
+  storeCall({ member: 'readRetrievalEvent' }, () => brain.readRetrievalEvent(id)) as Promise<Awaited<ReturnType<BrainEngine['readRetrievalEvent']>>>;
+
+export const applyRetrievalRatings: Member<'applyRetrievalRatings'> = (brain, args) =>
+  storeCall({ member: 'applyRetrievalRatings' }, () => brain.applyRetrievalRatings(args)) as Promise<Awaited<ReturnType<BrainEngine['applyRetrievalRatings']>>>;
+
+export const readFeedbackStatus: Member<'readFeedbackStatus'> = (brain) =>
+  storeCall({ member: 'readFeedbackStatus' }, () => brain.readFeedbackStatus()) as Promise<Awaited<ReturnType<BrainEngine['readFeedbackStatus']>>>;

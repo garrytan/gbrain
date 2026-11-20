@@ -18,7 +18,7 @@
 //! - `a 0x03 <token_name>` -> `RollupRecord` (JSON). The tally keys a NULL token as `''`, as the
 //!   prune's `COALESCE(token_name, '')` does.
 //!
-//! The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet: those tables
+//! The retrieval feedback sub-tags (`0x04` to `0x08`) are served by `retrieval_feedback.rs`. The budget ledger sub-tags have no records yet: those tables
 //! are not served (rust/docs/store/telemetry.md).
 //!
 //! No table carries a source or a page: page and source deletes never touch them.

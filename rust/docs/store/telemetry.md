@@ -24,8 +24,9 @@ Keys: every record starts with the family tag `a` (`keys::TELEMETRY`) and the ta
   (`keys::TELEMETRY_CHAT_USAGE`, a reviewed key reservation). Key order is `created_at` order, ties by id; the id
   comes from the `next_chat_usage_id` counter.
 
-The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet. No table has a source or
-page column, so page and source deletes never touch them.
+The retrieval feedback sub-tags (`0x04` to `0x08`) are served by `retrieval_feedback.rs`
+([retrieval-feedback.md](retrieval-feedback.md)). The budget ledger sub-tags have no records yet. No table has a page
+column, so page deletes never touch them.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

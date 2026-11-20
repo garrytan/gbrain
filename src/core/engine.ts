@@ -97,7 +97,7 @@ import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
-import type { OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, SourceClientReferentRow } from './engine-sql/collate-store-reads.ts';
+import type { AppliedRatingRow, FeedbackStatusData, OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch, SourceClientReferentRow } from './engine-sql/collate-store-reads.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
@@ -4575,6 +4575,14 @@ export interface BrainEngine {
   readPinnedQuestion(sourceId: string, slug: string): Promise<PinnedQuestionRow | null>;
   /** Pinned questions that pass the filter, by source id in byte order, then creation time and id. */
   listPinnedQuestions(filter: PinnedQuestionFilter): Promise<PinnedQuestionRow[]>;
+  /** Records retrieval events with the pages and links each returned; a page or link whose page row is gone is skipped and a repeat is ignored. */
+  insertRetrievalEvents(events: RetrievalEventInsert[]): Promise<void>;
+  /** One retrieval event with its pages by rank and its links by byte of source, edge key and target, or null. */
+  readRetrievalEvent(id: string): Promise<RetrievalEventRead | null>;
+  /** Applies one batch of ratings atomically; a rating already stored for the event and signal reads back unchanged. */
+  applyRetrievalRatings(args: RetrievalRatingBatch): Promise<AppliedRatingRow[]>;
+  /** The feedback counts and the ten lowest and highest page weights, ties by byte of source and key. */
+  readFeedbackStatus(): Promise<FeedbackStatusData>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

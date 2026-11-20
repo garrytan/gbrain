@@ -819,6 +819,97 @@ SELECT source_id, type FROM pairs`],
    ORDER BY source_id COLLATE "C", created_at, id`],
   },
   {
+    from: 'src/core/feedback/store.ts:69 insertRetrievalEvents, at dded7edc51 (page-exists filter and neutral weight written out)',
+    case: { method: 'insertRetrievalEvents', variant: 'default', run: e => e.insertRetrievalEvents([{ id: 'evt-1', client_id: 'local', op: 'query', pages: [{ source_id: 'default', slug: 'p', content_hash: null, rank: 1, cited: false }], links: [{ source_id: 'default', edge_key: 'p|links|p', to_slug: 'p' }] }]) },
+    texts: [`INSERT INTO retrieval_events (id, client_id, op)
+     SELECT * FROM unnest($1::text[], $2::text[], $3::text[])
+     ON CONFLICT (id) DO NOTHING`, `INSERT INTO retrieval_event_pages (event_id, source_id, slug, content_hash, rank, cited)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int[], $6::text[]::boolean[])
+         AS t(event_id, source_id, slug, content_hash, rank, cited)
+        WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = t.slug FOR KEY SHARE)
+       ON CONFLICT DO NOTHING`, `INSERT INTO retrieval_event_links (event_id, source_id, edge_key, to_slug)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS t(event_id, source_id, edge_key, to_slug)
+        WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = t.to_slug FOR KEY SHARE) AND EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = split_part(t.edge_key, '|', 1) FOR KEY SHARE) AND EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = reverse(split_part(reverse(t.edge_key), '|', 1)) FOR KEY SHARE)
+       ON CONFLICT DO NOTHING`],
+  },
+  {
+    from: 'src/core/feedback/store.ts:103 getRetrievalEvent, at dded7edc51',
+    case: { method: 'readRetrievalEvent', variant: 'default', run: e => e.readRetrievalEvent('evt-1'), rows: [[/FROM retrieval_events WHERE id/, [{ id: 'evt-1', client_id: 'local', op: 'query', created_at: '2026-01-01T00:00:00.000Z' }]]] },
+    texts: [`SELECT id, client_id, op, created_at FROM retrieval_events WHERE id = $1`, `SELECT source_id, slug, content_hash, rank, cited FROM retrieval_event_pages WHERE event_id = $1 ORDER BY rank`, `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id COLLATE "C", edge_key COLLATE "C", to_slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/feedback/store.ts:152 applyRatings, at dded7edc51 (page-exists filter and neutral weight written out)',
+    case: { method: 'applyRetrievalRatings', variant: 'default', run: e => e.applyRetrievalRatings({ eventId: 'evt-1', clientId: 'local', signal: 'explicit', alpha: 0.6, targets: [{ kind: 'page', source_id: 'default', key: 'p', rating: 5, content_hash: null }] }) },
+    texts: [`WITH input AS (
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[])
+         AS t(element_kind, source_id, element_key, rating, content_hash)
+        WHERE CASE t.element_kind WHEN 'page' THEN EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = t.element_key FOR KEY SHARE)
+                                  ELSE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = split_part(t.element_key, '|', 1) FOR KEY SHARE) AND EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = t.source_id AND pg.slug = reverse(split_part(reverse(t.element_key), '|', 1)) FOR KEY SHARE) END
+     ),
+     cur AS (
+       SELECT i.*, COALESCE(w.weight, 0.5)::real AS w0,
+              CASE WHEN w.weight IS NULL THEN 0.5
+                   WHEN i.element_kind = 'page' AND w.content_hash IS DISTINCT FROM i.content_hash
+                     THEN 0.5 + (w.weight - 0.5) / 2
+                   ELSE w.weight END AS w_eff
+         FROM input i
+         LEFT JOIN retrieval_weights w
+           ON w.source_id = i.source_id AND w.element_kind = i.element_kind AND w.element_key = i.element_key
+     ),
+     calc AS (
+       SELECT c.*, LEAST(1, GREATEST(0, c.w_eff + $6::real * ((c.rating - 1) / 4.0 - c.w_eff)))::real AS w1
+         FROM cur c
+     ),
+     ins AS (
+       INSERT INTO retrieval_feedback
+         (event_id, signal, element_kind, source_id, element_key, client_id, rating, weight_before, weight_after)
+       SELECT $7, $8, element_kind, source_id, element_key, $9, rating, w_eff, w1 FROM calc
+       ON CONFLICT DO NOTHING
+       RETURNING element_kind, source_id, element_key, rating
+     )
+     INSERT INTO retrieval_weights AS rw (source_id, element_kind, element_key, weight, content_hash, updates, updated_at)
+     SELECT ins.source_id, ins.element_kind, ins.element_key, calc.w1, calc.content_hash, 1, now()
+       FROM ins JOIN calc ON calc.element_kind = ins.element_kind AND calc.source_id = ins.source_id AND calc.element_key = ins.element_key
+     ON CONFLICT (source_id, element_kind, element_key) DO UPDATE SET
+       weight = LEAST(1, GREATEST(0,
+         (CASE WHEN rw.element_kind = 'page' AND rw.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+               THEN 0.5 + (rw.weight - 0.5) / 2 ELSE rw.weight END)
+         + $6::real * ((SELECT rating FROM ins i2 WHERE i2.source_id = EXCLUDED.source_id AND i2.element_kind = EXCLUDED.element_kind AND i2.element_key = EXCLUDED.element_key) - 1) / 4.0
+         - $6::real * (CASE WHEN rw.element_kind = 'page' AND rw.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+               THEN 0.5 + (rw.weight - 0.5) / 2 ELSE rw.weight END)))::real,
+       content_hash = EXCLUDED.content_hash,
+       updates = rw.updates + 1,
+       updated_at = now()
+     RETURNING rw.element_kind, rw.source_id, rw.element_key, rw.weight AS weight_after`, `SELECT element_kind, source_id, element_key, rating, weight_before, weight_after
+       FROM retrieval_feedback
+      WHERE event_id = $1 AND signal = $2
+        AND (element_kind, source_id, element_key) IN (
+          SELECT * FROM unnest($3::text[], $4::text[], $5::text[]))`],
+  },
+  {
+    from: 'src/core/feedback/store.ts:391 feedbackStatus, at dded7edc51 (neutral weight written out)',
+    case: { method: 'readFeedbackStatus', variant: 'default', run: e => e.readFeedbackStatus() },
+    texts: [`SELECT
+       (SELECT count(*)::int FROM retrieval_events) AS events,
+       (SELECT count(*)::int FROM retrieval_feedback WHERE signal = 'explicit') AS ratings_explicit,
+       (SELECT count(*)::int FROM retrieval_feedback WHERE signal = 'cited') AS ratings_cited,
+       (SELECT count(*)::int FROM retrieval_weights) AS weights_total,
+       (SELECT count(*)::int FROM retrieval_weights WHERE abs(weight - 0.5) > 0.01) AS weights_off_neutral,
+       (SELECT max(applied_at) FROM retrieval_feedback) AS last_rating_at,
+       (SELECT max(n)::float / NULLIF(sum(n), 0) FROM (
+          SELECT count(*) AS n FROM retrieval_feedback
+           WHERE signal = 'explicit' AND applied_at > now() - interval '7 days'
+           GROUP BY client_id) c) AS top_client_share_7d`, `SELECT w.source_id, w.element_key AS slug, w.weight,
+            (SELECT count(*) FROM retrieval_feedback f
+              WHERE f.element_kind = 'page' AND f.source_id = w.source_id
+                AND f.element_key = w.element_key AND f.rating <= 2)::int AS low_ratings
+       FROM retrieval_weights w
+      WHERE w.element_kind = 'page' AND w.weight < 0.5
+      ORDER BY w.weight ASC, w.source_id COLLATE "C", w.element_key COLLATE "C" LIMIT 10`, `SELECT source_id, element_key AS slug, weight FROM retrieval_weights
+      WHERE element_kind = 'page' AND weight > 0.5
+      ORDER BY weight DESC, source_id COLLATE "C", element_key COLLATE "C" LIMIT 10`],
+  },
+  {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
     texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],

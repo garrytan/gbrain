@@ -81,6 +81,7 @@ mod page_embedding_budget;
 mod page_ops;
 mod raw_files;
 mod relations;
+mod retrieval_feedback;
 mod salience;
 mod stats;
 mod takes;

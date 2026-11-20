@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 982/991
+# covered: 986/995
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -39,7 +39,7 @@
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
-# minion_queue: 106/107
+# minion_queue: 110/111
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -96,7 +96,7 @@ getPage	pages	yes	113	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	552	yes	yes	yes	serves
+putPage	pages	yes	555	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -685,6 +685,10 @@ readOwnerCredentials	minion_queue	yes	2	no	yes	yes	serves
 insertPinnedQuestion	minion_queue	yes	1	no	yes	yes	serves
 readPinnedQuestion	minion_queue	no	0	no	-	-	-
 listPinnedQuestions	minion_queue	yes	1	no	yes	yes	serves
+insertRetrievalEvents	minion_queue	yes	3	no	yes	yes	serves
+readRetrievalEvent	minion_queue	yes	1	no	yes	yes	serves
+applyRetrievalRatings	minion_queue	yes	2	no	yes	yes	serves
+readFeedbackStatus	minion_queue	yes	2	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	13	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
@@ -813,7 +817,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	57	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	54	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
