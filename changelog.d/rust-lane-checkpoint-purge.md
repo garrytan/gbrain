@@ -7,3 +7,4 @@
 ### Fixed
 - On the Rust engine the purge now reads a sync delete tombstone's recorded time in the form Postgres stores it, with a time zone offset. Before, it kept such a tombstone even after its page was restored or deleted again.
 - On the Rust engine a sync of a changed file now keeps the commit's change reason with the page's old version, as PGLite and Postgres do. Version history reads show it, and a reason a purge removed stays removed.
+- On the Rust engine a sync that reuses stored chunk vectors no longer stops on the safe-chunk check. A page chunked before the safe-fence chunker reads as having no reusable chunks, as on PGLite and Postgres.

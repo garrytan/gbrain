@@ -944,6 +944,9 @@ pub struct GetChunksOptions {
     pub include_deleted: bool,
     pub include_embedding: bool,
     pub include_unsealed: bool,
+    /// `safeChunksFilter('p')`: a page chunked below `SAFE_FENCE_CHUNKER_VERSION` (or with no
+    /// recorded version) reads as no chunks.
+    pub require_safe_chunks: bool,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`.
@@ -1160,8 +1163,8 @@ impl Store {
     /// index order) while they describe the page's current text. PGLite reads a page's chunks only
     /// when its `text_projection_revision` equals its `knowledge_revision` (the chunks are sealed),
     /// so a page that was never sealed, or whose revision moved since (a tag change, a soft
-    /// delete), reads as no chunks unless `include_unsealed` is set. `include_embedding` returns
-    /// each stored vector.
+    /// delete), reads as no chunks unless `include_unsealed` is set. `require_safe_chunks` reads a
+    /// page chunked below the safe fence as no chunks. `include_embedding` returns each stored vector.
     pub fn get_chunks_with(&self, slug: &str, options: &GetChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let scope_default = if options.source_id.is_none()
@@ -1179,6 +1182,11 @@ impl Store {
         };
         if !options.include_unsealed
             && page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str())
+        {
+            return Ok(Vec::new());
+        }
+        if options.require_safe_chunks
+            && page.chunker_version.unwrap_or(0) < crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION
         {
             return Ok(Vec::new());
         }
