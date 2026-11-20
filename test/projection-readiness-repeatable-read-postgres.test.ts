@@ -52,17 +52,27 @@ pgTest('an answer cached on an old REPEATABLE READ snapshot is not reused after 
     const uncached = () => withEnv({ [PROJECTION_READINESS_CACHE_ENV]: '0' }, () => probeProjectionReadiness(engine));
     const other = postgres(brainUrl, { max: 1, prepare: false });
     try {
-      const inside = await engine.transaction(async tx => {
-        await tx.beginSnapshotRead({ readOnly: true });
-        // The first read takes the snapshot; the brain has no page yet.
-        await tx.executeRaw('SELECT count(*) FROM pages');
-        await other.unsafe(insertPage);
-        const generation = await tx.readProjectionReadinessGeneration();
-        const cached = await probeProjectionReadiness(tx);
-        const again = await probeProjectionReadiness(tx);
-        const fresh = await withEnv({ [PROJECTION_READINESS_CACHE_ENV]: '0' }, () => probeProjectionReadiness(tx));
-        return { generation, cached, again, fresh };
-      });
+      // The generation is only read while no other transaction on the server is open; a shared test server can have
+      // one open when the snapshot is taken, so take the snapshot again (bounded) until it is read.
+      let inside: Awaited<ReturnType<typeof snapshotRead>> | undefined;
+      async function snapshotRead() {
+        return engine.transaction(async tx => {
+          await tx.beginSnapshotRead({ readOnly: true });
+          // The first read takes the snapshot; the brain has no page yet.
+          await tx.executeRaw('SELECT count(*) FROM pages');
+          await other.unsafe(insertPage);
+          const generation = await tx.readProjectionReadinessGeneration();
+          const cached = await probeProjectionReadiness(tx);
+          const again = await probeProjectionReadiness(tx);
+          const fresh = await withEnv({ [PROJECTION_READINESS_CACHE_ENV]: '0' }, () => probeProjectionReadiness(tx));
+          return { generation, cached, again, fresh };
+        });
+      }
+      for (let attempt = 0; attempt < 50 && typeof inside?.generation !== 'string'; attempt++) {
+        if (attempt > 0) { await engine.executeRaw('DELETE FROM pages'); await Bun.sleep(100); }
+        inside = await snapshotRead();
+      }
+      if (!inside) throw new Error('unreachable');
       // The hole: the generation already counts the committed write, and the answer stored under it is the snapshot's.
       expect(typeof inside.generation).toBe('string');
       expect(inside.cached.status).toBe('ready');
@@ -70,10 +80,12 @@ pgTest('an answer cached on an old REPEATABLE READ snapshot is not reused after 
       expect(inside.again).toBe(inside.cached);
       expect(inside.fresh).toEqual(inside.cached);
       // After it, the brain's generation is the one the stale answer was stored under, yet the search reads again.
-      expect(await engine.readProjectionReadinessGeneration()).toBe(inside.generation);
+      let base = await engine.readProjectionReadinessGeneration();
+      for (let attempt = 0; attempt < 50 && base === null; attempt++) { await Bun.sleep(100); base = await engine.readProjectionReadinessGeneration(); }
+      expect(base).toBe(inside.generation);
       const after = await probeProjectionReadiness(engine);
       expect(after.status).toBe('projection_pending');
       expect(after).toEqual(await uncached());
     } finally { await other.end(); }
   });
-});
+}, 60_000);
