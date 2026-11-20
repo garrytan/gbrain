@@ -12,6 +12,7 @@ import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, Extrac
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
+import type * as CoreNoticesSql from './engine-sql/core-notices.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
@@ -4179,6 +4180,10 @@ export interface BrainEngine {
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
   /** Rows of a page-child relation (`<table>.<column>`) whose page row is gone; a NULL reference of a SET NULL column is not one. */
   countPageChildOrphans(target: DoctorReadsSql.PageChildTarget): Promise<number>;
+
+  // Core edit notices (engine-sql/core-notices.ts): the pending remote-edit notices the core block, core status and doctor read.
+  /** The newest unacknowledged remote-edit notice per core page (at most 50, by source then slug, bytewise); `sourceIds` narrows it. */
+  listPendingCoreNotices(sourceIds?: readonly string[] | null): Promise<CoreNoticesSql.PendingCoreNotice[]>;
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
   /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */

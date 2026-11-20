@@ -18,7 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import {
   CORE_DEFAULT_PRIORITY, CORE_DOCS, coreNoticeLine, coreUsage, isCoreFrontmatter, loadCoreBlock,
-  pendingCoreNotices, readCoreSettings, renderCorePage,
+  coreNoticesUnknownLine, readPendingCoreNotices, readCoreSettings, renderCorePage,
 } from '../core/core-memory.ts';
 import { serializePageToMarkdown } from '../core/markdown.ts';
 import { wholeBodySnapshot } from '../core/persistence/segmented-apply.ts';
@@ -158,14 +158,16 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
     case 'status': {
       const settings = await readCoreSettings(engine);
       const usage = await coreUsage(engine);
-      const notices = await pendingCoreNotices(engine);
+      const { notices, unknown: noticesUnknown } = await readPendingCoreNotices(engine);
       const block = await loadCoreBlock(engine, { sessionSourceId: sourceId, excludePrivate: true });
       const status = {
         enabled: settings.enabled, chars_used: usage.chars, chars_limit: settings.maxChars, over_budget: usage.chars > settings.maxChars,
         pages: usage.pages.length, remote_edit: settings.remoteEdit, revision: block.revision,
         largest: [...usage.pages].sort((a, b) => b.chars - a.chars).slice(0, 5).map(p => ({ source_id: p.source_id, slug: p.slug, chars: p.chars })),
         withheld: block.omitted.filter(o => o.reason === 'withheld'),
-        pending_notices: notices.map(n => ({ ...n, next: coreNoticeLine(n) })),
+        // null with pending_notices_unknown when the engine cannot list notices (never an empty list in its place).
+        pending_notices: noticesUnknown ? null : notices.map(n => ({ ...n, next: coreNoticeLine(n) })),
+        ...(noticesUnknown ? { pending_notices_unknown: { code: 'engine_capability_missing', message: noticesUnknown } } : {}),
         delivery: {
           'claude-code': 'session-start hook (core printed first)', openclaw: 'context engine, every turn',
           mcp: 'context_pack core field', 'static files': 'gbrain compile-context --include-core',
@@ -178,6 +180,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
         ...status.largest.map(p => `  ${p.source_id}:${p.slug}  ${p.chars} chars`),
         ...status.withheld.map(w => `  withheld from delivery: ${w.source_id}:${w.slug} (sensitive content)`),
         ...notices.map(n => `  notice: ${coreNoticeLine(n)}`),
+        ...(noticesUnknown ? [`  notices: ${coreNoticesUnknownLine(noticesUnknown)}`] : []),
       ].join('\n'));
       return;
     }

@@ -282,7 +282,6 @@ src/core/context/volunteer-events.ts	execute_raw	2
 src/core/context/volunteer.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
-src/core/core-memory.ts	execute_raw	1
 src/core/cycle.ts	execute_raw	2
 src/core/cycle/calibration-profile.ts	execute_raw	2
 src/core/cycle/chronicle.ts	execute_raw	3

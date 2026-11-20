@@ -185,6 +185,7 @@ import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
 import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
+import * as coreNoticesImpl from './engine-sql/core-notices.ts';
 import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
@@ -1529,6 +1530,7 @@ export class PGLiteEngine implements BrainEngine {
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.rawRead, store); }
   countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.rawRead, column); }
   countPageChildOrphans(target: doctorReadsImpl.PageChildTarget) { return doctorReadsImpl.countPageChildOrphans(this.rawRead, target); }
+  listPendingCoreNotices(sourceIds?: readonly string[] | null) { return coreNoticesImpl.listPendingCoreNotices(this.rawRead, sourceIds); }
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts).
   readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.rawRead, opts); }

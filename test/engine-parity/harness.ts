@@ -211,6 +211,30 @@ export async function createSource(engine: BrainEngine, backend: ParityBackend, 
   }
 }
 
+/** One core_edit_notices row (the core-page guard's writer has no typed member). */
+export interface CoreEditNoticeSeed { sourceId: string; slug: string; revision: string | null; actor: string; acked?: boolean }
+
+/**
+ * Fixture: record a remote edit to a core page, as the core-page guard does. Harness-only SQL behind the backend
+ * switch. The Rust engine keeps no core-edit notices (listPendingCoreNotices refuses by name), so a case that reaches
+ * this on Rust is wrong: it must stop on the refusal first.
+ */
+export async function seedCoreEditNotice(engine: BrainEngine, backend: ParityBackend, seed: CoreEditNoticeSeed): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      throw new Error('seedCoreEditNotice: the Rust engine keeps no core-edit notices; stop on the listPendingCoreNotices refusal first');
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(
+        `INSERT INTO core_edit_notices (source_id, slug, revision, actor, acked_at) VALUES ($1, $2, $3, $4, CASE WHEN $5::boolean THEN now() END)`,
+        [seed.sourceId, seed.slug, seed.revision, seed.actor, seed.acked === true],
+      );
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
 export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
   switch (backend) {

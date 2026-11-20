@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 804/804
+# covered: 805/805
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -43,6 +43,7 @@
 # facts_doctor: 11/11
 # embedding_catalog: 5/5
 # doctor_reads: 1/1
+# core_notices: 1/1
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
 # doctor_pages: 19/19
@@ -550,6 +551,7 @@ listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 countPageChildOrphans	doctor_reads	yes	1	no	yes	yes	serves
+listPendingCoreNotices	core_notices	yes	1	no	yes	yes	refuses:pages
 readIgnoredPrivacyLabelCounts	doctor_derived	yes	1	no	yes	yes	refuses:health
 countSafeIndexPending	doctor_derived	yes	1	no	yes	yes	serves
 countCredentialProjectionPending	doctor_derived	yes	1	no	yes	yes	refuses:health

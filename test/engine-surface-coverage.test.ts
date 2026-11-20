@@ -120,6 +120,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
   // Doctor reads (engine-sql/doctor-reads.ts; covered by test/engine-parity/doctor-reads.test.ts)
   'countPageChildOrphans',
+  // Core notices (engine-sql/core-notices.ts; covered by test/engine-parity/core-notices.test.ts)
+  'listPendingCoreNotices',
   // Doctor derived reads (engine-sql/doctor-derived.ts; covered by test/engine-parity/doctor-derived.test.ts)
   'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner', 'listRecordedTombstones',
   'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch', 'listAtomFenceCandidates', 'readPageCompiledTruths',

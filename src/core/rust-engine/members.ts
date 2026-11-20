@@ -889,6 +889,8 @@ export const RUST_ENGINE_MEMBERS = {
   settleWakeForget: 'minion_queue',
   // Group D (trust tier reads)
   listCorePageRows: 'pages',
+  // The store keeps no core edit notices: the read refuses by name (rust/docs/store/core-notices.md).
+  listPendingCoreNotices: 'pages',
   listTrustScanRows: 'facts',
   countUnscannedTrustRows: 'facts',
   readBeliefHistoryRows: 'belief_ledger',

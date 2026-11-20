@@ -23,6 +23,8 @@ import { proactiveEligibility } from './eligibility/registry.ts';
 import { compactTrustLabel, needsDataEnvelope, renderTrustedText, trustFields } from './eligibility/labels.ts';
 import { PAGE_MAX_BYTES } from './page-size-policy.ts';
 import { heldRowsForCaller } from './eligibility/fence-overlay.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
+import type { PendingCoreNotice } from './engine-sql/core-notices.ts';
 
 export const CORE_DEFAULT_MAX_CHARS = 4000;
 export const CORE_MIN_MAX_CHARS = 500;
@@ -331,16 +333,35 @@ export async function applyCoreSensitivity(pages: readonly CorePage[]): Promise<
   return { pages: out, withheld };
 }
 
-/** Pending remote-edit notices for the given sources, newest first (notify policy). */
-export async function pendingCoreNotices(exec: Pick<BrainEngine, 'executeRaw'>, sourceIds?: readonly string[]): Promise<Array<{ source_id: string; slug: string; revision: string | null; actor: string; created_at: string }>> {
+/**
+ * Pending remote-edit notices for the given sources, newest first (notify policy). A brain from before the notices
+ * table reads none; an engine that keeps no notices refuses by name (`engine_capability_missing`), never "none".
+ */
+export async function pendingCoreNotices(exec: Pick<BrainEngine, 'listPendingCoreNotices'>, sourceIds?: readonly string[]): Promise<PendingCoreNotice[]> {
   try {
-    return await exec.executeRaw(
-      `SELECT DISTINCT ON (source_id, slug) source_id, slug, revision, actor, created_at::text AS created_at
-         FROM core_edit_notices WHERE acked_at IS NULL ${sourceIds ? 'AND source_id = ANY($1::text[])' : ''}
-        ORDER BY source_id, slug, id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
-  } catch {
+    return await exec.listPendingCoreNotices(sourceIds ?? null);
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return [];
   }
+}
+
+/**
+ * The pending notices, or why they are unknown: on an engine that refuses the read, `unknown` carries the refusal's
+ * message and `notices` is empty, so a caller says the notices are unknown instead of reporting none.
+ */
+export async function readPendingCoreNotices(exec: Pick<BrainEngine, 'listPendingCoreNotices'>, sourceIds?: readonly string[]): Promise<{ notices: PendingCoreNotice[]; unknown: string | null }> {
+  try {
+    return { notices: await pendingCoreNotices(exec, sourceIds), unknown: null };
+  } catch (err) {
+    if (!isEngineCapabilityRefusal(err)) throw err;
+    return { notices: [], unknown: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** The core block line that stands in for the notices when the engine cannot list them. */
+export function coreNoticesUnknownLine(message: string): string {
+  return `Remote edits to core pages are unknown on this brain: ${message}`;
 }
 
 export function coreNoticeLine(n: { source_id: string; slug: string; revision: string | null; actor: string }): string {
@@ -359,7 +380,11 @@ export async function loadCoreBlock(engine: BrainEngine, opts: LoadCoreBlockOpts
   const listed = all.filter(p => !p.suppressed);
   const suppressed = all.filter(p => p.suppressed).map(p => ({ source_id: p.source_id, slug: p.slug, family: 'unconfirmed agent-written instruction (gbrain trust review)' }));
   const { pages, withheld } = await applyCoreSensitivity(listed);
-  const notices = opts.notices ?? (listed.length ? (await pendingCoreNotices(engine, sourceIds)).map(coreNoticeLine) : []);
+  let notices = opts.notices;
+  if (!notices) {
+    const pending = listed.length ? await readPendingCoreNotices(engine, sourceIds) : { notices: [], unknown: null };
+    notices = pending.unknown ? [coreNoticesUnknownLine(pending.unknown)] : pending.notices.map(coreNoticeLine);
+  }
   return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices, withheld: [...withheld, ...suppressed] }), enabled: true,
     ...(suppressed.length ? { activation_withheld: suppressed.length } : {}) };
 }

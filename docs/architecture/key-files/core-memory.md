@@ -58,9 +58,17 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   `valid_from` included, is also a top-level default an item's own value overrides).
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
+- `src/core/engine-sql/core-notices.ts`: `listPendingCoreNotices`, the pending
+  `core_edit_notices` read (one per page, newest wins, source then slug in
+  byte order, `COLLATE "C"`). `readPendingCoreNotices` in `core-memory.ts`
+  turns the Rust engine's named refusal into `unknown`: the core block prints
+  one "unknown" line, `core status` sets `pending_notices: null` with
+  `pending_notices_unknown`, doctor `core_memory` warns. Rust contract:
+  `rust/docs/store/core-notices.md`.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,
   `test/core-cli.test.ts`, `test/compile-context-core.serial.test.ts`,
   `test/context-pressure.test.ts`, `test/remember-batch.test.ts`,
   `test/remember-batch-entity-7432.test.ts`,
   `test/trust-cache-invalidation.test.ts` (core lane after trust transitions),
-  `test/e2e/core-memory-locks-postgres.test.ts`.
+  `test/e2e/core-memory-locks-postgres.test.ts`,
+  `test/engine-parity/core-notices.test.ts`, `test/core-notices-capability-refusal.test.ts`.

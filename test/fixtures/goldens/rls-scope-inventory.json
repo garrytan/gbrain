@@ -4983,6 +4983,7 @@
         "listPagesTitledIn": "none",
         "listParkedEffects": "none",
         "listParkedGroupRows": "none",
+        "listPendingCoreNotices": "none",
         "listPendingGenerationMembers": "none",
         "listPendingRoster": "none",
         "listPendingSegmentedProjections": "none",

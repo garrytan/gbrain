@@ -151,6 +151,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
   // doctor_reads: the statements doctor checks ran through executeRaw (engine-sql/doctor-reads.ts)
   doctor_reads: ['countPageChildOrphans'],
+  // core_notices: the pending core-edit notices core memory ran through executeRaw (engine-sql/core-notices.ts)
+  core_notices: ['listPendingCoreNotices'],
   // doctor_derived: the derived-state reads doctor checks, repair scans and the purge ran through executeRaw (engine-sql/doctor-derived.ts)
   doctor_derived: [
     'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner',
