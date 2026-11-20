@@ -30,6 +30,7 @@ import { renderCliError } from '../src/core/agent-output.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTakeProposalMembers } from './helpers/take-proposal-members.ts';
 
 beforeEach(() => {
   resetGateway();
@@ -122,7 +123,7 @@ describe('defaultExtractor configurable caps (#4494)', () => {
 // ─── phase-level config threading ───────────────────────────────────
 
 function buildMockEngine(config: Record<string, string>): BrainEngine {
-  return {
+  return withTakeProposalMembers({
     kind: 'pglite',
     async getConfig(key: string): Promise<string | null> {
       return config[key] ?? null;
@@ -140,7 +141,7 @@ function buildMockEngine(config: Record<string, string>): BrainEngine {
       if (sql.includes('INSERT INTO take_proposals')) return [{ id: 1 } as unknown as T];
       return [];
     },
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 }
 
 function buildCtx(engine: BrainEngine): OperationContext {

@@ -105,6 +105,7 @@ const OOS = {
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
   identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
+  takeProposals: 'out-of-scope:take-proposals (born in engine-sql/take-proposals.ts; pinned by test/engine-parity/take-proposals.test.ts and the propose_takes / takes propose tests)',
   calibrationProfiles: 'out-of-scope:calibration-profiles (decide family group B, born in engine-sql/calibration-profiles.ts; pinned by test/engine-parity/calibration-profiles.test.ts)',
 } as const;
 
@@ -649,6 +650,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listTakeIdsLeavingFence': OOS.extractTakes, 'listTakePreimages': OOS.extractTakes, 'deleteTakesByIds': OOS.extractTakes, 'findTakeId': OOS.extractTakes,
   'listLatestTakeGrades': OOS.takesReads, 'readTakeGrade': OOS.takesReads, 'insertTakeGrade': OOS.takesReads, 'deleteTakeGrade': OOS.takesReads,
   'readLiveTakePage': OOS.takesReads, 'readTakeClaim': OOS.takesReads, 'upsertTakeHorizon': OOS.takesReads, 'deleteTakeHorizon': OOS.takesReads, 'listTakeHorizons': OOS.takesReads, 'listHorizonScanRows': OOS.takesReads, 'listWaveAppliedTakeIds': OOS.takesReads, 'revertWaveTakeResolutions': OOS.takesReads, 'unapplyWaveTakeGrades': OOS.takesReads, 'purgeTakeNudgesByWave': OOS.takesReads, 'insertTakeNudge': OOS.takesReads,
+  'listPendingTakeProposals': OOS.takeProposals, 'readTakeProposal': OOS.takeProposals, 'claimTakeProposal': OOS.takeProposals, 'readStrandedTakeProposalClaim': OOS.takeProposals, 'releaseTakeProposalClaim': OOS.takeProposals, 'setTakeProposalPromotedRow': OOS.takeProposals, 'rejectTakeProposal': OOS.takeProposals, 'takeProposalCached': OOS.takeProposals, 'listRejectedTakeProposalClaims': OOS.takeProposals, 'insertTakeProposal': OOS.takeProposals, 'listTakeProposalTombstones': OOS.takeProposals, 'deleteTakeProposalTombstones': OOS.takeProposals, 'listProposeTakesCandidatePages': OOS.takeProposals, 'readOpCheckpointDoc': OOS.takeProposals, 'writeOpCheckpointDoc': OOS.takeProposals, 'listWriteRequestsByRequestId': OOS.takeProposals,
   'countMcpResolvedTakes': OOS.takesReads,
   'listTakeSupersessionCandidates': OOS.takesReads,
   'countZeroWeightWithTakes': OOS.takesReads,

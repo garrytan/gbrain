@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, arg, required};
 use gbrain_store::takes;
 
+mod proposals;
 mod reads;
 
 #[napi]

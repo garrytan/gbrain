@@ -7,10 +7,10 @@
 //! Key: `A 0x07 <nudge id u64 BE>` -> `NudgeRecord` (JSON). Id counter: `M next_take_nudge_id`, taken
 //! before the row's checks as the `BIGSERIAL` default is. The table's checks, in Postgres's order:
 //! `take_nudge_log_target_xor` (exactly one of take and proposal), then the foreign keys
-//! `take_nudge_log_source_id_fkey` and `take_nudge_log_proposal_id_fkey`. This store keeps no
-//! `take_proposals`, so a nudge at a proposal always fails its foreign key. `take_id` has no foreign
-//! key: a row outlives its take. A deleted source deletes its rows (`ON DELETE CASCADE`,
-//! [`remove_source_rows`]).
+//! `take_nudge_log_source_id_fkey` and `take_nudge_log_proposal_id_fkey`: a nudge at a proposal needs
+//! the proposal (`takes/proposals.rs`, `A 0x08`), and deleting the proposal deletes its nudges
+//! (`ON DELETE CASCADE`, [`remove_proposal_rows`]). `take_id` has no foreign key: a row outlives its
+//! take. A deleted source deletes its rows (`ON DELETE CASCADE`, [`remove_source_rows`]).
 
 use super::*;
 use crate::sources::read_source;
@@ -88,6 +88,17 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     Ok(())
 }
 
+/// A proposal delete's cascade (`take_nudge_log_proposal_id_fkey ... ON DELETE CASCADE`): deletes
+/// every nudge at proposal `proposal_id`.
+pub(super) fn remove_proposal_rows(tx: &mut dyn KvWrite, proposal_id: i64) -> Result<()> {
+    for record in all_nudges(&*tx)? {
+        if record.proposal_id == Some(proposal_id) {
+            tx.delete(&nudge_key(record.id))?;
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     /// `insertTakeNudge(n)`: logs the nudge and returns its id.
     pub fn insert_take_nudge(&self, n: &TakeNudgeInput) -> Result<u64> {
@@ -116,14 +127,16 @@ impl Store {
             if read_source(&*tx, &n.source_id)?.is_none() {
                 return Err(fk_failed(TABLE, "take_nudge_log_source_id_fkey"));
             }
-            if n.proposal_id.is_some() {
+            if let Some(proposal) = n.proposal_id
+                && !super::proposals::proposal_exists(&*tx, proposal)?
+            {
                 return Err(fk_failed(TABLE, "take_nudge_log_proposal_id_fkey"));
             }
             let record = NudgeRecord {
                 id,
                 source_id: n.source_id.clone(),
                 take_id: n.take_id,
-                proposal_id: None,
+                proposal_id: n.proposal_id,
                 nudge_pattern: n.nudge_pattern.clone(),
                 fired_at_us: fired_at.unwrap_or_else(|| self.env.now_micros()),
                 channel: n

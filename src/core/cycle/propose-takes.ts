@@ -63,7 +63,7 @@ import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from '
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
-import { guestSourceExclusionSql } from '../guests/derived.ts';
+import type { ProposeTakesPageRow } from '../engine-sql/take-proposals.ts';
 
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
@@ -285,13 +285,6 @@ export interface ProposeTakesResult {
   warnings: string[];
 }
 
-/** Narrow projection of `pages` — the only columns this phase reads. */
-interface ProposeTakesPageRow {
-  slug: string;
-  source_id: string;
-  compiled_truth: string | null;
-}
-
 /**
  * Load proposal candidates with a narrow projection instead of
  * `engine.listPages` (`SELECT p.*`). The phase only reads slug, source_id
@@ -308,39 +301,7 @@ async function listCandidatePages(
   limit: number,
   types: string[] | null = null,
 ): Promise<ProposeTakesPageRow[]> {
-  const where = [
-    'deleted_at IS NULL',
-    "type IS DISTINCT FROM 'extract_receipt'",
-    // #5211: an atom is a fragment of a page that is itself a candidate; a legacy atom carries no writer stamp.
-    "type IS DISTINCT FROM 'atom'",
-    // #5212: never propose takes from the dream cycle's own output.
-    "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
-    "COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'",
-    "COALESCE(frontmatter->>'synthesized_by', '') NOT LIKE 'synthesize_concepts%'",
-    guestSourceExclusionSql('propose_takes', 'pages'),
-  ];
-  const params: unknown[] = [];
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    where.push(`source_id = ANY($${params.length}::text[])`);
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    where.push(`source_id = $${params.length}`);
-  }
-  // #5213: `cycle.propose_takes.types` narrows candidates to listed page types.
-  if (types) {
-    params.push(types);
-    where.push(`type = ANY($${params.length}::text[])`);
-  }
-  params.push(limit);
-  return engine.executeRaw<ProposeTakesPageRow>(
-    `SELECT slug, source_id, compiled_truth
-       FROM pages
-      WHERE ${where.join(' AND ')}
-      ORDER BY updated_at DESC, id DESC
-      LIMIT $${params.length}`,
-    params,
-  );
+  return engine.listProposeTakesCandidatePages({ sourceIds: scope.sourceIds, sourceId: scope.sourceId, types, limit });
 }
 
 export const PROPOSE_TAKES_TYPES_KEY = 'cycle.propose_takes.types';
@@ -985,13 +946,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       // Idempotency check. If a row exists for (source_id, page_slug, content_hash,
       // prompt_version), this page was already processed — skip and count as cache hit.
       const sourceId = page.source_id ?? scope.sourceId ?? 'default';
-      const cached = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM take_proposals
-         WHERE source_id = $1 AND page_slug = $2 AND content_hash = $3 AND prompt_version = $4
-         LIMIT 1`,
-        [sourceId, page.slug, ch, promptVersion],
-      );
-      if (cached.length > 0) {
+      if (await engine.takeProposalCached({ sourceId, pageSlug: page.slug, contentHash: ch, promptVersion })) {
         result.cache_hits += 1;
         continue;
       }
@@ -1077,11 +1032,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       const heldTakes = existingTakes.filter(take => take.holder !== 'world').map(take => fold(take.claim)).filter(claim => claim.length >= 12);
       proposals = proposals.filter(p => !heldTakes.some(claim => fold(p.claim_text).includes(claim)));
       // #7299: a new content hash extracts the page again; a claim the operator already rejected on it stays rejected.
-      const rejected = new Set((await engine.executeRaw<{ claim_text: string }>(
-        `SELECT claim_text FROM take_proposals
-          WHERE source_id = $1 AND page_slug = $2 AND status = 'rejected' AND acted_at IS NOT NULL`,
-        [sourceId, page.slug],
-      )).map(row => row.claim_text));
+      const rejected = new Set(await engine.listRejectedTakeProposalClaims(sourceId, page.slug));
       const fresh = proposals.filter(p => !rejected.has(p.claim_text));
       result.rejected_claims_skipped += proposals.length - fresh.length;
       proposals = fresh;
@@ -1091,31 +1042,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
       // the per-page tuple (migration v125), so a multi-claim page keeps every
       // claim. RETURNING id prevents a repeated claim from inflating the count.
       for (const p of proposals) {
-        const inserted = await engine.executeRaw<{ id: number }>(
-          `INSERT INTO take_proposals
-             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
-              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
-           RETURNING id`,
-          [
-            sourceId,
-            page.slug,
-            ch,
-            promptVersion,
-            proposalRunId,
-            p.claim_text,
-            p.kind,
-            p.holder,
-            p.weight,
-            p.domain ?? null,
-            JSON.stringify(existingTakes),
-            // #4737: prefer the response-derived model (what actually
-            // answered) over the requested one for provenance.
-            p.served_model ?? modelId,
-          ],
-        );
-        result.proposals_inserted += inserted.length;
+        const inserted = await engine.insertTakeProposal({
+          sourceId, pageSlug: page.slug, contentHash: ch, promptVersion, proposalRunId,
+          claimText: p.claim_text, kind: p.kind, holder: p.holder, weight: p.weight, domain: p.domain ?? null,
+          dedupAgainst: existingTakes,
+          // #4737: prefer the response-derived model (what actually answered) over the requested one for provenance.
+          modelId: p.served_model ?? modelId,
+        });
+        if (inserted !== null) result.proposals_inserted += 1;
       }
 
       // Memoize the empty case too. A page that extracted zero claims gets
@@ -1130,27 +1064,11 @@ class ProposeTakesPhase extends BaseCyclePhase {
       // SUCCESSFUL empty extract — the extractor-throw path `continue`s above,
       // so failed pages are retried rather than tombstoned.
       if (proposals.length === 0) {
-        await engine.executeRaw(
-          `INSERT INTO take_proposals
-             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
-              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb, $12, 'rejected')
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
-          [
-            sourceId,
-            page.slug,
-            ch,
-            promptVersion,
-            proposalRunId,
-            EMPTY_EXTRACTION_TOMBSTONE_TEXT,
-            'fact',
-            'brain',
-            0,
-            null,
-            JSON.stringify(existingTakes),
-            modelId,
-          ],
-        );
+        await engine.insertTakeProposal({
+          sourceId, pageSlug: page.slug, contentHash: ch, promptVersion, proposalRunId,
+          claimText: EMPTY_EXTRACTION_TOMBSTONE_TEXT, kind: 'fact', holder: 'brain', weight: 0, domain: null,
+          dedupAgainst: existingTakes, modelId, status: 'rejected',
+        });
         result.tombstones_written += 1;
       }
     }

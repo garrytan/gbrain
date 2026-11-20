@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 921/921
+# covered: 937/937
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 20/20
 # ontology: 4/4
 # raw_files: 6/6
-# takes: 43/43
+# takes: 59/59
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
@@ -93,7 +93,7 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	550	yes	yes	yes	serves
+putPage	pages	yes	557	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -301,7 +301,7 @@ listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
 addTakesBatch	takes	yes	53	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	23	no	yes	yes	serves
+listTakes	takes	yes	24	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -338,8 +338,24 @@ listHorizonScanRows	takes	yes	2	no	yes	yes	serves
 listWaveAppliedTakeIds	takes	yes	1	no	yes	yes	serves
 revertWaveTakeResolutions	takes	yes	1	no	yes	yes	serves
 unapplyWaveTakeGrades	takes	yes	1	no	yes	yes	serves
-purgeTakeNudgesByWave	takes	yes	1	no	yes	yes	serves
-insertTakeNudge	takes	yes	1	no	yes	yes	serves
+purgeTakeNudgesByWave	takes	yes	2	no	yes	yes	serves
+insertTakeNudge	takes	yes	2	no	yes	yes	serves
+listPendingTakeProposals	takes	yes	6	no	yes	yes	serves
+readTakeProposal	takes	yes	4	no	yes	yes	serves
+claimTakeProposal	takes	yes	3	no	yes	yes	serves
+readStrandedTakeProposalClaim	takes	yes	2	no	yes	yes	serves
+releaseTakeProposalClaim	takes	yes	2	no	yes	yes	serves
+setTakeProposalPromotedRow	takes	yes	2	no	yes	yes	serves
+rejectTakeProposal	takes	yes	2	no	yes	yes	serves
+takeProposalCached	takes	yes	2	no	yes	yes	serves
+listRejectedTakeProposalClaims	takes	yes	3	no	yes	yes	serves
+insertTakeProposal	takes	yes	7	no	yes	yes	serves
+listTakeProposalTombstones	takes	yes	2	no	yes	yes	serves
+deleteTakeProposalTombstones	takes	yes	4	no	yes	yes	serves
+listProposeTakesCandidatePages	takes	yes	2	no	yes	yes	serves
+readOpCheckpointDoc	takes	yes	4	no	yes	yes	serves
+writeOpCheckpointDoc	takes	yes	3	no	yes	yes	serves
+listWriteRequestsByRequestId	takes	yes	3	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	4	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves

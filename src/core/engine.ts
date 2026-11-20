@@ -89,6 +89,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
+import type { ProposeTakesCandidateScope, ProposeTakesPageRow, TakeProposalClaim, TakeProposalInsert, TakeProposalPageKey, TakeProposalRow, TakeProposalTombstone } from './engine-sql/take-proposals.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
@@ -4426,6 +4427,38 @@ export interface BrainEngine {
   purgeTakeNudgesByWave(spec: { waveVersion: string; dryRun: boolean }): Promise<number>;
   /** Log a fired nudge at a take or a take proposal; its id. */
   insertTakeNudge(n: TakeNudgeInput): Promise<number>;
+  /** The take proposal queue (SQL in engine-sql/take-proposals.ts): pending proposals, newest first (limit clamped to 1..500). */
+  listPendingTakeProposals(opts: { sourceId?: string; limit: number }): Promise<TakeProposalRow[]>;
+  /** One proposal by id, whatever its status; with `sourceId`, another source's proposal reads as null. */
+  readTakeProposal(id: number, sourceId?: string): Promise<TakeProposalRow | null>;
+  /** Claim a pending proposal for an accept (status accepted, acted now); null when it is not pending. */
+  claimTakeProposal(id: number, actedBy: string): Promise<TakeProposalClaim | null>;
+  /** The claim of an accepted proposal whose take is not recorded yet, or null. */
+  readStrandedTakeProposalClaim(id: number): Promise<TakeProposalClaim | null>;
+  /** Put a claimed, unrecorded proposal back to pending while it is still the claim made at `claimedAt` (ISO, ms). */
+  releaseTakeProposalClaim(id: number, claimedAt: string | null): Promise<void>;
+  /** Record the take row an accepted proposal became. */
+  setTakeProposalPromotedRow(id: number, rowNum: number): Promise<void>;
+  /** Reject a pending proposal; false when it is not pending. */
+  rejectTakeProposal(id: number, actedBy: string): Promise<boolean>;
+  /** Whether any proposal (tombstones too) is stored under the propose_takes page key: the page is a cache hit. */
+  takeProposalCached(key: TakeProposalPageKey): Promise<boolean>;
+  /** The claims an operator rejected on a page, at any content. */
+  listRejectedTakeProposalClaims(sourceId: string, pageSlug: string): Promise<string[]>;
+  /** Store a proposal or tombstone unless that claim is stored under its page key; the new id, or null. */
+  insertTakeProposal(p: TakeProposalInsert): Promise<number | null>;
+  /** A source's failure tombstones (claims starting with `prefix`, never acted on), by page slug. */
+  listTakeProposalTombstones(sourceId: string, prefix: string): Promise<TakeProposalTombstone[]>;
+  /** Delete a source's failure tombstones, of one page or all; the pages released, sorted, each once. */
+  deleteTakeProposalTombstones(sourceId: string, prefix: string, slug?: string): Promise<string[]>;
+  /** The pages propose_takes reads, newest first (live, not receipts, atoms, generated or guest pages). */
+  listProposeTakesCandidatePages(scope: ProposeTakesCandidateScope): Promise<ProposeTakesPageRow[]>;
+  /** The one JSON document an op checkpoint row holds (`completed_keys[0]`), or null. */
+  readOpCheckpointDoc(op: string, fingerprint: string): Promise<unknown>;
+  /** Store one JSON document as an op checkpoint row (`completed_keys = [doc]`). */
+  writeOpCheckpointDoc(op: string, fingerprint: string, doc: unknown): Promise<void>;
+  /** Every write request admitted under `requestId`, whichever principal admitted it. */
+  listWriteRequestsByRequestId(requestId: string): Promise<WriteRequest[]>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

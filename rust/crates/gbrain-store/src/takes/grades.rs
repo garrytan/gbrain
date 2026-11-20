@@ -109,13 +109,13 @@ fn grade_key(
 }
 
 /// A `REAL` value as the number both SQL engines print: the shortest decimal that names it.
-fn real(x: f32) -> f64 {
+pub(super) fn real(x: f32) -> f64 {
     x.to_string().parse().unwrap_or(f64::from(x))
 }
 
 /// A `REAL` parameter: refuses a NaN or infinity (native input only) and a finite number too large
 /// for `f32`, as Postgres refuses it out of range.
-fn to_real(op: &str, x: f64) -> Result<f32> {
+pub(super) fn to_real(op: &str, x: f64) -> Result<f32> {
     if !x.is_finite() {
         return Err(StoreError::invalid(format!(
             "{op}: confidence is not a finite number"

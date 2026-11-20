@@ -31,6 +31,7 @@ import {
 } from '../src/core/cycle/propose-takes.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTakeProposalMembers } from './helpers/take-proposal-members.ts';
 
 const CONFIGURED_MODEL = 'anthropic:claude-sonnet-4-6';
 const SERVED_MODEL = 'openrouter:example/other-model';
@@ -74,7 +75,7 @@ interface CapturedSql { sql: string; params: unknown[] }
 
 function buildMockEngine(): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
-  const engine = {
+  const engine = withTakeProposalMembers({
     kind: 'pglite',
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
@@ -90,7 +91,7 @@ function buildMockEngine(): { engine: BrainEngine; captured: CapturedSql[] } {
       if (sql.includes('INSERT INTO take_proposals')) return [{ id: 1 } as unknown as T];
       return [];
     },
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
   return { engine, captured };
 }
 

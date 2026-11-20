@@ -3,8 +3,8 @@
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
 //! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
 //! `takes/reads.rs`, the reads and the delete of `takes/extract.rs`, the grade_takes verdict
-//! cache of `takes/grades.rs`, the take horizons of `takes/horizons.rs` and the nudge log of
-//! `takes/nudges.rs`.
+//! cache of `takes/grades.rs`, the take horizons of `takes/horizons.rs`, the nudge log of
+//! `takes/nudges.rs` and the take proposal queue of `takes/proposals.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -16,6 +16,10 @@
 //!   (`takes/grades.rs`).
 //! - `A 0x06 <take id>` -> a `take_horizons` row (`takes/horizons.rs`), deleted with its take.
 //! - `A 0x07 <nudge id>` -> a `take_nudge_log` row (`takes/nudges.rs`); counter `M next_take_nudge_id`.
+//! - `A 0x08 <proposal id>` -> a `take_proposals` row (`takes/proposals.rs`); counter
+//!   `M next_take_proposal_id`.
+//! - `A 0x09 <source> 0x00 <slug> 0x00 <content hash> 0x00 <prompt> 0x00 <claim sha256>` -> the
+//!   proposal id: the table's idempotency index (`takes/proposals.rs`).
 //! - Id counter: `M next_take_id`. Every row an `addTakesBatch` call reads takes an id, as the
 //!   Postgres sequence default does, inserted or not.
 //!
@@ -46,12 +50,16 @@ mod extract;
 mod grades;
 mod horizons;
 pub(crate) mod nudges;
+pub(crate) mod proposals;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};
 pub use horizons::TakeHorizonInput;
 pub use nudges::{TakeNudgeInput, WaveSpec};
+pub use proposals::{
+    ProposeTakesCandidateScope, TakeProposalInput, TakeProposalListSpec, TakeProposalPageKey,
+};
 pub use reads::{LiveTakeAt, McpResolvedInput, PurgeTakesInput, RevertResolutionsSpec};
 
 const NEXT_TAKE_ID: &str = "next_take_id";

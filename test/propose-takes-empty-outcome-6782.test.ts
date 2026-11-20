@@ -17,6 +17,7 @@ import { __setChatTransportForTests, configureGateway, resetGateway, type ChatRe
 import { defaultExtractor, extractorOutcome, runPhaseProposeTakes, EMPTY_EXTRACTION_TOMBSTONE_TEXT } from '../src/core/cycle/propose-takes.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTakeProposalMembers } from './helpers/take-proposal-members.ts';
 
 const REPORTED_EMPTY = [
   '[]\n\nNo gradeable claims—this is purely factual (purpose, ownership, dates, source links).',
@@ -96,7 +97,7 @@ describe('#6782 the phase memoizes a reported empty reply with a tombstone', () 
   test('one extractor call, one tombstone, no failure', async () => {
     reply(REPORTED_EMPTY[0]!);
     const captured: Array<{ sql: string; params: unknown[] }> = [];
-    const engine = {
+    const engine = withTakeProposalMembers({
       kind: 'pglite',
       async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
         captured.push({ sql, params: params ?? [] });
@@ -105,7 +106,7 @@ describe('#6782 the phase memoizes a reported empty reply with a tombstone', () 
         if (sql.includes('INSERT INTO take_proposals')) return [{ id: 1 } as unknown as T];
         return [];
       },
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     const ctx = { engine, config: {} as never, logger: { info() {}, warn() {}, error() {} } as never, dryRun: false, remote: false, sourceId: 'default' } as OperationContext;
     const result = await runPhaseProposeTakes(ctx, {});
     const details = result.details as Record<string, unknown>;
