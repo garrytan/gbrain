@@ -272,6 +272,7 @@ Each member is one store call (a scan of the fact rows, no SQL). The TypeScript 
 | `listFreshExtractionOutcomes` | the unexpired `audit:` rows of named pages, the preferred source first within a page | served (exact ties break by id) |
 | `listFenceRowGroups` | per page coordinate with fenced rows (no `cli:` rows): row numbers and whether all are expired | served (no set order) |
 | `readFactSubject` | a fact's source and page slug (its page, else its entity), or null | served |
+| `listFactProvenance` | `{ id, source }` of each listed fact of the source, by id | served |
 | `listFactsForPage` | the fence-owned rows of a page by row number then id; times come back as `Date`s | served |
 | `countLegacyFactsPending` | per entity page, the unexpired unfenced non-observation rows of a live page in a source with a checkout | served (no set order) |
 | `countUnconsolidatedFactsBySource` | the consolidate buckets of at least `minPerBucket` active unconsolidated facts | served; "names readers" is a page whose frontmatter has `readable_by` (the folder-rule tables and `page_readers` are empty, as in `privacy.rs`) |

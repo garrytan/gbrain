@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 904/904
+# covered: 905/905
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -45,7 +45,7 @@
 # embedding_catalog: 5/5
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
-# facts_cycle: 12/12
+# facts_cycle: 13/13
 # facts_purge: 18/18
 # facts_repair: 10/10
 # facts_trust: 10/10
@@ -335,7 +335,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	62	yes	yes	yes	serves
+insertFact	facts	yes	63	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
@@ -684,6 +684,7 @@ listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
+listFactProvenance	facts_cycle	yes	1	no	yes	yes	serves
 listFactsForPage	facts_cycle	yes	8	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves

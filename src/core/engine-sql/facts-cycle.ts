@@ -76,6 +76,17 @@ export async function readFactSubject(raw: EngineRawRead, id: number): Promise<F
   return row ?? null;
 }
 
+/** A fact's stored provenance (`facts.source`, what `remember --provenance` wrote). */
+export interface FactProvenanceRow { id: number; source: string | null }
+
+/** context_pack and delta (#6146): the stored provenance of the listed facts of `sourceId`, by id; an empty list reads nothing. */
+export async function listFactProvenance(raw: EngineRawRead, sourceId: string, ids: readonly number[]): Promise<FactProvenanceRow[]> {
+  if (ids.length === 0) return [];
+  const rows = await raw<{ id: number | string; source: string | null }>(
+    'SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id', [sourceId, [...ids]]);
+  return rows.map(r => ({ id: Number(r.id), source: r.source }));
+}
+
 /** One fence-owned fact row of a page as extract_facts reconciles it. */
 export interface PageFactRow {
   id: number | string;

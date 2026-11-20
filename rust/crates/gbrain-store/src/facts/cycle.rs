@@ -3,7 +3,7 @@
 //! fence-repair and entity-card paths ran through `executeRaw`.
 //!
 //! Members: listActiveFactsForEntity, listFreshExtractionOutcomes, listFenceRowGroups, readFactSubject,
-//! listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
+//! listFactProvenance, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
 //! listStoredFenceFactRows, countWorldFacts.
 //!
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
@@ -15,7 +15,7 @@
 
 use super::{
     FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, hidden_by_deleted_page,
-    hidden_by_policy, hidden_by_quarantine, page_rows, real,
+    hidden_by_policy, hidden_by_quarantine, page_rows, read_fact, real,
 };
 use crate::Store;
 use crate::env::iso;
@@ -85,6 +85,14 @@ pub struct ExtractionOutcomeQuery {
 pub struct PageCoordinate {
     pub source_id: String,
     pub slug: String,
+}
+
+/// `listFactProvenance` arguments: a source and fact ids.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactProvenanceQuery {
+    pub source_id: String,
+    pub ids: Vec<i64>,
 }
 
 /// `readFenceRowOccupant` arguments: a page coordinate and a row number.
@@ -295,6 +303,26 @@ impl Store {
                 json!({ "source_id": r.source_id, "slug": slug })
             }),
         )
+    }
+
+    /// `listFactProvenance` (src/core/ops/facts.ts `withProvenance`): `{ id, source }` of each listed fact of the
+    /// source, by id, once each; an id of no fact or of another source's fact is left out.
+    pub fn list_fact_provenance(&self, q: &FactProvenanceQuery) -> Result<Vec<Value>> {
+        no_nul("listFactProvenance", &[("sourceId", &q.source_id)])?;
+        let ids: BTreeSet<u64> = q
+            .ids
+            .iter()
+            .filter(|&&id| id >= 1)
+            .map(|&id| id as u64)
+            .collect();
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(r) = read_fact(&*read, id)?.filter(|r| r.source_id == q.source_id) {
+                out.push(json!({ "id": r.id, "source": r.source }));
+            }
+        }
+        Ok(out)
     }
 
     /// `listFactsForPage` (src/core/cycle/extract-facts.ts): the fence-owned rows of a page coordinate, by

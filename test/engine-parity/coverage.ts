@@ -176,7 +176,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   fact_relink_writes: ['placeRelinkedFact', 'linkConversationFact', 'listConversationRelinkPages'],
 
   // facts_cycle: command, cycle and fence reads
-  facts_cycle: ['listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactsForPage', 'countLegacyFactsPending',
+  facts_cycle: ['listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactProvenance', 'listFactsForPage', 'countLegacyFactsPending',
     'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'readFenceRowOccupant', 'listStoredFenceFactRows', 'countWorldFacts'],
 
   // facts_purge: purge, withdrawal, relink and fence repair

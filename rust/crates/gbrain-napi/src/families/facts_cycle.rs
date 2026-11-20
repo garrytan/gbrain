@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::cycle::{
-    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
-    PageCoordinate, WorldFactCount,
+    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FactProvenanceQuery,
+    FenceRowOccupantQuery, PageCoordinate, WorldFactCount,
 };
 
 #[napi]
@@ -55,6 +55,19 @@ impl Brain {
         self.run(env, move |s| {
             let id: f64 = required(id, "readFactSubject id")?;
             s.read_fact_subject(id)
+        })
+    }
+
+    /// `listFactProvenance({ sourceId, ids })`: resolves `{ id, source }` rows by id.
+    #[napi]
+    pub fn list_fact_provenance<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FactProvenanceQuery = required(args, "listFactProvenance args")?;
+            s.list_fact_provenance(&a)
         })
     }
 

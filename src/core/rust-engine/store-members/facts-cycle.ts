@@ -29,6 +29,13 @@ export const listFenceRowGroups: Member<'listFenceRowGroups'> = (brain) =>
 export const readFactSubject: Member<'readFactSubject'> = (brain, id) =>
   storeCall({ member: 'readFactSubject' }, () => brain.readFactSubject(id));
 
+export const listFactProvenance: Member<'listFactProvenance'> = async (brain, sourceId, ids) => {
+  if (ids.length === 0) return [];
+  // `$2::bigint[]` refuses an id that is not an integer.
+  if (!ids.every(id => Number.isSafeInteger(id))) refuseMember('listFactProvenance', 'a fact id that is not an integer');
+  return storeCall({ member: 'listFactProvenance' }, () => brain.listFactProvenance({ sourceId, ids: [...ids] }));
+};
+
 /** `valid_from`, `valid_until` and `expired_at` come back from PGLite as `Date`s. */
 export const listFactsForPage: Member<'listFactsForPage'> = async (brain, sourceId, slug) => {
   const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listFactsForPage' }, () => brain.listFactsForPage({ sourceId, slug }));

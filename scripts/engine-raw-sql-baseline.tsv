@@ -551,7 +551,6 @@ src/core/op-checkpoint.ts	execute_raw	1
 src/core/ops/admin.ts	execute_raw	2
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/context.ts	execute_raw	1
-src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4

@@ -740,6 +740,7 @@
       "readFactEntitySlug": "out-of-scope:memory-mutation-reads (born in engine-sql/memory-mutation-reads.ts; pinned by test/engine-parity/memory-mutation-reads.test.ts and test/memory-mutation-reads-sql-pin.test.ts)",
       "readFactForOwnerAction": "out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)",
       "readFactSubject": "out-of-scope:facts-cycle (born in engine-sql/facts-cycle.ts; pinned by test/engine-parity/facts-cycle.test.ts)",
+      "listFactProvenance": "out-of-scope:facts-cycle (born in engine-sql/facts-cycle.ts; pinned by test/engine-parity/caller-typed-reads.test.ts)",
       "readFactWithdrawalClaim": "out-of-scope:memory-mutation-reads (born in engine-sql/memory-mutation-reads.ts; pinned by test/engine-parity/memory-mutation-reads.test.ts and test/memory-mutation-reads-sql-pin.test.ts)",
       "readFactWithdrawnBacking": "out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)",
       "readFactWithdrawnRow": "out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)",

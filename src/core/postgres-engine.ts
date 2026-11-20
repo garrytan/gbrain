@@ -1272,6 +1272,7 @@ export class PostgresEngine implements BrainEngine {
   listFreshExtractionOutcomes(sourceId: string, slugs: string[], sources: string[], preferredSource: string) { return factsCycleImpl.listFreshExtractionOutcomes(this.executeRaw.bind(this), sourceId, slugs, sources, preferredSource); }
   listFenceRowGroups() { return factsCycleImpl.listFenceRowGroups(this.executeRaw.bind(this)); }
   readFactSubject(id: number) { return factsCycleImpl.readFactSubject(this.executeRaw.bind(this), id); }
+  listFactProvenance(sourceId: string, ids: readonly number[]) { return factsCycleImpl.listFactProvenance(this.executeRaw.bind(this), sourceId, ids); }
   listFactsForPage(sourceId: string, slug: string) { return factsCycleImpl.listFactsForPage(this.executeRaw.bind(this), sourceId, slug); }
   countLegacyFactsPending(sourceId: string) { return factsCycleImpl.countLegacyFactsPending(this.executeRaw.bind(this), sourceId); }
   countUnconsolidatedFactsBySource(opts: { sourceId?: string; worldOnly: boolean; minPerBucket: number }) { return factsCycleImpl.countUnconsolidatedFactsBySource(this.executeRaw.bind(this), opts); }

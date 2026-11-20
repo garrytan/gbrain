@@ -435,6 +435,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFreshExtractionOutcomes: 'facts',
   listFenceRowGroups: 'facts',
   readFactSubject: 'facts',
+  listFactProvenance: 'facts',
   listFactsForPage: 'facts',
   countLegacyFactsPending: 'facts',
   countUnconsolidatedFactsBySource: 'facts',

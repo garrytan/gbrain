@@ -3501,6 +3501,8 @@ export interface BrainEngine {
   listFenceRowGroups(): Promise<FactsCycleSql.FenceRowGroupRow[]>;
   /** The source and page slug (the row's page, else its entity) of fact `id`, or null for no such row. */
   readFactSubject(id: number): Promise<FactsCycleSql.FactSubjectRow | null>;
+  /** context_pack and delta: `{ id, source }` (the stored provenance) of each listed fact of the source, by id (engine-sql/facts-cycle.ts). */
+  listFactProvenance(sourceId: string, ids: readonly number[]): Promise<FactsCycleSql.FactProvenanceRow[]>;
   /** The fence-owned rows of a page coordinate, by row number then id; `valid_from`, `valid_until` and `expired_at` are dates. */
   listFactsForPage(sourceId: string, slug: string): Promise<FactsCycleSql.PageFactRow[]>;
   /** Per entity page of the source, its unexpired unfenced rows (a live page in a source with a checkout). No set order. */

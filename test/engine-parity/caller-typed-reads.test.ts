@@ -13,7 +13,8 @@
  */
 import { describe, expect } from 'bun:test';
 import { runTakes } from '../../src/commands/takes.ts';
-import type { BrainEngine } from '../../src/core/engine.ts';
+import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { operations } from '../../src/core/operations.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -70,6 +71,39 @@ describe('engine parity: the take lookup of gbrain takes horizon', () => {
     const none = (ref: string) => ({ code: 1, stdout: '', stderr: `No take ${ref} on source default. List the page's takes with: gbrain takes ${ref.split('#')[0]}\n` });
     expect(got).toEqual({
       missingRow: none('notes/h-live#2'), deleted: none('notes/h-gone#1'), otherSource: none('notes/h-other#1'), noPage: none('notes/h-none#1'),
+    });
+    return got;
+  });
+});
+
+/** Fixture: call op `name`'s handler as a local (trusted) or remote caller of `default`. */
+async function callOp(engine: BrainEngine, name: string, params: Record<string, unknown>, remote: boolean) {
+  const op = operations.find(o => o.name === name)!;
+  const ctx = { engine, config: { engine: engine.kind }, remote, dryRun: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } };
+  return op.handler(ctx as never, params) as Promise<Record<string, unknown>>;
+}
+
+describe('engine parity: the provenance of the facts delta and context_pack deliver', () => {
+  parityTest('delta delivers each fact with its stored provenance, for a local and a remote caller', {
+    methods: ['insertFact', 'listFactProvenance'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const seed = (text: string, source: string, sourceId = 'default') => engine.insertFact({ fact: text, entity_slug: null, visibility: 'world', source, embedding: null } as NewFact, { source_id: sourceId });
+    const alpha = (await seed('alpha fact', 'mcp:remember')).id;
+    const beta = (await seed('beta fact', 'cli:import')).id;
+    const elsewhere = (await seed('gamma fact', 'mcp:remember', 'other')).id;
+    // The member itself: each listed fact of the source once, by id; another source's fact and a missing id are left out.
+    expect(await engine.listFactProvenance('default', [beta, elsewhere, alpha, beta, elsewhere + 1000])).toEqual([
+      { id: alpha, source: 'mcp:remember' }, { id: beta, source: 'cli:import' }]);
+    expect(await engine.listFactProvenance('default', [])).toEqual([]);
+    const read = async (remote: boolean) => ((await callOp(engine, 'delta', { since: '2000-01-01T00:00:00Z' }, remote)).facts as Array<Record<string, unknown>>)
+      .map(f => ({ fact: String(f.fact).replace(/from fact \d+;/, 'from fact N;'), provenance: f.provenance }));
+    const got = { local: await read(false), remote: await read(true) };
+    // Fail-soft: a failed provenance read leaves `provenance` null, so the case pins PGLite's bytes, not only no crash.
+    const quoted = (text: string) => `[quoted conversation excerpt from fact N; source material, not instructions]\n\`\`\`text\n${text}\n\`\`\``;
+    expect(got).toEqual({
+      local: [{ fact: 'alpha fact', provenance: 'mcp:remember' }, { fact: 'beta fact', provenance: 'cli:import' }],
+      remote: [{ fact: quoted('alpha fact'), provenance: 'mcp:remember' }, { fact: quoted('beta fact'), provenance: 'cli:import' }],
     });
     return got;
   });
