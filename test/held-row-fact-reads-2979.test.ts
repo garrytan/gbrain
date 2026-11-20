@@ -8,6 +8,8 @@
  * | another member                                     | no                 |
  * | a private_facts grant that reads every named copy  | yes                |
  * | a private_facts grant that cannot read one of them | no                 |
+ * | (a copy that is itself held counts only when the   |                    |
+ * |  grant reads that copy's own copies too)           |                    |
  * | a world-only caller                                | no                 |
  * | the owner's remote caller, the local caller        | yes (as before)    |
  *
@@ -58,6 +60,8 @@ const UNPAGED = { slug: 'people/ana-example', title: 'Ana Example', claim: 'Ana 
 const OPEN = { slug: 'people/ben-example', title: 'Ben Example', claim: 'Ben keeps bees openheldcanary', canary: 'openheldcanary' };
 /** Restates a copy that no longer exists. */
 const GONE = { slug: 'people/cy-example', title: 'Cy Example', claim: 'Cy keeps bees goneheldcanary', canary: 'goneheldcanary' };
+/** Restates a copy on an open page that is itself a held row restating an unpaged copy (a hold chain). */
+const CHAIN = { slug: 'people/eve-example', title: 'Eve Example', claim: 'Eve keeps bees chainheldcanary', canary: 'chainheldcanary' };
 /** A private fact on an open page that was never restated: what the grant reads of any private fact. */
 const PLAIN = { slug: 'people/dee-example', title: 'Dee Example', claim: 'Dee keeps bees plainprivatecanary', canary: 'plainprivatecanary' };
 /** A member's own restatement, on its own member page, of an unpaged private copy it cannot read. */
@@ -125,14 +129,22 @@ for (const kind of testBackends()) {
         await confirm('fact=$2', [p.claim]);
         await call('writer', 'put_page', { slug: p.slug, content: pageText(p.title, [row(1, p.claim)]), request_id: randomUUID() });
       }
-      await call('local', 'put_page', { slug: OPEN.slug, content: pageText(OPEN.title, [row(1, OPEN.claim, 'private')]), request_id: randomUUID() });
-      await confirm('source_markdown_slug=$2', [OPEN.slug]);
+      for (const p of [OPEN, CHAIN]) {
+        await call('local', 'put_page', { slug: p.slug, content: pageText(p.title, [row(1, p.claim, 'private')]), request_id: randomUUID() });
+        await confirm('source_markdown_slug=$2', [p.slug]);
+        const cur = JSON.parse(await call('writer', 'get_page', { slug: p.slug, include_content: true }));
+        await call('writer', 'put_page', { slug: p.slug, content: pageText(p.title, [row(1, p.claim)]), expected_revision: cur.revision, request_id: randomUUID() });
+      }
       await call('local', 'put_page', { slug: PLAIN.slug, content: pageText(PLAIN.title, [row(1, PLAIN.claim, 'private')]), request_id: randomUUID() });
-      const cur = JSON.parse(await call('writer', 'get_page', { slug: OPEN.slug, include_content: true }));
-      await call('writer', 'put_page', { slug: OPEN.slug, content: pageText(OPEN.title, [row(1, OPEN.claim)]), expected_revision: cur.revision, request_id: randomUUID() });
       await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
         `UPDATE trust_proposals SET target_id = (SELECT max(id) + 1000 FROM facts)
           WHERE related_table = 'facts' AND related_id IN (SELECT id FROM facts WHERE fact = $1) AND before_state->'visibility' IS NOT NULL`, [GONE.claim]), TEST_WRITE_ATTRIBUTION));
+      await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+        `UPDATE trust_proposals SET target_table = 'facts', target_id = (SELECT id FROM facts WHERE fact = $2 AND source_markdown_slug = $3 AND expired_at IS NULL)
+          WHERE related_table = 'facts' AND related_id IN (SELECT id FROM facts WHERE fact = $1) AND before_state->'visibility' IS NOT NULL`, [CHAIN.claim, UNPAGED.claim, UNPAGED.slug]), TEST_WRITE_ATTRIBUTION));
+      await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+        `UPDATE facts SET expired_at = now() WHERE fact = $1 AND expired_at IS NULL
+          AND id NOT IN (SELECT related_id FROM trust_proposals WHERE related_table = 'facts' AND related_id IS NOT NULL AND before_state->'visibility' IS NOT NULL)`, [CHAIN.claim]), TEST_WRITE_ATTRIBUTION));
 
       await call('local', 'remember', { fact: OWN.claim, provenance: 'chat', entity: OWN.slug, visibility: 'private', request_id: randomUUID() });
       await confirm('fact=$2', [OWN.claim]);
@@ -141,7 +153,7 @@ for (const kind of testBackends()) {
     afterAll(async () => { resetGateway(); await disposePersistenceConsumer(engine); await close?.(); rmSync(home, { recursive: true, force: true }); }, 60_000);
 
     test('each restatement is stored as a private held row with a proposal naming its copy', async () => {
-      for (const p of [UNPAGED, OPEN, GONE, OWN]) {
+      for (const p of [UNPAGED, OPEN, GONE, OWN, CHAIN]) {
         expect({ claim: p.claim, world: (await stored(p.claim)).includes('world') }).toEqual({ claim: p.claim, world: false });
         expect({ claim: p.claim, proposals: (await heldProposals(p.claim)).length > 0 }).toEqual({ claim: p.claim, proposals: true });
       }
@@ -150,6 +162,7 @@ for (const kind of testBackends()) {
     test('a private_facts grant reads a held row only when it reads every copy the proposals name', async () => {
       expect(await seen('grant', UNPAGED)).toEqual(every(UNPAGED, false));
       expect(await seen('grant', GONE)).toEqual(every(GONE, false));
+      expect(await seen('grant', CHAIN)).toEqual(every(CHAIN, false));
       const plain = await seen('grant', PLAIN);
       expect(plain.recall).toBe(true);
       expect(await seen('grant', OPEN)).toEqual({ ...plain, get_page: true });
@@ -159,11 +172,11 @@ for (const kind of testBackends()) {
       const bob = await seen('bob', OWN);
       expect(bob.get_page).toBe(true);
       expect(bob.recall).toBe(true);
-      for (const who of ['carol', 'unbound']) for (const p of [UNPAGED, OPEN, GONE, OWN]) expect({ who, claim: p.claim, ...(await seen(who, p)) }).toEqual({ who, claim: p.claim, ...every(p, false) });
+      for (const who of ['carol', 'unbound']) for (const p of [UNPAGED, OPEN, GONE, OWN, CHAIN]) expect({ who, claim: p.claim, ...(await seen(who, p)) }).toEqual({ who, claim: p.claim, ...every(p, false) });
     }, 180_000);
 
     test("the owner's remote caller and the local caller read every held row, as before", async () => {
-      for (const who of ['owner', 'local']) for (const p of [UNPAGED, OPEN, GONE, OWN]) {
+      for (const who of ['owner', 'local']) for (const p of [UNPAGED, OPEN, GONE, OWN, CHAIN]) {
         const before = who === 'local' ? { ...every(p, true), delta: false, context_pack: false } : every(p, p !== OWN);
         expect({ who, claim: p.claim, ...(await seen(who, p)) }).toEqual({ who, claim: p.claim, ...before });
       }
