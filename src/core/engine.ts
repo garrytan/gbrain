@@ -3610,6 +3610,10 @@ export interface BrainEngine {
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
   /** The stored provenance (`facts.source`) of the named facts of one source (ops/facts.ts `withProvenance`). */
   listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
+  /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
+  listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
+  /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */
+  readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

@@ -1615,6 +1615,8 @@ export class PGLiteEngine implements BrainEngine {
   listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.rawRead, opts); }
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.rawRead); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.rawRead, opts); }
+  listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.rawRead, sourceId, entitySlug, dimension); }
+  readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.rawRead, sourceId, entitySlug, dimension, excludeId); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }

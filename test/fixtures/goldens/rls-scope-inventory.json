@@ -3001,6 +3001,17 @@
         ],
         "flagOnScopes": []
       },
+      "listOntologyStreamSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listOverdueHeldWrites#import": {
         "flagOffLanes": [
           "pool"
@@ -4945,6 +4956,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOntologyRival#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -7144,6 +7166,7 @@
         "listMemoryProposalRows": "none",
         "listNotifierHostSourceRows": "none",
         "listOauthClients": "none",
+        "listOntologyStreamSlugs": "none",
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",
         "listOriginClaims": "none",
@@ -7437,6 +7460,7 @@
         "readOauthClientColumns": "none",
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
+        "readOntologyRival": "none",
         "readOpCheckpointKeys": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",

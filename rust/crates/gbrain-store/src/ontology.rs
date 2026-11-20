@@ -1,5 +1,5 @@
 //! Ontology dimensions over facts (BrainEngine mergeOntologyFact, getOntology,
-//! discoverOntologyDimensions, findOntologyConflicts).
+//! discoverOntologyDimensions, findOntologyConflicts, listOntologyStreamSlugs, readOntologyRival).
 //!
 //! The ontology owns no records of its own: an observation is a `facts` row whose `dimension`,
 //! `value`, `value_hash` and `dim_status` columns are set, written and read through the facts
@@ -273,6 +273,69 @@ impl Store {
                 "factId": row.id,
                 "supersededId": superseded,
             }))
+        })
+    }
+
+    /// `listOntologyStreamSlugs(sourceId, entitySlug, dimension)`: the distinct non-null
+    /// `source_markdown_slug` of every open (unexpired, unclosed) non-conversation row of the
+    /// entity's dimension, in byte order. `dimension` is already normalised.
+    pub fn list_ontology_stream_slugs(
+        &self,
+        source_id: &str,
+        entity_slug: &str,
+        dimension: &str,
+    ) -> Result<Vec<String>> {
+        const OP: &str = "listOntologyStreamSlugs";
+        no_nul(
+            OP,
+            &[("sourceId", source_id), ("entitySlug", entity_slug), ("dimension", dimension)],
+        )?;
+        let read = self.read()?;
+        Ok(entity_rows(&*read, source_id, entity_slug)?
+            .into_iter()
+            .filter(|r| {
+                r.dimension.as_deref() == Some(dimension)
+                    && r.expired_at_us.is_none()
+                    && r.valid_until_us.is_none()
+                    && !r.conversation_slot()
+            })
+            .filter_map(|r| r.source_markdown_slug)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect())
+    }
+
+    /// `readOntologyRival(sourceId, entitySlug, dimension, excludeId)`: `{ id, trust_tier }` of
+    /// the newest open, active, non-conversation row of the entity's dimension other than
+    /// `excludeId` (the stint mergeOntologyFact left open), or null. `dimension` is already
+    /// normalised.
+    pub fn read_ontology_rival(
+        &self,
+        source_id: &str,
+        entity_slug: &str,
+        dimension: &str,
+        exclude_id: i64,
+    ) -> Result<Value> {
+        const OP: &str = "readOntologyRival";
+        no_nul(
+            OP,
+            &[("sourceId", source_id), ("entitySlug", entity_slug), ("dimension", dimension)],
+        )?;
+        let read = self.read()?;
+        let rival = entity_rows(&*read, source_id, entity_slug)?
+            .into_iter()
+            .filter(|r| {
+                r.dimension.as_deref() == Some(dimension)
+                    && r.id as i64 != exclude_id
+                    && r.expired_at_us.is_none()
+                    && r.valid_until_us.is_none()
+                    && status_active(r)
+                    && !r.conversation_slot()
+            })
+            .max_by(newest);
+        Ok(match rival {
+            Some(r) => json!({ "id": r.id, "trust_tier": r.trust_tier }),
+            None => Value::Null,
         })
     }
 

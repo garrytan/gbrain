@@ -256,7 +256,7 @@ src/core/belief/purge-mirror.ts	execute_raw	24
 src/core/belief/purge.ts	execute_raw	19
 src/core/belief/retier.ts	execute_raw	3
 src/core/belief/state.ts	execute_raw	4
-src/core/belief/writers.ts	execute_raw	2
+src/core/belief/writers.ts	execute_raw	1
 src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
@@ -1014,7 +1014,7 @@ src/core/trust/provenance-drift.ts	execute_raw	3
 src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15
-src/core/trust/supersede-handlers.ts	execute_raw	12	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
+src/core/trust/supersede-handlers.ts	execute_raw	11	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
 src/core/trust/taint.ts	execute_raw	5
 src/core/trust/timeline-projection.ts	execute_raw	2
 src/core/uncommitted-deletions.ts	execute_raw	1

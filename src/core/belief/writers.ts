@@ -11,7 +11,7 @@ import type { BrainEngine } from '../engine.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { withWriteAttribution } from '../persistence/context.ts';
 import { validateSlug } from '../utils.ts';
-import { normalizeDimension, NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
+import { normalizeDimension } from '../chronicle/ontology.ts';
 import { markBeliefCommits } from './append.ts';
 import { withBeliefBatch, type BeliefBatchOptions } from './ledger.ts';
 
@@ -37,10 +37,9 @@ export async function beliefStreamSlugs(tx: Pick<BrainEngine, 'executeRaw'>, tab
  * every ontology writer also holds the entity's key, so the open stints do not
  * change between this read and the write.
  */
-export async function ontologyStreamSlugs(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, entity: string, dimension: string, source: string): Promise<string[]> {
-  const open = await tx.executeRaw<{ slug: string | null }>(`SELECT DISTINCT source_markdown_slug AS slug FROM facts
-    WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND ${NOT_CONVERSATION_SLOT_SQL}`, [sourceId, entity, normalizeDimension(dimension)]);
-  return [...new Set([entity, source, ...open.map(r => r.slug)].filter(validSlug))].sort();
+export async function ontologyStreamSlugs(tx: Pick<BrainEngine, 'listOntologyStreamSlugs'>, sourceId: string, entity: string, dimension: string, source: string): Promise<string[]> {
+  const open = await tx.listOntologyStreamSlugs(sourceId, entity, normalizeDimension(dimension));
+  return [...new Set([entity, source, ...open].filter(validSlug))].sort();
 }
 
 /**

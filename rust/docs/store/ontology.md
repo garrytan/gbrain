@@ -25,6 +25,8 @@ microsecond ISO text.
 | `getOntology` | The best row per dimension as of `asof` (default now): `valid_from <= asof < valid_until`, active unless `includeQuarantined`, at or above `minConfidence`, filtered by the visibility list, `excludeDiary` (`life/diary/` sources) and soft-deleted provenance pages. Dimensions come out in byte order. |
 | `discoverOntologyDimensions` | Per dimension, the distinct entities and the observation count of open slot rows. Most entities first, then dimension. |
 | `findOntologyConflicts` | Open, active slot rows grouped by entity and dimension, kept when they hold two or more distinct values from two or more distinct sources. Values come out in id order. A null entity sorts last. |
+| `listOntologyStreamSlugs` | For `belief/writers.ts` `ontologyStreamSlugs`: the distinct non-null `source_markdown_slug` of every open (unexpired, unclosed), non-conversation row of one entity's dimension in one source, in byte order. The dimension comes in normalised. |
+| `readOntologyRival` | For `trust/supersede-handlers.ts` `contestOntologySupersession`: `{ id, trust_tier }` of the newest open, active, non-conversation row of one entity's dimension in one source other than `excludeId` (the same order as `mergeOntologyFact`), or null. A non-integer `excludeId` is refused before the store is read. |
 
 `sourceIds` scopes every read to a list of sources; with neither `sourceIds` nor `sourceId`
 every source is read. An empty `visibility` list matches no rows.

@@ -1,6 +1,6 @@
 /**
  * Ontology dimensions over facts (BrainEngine mergeOntologyFact, getOntology, discoverOntologyDimensions,
- * findOntologyConflicts).
+ * findOntologyConflicts, listOntologyStreamSlugs, readOntologyRival).
  *
  * Each member applies the defaults of src/core/pglite-engine.ts, then makes one store call. mergeOntologyFact
  * normalises the dimension, computes the value hash, the default status and the fact text here, with the helpers
@@ -132,4 +132,21 @@ export const findOntologyConflicts: Member<'findOntologyConflicts'> = (brain, op
   const o = takeOptions(member, opts, ['minConfidence', 'visibility', 'excludeDiary', 'excludePrivate', ...SCOPE],
     IGNORED) as OntologyReadOpts;
   return storeCall({ member }, () => brain.findOntologyConflicts(readFilters(member, o)));
+};
+
+/** The provenance slugs of the dimension's open stints (engine-sql/facts-trust.ts); `dimension` comes normalised. */
+export const listOntologyStreamSlugs: Member<'listOntologyStreamSlugs'> = async (brain, sourceId, entitySlug, dimension) => {
+  const slugs: string[] = await storeCall({ member: 'listOntologyStreamSlugs' }, () =>
+    brain.listOntologyStreamSlugs(ensureWellFormed(sourceId), ensureWellFormed(entitySlug), ensureWellFormed(dimension)));
+  // The store answers in byte order; the SQL engines sort in code-unit order.
+  return [...slugs].sort();
+};
+
+/** The stint an observation left open, with its stored tier (engine-sql/facts-trust.ts); `dimension` comes normalised. */
+export const readOntologyRival: Member<'readOntologyRival'> = async (brain, sourceId, entitySlug, dimension, excludeId) => {
+  const member = 'readOntologyRival';
+  if (!Number.isSafeInteger(excludeId)) refuseMember(member, 'an id that is not a safe integer');
+  const row: { id: number; trust_tier: string } | null = await storeCall({ member }, () =>
+    brain.readOntologyRival(ensureWellFormed(sourceId), ensureWellFormed(entitySlug), ensureWellFormed(dimension), excludeId));
+  return row ? { id: Number(row.id), trust_tier: row.trust_tier } : null;
 };

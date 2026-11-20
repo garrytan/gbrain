@@ -344,3 +344,28 @@ export async function listFactProvenance(raw: EngineRawRead, opts: { sourceId: s
   );
   return rows.map((r) => ({ id: Number(r.id), source: r.source }));
 }
+
+/**
+ * The provenance (`source_markdown_slug`) of each open stint of an entity's dimension: every unexpired, unclosed row
+ * that is not a conversation slot (belief/writers.ts `ontologyStreamSlugs`, the streams an observation can change).
+ * `dimension` is already normalised. Each slug once, in code-unit order; a row with no provenance adds nothing.
+ * The conversation test is chronicle/ontology.ts NOT_CONVERSATION_SLOT_SQL written out (both texts are pinned).
+ */
+export async function listOntologyStreamSlugs(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string): Promise<string[]> {
+  const rows = await raw<{ slug: string | null }>(`SELECT DISTINCT source_markdown_slug AS slug FROM facts
+    WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'`, [sourceId, entitySlug, dimension]);
+  return rows.map(r => r.slug).filter((slug): slug is string => slug !== null).sort();
+}
+
+/**
+ * The stint an ontology observation `excludeId` left open (trust/supersede-handlers.ts `contestOntologySupersession`):
+ * the newest open, active, non-conversation row of the entity's dimension other than `excludeId`, with its stored
+ * `trust_tier` (the caller reads it through storedTrustTier). `dimension` is already normalised. Null: no such row.
+ */
+export async function readOntologyRival(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null> {
+  const [row] = await raw<{ id: number | string; trust_tier: string }>(
+    `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
+       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
+     ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`, [sourceId, entitySlug, dimension, excludeId]);
+  return row ? { id: Number(row.id), trust_tier: row.trust_tier } : null;
+}

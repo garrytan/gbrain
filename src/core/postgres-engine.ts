@@ -1290,6 +1290,8 @@ export class PostgresEngine implements BrainEngine {
   listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.executeRaw.bind(this), opts); }
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.executeRaw.bind(this), opts); }
+  listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.executeRaw.bind(this), sourceId, entitySlug, dimension); }
+  readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.executeRaw.bind(this), sourceId, entitySlug, dimension, excludeId); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }

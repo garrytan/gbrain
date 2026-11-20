@@ -137,7 +137,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listSessionFactsForClassification', 'listSessionFactTwins', 'listCapturedFactsForClassification', 'countLabelFacts',
   'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listFactsForRelevance',
   'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
-  'listRestatedPrivateCopies', 'countDerivedFactTaint', 'listFactProvenance',
+  'listRestatedPrivateCopies', 'countDerivedFactTaint', 'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',

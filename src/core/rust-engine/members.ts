@@ -561,6 +561,8 @@ export const RUST_ENGINE_MEMBERS = {
   // ontology
   mergeOntologyFact: 'ontology',
   getOntology: 'ontology',
+  listOntologyStreamSlugs: 'ontology',
+  readOntologyRival: 'ontology',
   discoverOntologyDimensions: 'ontology',
   findOntologyConflicts: 'ontology',
   // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)

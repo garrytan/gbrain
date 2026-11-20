@@ -538,6 +538,19 @@ const PINS: Pin[] = [
     texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
   },
   {
+    from: 'src/core/belief/writers.ts:41 ontologyStreamSlugs, at 432ac446f4',
+    case: { method: 'listOntologyStreamSlugs', variant: 'default', run: e => e.listOntologyStreamSlugs('default', 'people/a', 'role') },
+    texts: [`SELECT DISTINCT source_markdown_slug AS slug FROM facts
+    WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'`],
+  },
+  {
+    from: 'src/core/trust/supersede-handlers.ts:169 contestOntologySupersession, at 432ac446f4',
+    case: { method: 'readOntologyRival', variant: 'default', run: e => e.readOntologyRival('default', 'people/a', 'role', 1) },
+    texts: [`SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
+       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
+     ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`],
+  },
+  {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
     texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],
