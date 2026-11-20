@@ -540,6 +540,42 @@ Differences from a SQL brain: slugs and source ids sort in byte order; the store
 (`managed_persistence`), so an activated Rust brain can be deactivated but not written through the
 journal.
 
+## Publication journal
+
+A write to a worktree-bound source publishes its file around a request-row recovery record
+(`src/core/persistence/coordinator.ts` publishMutation and recoverPublication, `journal.ts`
+prepareRecovery, clearResolvedRecovery and markRecovering, `page-prepare.ts`, `ownership.ts`
+guardOwnership, `effect-journal.ts`, `staging.ts` upgradeRecoveryStaging). Those reads and writes
+run on the BrainEngine member `publicationJournalStore()` of
+`src/core/engine-sql/publication-journal.ts`. On this engine the store is
+`store-members/publication-journal.ts`: each read is one `brain.publicationJournalRows({ kind, ... })`
+call (`persistence::PublicationRead`) and each write one `brain.publicationJournalWrite({ kind, ... })`
+call (`persistence::PublicationWrite`). `lockSource`, `shareWorktree` and `stagingDurability` change
+nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` is
+`brain.readWorktreeOwner(id)`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `publicationJournalRows({ kind: 'held_behind_import', sourceId, slug, sequence })` | the `deferred_import_from` of the earliest `deferred` request to the page before `sequence` whose import is the source's last commit (`''` when none), or null | compareFileTarget's held-first read |
+| `kind: 'recovery_blocker', worktreeId, excludeId` | whether another request on the worktree, or an effect on it, holds a recovery record | publishMutation's recheck |
+| `kind: 'owner_path', worktreeId` | the owner host's `local_path`, or null with no owner binding | the Git effect target read |
+| `kind: 'recovery_staging', table, id` | `{ recovery, recovery_bytes, source_id }` of the request (uuid) or effect (number), or null | upgradeRecoveryStaging's locked read |
+| `publicationJournalWrite({ kind: 'record_recovery', id, executionToken, recovery, bytes, keys, checked })` | `checked`: records and reserves only on a `running` row under the token with no record, true when it did. Otherwise reserves on `keys` and records by id and token, true when the row matched | prepareRecovery's two statements |
+| `kind: 'clear_known_recovery', id, keys, recovery` | clears a terminal row's record that is still exactly `recovery` and releases its bytes; true when it did | clearResolvedRecovery's known clear |
+| `kind: 'clear_recovery', id, keys, bytes` | releases `bytes` from `keys` and clears the row's record | clearResolvedRecovery's checked clear |
+| `kind: 'mark_recovering', id, executionToken, reason, errorCode, errorMessage, errorDetail` | a `running` or `recovering` row under the token goes `recovering` with `reason`; the first error is kept | markRecovering |
+| `kind: 'publication_started', id` | stamps `publication_started` and returns the row, or null | the publication's row stamp |
+| `kind: 'block_capacity', id` | a `running` or `recovering` row with a record takes `writer_pool_capacity`; the row, or null | recoverPublication's capacity wait |
+| `kind: 'block_recovery', id, reason` | a live row goes `recovering`, a terminal one keeps its state; both take `reason` | recoverPublication's refusal |
+| `kind: 'requeue_recovered', id, kept, clearError` | the row goes `queued` with no claim, record or stamp; `kept` replaces the outcome; `clearError` clears the error | recoverPublication's requeue |
+| `kind: 'grow_recovery_staging', table, id, recovery, extra` | replaces the record and adds `extra` to the row's `recovery_bytes` | upgradeRecoveryStaging's update |
+
+A counter release below zero is `constraint_violation`, as the CHECK (>= 0) refuses it; a missing
+counter row changes nothing. recoverPublication and upgradeRecoveryStaging move the counters through
+`addPersistenceCounters` ("Writer release"). A bound write is still admitted only through
+`requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
+admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
+
 ## TypeScript members with no stored state
 
 | Member | Answer | Why |

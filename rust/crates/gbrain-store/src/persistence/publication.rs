@@ -70,7 +70,11 @@ pub enum PublicationRead {
 
 /// One write of `publicationJournalStore()`, named by `kind`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum PublicationWrite {
     /// Records the recovery and adds `bytes` to the named counters. `checked`: only a request still
     /// running under the token with no recovery record (the fast path); otherwise by id and token.
@@ -169,11 +173,7 @@ fn add_recovery_bytes(tx: &mut dyn KvWrite, keys: &[String], delta: i64) -> Resu
 
 /// The request under `id` when its token is `token` (`execution_token=$n::uuid`; a null token
 /// matches nothing).
-fn claimed(
-    tx: &dyn KvRead,
-    id: &str,
-    token: &Option<String>,
-) -> Result<Option<RequestRecord>> {
+fn claimed(tx: &dyn KvRead, id: &str, token: &Option<String>) -> Result<Option<RequestRecord>> {
     let Some(token) = token.as_deref() else {
         return Ok(None);
     };
@@ -190,7 +190,10 @@ fn row_or_null(record: Option<RequestRecord>) -> Value {
     record.map_or(Value::Null, |r| r.to_row())
 }
 
-pub(crate) fn publication_journal_rows_in(read: &dyn KvRead, what: &PublicationRead) -> Result<Value> {
+pub(crate) fn publication_journal_rows_in(
+    read: &dyn KvRead,
+    what: &PublicationRead,
+) -> Result<Value> {
     Ok(match what {
         PublicationRead::HeldBehindImport {
             source_id,
@@ -257,13 +260,15 @@ pub(crate) fn publication_journal_rows_in(read: &dyn KvRead, what: &PublicationR
                     })
                 })
             }
-            RecoveryTable::Effects => effect_by_id(read, bigint(id, "id")?)?.map_or(Value::Null, |e| {
-                json!({
-                    "recovery": e.recovery,
-                    "recovery_bytes": e.recovery_bytes,
-                    "source_id": e.source_id,
+            RecoveryTable::Effects => {
+                effect_by_id(read, bigint(id, "id")?)?.map_or(Value::Null, |e| {
+                    json!({
+                        "recovery": e.recovery,
+                        "recovery_bytes": e.recovery_bytes,
+                        "source_id": e.source_id,
+                    })
                 })
-            }),
+            }
         },
     })
 }
@@ -303,7 +308,9 @@ pub(crate) fn publication_journal_write_in(
             let Some(mut record) = request_by_id(&*tx, id)? else {
                 return Ok(json!(false));
             };
-            if record.extra.get("recovery") != Some(recovery) || !TERMINAL.contains(&record.state.as_str()) {
+            if record.extra.get("recovery") != Some(recovery)
+                || !TERMINAL.contains(&record.state.as_str())
+            {
                 return Ok(json!(false));
             }
             let bytes = record
@@ -347,7 +354,10 @@ pub(crate) fn publication_journal_write_in(
                 );
             }
             record.error_code = record.error_code.take().or_else(|| error_code.clone());
-            record.error_message = record.error_message.take().or_else(|| error_message.clone());
+            record.error_message = record
+                .error_message
+                .take()
+                .or_else(|| error_message.clone());
             record.state = "recovering".into();
             record.blocked_reason = Some(reason.clone());
             record.updated_at_us = now;
@@ -433,7 +443,11 @@ pub(crate) fn publication_journal_write_in(
                         .as_str()
                         .ok_or_else(|| StoreError::invalid("id is not a UUID"))?;
                     if let Some(mut r) = request_by_id(&*tx, id)? {
-                        let bytes = r.extra.get("recovery_bytes").and_then(Value::as_i64).unwrap_or(0);
+                        let bytes = r
+                            .extra
+                            .get("recovery_bytes")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0);
                         set_recovery(&mut r, recovery.clone(), bytes + extra);
                         write_request(tx, &r)?;
                     }
@@ -496,7 +510,10 @@ mod tests {
     }
 
     fn recovery_bytes(s: &Store, key: &str) -> i64 {
-        read_counter(&*s.read().unwrap(), key).unwrap().unwrap().recovery_bytes
+        read_counter(&*s.read().unwrap(), key)
+            .unwrap()
+            .unwrap()
+            .recovery_bytes
     }
 
     fn get(s: &Store, id: &str) -> Value {
@@ -517,7 +534,14 @@ mod tests {
     fn a_running_request_records_its_recovery_once_and_reserves_its_bytes() {
         let s = store();
         counters(&s, &["brain", "worktree:w"]);
-        put(&s, &record(REQ, "running", json!({ "execution_token": TOKEN, "worktree_id": WORKTREE })));
+        put(
+            &s,
+            &record(
+                REQ,
+                "running",
+                json!({ "execution_token": TOKEN, "worktree_id": WORKTREE }),
+            ),
+        );
         let rec = json!({ "version": 1, "path": "/x" });
         let first = json!({ "kind": "record_recovery", "id": REQ, "executionToken": TOKEN,
             "recovery": rec, "bytes": 100, "keys": ["brain", "worktree:w", "absent"], "checked": true });
@@ -529,7 +553,12 @@ mod tests {
         assert_eq!(write(&s, first), json!(false));
         assert_eq!(recovery_bytes(&s, "worktree:w"), 100);
         // A request blocked behind it on the same worktree; the request itself is excluded.
-        let blocker = |exclude: &str| rows(&s, json!({ "kind": "recovery_blocker", "worktreeId": WORKTREE, "excludeId": exclude }));
+        let blocker = |exclude: &str| {
+            rows(
+                &s,
+                json!({ "kind": "recovery_blocker", "worktreeId": WORKTREE, "excludeId": exclude }),
+            )
+        };
         assert_eq!(blocker(OTHER), json!(true));
         assert_eq!(blocker(REQ), json!(false));
     }
@@ -538,13 +567,24 @@ mod tests {
     fn a_refused_publication_moves_to_recovering_keeps_its_first_failure_and_requeues() {
         let s = store();
         counters(&s, &["brain"]);
-        put(&s, &record(REQ, "running", json!({ "execution_token": TOKEN })));
-        write(&s, json!({ "kind": "record_recovery", "id": REQ, "executionToken": TOKEN,
-            "recovery": { "v": 1 }, "bytes": 10, "keys": ["brain"], "checked": true }));
+        put(
+            &s,
+            &record(REQ, "running", json!({ "execution_token": TOKEN })),
+        );
+        write(
+            &s,
+            json!({ "kind": "record_recovery", "id": REQ, "executionToken": TOKEN,
+            "recovery": { "v": 1 }, "bytes": 10, "keys": ["brain"], "checked": true }),
+        );
         let started = write(&s, json!({ "kind": "publication_started", "id": REQ }));
         assert_eq!(started["publication_started"], true);
-        let mark = |code: &str| write(&s, json!({ "kind": "mark_recovering", "id": REQ, "executionToken": TOKEN,
-            "reason": "publication_failed", "errorCode": code, "errorMessage": "m", "errorDetail": { "c": code } }));
+        let mark = |code: &str| {
+            write(
+                &s,
+                json!({ "kind": "mark_recovering", "id": REQ, "executionToken": TOKEN,
+            "reason": "publication_failed", "errorCode": code, "errorMessage": "m", "errorDetail": { "c": code } }),
+            )
+        };
         mark("storage_error");
         mark("later_error");
         let row = get(&s, REQ);
@@ -552,62 +592,147 @@ mod tests {
         assert_eq!(row["error_code"], "storage_error");
         assert_eq!(row["error_detail"], json!({ "c": "storage_error" }));
         // Another token changes nothing.
-        write(&s, json!({ "kind": "mark_recovering", "id": REQ, "executionToken": OTHER, "reason": "x" }));
+        write(
+            &s,
+            json!({ "kind": "mark_recovering", "id": REQ, "executionToken": OTHER, "reason": "x" }),
+        );
         assert_eq!(get(&s, REQ)["blocked_reason"], "publication_failed");
         let blocked = write(&s, json!({ "kind": "block_capacity", "id": REQ }));
         assert_eq!(blocked["blocked_reason"], "writer_pool_capacity");
-        let requeued = write(&s, json!({ "kind": "requeue_recovered", "id": REQ, "kept": null, "clearError": true }));
+        let requeued = write(
+            &s,
+            json!({ "kind": "requeue_recovered", "id": REQ, "kept": null, "clearError": true }),
+        );
         assert_eq!(requeued["state"], "queued");
         assert_eq!(requeued["recovery"], Value::Null);
         assert_eq!(requeued["execution_token"], Value::Null);
         assert_eq!(requeued["error_code"], Value::Null);
         assert_eq!(requeued["publication_started"], false);
         // Capacity is no longer blocked: the request holds no recovery record.
-        assert_eq!(write(&s, json!({ "kind": "block_capacity", "id": REQ })), Value::Null);
+        assert_eq!(
+            write(&s, json!({ "kind": "block_capacity", "id": REQ })),
+            Value::Null
+        );
     }
 
     #[test]
     fn a_terminal_request_clears_only_its_exact_recovery_and_releases_its_bytes() {
         let s = store();
         counters(&s, &["brain"]);
-        write(&s, json!({ "kind": "grow_recovery_staging", "table": "persistence_requests", "id": REQ, "recovery": {}, "extra": 0 }));
-        put(&s, &record(REQ, "failed", json!({ "recovery": { "v": 1 }, "recovery_bytes": 40 })));
-        s.add_persistence_counters("brain", &serde_json::from_value(json!({ "recovery_bytes": 40 })).unwrap()).unwrap();
-        let clear = |rec: Value| write(&s, json!({ "kind": "clear_known_recovery", "id": REQ, "keys": ["brain"], "recovery": rec }));
+        write(
+            &s,
+            json!({ "kind": "grow_recovery_staging", "table": "persistence_requests", "id": REQ, "recovery": {}, "extra": 0 }),
+        );
+        put(
+            &s,
+            &record(
+                REQ,
+                "failed",
+                json!({ "recovery": { "v": 1 }, "recovery_bytes": 40 }),
+            ),
+        );
+        s.add_persistence_counters(
+            "brain",
+            &serde_json::from_value(json!({ "recovery_bytes": 40 })).unwrap(),
+        )
+        .unwrap();
+        let clear = |rec: Value| {
+            write(
+                &s,
+                json!({ "kind": "clear_known_recovery", "id": REQ, "keys": ["brain"], "recovery": rec }),
+            )
+        };
         assert_eq!(clear(json!({ "v": 2 })), json!(false));
         assert_eq!(clear(json!({ "v": 1 })), json!(true));
         assert_eq!(recovery_bytes(&s, "brain"), 0);
         assert_eq!(get(&s, REQ)["recovery"], Value::Null);
         // A release below zero refuses, as the CHECK does.
-        let err = s.publication_journal_write(&serde_json::from_value(
-            json!({ "kind": "clear_recovery", "id": REQ, "keys": ["brain"], "bytes": 1 })).unwrap()).unwrap_err();
+        let err = s
+            .publication_journal_write(
+                &serde_json::from_value(
+                    json!({ "kind": "clear_recovery", "id": REQ, "keys": ["brain"], "bytes": 1 }),
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
         assert!(err.message.contains("below zero"), "{}", err.message);
     }
 
     #[test]
     fn a_recovery_error_blocks_a_live_request_and_staging_grows_its_record() {
         let s = store();
-        put(&s, &record(REQ, "recovering", json!({ "recovery": { "v": 1 }, "recovery_bytes": 7 })));
+        put(
+            &s,
+            &record(
+                REQ,
+                "recovering",
+                json!({ "recovery": { "v": 1 }, "recovery_bytes": 7 }),
+            ),
+        );
         put(&s, &record(OTHER, "committed", json!({})));
-        assert_eq!(write(&s, json!({ "kind": "block_recovery", "id": REQ, "reason": "unexpected_file_bytes" }))["state"], "recovering");
-        assert_eq!(write(&s, json!({ "kind": "block_recovery", "id": OTHER, "reason": "unexpected_file_bytes" }))["state"], "committed");
-        write(&s, json!({ "kind": "grow_recovery_staging", "table": "persistence_requests", "id": REQ, "recovery": { "v": 2 }, "extra": 3 }));
-        assert_eq!(rows(&s, json!({ "kind": "recovery_staging", "table": "persistence_requests", "id": REQ })),
-            json!({ "recovery": { "v": 2 }, "recovery_bytes": 10, "source_id": "work" }));
-        assert_eq!(rows(&s, json!({ "kind": "recovery_staging", "table": "persistence_effects", "id": "9" })), Value::Null);
+        assert_eq!(
+            write(
+                &s,
+                json!({ "kind": "block_recovery", "id": REQ, "reason": "unexpected_file_bytes" })
+            )["state"],
+            "recovering"
+        );
+        assert_eq!(
+            write(
+                &s,
+                json!({ "kind": "block_recovery", "id": OTHER, "reason": "unexpected_file_bytes" })
+            )["state"],
+            "committed"
+        );
+        write(
+            &s,
+            json!({ "kind": "grow_recovery_staging", "table": "persistence_requests", "id": REQ, "recovery": { "v": 2 }, "extra": 3 }),
+        );
+        assert_eq!(
+            rows(
+                &s,
+                json!({ "kind": "recovery_staging", "table": "persistence_requests", "id": REQ })
+            ),
+            json!({ "recovery": { "v": 2 }, "recovery_bytes": 10, "source_id": "work" })
+        );
+        assert_eq!(
+            rows(
+                &s,
+                json!({ "kind": "recovery_staging", "table": "persistence_effects", "id": "9" })
+            ),
+            Value::Null
+        );
     }
 
     #[test]
     fn a_held_write_waits_on_the_import_its_source_has_not_landed() {
         let s = store();
-        let input = serde_json::from_value(json!({ "id": "work", "name": "work", "config": {} })).unwrap();
+        let input =
+            serde_json::from_value(json!({ "id": "work", "name": "work", "config": {} })).unwrap();
         s.upsert_source(&input).unwrap();
-        put(&s, &record(REQ, "deferred", json!({ "deferred_import_from": "" })));
-        let held = |seq: Value| rows(&s, json!({ "kind": "held_behind_import", "sourceId": "work", "slug": "notes/a", "sequence": seq }));
+        put(
+            &s,
+            &record(REQ, "deferred", json!({ "deferred_import_from": "" })),
+        );
+        let held = |seq: Value| {
+            rows(
+                &s,
+                json!({ "kind": "held_behind_import", "sourceId": "work", "slug": "notes/a", "sequence": seq }),
+            )
+        };
         // The source has no last commit, so a hold from '' has not landed.
         assert_eq!(held(json!("6")), json!(""));
         assert_eq!(held(json!(5)), Value::Null);
-        assert_eq!(rows(&s, json!({ "kind": "held_behind_import", "sourceId": "none", "slug": "notes/a", "sequence": 9 })), Value::Null);
-        assert_eq!(rows(&s, json!({ "kind": "owner_path", "worktreeId": WORKTREE })), Value::Null);
+        assert_eq!(
+            rows(
+                &s,
+                json!({ "kind": "held_behind_import", "sourceId": "none", "slug": "notes/a", "sequence": 9 })
+            ),
+            Value::Null
+        );
+        assert_eq!(
+            rows(&s, json!({ "kind": "owner_path", "worktreeId": WORKTREE })),
+            Value::Null
+        );
     }
 }

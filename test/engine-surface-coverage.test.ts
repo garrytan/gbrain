@@ -287,6 +287,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'worktreeClaimStore', 'readWriterAdminState', 'writerAdminStore', 'readWorktreeManifest',
   // Writer activation, deactivation and the claim release (engine-sql/writer-release.ts).
   'writerReleaseStore', 'addPersistenceCounters',
+  // A bound publication's request-row recovery work (engine-sql/publication-journal.ts).
+  'publicationJournalStore',
   // Writer status (engine-sql/writer-status.ts).
   'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows',
   // Code edges

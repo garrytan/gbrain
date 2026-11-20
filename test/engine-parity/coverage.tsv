@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1020/1026
+# covered: 1021/1027
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 66/72
+# write_misc: 67/73
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -929,11 +929,12 @@ readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	6	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	13	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	15	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	4	no	yes	yes	serves
+publicationJournalStore	write_misc	yes	1	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves

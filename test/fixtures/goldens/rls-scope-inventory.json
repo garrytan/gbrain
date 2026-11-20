@@ -6543,6 +6543,7 @@
         "addLink": "none",
         "addLinksBatch": "none",
         "addPageTagsById": "none",
+        "addPersistenceCounters": "none",
         "addSynthesisEvidence": "none",
         "addTag": "none",
         "addTakesBatch": "none",
@@ -7175,6 +7176,7 @@
         "pruneJobs": "none",
         "pruneMcpRequestLogBatch": "none",
         "pruneSatisfiedWantedMarkers": "none",
+        "publicationJournalStore": "none",
         "purgeCalibrationProfilesByWave": "none",
         "purgeDeletedPages": "none",
         "purgeMemoryProposals": "none",
@@ -7603,7 +7605,8 @@
         "writeReasonPurgeTombstones": "none",
         "writeSyncPassRow": "none",
         "writeTextProjectionSeal": "none",
-        "writerAdminStore": "none"
+        "writerAdminStore": "none",
+        "writerReleaseStore": "none"
       }
     }
   },

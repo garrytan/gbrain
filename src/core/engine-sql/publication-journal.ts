@@ -17,8 +17,8 @@ import type { RecoveryRecord, WriteRequest } from '../persistence/model.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
-/** persistence/protocol.ts PERSISTENCE_PROTOCOL_PREDICATE: the statement declares protocol 2 for itself. */
-const PROTOCOL_2 = "set_config('gbrain.persistence_protocol','2',true)='2'";
+// Each statement is constant text: protocol.ts PERSISTENCE_PROTOCOL_PREDICATE is written out where a statement
+// declares protocol 2 for itself (as engine-sql/persistence-claims.ts does).
 
 /** The table a recovery-staging upgrade reads and writes (persistence/staging.ts). */
 export type RecoveryTable = 'persistence_requests' | 'persistence_effects';
@@ -74,10 +74,21 @@ export interface PublicationJournalStore {
   growRecoveryStaging(table: RecoveryTable, id: string | number, recovery: unknown, extra: number): Promise<void>;
 }
 
-const RECOVERY_TABLES: readonly RecoveryTable[] = ['persistence_requests', 'persistence_effects'];
-function recoveryTable(table: RecoveryTable): RecoveryTable {
-  if (!RECOVERY_TABLES.includes(table)) throw new TypeError(`Not a recovery table: ${String(table)}`);
-  return table;
+/** The two statements of a recovery-staging upgrade for each table; an unknown table name throws. */
+const RECOVERY_STAGING_SQL: Readonly<Record<RecoveryTable, { read: string; grow: string }>> = {
+  persistence_requests: {
+    read: 'SELECT recovery,recovery_bytes,source_id FROM persistence_requests WHERE id=$1 FOR UPDATE',
+    grow: 'UPDATE persistence_requests SET recovery=$2::text::jsonb,recovery_bytes=recovery_bytes+$3 WHERE id=$1',
+  },
+  persistence_effects: {
+    read: 'SELECT recovery,recovery_bytes,source_id FROM persistence_effects WHERE id=$1 FOR UPDATE',
+    grow: 'UPDATE persistence_effects SET recovery=$2::text::jsonb,recovery_bytes=recovery_bytes+$3 WHERE id=$1',
+  },
+};
+function recoveryStagingSql(table: RecoveryTable): { read: string; grow: string } {
+  const sql = Object.hasOwn(RECOVERY_STAGING_SQL, table) ? RECOVERY_STAGING_SQL[table] : undefined;
+  if (!sql) throw new TypeError(`Not a recovery table: ${String(table)}`);
+  return sql;
 }
 
 export function sqlPublicationJournalStore(exec: RawSql): PublicationJournalStore {
@@ -138,7 +149,7 @@ export function sqlPublicationJournalStore(exec: RawSql): PublicationJournalStor
       await exec.executeRaw(`UPDATE persistence_requests SET state='recovering',blocked_reason=$3,updated_at=now(),
         error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5),
         error_detail=CASE WHEN error_code IS NULL THEN $6::text::jsonb ELSE error_detail END
-        WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PROTOCOL_2}`,
+        WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND set_config('gbrain.persistence_protocol','2',true)='2'`,
       [id, executionToken, reason, failure?.code ?? null, failure?.message ?? null, failure?.detail ? JSON.stringify(failure.detail) : null]);
     },
     async markPublicationStarted(id) {
@@ -147,7 +158,7 @@ export function sqlPublicationJournalStore(exec: RawSql): PublicationJournalStor
     },
     async blockCapacity(id) {
       const [row] = await exec.executeRaw<WriteRequest>(`UPDATE persistence_requests SET blocked_reason='writer_pool_capacity',updated_at=now()
-        WHERE id=$1::uuid AND recovery IS NOT NULL AND state IN ('running','recovering') AND ${PROTOCOL_2} RETURNING *`, [id]);
+        WHERE id=$1::uuid AND recovery IS NOT NULL AND state IN ('running','recovering') AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING *`, [id]);
       return row ?? null;
     },
     async blockRecovery(id, reason) {
@@ -159,19 +170,20 @@ export function sqlPublicationJournalStore(exec: RawSql): PublicationJournalStor
     async requeueRecovered(id, kept, clearError) {
       const [row] = await exec.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
         claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),
-        ${clearError ? 'error_code=NULL,error_message=NULL,error_detail=NULL,' : ''}updated_at=now()
-        WHERE id=$1::uuid RETURNING *`, [id, kept ? JSON.stringify(kept) : null]);
+        error_code=CASE WHEN $3::boolean THEN NULL ELSE error_code END,error_message=CASE WHEN $3::boolean THEN NULL ELSE error_message END,
+        error_detail=CASE WHEN $3::boolean THEN NULL ELSE error_detail END,updated_at=now()
+        WHERE id=$1::uuid RETURNING *`, [id, kept ? JSON.stringify(kept) : null, clearError]);
       return row ?? null;
     },
     async stagingDurability() {
       await exec.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     },
     async recoveryStaging(table, id) {
-      const [row] = await exec.executeRaw<RecoveryStagingRow>(`SELECT recovery,recovery_bytes,source_id FROM ${recoveryTable(table)} WHERE id=$1 FOR UPDATE`, [id]);
+      const [row] = await exec.executeRaw<RecoveryStagingRow>(recoveryStagingSql(table).read, [id]);
       return row ?? null;
     },
     async growRecoveryStaging(table, id, recovery, extra) {
-      await exec.executeRaw(`UPDATE ${recoveryTable(table)} SET recovery=$2::text::jsonb,recovery_bytes=recovery_bytes+$3 WHERE id=$1`,
+      await exec.executeRaw(recoveryStagingSql(table).grow,
         [id, JSON.stringify(recovery), extra]);
     },
   };

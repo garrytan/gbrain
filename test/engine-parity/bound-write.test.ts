@@ -31,6 +31,8 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { installFaultHook, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
 import { readLocalWriter } from '../../src/core/persistence/identity.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
+import { completeWrite } from '../../src/core/persistence/journal.ts';
+import type { PagesRecoveryRecord, WriteRequest } from '../../src/core/persistence/model.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -54,12 +56,96 @@ async function withClaimedCheckout<T>(engine: BrainEngine, backend: ParityBacken
   }
 }
 
+const PRINCIPAL = { kind: 'local_cli', id: 'parity-writer' };
+const KEYS = ['principal:local_cli:parity-writer', 'brain'];
+const TOKEN = 'c0000000-0000-4000-8000-0000000000c1';
+const NO_WORKTREE = 'f0000000-0000-4000-8000-0000000000f1';
+const RECORD: PagesRecoveryRecord = { version: 3, target: 'pages', root: '/parity', ownerEpoch: '1', attempt: TOKEN, files: [] };
+
+/** Admits one request to `default` and claims it under TOKEN; returns its journal id. */
+async function claimedRequest(engine: BrainEngine, requestId: string): Promise<string> {
+  const source = await engine.readSourceMembership('default');
+  await engine.lockPersistenceCounters(KEYS);
+  const { id } = await engine.insertWriteRequest({ principalKind: PRINCIPAL.kind, principalId: PRINCIPAL.id, requestId, operation: 'put_page',
+    sourceId: 'default', sourceIncarnation: source!.incarnation, pageId: null, slug: 'notes/parity-example', worktreeId: null, topologyGeneration: null,
+    digest: 'd'.repeat(64), intent: { kind: 'put_page', slug: 'notes/parity-example' }, authority: { scopes: ['write'] }, intentBytes: 100,
+    terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: KEYS,
+    clientRequestId: null, state: 'queued', deferredRefreshId: null });
+  await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+  return id;
+}
+const recoveryBytes = async (engine: BrainEngine) => Number((await engine.lockPersistenceCounters(['brain'])).find(r => r.key === 'brain')!.recovery_bytes);
+const shape = (row: WriteRequest | null) => row && { state: row.state, token: row.execution_token, recovery: row.recovery ?? null,
+  recoveryBytes: Number(row.recovery_bytes), blocked: row.blocked_reason ?? null, errorCode: row.error_code ?? null, started: row.publication_started === true };
+
 const ctxFor = (engine: BrainEngine) => ({ engine, sourceId: 'work', remote: false as const,
   config: { engine: engine.kind, embedding_disabled: true }, dryRun: false, logger: { info() {}, warn() {}, error() {} } });
 
 describe('a write to a worktree-bound source', () => {
+  parityTest('the publication journal store: a recovery is recorded once, marked, blocked, requeued and cleared', {
+    methods: ['publicationJournalStore'],
+  }, async (engine) => {
+    const id = await claimedRequest(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const reservation = { id, executionToken: TOKEN, recovery: RECORD, bytes: 40, keys: KEYS };
+    const first = await engine.transaction(async (tx) => {
+      const journal = await tx.publicationJournalStore();
+      await journal.lockSource('default');
+      await journal.shareWorktree(NO_WORKTREE);
+      await journal.stagingDurability();
+      const recorded = [await journal.recordRecovery(reservation, true), await journal.recordRecovery(reservation, true)];
+      const staging = await journal.recoveryStaging('persistence_requests', id);
+      await journal.growRecoveryStaging('persistence_requests', id, { ...RECORD, ownerEpoch: '2' }, 10);
+      await journal.markRecovering(id, TOKEN, 'publication_failed', { code: 'storage_error', message: 'first' });
+      await journal.markRecovering(id, TOKEN, 'publication_failed', { code: 'other_error', message: 'second' });
+      const marked = shape(await tx.lockWriteRequest(id));
+      const notTerminal = await journal.clearKnownRecovery(id, KEYS, { ...RECORD, ownerEpoch: '2' });
+      const capacity = shape(await journal.blockCapacity(id));
+      const blocked = shape(await journal.blockRecovery(id, 'unexpected_file_bytes'));
+      const started = shape(await journal.markPublicationStarted(id));
+      const requeued = shape(await journal.requeueRecovered(id, { persistence: { git_state: 'committed' } }, true));
+      const missing = { held: await journal.heldBehindImport('default', 'notes/parity-example', 999), blocker: await journal.recoveryBlocker(NO_WORKTREE, id),
+        path: await journal.ownerPath(NO_WORKTREE), owner: await journal.shareWorktreeOwner(NO_WORKTREE),
+        staging: await journal.recoveryStaging('persistence_effects', 999_999) };
+      return { recorded, staging: staging && { ...staging, recovery_bytes: Number(staging.recovery_bytes) }, marked, notTerminal, capacity, blocked, started, requeued, missing };
+    });
+    expect(first).toEqual({
+      recorded: [true, false],
+      staging: { recovery: RECORD, recovery_bytes: 40, source_id: 'default' },
+      marked: { state: 'recovering', token: TOKEN, recovery: { ...RECORD, ownerEpoch: '2' }, recoveryBytes: 50, blocked: 'publication_failed', errorCode: 'storage_error', started: false },
+      notTerminal: false,
+      capacity: { state: 'recovering', token: TOKEN, recovery: { ...RECORD, ownerEpoch: '2' }, recoveryBytes: 50, blocked: 'writer_pool_capacity', errorCode: 'storage_error', started: false },
+      blocked: { state: 'recovering', token: TOKEN, recovery: { ...RECORD, ownerEpoch: '2' }, recoveryBytes: 50, blocked: 'unexpected_file_bytes', errorCode: 'storage_error', started: false },
+      started: { state: 'recovering', token: TOKEN, recovery: { ...RECORD, ownerEpoch: '2' }, recoveryBytes: 50, blocked: 'unexpected_file_bytes', errorCode: 'storage_error', started: true },
+      requeued: { state: 'queued', token: null, recovery: null, recoveryBytes: 0, blocked: null, errorCode: null, started: false },
+      missing: { held: null, blocker: false, path: null, owner: null, staging: null },
+    });
+    // The record's 40 bytes stay reserved until the caller releases them (recoverPublication's addPersistenceCounters).
+    expect(await recoveryBytes(engine)).toBe(40);
+    await engine.addPersistenceCounters('brain', { recovery_bytes: -40 });
+
+    // A terminal request's known record is cleared once, releasing its bytes; a second request's record by its locked bytes.
+    const terminal = await claimedRequest(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const other = await claimedRequest(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    const cleared = await engine.transaction(async (tx) => {
+      const journal = await tx.publicationJournalStore();
+      await journal.recordRecovery({ ...reservation, id: terminal, bytes: 30 }, true);
+      await journal.recordRecovery({ ...reservation, id: other, bytes: 20 }, false);
+      const reserved = await recoveryBytes(tx);
+      await completeWrite(tx, (await tx.lockWriteRequest(terminal))!, 'failed', {}, { code: 'storage_error', message: 'parity' });
+      const known = [await journal.clearKnownRecovery(terminal, KEYS, RECORD), await journal.clearKnownRecovery(terminal, KEYS, RECORD)];
+      await journal.clearRecovery(other, KEYS, 20);
+      return { reserved, known, released: await recoveryBytes(tx), terminal: shape(await tx.lockWriteRequest(terminal)), other: shape(await tx.lockWriteRequest(other)) };
+    });
+    expect(cleared).toEqual({ reserved: 50, known: [true, false], released: 0,
+      terminal: { state: 'failed', token: TOKEN, recovery: null, recoveryBytes: 0, blocked: null, errorCode: 'storage_error', started: false },
+      other: { state: 'running', token: TOKEN, recovery: null, recoveryBytes: 0, blocked: null, errorCode: null, started: false } });
+  });
+
   parityTest('claim the checkout, put_page to the bound source: the page and its file are written', {
     methods: ['worktreeClaimStore'],
+    // Held: a bound write is admitted only through journal.ts prepareAdmission, which still refuses on Rust
+    // (managed_persistence). Remove this line when that admission is typed; the case then compares on Rust.
+    requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
     await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page',
@@ -73,6 +159,9 @@ describe('a write to a worktree-bound source', () => {
 
   parityTest('a refusal at publication moves the request to recovering, then ends it failed: no page, no file', {
     methods: ['worktreeClaimStore'],
+    // Held: a bound write is admitted only through journal.ts prepareAdmission, which still refuses on Rust
+    // (managed_persistence). Remove this line when that admission is typed; the case then compares on Rust.
+    requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
     const request_id = randomUUID();
@@ -80,7 +169,8 @@ describe('a write to a worktree-bound source', () => {
     const stored = async () => engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id);
     // The request as the recovery pass leaves it, before its recovery record is cleared: terminal, the record still held.
     // markRecovering is the only route to that pass from a refused publication, and no seam sits between the two.
-    let recovered: { state: string; recovery: boolean; blocked_reason: string | null } | null = null;
+    type Seen = { state: string; recovery: boolean; blocked_reason: string | null };
+    let recovered = null as Seen | null;
     const seen: FaultPoint[] = [];
     installFaultHook(async (point) => {
       seen.push(point);
@@ -95,6 +185,8 @@ describe('a write to a worktree-bound source', () => {
       await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page',
         params: { slug: 'notes/carol-example', content: '---\ntype: note\ntitle: Carol Example\n---\nWorks at widget-co.\n', request_id } });
     } catch (e) {
+      // The held admission refusal ends the case on Rust (see `requires`); every other refusal is the answer.
+      if ((e as { code?: string }).code === 'engine_capability_missing') throw e;
       code = (e as { code?: string }).code;
     } finally { installFaultHook(undefined); }
     const final = await stored();
