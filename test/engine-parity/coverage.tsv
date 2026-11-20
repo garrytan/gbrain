@@ -95,13 +95,13 @@ getPage	pages	yes	131	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	565	yes	yes	yes	serves
+putPage	pages	yes	566	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	164	yes	yes	yes	serves
+softDeletePage	pages	yes	165	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -117,7 +117,7 @@ applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	2	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
-getSource	pages	yes	8	no	yes	yes	serves
+getSource	pages	yes	9	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
@@ -406,7 +406,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	18	no	yes	yes	serves
-setConfig	config	yes	31	no	yes	yes	serves
+setConfig	config	yes	32	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -478,7 +478,7 @@ readManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 readOrphanedManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncHeadRequestRow	persistence_journal	yes	1	no	yes	yes	serves
 readSyncRecoveryProbeRow	persistence_journal	yes	1	no	yes	yes	serves
-readIdentityDowngradeRows	persistence_journal	yes	2	no	yes	yes	serves
+readIdentityDowngradeRows	persistence_journal	yes	3	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
@@ -936,8 +936,8 @@ readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	6	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	10	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	7	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	11	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	6	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -1024,7 +1024,7 @@ readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
 readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	serves
 listSlugAliases	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
-readPageOrigin	write_guards	yes	2	no	yes	yes	serves
+readPageOrigin	write_guards	yes	3	no	yes	yes	serves
 listOriginClaims	write_guards	yes	1	no	yes	yes	serves
 bindPageOrigin	write_guards	yes	1	no	yes	yes	serves
 stampPageIngest	write_guards	yes	1	no	yes	yes	serves

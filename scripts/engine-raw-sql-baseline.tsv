@@ -966,7 +966,7 @@ src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
-src/core/sync-identity-downgrades.ts	execute_raw	7
+src/core/sync-identity-downgrades.ts	execute_raw	6
 src/core/sync-pending.ts	execute_raw	2
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	1

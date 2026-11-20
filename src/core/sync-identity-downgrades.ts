@@ -16,7 +16,6 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { isConnectorSourceKind } from './persistence/connector-identity.ts';
-import { getWorktreeBinding } from './persistence/ownership.ts';
 import { readDatabaseOnlyActivatedSources } from './persistence/unbound-source.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
@@ -40,18 +39,19 @@ export interface IdentityDowngrade extends DowngradedRename {
   restore_available?: boolean;
 }
 
-type RestoreProbeEngine = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'kind' | 'readIdentityDowngradeRows'>;
+type RestoreProbeEngine = Pick<BrainEngine, 'getSource' | 'getWorktreeBinding' | 'getConfig' | 'kind' | 'readIdentityDowngradeRows'>;
 
 /**
  * Whether a restore of a page that came from a canonical file can be admitted on this source, by the rule page writes
  * follow (decideUnboundWrite): a bound source, a connector source, a source with no checkout, or a PGLite source not
  * activated database-only can; an unbound Postgres source with a checkout refuses `owner_unavailable`, so no surface
- * offers the restore there.
+ * offers the restore there. It reads through the typed source, binding and config members, so every engine answers it.
  */
 export async function identityRestoreAvailable(engine: RestoreProbeEngine, sourceId: string): Promise<boolean> {
-  const [source] = await engine.executeRaw<{ local_path: string | null; kind: string | null }>("SELECT local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
-  if (!source?.local_path || isConnectorSourceKind(source.kind)) return true;
-  if (await getWorktreeBinding(engine as never, sourceId, null)) return true;
+  const source = await engine.getSource(sourceId);
+  const config: unknown = typeof source?.config === 'string' ? JSON.parse(source.config) : source?.config;
+  if (!source?.local_path || isConnectorSourceKind((config as { kind?: unknown } | null | undefined)?.kind)) return true;
+  if (await engine.getWorktreeBinding(sourceId, null)) return true;
   return engine.kind === 'pglite' && !(await readDatabaseOnlyActivatedSources(engine)).includes(sourceId);
 }
 

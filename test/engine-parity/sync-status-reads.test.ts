@@ -13,9 +13,12 @@
  *    An identity-downgrade record reads while it is open (no disposition, its old page still soft-deleted at the
  *    recorded `old_deleted_at`, in the record's source), oldest `recorded_at` first, with the live slugs of its source
  *    at its new path (null when none); a malformed `old_deleted_at` refuses as the timestamptz cast does.
+ *    `listIdentityDowngrades` offers the restore on a bound source, a connector source and a source with no checkout;
+ *    on an unbound source with a checkout only a PGLite brain not activated database-only offers it.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which failed `gbrain sync status`
  *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly. The
- *    Rust engine also refused readIdentityDowngradeRows once one record existed, rather than join its pages.
+ *    Rust engine also refused readIdentityDowngradeRows once one record existed, rather than join its pages, and
+ *    listIdentityDowngrades's restore probe read `sources` through raw SQL, which the Rust engine refuses.
  *  - Why existing coverage misses it: the sync-status tests run on PGLite and Postgres only, and the pins test checks
  *    statement text, not answers.
  *  - Seam: none. Real engines; the seeded-cursor case writes its rows with `executeRaw`, so a Rust brain stops there.
@@ -28,10 +31,14 @@ import { syncLockId } from '../../src/core/db-lock.ts';
 import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
+import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
+import { DATABASE_ONLY_SOURCES_KEY } from '../../src/core/persistence/unbound-source.ts';
 import { createSource, parityArms, recordIdentityDowngrade } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+const HOST = '00000000-0000-4000-8000-00000000000a';
 
 const incarnationOf = async (engine: BrainEngine, id: string) => String((await engine.readSourceState(id))!.incarnation);
 
@@ -195,6 +202,45 @@ describe('engine parity: sync status reads', () => {
       const B = { old_slug: 'notes/b', source_id: 'default', to: 'notes/never.md', recorded_at: at(1), new_slugs: null, id: 'b' };
       const H = { old_slug: 'notes/h', source_id: 'other', to: 'notes/h2.md', recorded_at: at(3), new_slugs: ['notes/h2'], id: 'h' };
       expect(result).toEqual({ all: [B, A, H], def: [B, A], other: [H], none: [], malformed: 'timestamptz refusal' });
+      return result;
+    });
+
+  parityTest('listIdentityDowngrades offers the restore on a bound, a connector and a checkout-less source; an unbound checkout only on PGLite not activated database-only',
+    { methods: ['putPage', 'softDeletePage', 'readPageOrigin', 'readIdentityDowngradeRows', 'getSource', 'getWorktreeBinding', 'setConfig', 'worktreeClaimStore'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'bound', {}, '/var/tmp/restore-bound');
+      await createSource(engine, backend, 'loose', {}, '/var/tmp/restore-loose');
+      await createSource(engine, backend, 'conn', { kind: 'google' }, '/var/tmp/restore-conn');
+      await createSource(engine, backend, 'bare', {});
+      await claimWorktreeBinding(engine, async store => {
+        const source = await store.lockSource('bound');
+        const id = randomUUID();
+        await store.insertWorktree({ id, ownerHostId: HOST, ownerEpoch: 1, topologyGeneration: 1, state: 'active', manifest: {} });
+        await store.insertSourceBinding({ sourceId: 'bound', incarnation: source!.incarnation, worktreeId: id, relativePath: '', topologyGeneration: 1 });
+        await store.insertHostBinding({ worktreeId: id, hostId: HOST, localPath: '/var/tmp/restore-bound', coordinationPath: '/var/tmp/restore-coord', gitDurability: 'enabled' });
+      });
+      const sources = ['bound', 'loose', 'conn', 'bare'];
+      for (const [i, sourceId] of sources.entries()) {
+        await engine.putPage('notes/old', { type: 'note', title: 'old', compiled_truth: 'Old body.', timeline: '', source_path: 'notes/old.md' }, { sourceId });
+        await engine.softDeletePage('notes/old', { sourceId });
+        await recordIdentityDowngrade(engine, backend, sourceId, 'notes/old', { from: 'notes/old.md', to: 'notes/new.md', recorded_at: `2026-01-0${i + 1}T00:00:00.000Z` });
+      }
+      const offered = async () => Object.fromEntries((await listIdentityDowngrades(engine)).map(r => [r.source_id, r.restore_available]));
+      const all = await offered();
+      const scoped = (await listIdentityDowngrades(engine, ['loose'])).map(r => [r.source_id, r.restore_available]);
+      await engine.setConfig(DATABASE_ONLY_SOURCES_KEY, JSON.stringify(['loose']));
+      const activated = await offered();
+      // The unbound checkout follows decideUnboundWrite: PGLite claims it unless it is activated database-only; Postgres
+      // and Rust refuse it. Each arm answers whether it gave its engine's rule.
+      const pglite = backend === 'pglite';
+      const result: Record<string, unknown> = {
+        all: { ...all, loose: all.loose === pglite }, scoped: scoped.map(([id, v]) => [id, v === pglite]),
+        activated: { ...activated, loose: activated.loose === false },
+      };
+      expect(result).toEqual({
+        all: { bound: true, loose: true, conn: true, bare: true }, scoped: [['loose', true]],
+        activated: { bound: true, loose: true, conn: true, bare: true },
+      });
       return result;
     });
 });
