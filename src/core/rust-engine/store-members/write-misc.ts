@@ -1,6 +1,7 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
+ * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts;
+ * readDrainHolderProgress, SQL in engine-sql/persistence-journal.ts), and the folder access read beside the
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readLiveMember and readJobPrincipal; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
@@ -9,6 +10,7 @@ import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
 import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia } from '../../engine-sql/access-control.ts';
+import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journal.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -57,6 +59,12 @@ export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkill
  * writers (claimWorktree's raw SQL) refuse on it, so no source is bound on any host.
  */
 export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = async () => null;
+
+/**
+ * No source is bound on this engine (see getWorktreeBinding), so a drain lease's holder has no progress row; the lease
+ * reading counts it as no commits and no save, as PGLite and Postgres read an unbound source.
+ */
+export const readDrainHolderProgress: StoreMember<[sourceId: string, since: string], DrainHolderProgressRow | null> = async () => null;
 
 /** No binding claims a source on this engine (see getWorktreeBinding), so classic sync never meets a claim. */
 export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async () => false;

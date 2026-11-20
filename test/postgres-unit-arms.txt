@@ -153,6 +153,7 @@ test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
+test/engine-parity/first-due.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
@@ -174,6 +175,7 @@ test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/notifier-freshness.test.ts
+test/engine-parity/notifier-resident.test.ts
 test/engine-parity/notifier.test.ts
 test/engine-parity/op-checkpoint.test.ts
 test/engine-parity/open-loops.test.ts
@@ -194,10 +196,12 @@ test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/source-last-commit.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
+test/engine-parity/sync-requests.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run.test.ts
 test/engine-parity/takes.test.ts

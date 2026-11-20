@@ -14,15 +14,9 @@ const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** Whether the source is a managed one (bound to a worktree on an activated brain), and its checkout root. */
 export async function sourceSyncShape(engine: BrainEngine, sourceId: string): Promise<{ exists: boolean; managed: boolean; root: string | null }> {
-  const [row] = await engine.executeRaw<{ local_path: string | null; root: string | null; bound: unknown }>(
-    `SELECT s.local_path, h.local_path AS root, (b.source_id IS NOT NULL) AS bound
-       FROM sources s
-       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
-       LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
-       LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
-      WHERE s.id = $1 AND NOT s.archived LIMIT 1`, [sourceId]);
+  const row = await engine.readSourceSyncShape(sourceId);
   if (!row) return { exists: false, managed: false, root: null };
-  const managed = (row.bound === true || row.bound === 't')
+  const managed = row.bound
     && await readManagedMode(engine, { refusal: { subject: 'Recording a sync request', consequence: 'it refuses rather than guess whether the source pulls' } });
   return { exists: true, managed, root: (managed ? row.root : null) ?? row.local_path };
 }

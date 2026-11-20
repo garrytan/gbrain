@@ -21,13 +21,13 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
-    "advanceSourceCommit#clearNewest": {
-      "raw": 1
-    },
     "advanceSourceCommit#default": {
       "raw": 1
     },
-    "advanceSourceCommit#newest": {
+    "advanceSourceCommit#newest-cleared": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest-content": {
       "raw": 1
     },
     "advanceSourcePurgeEpoch#default": {
@@ -400,6 +400,9 @@
       "raw": 1
     },
     "readSourceChunkerVersion#default": {
+      "raw": 1
+    },
+    "readSourceLastCommit#default": {
       "raw": 1
     },
     "readSourceRow#default": {

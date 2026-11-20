@@ -59,6 +59,7 @@
 
 mod attachments;
 mod checks;
+mod drain_lease;
 mod health;
 mod inbox;
 mod insight;

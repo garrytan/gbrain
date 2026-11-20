@@ -7,7 +7,7 @@
  * readLiveIdentityHolders are a git sync's page reads, and readPageSizeRows its size-state read (store side: the same
  * cli_reads/sources.rs, and sources.rs for advanceSourceCommit). readPageIdentity is the held-rename redecision read;
  * writeSourceSyncHeartbeat and writeSourceUpstreamObservation are the sync's heartbeat and upstream observation
- * (store side: sources.rs).
+ * (store side: sources.rs). readSourceLastCommit reads the sync anchor for the resident notifier (store side: sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, PageIdentityRow, SourceCheckRow, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
@@ -119,3 +119,7 @@ export const writeSourceUpstreamObservation: StoreMember<[sourceId: string, obse
 export const insertSource: StoreMember<[row: SourceInsert], void> = async (brain, row) => {
   await storeCall({ member: 'insertSource', sourceId: row.id }, () => brain.insertSource(row.id, row.name, row.local_path, row.config));
 };
+
+/** The commit the source's last sync advanced to, or null. */
+export const readSourceLastCommit: StoreMember<[sourceId: string], string | null> = async (brain, sourceId) =>
+  await storeCall({ member: 'readSourceLastCommit', sourceId }, () => brain.readSourceLastCommit(sourceId)) as string | null;

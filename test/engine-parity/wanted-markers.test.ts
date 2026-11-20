@@ -19,7 +19,8 @@
  *  - Why existing coverage misses it: the notifier's marker tests run PGLite or Postgres only, or the in-memory store
  *    (test/helpers/notifier-memory-store.ts); test/rust-engine-store.test.ts pinned the refusal on Rust.
  *  - Seam: none. Real engines, typed members and the real readNotifierBlock. Timestamps are compared as "set" and
- *    "ordered", never by value. Every source keeps last_commit null, which is all the Rust store can hold.
+ *    "ordered", never by value. The sources in this file keep last_commit null; source-last-commit.test.ts covers a
+ *    source that holds one.
  */
 import { describe, expect } from 'bun:test';
 import type { WantedMarker } from '../../src/core/engine-sql/notifier.ts';

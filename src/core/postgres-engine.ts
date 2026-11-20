@@ -208,6 +208,7 @@ import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
 import type { AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, MayActForVia, MemberBindingVia } from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
+import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
 import * as jobsImpl from './engine-sql/jobs.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, ListJobsFilter } from './engine-sql/jobs.ts';
 import * as jobsQueue from './engine-sql/jobs-queue.ts';
@@ -1382,6 +1383,7 @@ export class PostgresEngine implements BrainEngine {
   writeSourceSyncHeartbeat(sourceId: string) { return sourcesImpl.writeSourceSyncHeartbeat(this.engineSql, sourceId); }
   writeSourceUpstreamObservation(sourceId: string, observed: sourcesImpl.SourceUpstreamObservation) { return sourcesImpl.writeSourceUpstreamObservation(this.engineSql, sourceId, observed); }
   readPageIdentity(pageId: number) { return sourcesImpl.readPageIdentity(unscopedExecutor(this.engineSql, 'sources: the held-rename redecision read a page identity unscoped through executeRaw'), pageId); }
+  readSourceLastCommit(sourceId: string) { return sourcesImpl.readSourceLastCommit(unscopedExecutor(this.engineSql, 'sources: the resident notifier read the last commit unscoped through executeRaw'), sourceId); }
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }) { return sourcesImpl.countSourcePages(unscopedExecutor(this.engineSql, 'sources: source commands counted pages unscoped through executeRaw'), sourceId, opts); }
   insertSource(row: sourcesImpl.SourceInsert) { return sourcesImpl.insertSource(this.engineSql, row); }
   readPageSizeRows(sourceId: string, maxBytes: number, slugs: readonly string[] | null) { return sourcesImpl.readPageSizeRows(unscopedExecutor(this.engineSql, 'sources: the sync size-state read ran it unscoped through executeRaw'), sourceId, maxBytes, slugs); }
@@ -1471,6 +1473,15 @@ export class PostgresEngine implements BrainEngine {
 
   async listSourceWantedMarkers(sourceId: string): Promise<notifierImpl.PendingWantedMarker[]> {
     return notifierImpl.listSourceWantedMarkers(this.autocommitSql, sourceId);
+  }
+
+  async readSourceSyncShape(sourceId: string): Promise<notifierImpl.SourceSyncShapeRow | null> {
+    return notifierImpl.readSourceSyncShape(this.autocommitSql, sourceId);
+  }
+
+  readDrainHolderProgress(sourceId: string, since: string) { return persistenceJournalImpl.readDrainHolderProgress(unscopedExecutor(this.engineSql, 'drain lease: the lease reading read the holder progress unscoped through executeRaw'), sourceId, since); }
+  async readNotifierFirstDue(sourceIds: string[]): Promise<notifierImpl.NotifierFirstDueRow[]> {
+    return notifierImpl.readNotifierFirstDue(this.autocommitSql, sourceIds);
   }
 
   async listSourceLocalPaths(): Promise<string[]> {
@@ -3767,6 +3778,10 @@ export class PostgresEngine implements BrainEngine {
   async refreshCycleLock(lockId: string, opts: Parameters<BrainEngine['refreshCycleLock']>[1], queryOpts?: { signal?: AbortSignal }) { return cycleLocksImpl.refreshCycleLock(this.directEngineSql, lockId, opts, queryOpts); }
   async releaseCycleLock(lockId: string, opts: Parameters<BrainEngine['releaseCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.releaseCycleLock(this.engineSqlOn(c), lockId, opts)); }
   async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.engineSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
+  async readDrainLeaseBeacon(lockToken: string) { return cycleLocksImpl.readDrainLeaseBeacon(unscopedExecutor(this.engineSql, 'drain lease: the lease reading read the holder beacon unscoped through executeRaw'), lockToken); }
+  async writeDrainLeaseHolder(record: DrainLeaseHolderRecord) { return cycleLocksImpl.writeDrainLeaseHolder(this.engineSql, record); }
+  async refreshDrainLeaseHolder(lockToken: string, ttlMinutes: number) { return cycleLocksImpl.refreshDrainLeaseHolder(this.engineSql, lockToken, ttlMinutes); }
+  async releaseDrainLeaseHolder(lockToken: string) { return cycleLocksImpl.releaseDrainLeaseHolder(this.engineSql, lockToken); }
   async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLock(this.engineSqlOn(c), lockId, opts)); }
   async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLockIfStale(this.engineSqlOn(c), lockId, opts)); }
   async assertCycleLease(lockId: string, acquisitionToken: string) { return cycleLocksImpl.assertCycleLease(this, lockId, acquisitionToken); }
@@ -3775,6 +3790,7 @@ export class PostgresEngine implements BrainEngine {
   // renewal run on executeRawDirect; reads run where they are called (a transaction engine reads inside it).
   async admitJob(spec: AdmitJobSpec, policy: AdmitJobPolicy) { return this.transaction(tx => jobsImpl.admitJob(tx, spec, policy)); }
   async getJob(id: number) { return jobsImpl.getJob(this, id); }
+  async readLiveJobIds(ids: number[]) { return jobsImpl.readLiveJobIds(this, ids); }
   async listJobs(filter?: ListJobsFilter) { return jobsImpl.listJobs(this, filter); }
   async claimNextJob(spec: ClaimJobSpec) { return jobsImpl.claimNextJob(this, spec); }
   async renewJobLease(id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal }) { return jobsImpl.renewJobLease(this, id, lockToken, lockDurationMs, opts); }

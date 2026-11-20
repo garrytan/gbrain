@@ -4983,17 +4983,6 @@
     },
     "sources": {
       "advanceSourceCommit": {
-        "clearNewest": [
-          {
-            "paramCount": 3,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          }
-        ],
         "default": [
           {
             "paramCount": 2,
@@ -5005,7 +4994,18 @@
             "via": "unsafe"
           }
         ],
-        "newest": [
+        "newest-cleared": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "newest-content": [
           {
             "paramCount": 3,
             "unsafeOptions": {
@@ -5311,6 +5311,19 @@
         ]
       },
       "readSourceChunkerVersion": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourceLastCommit": {
         "default": [
           {
             "paramCount": 1,

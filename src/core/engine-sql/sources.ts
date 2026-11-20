@@ -145,6 +145,12 @@ export async function writeSourceUpstreamObservation(exec: SqlExecutor, sourceId
   await exec.executeRaw(SOURCE_UPSTREAM_OBSERVATION_SQL, [sourceId, observed.checkedAt, observed.commit, observed.behind]);
 }
 
+/** The commit the source's last sync advanced to (`last_commit`), or null before the first sync and for an unknown source. */
+export async function readSourceLastCommit(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  return row?.last_commit ?? null;
+}
+
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.

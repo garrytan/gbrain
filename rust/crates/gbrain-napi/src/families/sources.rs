@@ -63,6 +63,16 @@ impl Brain {
         self.run(env, move |s| s.set_source_archived(&id, archived))
     }
 
+    /// `readSourceLastCommit(id)`: the commit the source's last sync advanced to, or `null`.
+    #[napi]
+    pub fn read_source_last_commit<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_last_commit(&id))
+    }
+
     /// `getSource(id)`: the `SourceDetailRow` or `null`.
     #[napi]
     pub fn get_source<'env>(&self, env: &'env Env, id: String) -> napi::Result<Object<'env>> {

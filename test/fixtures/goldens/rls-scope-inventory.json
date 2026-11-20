@@ -100,17 +100,6 @@
         ],
         "flagOnScopes": []
       },
-      "advanceSourceCommit#clearNewest": {
-        "flagOffLanes": [
-          "pool"
-        ],
-        "flagOffOpensTransaction": false,
-        "flagOn": "unscoped",
-        "flagOnLanes": [
-          "pool"
-        ],
-        "flagOnScopes": []
-      },
       "advanceSourceCommit#default": {
         "flagOffLanes": [
           "pool"
@@ -122,7 +111,18 @@
         ],
         "flagOnScopes": []
       },
-      "advanceSourceCommit#newest": {
+      "advanceSourceCommit#newest-cleared": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "advanceSourceCommit#newest-content": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3784,6 +3784,17 @@
         ],
         "flagOnScopes": []
       },
+      "readDrainHolderProgress#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readDueWantedMarkers#all": {
         "flagOffLanes": [
           "pool"
@@ -4266,6 +4277,17 @@
         ],
         "flagOnScopes": []
       },
+      "readNotifierFirstDue#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readNotifierLease#default": {
         "flagOffLanes": [
           "pool"
@@ -4536,6 +4558,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSourceLastCommit#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceMembership#default": {
         "flagOffLanes": [
           "pool"
@@ -4559,6 +4592,17 @@
         "flagOnScopes": []
       },
       "readSourceRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSourceSyncShape#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6440,6 +6484,8 @@
         "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
+        "readDrainHolderProgress": "none",
+        "readDrainLeaseBeacon": "none",
         "readDueWantedMarkers": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingIdentity": "none",
@@ -6482,6 +6528,7 @@
         "readLinkRelationshipEvidence": "none",
         "readLiveAccessToken": "none",
         "readLiveIdentityHolders": "none",
+        "readLiveJobIds": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
         "readLivePageTypes": "none",
@@ -6496,6 +6543,7 @@
         "readMcpRollupPrunedBefore": "none",
         "readMentionLastPass": "none",
         "readNamedEntitySlugs": "none",
+        "readNotifierFirstDue": "none",
         "readNotifierLease": "none",
         "readNotifierSources": "none",
         "readNotifierStatusRows": "none",
@@ -6544,10 +6592,12 @@
         "readSourceChunkerVersion": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
+        "readSourceLastCommit": "none",
         "readSourceMembership": "none",
         "readSourcePurgeEpoch": "none",
         "readSourceRow": "none",
         "readSourceState": "none",
+        "readSourceSyncShape": "none",
         "readStoredBodyBytes": "none",
         "readSyncDispatchRow": "none",
         "readTopologyChange": "none",
@@ -6580,12 +6630,14 @@
         "recordWakeCronRun": "none",
         "recordWakeTermsAcceptance": "none",
         "refreshCycleLock": "none",
+        "refreshDrainLeaseHolder": "none",
         "refreshPageBody": "none",
         "refreshPageOrigin": "none",
         "registerBeforeDisconnect": "none",
         "relationalChainHop": "none",
         "relationalFanout": "none",
         "releaseCycleLock": "none",
+        "releaseDrainLeaseHolder": "none",
         "releaseNotifierLease": "none",
         "releaseWatchdogClaim": "none",
         "removeLink": "none",
@@ -6712,6 +6764,7 @@
         "wordLexemes": "none",
         "writeAccessStoreConfig": "none",
         "writeContradictionsRun": "none",
+        "writeDrainLeaseHolder": "none",
         "writeLinkRelationshipState": "none",
         "writeManualLinkTransitions": "none",
         "writeMiscRead": "none",

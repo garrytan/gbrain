@@ -392,6 +392,13 @@ impl Store {
         Ok(read_source(&*self.read()?, id)?.map(SourceDetailRow::from))
     }
 
+    /// `readSourceLastCommit(id)`: the commit the source's last sync advanced to, or `None` before
+    /// the first advance and for an unknown source. Archived sources read too, as the SELECT does
+    /// not filter them.
+    pub fn read_source_last_commit(&self, id: &str) -> Result<Option<String>> {
+        Ok(read_source(&*self.read()?, id)?.and_then(|r| r.last_commit))
+    }
+
     /// `countRepoBoundSources()`: how many sources that are not archived have a non-empty
     /// local path. Mirrors `countRepoBoundSources`.
     pub fn count_repo_bound_sources(&self) -> Result<u64> {

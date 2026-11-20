@@ -897,6 +897,82 @@ const PINS: Pin[] = [
     texts: [`SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
       WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY 1, 2`],
   },
+  {
+    from: 'src/core/notifier/nudge.ts:17 sourceSyncShape (at 87bd59b208)',
+    case: { method: 'readSourceSyncShape', variant: 'default', run: e => e.readSourceSyncShape('source-a') },
+    texts: [`SELECT s.local_path, h.local_path AS root, (b.source_id IS NOT NULL) AS bound
+       FROM sources s
+       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
+       LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
+       LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
+      WHERE s.id = $1 AND NOT s.archived LIMIT 1`],
+  },
+  {
+    from: 'src/core/sync-pending.ts:101 readFirstDue (at 87bd59b208)',
+    case: { method: 'readNotifierFirstDue', variant: 'default', run: e => e.readNotifierFirstDue(['source-a']) },
+    texts: [`SELECT s.id AS source_id, n.observed_head,
+              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
+                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
+                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
+         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+        WHERE s.id = ANY($1::text[])`],
+  },
+  {
+    from: 'src/core/sync-anchor.ts:272 writeSyncAnchor, with a newest content time (at 87bd59b208)',
+    case: { method: 'advanceSourceCommit', variant: 'newest-content', run: e => e.advanceSourceCommit('source-a', 'abc123', '2026-01-02T03:04:05.000Z') },
+    texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2'],
+  },
+  {
+    from: 'src/core/sync-anchor.ts:277 writeSyncAnchor, without a newest content time (at 87bd59b208)',
+    case: { method: 'advanceSourceCommit', variant: 'default', run: e => e.advanceSourceCommit('source-a', 'abc123') },
+    texts: ['UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2'],
+  },
+  {
+    from: 'src/core/notifier/resident.ts:50 sqlNotifierStore liveJobs (at e98683e983)',
+    case: { method: 'readLiveJobIds', variant: 'default', run: e => e.readLiveJobIds([1, 2]) },
+    texts: ["SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')"],
+  },
+  {
+    from: 'src/core/notifier/resident.ts:169 residentNotifierOptions lastCommit (at e98683e983)',
+    case: { method: 'readSourceLastCommit', variant: 'default', run: e => e.readSourceLastCommit('source-a') },
+    texts: ['SELECT last_commit FROM sources WHERE id=$1'],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:136 readDrainLease (at e98683e983)',
+    case: { method: 'readDrainLeaseBeacon', variant: 'default', run: e => e.readDrainLeaseBeacon('token-a') },
+    texts: ["SELECT data->'drain_lease_beacon' AS meta FROM minion_jobs WHERE queue=$1 AND lock_token=$2"],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:161 holderProgress (at e98683e983)',
+    case: { method: 'readDrainHolderProgress', variant: 'default', run: e => e.readDrainHolderProgress('source-a', '1970-01-01T00:00:00.000Z') },
+    texts: [`
+    SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
+        AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
+      (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op='sync-hold-summary' AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:259 writeHolderRecord (at e98683e983)',
+    case: { method: 'writeDrainLeaseHolder', variant: 'default', run: e => e.writeDrainLeaseHolder({ sourceId: 'source-a', lockToken: 'token-a', beacon: { kind: 'job', id: '7', version: '0.0.0.0' }, ttlMinutes: 5 }) },
+    texts: [`WITH gone AS (DELETE FROM minion_jobs WHERE queue=$1 AND name='sync' AND data->>'sourceId'=$5 RETURNING 1)
+    INSERT INTO minion_jobs(name,queue,status,submission_authority,data,max_attempts,max_stalled,lock_token,lock_until,started_at,remove_on_complete,remove_on_fail)
+    SELECT 'sync',$1,'active','{"version":1,"kind":"application"}'::jsonb,$2::text::jsonb,1,0,$3,now()+make_interval(mins => $4),now(),true,true FROM (SELECT count(*) FROM gone) g`],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:284 withDrainLease beacon refresh (at e98683e983)',
+    case: { method: 'refreshDrainLeaseHolder', variant: 'default', run: e => e.refreshDrainLeaseHolder('token-a', 5) },
+    texts: ['UPDATE minion_jobs SET lock_until=now()+make_interval(mins => $3),updated_at=now() WHERE queue=$1 AND lock_token=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-lease.ts:295 withDrainLease release (at e98683e983)',
+    case: { method: 'releaseDrainLeaseHolder', variant: 'default', run: e => e.releaseDrainLeaseHolder('token-a') },
+    texts: ['DELETE FROM minion_jobs WHERE queue=$1 AND lock_token=$2'],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */

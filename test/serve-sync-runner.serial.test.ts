@@ -165,9 +165,10 @@ describe('serve-sync-runner delegated jobs', () => {
     let markerReads = 0;
     const slowSettle = new Proxy(engine, { get(target, key) {
       const value = Reflect.get(target, key, target);
-      if (key === 'readDueWantedMarkers') return async (sourceIds: string[] | null) => {
+      // The due-marker read is the typed member readDueWantedMarkers (engine-sql/notifier.ts).
+      if (key === 'readDueWantedMarkers') return async (ids: string[] | null) => {
         if (++markerReads > 1) await new Promise((r) => setTimeout(r, 400));
-        return target.readDueWantedMarkers(sourceIds);
+        return target.readDueWantedMarkers(ids);
       };
       return typeof value === 'function' ? value.bind(target) : value;
     } });
@@ -196,9 +197,9 @@ describe('serve-sync-runner delegated jobs', () => {
     const entered = new Promise<void>((r) => { inSettle = r; });
     const slowSettle = new Proxy(engine, { get(target, key) {
       const value = Reflect.get(target, key, target);
-      if (key === 'readDueWantedMarkers') return async (sourceIds: string[] | null) => {
+      if (key === 'readDueWantedMarkers') return async (ids: string[] | null) => {
         if (++markerReads > 1) { inSettle(); await settling; }
-        return target.readDueWantedMarkers(sourceIds);
+        return target.readDueWantedMarkers(ids);
       };
       return typeof value === 'function' ? value.bind(target) : value;
     } });
