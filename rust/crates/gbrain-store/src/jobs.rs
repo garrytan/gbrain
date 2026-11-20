@@ -75,8 +75,8 @@ mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
-mod synthesis_completions;
-mod wake;
+pub(crate) mod synthesis_completions;
+pub(crate) mod wake;
 
 pub use attachments::AttachmentInput;
 pub use checks::{
