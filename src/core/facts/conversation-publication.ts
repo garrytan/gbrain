@@ -133,8 +133,12 @@ export type ConversationFactRow = NewFact & { row_num: number; source_markdown_s
  */
 export type ConversationScope = 'full' | 'window' | 'partial';
 const SCOPES: ReadonlySet<string> = new Set<ConversationScope>(['full', 'window', 'partial']);
-/** A frozen row: no source, page or row number (the request pins them) and no visibility (one per entry). */
-export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'>;
+/**
+ * A frozen row: no source, page or row number (the request pins them). Visibility is one per entry; a row carries
+ * `visibility: 'private'` only when it is narrower than its world entry (a claim the speaker asked to keep quiet), and
+ * no other value. A binary that predates the key publishes such a row at the entry's visibility, as before.
+ */
+export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'> & { visibility?: 'private' };
 
 /** One page's frozen batch inside a batch request. */
 export interface ConversationPageEntry {
@@ -348,8 +352,9 @@ async function plannedAdmissions(engine: BrainEngine, sourceId: string,
   return requests(opts.limit ? Math.min(opts.limit, backlog) : backlog);
 }
 
-function freezeRow(row: ConversationFactRow): FrozenConversationFact {
+function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world'): FrozenConversationFact {
   return {
+    ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
     valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
@@ -376,7 +381,7 @@ export async function buildConversationPage(engine: BrainEngine, config: GBrainC
     extractor_version: CONVERSATION_EXTRACTOR_VERSION, generation: input.generation.key, attempt: input.attempt,
     selectors: { since: input.since, segment_limit: input.segmentLimit }, complete: rows.some(row => OUTCOME_SOURCES.has(row.source)), scope: input.scope,
     newest_end: opts.newestEnd, visibility: opts.visibility, embedding: signature,
-    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null })),
+    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null }, opts.visibility)),
   };
 }
 
@@ -429,6 +434,7 @@ function entryProblem(entry: ConversationPageEntry): string | null {
     }
     if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
     if ((fact.dimension != null && typeof fact.dimension !== 'string') || (fact.value != null && typeof fact.value !== 'string')) return 'a row carries a malformed slot';
+    if (Object.hasOwn(fact, 'visibility') && fact.visibility !== 'private') return 'a row names a fact visibility other than private';
     if (fact.embedding && (!entry.embedding || fact.embedding.length !== entry.embedding.dimensions || !fact.embedding.every(Number.isFinite))) {
       return 'a vector does not match its embedding signature';
     }
@@ -708,7 +714,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const vectors = !!signature && !!entry.embedding && signature.model === entry.embedding.model && signature.dimensions === entry.embedding.dimensions;
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
-    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
+    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) || fact.visibility === 'private' ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
     valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
