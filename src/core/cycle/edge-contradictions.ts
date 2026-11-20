@@ -210,7 +210,7 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
      ), multi AS (
        SELECT source_id, from_page_id, link_type FROM live
         GROUP BY 1, 2, 3 HAVING count(DISTINCT to_page_id) >= 2
-        ORDER BY max(refreshed_at) DESC LIMIT ${maxSubjects}
+        ORDER BY max(refreshed_at) DESC, from_page_id, link_type COLLATE "C" LIMIT ${maxSubjects}
      )
      SELECT l.source_id, l.from_page_id, l.to_page_id, l.link_type, l.valid_ranges::text AS valid_ranges,
             l.last_start, l.recorded_at, l.evidence_hash,

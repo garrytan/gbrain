@@ -83,7 +83,7 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
   for (const pair of pairs) {
     const [old] = await engine.executeRaw<{ id: number | string; slug: string; deleted_at: string }>(
       `SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
-        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC LIMIT 1`,
+        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`,
       [sourceId, pair.from, resolveSlugForPath(pair.from)]);
     if (!old) continue;
     const owner = await canonicalOriginPage(engine, sourceId, pair.to);

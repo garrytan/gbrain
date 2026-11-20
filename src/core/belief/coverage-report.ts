@@ -313,7 +313,7 @@ export async function orphanLifetimes(engine: BrainEngine, sourceId: string, lim
       WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
       UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
       WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
-    ) o ORDER BY slug COLLATE "C" LIMIT ${Math.max(1, Math.floor(limit))}`, [sourceId, opts.deep === true]);
+    ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT ${Math.max(1, Math.floor(limit))}`, [sourceId, opts.deep === true]);
   return { count: Number(rows[0]?.total ?? 0), samples: rows.map(r => ({ slug: r.slug, page_lifetime: r.page_lifetime, reason: r.reason })) };
 }
 

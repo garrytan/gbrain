@@ -1133,7 +1133,7 @@ export async function scanStaleMentions(
             SELECT 1 FROM links l
              WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
           )
-        ORDER BY p.slug COLLATE "C"
+        ORDER BY p.slug COLLATE "C", p.id
         LIMIT $1
      )`;
 
@@ -1145,7 +1145,7 @@ export async function scanStaleMentions(
             COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
        FROM pages p
        JOIN scanned s ON s.id = p.id
-      ORDER BY p.slug COLLATE "C"`,
+      ORDER BY p.slug COLLATE "C", p.id`,
     [limit],
   );
 
