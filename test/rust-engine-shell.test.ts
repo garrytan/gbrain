@@ -221,11 +221,11 @@ describe('openRustEngine', () => {
     await engine.disconnect();
   });
 
-  // A client call that reaches the owner socket while the store is still opening waits for the open. When the open then
-  // fails, or a disconnect abandons it, giving up the owner role drains that call: it must end, not wait for the open
-  // that is waiting for it, and the lock must be free for the next owner.
+  // The election opens the store before the owner socket listens, so no client call reaches an owner whose store is
+  // still opening. When the open then fails, or a disconnect abandons it, the owner role is given up and the lock is
+  // free for the next owner.
   for (const outcome of ['fails', 'is abandoned'] as const) {
-    test(`an early client call ends when the open ${outcome}, and the owner role is given up`, async () => {
+    test(`no client reaches the owner while the open is pending, and the owner role is given up when the open ${outcome}`, async () => {
       const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-early-'));
       const db = join(dir, 'brain.rust');
       const gate = deferredAddon();
@@ -235,19 +235,18 @@ describe('openRustEngine', () => {
       let close = () => {};
       try {
         await gate.opening();
-        const client = { kind: 'rust', capabilities: new Set<string>() } as unknown as BrainEngine;
-        close = installOwnerClient(client, await connectOwner(ownerSocketPath(db)));
-        const call = client.getConfig('k').then(() => 'resolved', (error: { code?: string }) => error.code ?? 'rejected');
-        for (let i = 0; i < 100 && (engine.ownerStats()?.active ?? 0) === 0; i++) await Bun.sleep(10);
-        expect(engine.ownerStats()?.active).toBe(1);
+        const early = await connectOwner(ownerSocketPath(db), { timeoutMs: 500 }).then(
+          (conn) => { close = installOwnerClient({ kind: 'rust', capabilities: new Set<string>() } as unknown as BrainEngine, conn); return 'connected'; },
+          () => 'refused',
+        );
+        expect(early).toBe('refused');
         const timeout = Bun.sleep(3_000).then(() => 'hung');
         let disconnected: Promise<void> = Promise.resolve();
         if (outcome === 'fails') gate.failOpen();
         else { disconnected = engine.disconnect(); gate.finishOpen(); }
         expect(await Promise.race([settled, timeout])).not.toBe('hung');
-        expect(await Promise.race([call, timeout])).not.toBe('hung');
         expect(await Promise.race([disconnected.then(() => 'done'), timeout])).toBe('done');
-        expect(await call).not.toBe('resolved');
+        expect(await settled).not.toBe('resolved');
         expect(engine.connected).toBe(false);
         expect(engine.ownerRole).toBeNull();
         // The lock was given up: the next connect becomes the owner again.
