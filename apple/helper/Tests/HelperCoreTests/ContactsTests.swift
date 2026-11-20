@@ -183,6 +183,21 @@ final class ContactsHarness {
         #expect(h.get(applied.cursor).items.isEmpty)
     }
 
+    @Test func aRetriedCursorStillDeletesAContactFromTheUnsavedPage() {
+        let h = ContactsHarness()
+        h.store.records = [person("id-a", "alice")]
+        let snapshot = h.get()
+        let start = h.get(snapshot.cursor)
+        #expect(start.items.isEmpty)
+        h.store.records = [person("id-a", "alice"), person("id-b", "bob")]
+        #expect(h.get(start.cursor).ops == ["upsert id-b"])
+        h.store.records = [person("id-a", "alice")]
+        #expect(h.get(start.cursor).ops == ["delete id-b"])
+        let retried = h.get(start.cursor)
+        #expect(retried.ops == ["delete id-b"])
+        #expect(h.get(retried.cursor).items.isEmpty)
+    }
+
     @Test func anUnappliedSnapshotPageIsNeverCountedAsSent() {
         let h = ContactsHarness()
         h.store.records = [person("id-a", "alice"), person("id-b", "bob")]

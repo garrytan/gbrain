@@ -152,6 +152,10 @@ public final class ContactsSource: SourceModule {
             if let applied = index.pending[cursor.key] {
                 for (id, hash) in applied.upserts { index.entries[id] = hash }
                 for id in applied.deletes { index.entries.removeValue(forKey: id) }
+            } else {
+                for page in index.pending.values {
+                    for id in page.upserts.keys { index.entries[id] = "" }
+                }
             }
             index.pending = [:]
         }
