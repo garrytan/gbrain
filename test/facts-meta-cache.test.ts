@@ -288,6 +288,9 @@ describe('meta-hook cache hygiene (bounded, expired-entry eviction)', () => {
         readTrustGeneration: stubGeneration,
         listFactsBySession: async () => [],
         listFactsSince: async () => { n++; return [factRow(validUntil)]; },
+        // Quoting reads (#8042): no fact comes from a quoted page, none is owner tier.
+        listFactsFromQuotedPages: async () => [],
+        listFactIdsAtTrustFloor: async () => [],
       } as unknown as BrainEngine;
       return { engine, calls: () => n };
     }

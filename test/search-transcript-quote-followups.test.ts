@@ -228,10 +228,7 @@ for (const backend of testBackends()) {
     test('item 10: context_pack counts entity facts it withholds when quoting fails, instead of dropping them silently', async () => {
       const failing = new Proxy(engine, {
         get(target, prop, receiver) {
-          if (prop === 'executeRaw') {
-            return (sql: string, params?: unknown[]) => /FROM facts WHERE id = ANY\(\$1::bigint\[\]\) AND/.test(sql)
-              ? Promise.reject(new Error('probe: quote lookup failed')) : target.executeRaw(sql, params as never);
-          }
+          if (prop === 'listFactIdsAtTrustFloor') return () => Promise.reject(new Error('probe: quote lookup failed'));
           const value = Reflect.get(target, prop, receiver);
           return typeof value === 'function' ? value.bind(target) : value;
         },

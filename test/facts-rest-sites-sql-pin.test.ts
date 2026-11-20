@@ -15,6 +15,9 @@
  *    [model, dims, literal, ...pool params, model, dims, literal, limit], and dims bind only once when the column has declared
  *    dimensions (the pool then skips its vector_dims filter). This is the same shape listFactsForRelevance
  *    has used since lane 4's first batch.
+ *    The four quote-read members (listFactsFromQuotedPages, listFactIdsAtTrustFloor, readPageTypesByIds,
+ *    listReadablePageSlugs) are pinned to their callers at c33606182c (search/transcript-quote.ts, search/slot-history.ts),
+ *    captured the same way.
  *  - Regression: a member that reorders a clause, renumbers a placeholder, binds a value differently, drops a cast or
  *    sends the iterative-scan settings in another order changes what Postgres answers while the parity cases may still
  *    pass on a small fixture.
@@ -443,6 +446,44 @@ const PINS: Pin[] = [
     member: 'listFactRowsByIds',
     run: e => e.listFactRowsByIds(['s1', 's2'], [1, 2]),
     statements: [{ text: `SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])`, params: [['s1', 's2'], [1, 2]] }],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:135 factsFromQuotedPages (at c33606182c)',
+    member: 'listFactsFromQuotedPages',
+    run: e => e.listFactsFromQuotedPages([3, 1, 3], ['chat', 'transcript'], [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']]),
+    statements: [{ text: `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
+       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
+         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
+         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
+         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`, params: [[3, 1], ['chat', 'transcript'], 'sync:import', 'sync:', 'mcp:put_page', 'put_page:'] }],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:510 ownerTierFacts (at c33606182c)',
+    member: 'listFactIdsAtTrustFloor',
+    run: e => e.listFactIdsAtTrustFloor([3, 1, 3], 'agent_written'),
+    statements: [{ text: `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND (CASE trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) >= $2`, params: [[3, 1], 3] }],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:111 pageTypesById (at c33606182c)',
+    member: 'readPageTypesByIds',
+    run: e => e.readPageTypesByIds([7, 2, 7]),
+    statements: [{ text: 'SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', params: [[7, 2]] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'local scope',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], { sourceId: 's1', worldOnly: false, excludePrivate: false } as never, 2),
+    statements: [{ text: `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) LIMIT 2`, params: ['s1', ['people/carol', 'companies/carol']] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'remote scope, trust floor, two sources (the source filter is not applied)',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
+    statements: [{ digest: { length: 7741, sha256: '480b13fa66dd499685d723c5b26d6aecc8408de3ea76282ef1f801b84f435046' }, params: ['s1', ['people/carol', 'companies/carol']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:277 readSlotRows",

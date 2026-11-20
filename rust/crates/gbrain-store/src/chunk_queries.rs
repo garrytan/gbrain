@@ -35,6 +35,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
 mod site_reads;
+pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, WithdrawalChunksInput, WithdrawalKey,

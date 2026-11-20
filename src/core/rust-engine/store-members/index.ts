@@ -64,6 +64,7 @@ import * as ontologyRepair from './ontology-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsForget from './facts-forget.ts';
 import * as factsRecall from './facts-recall.ts';
+import * as factsQuoted from './facts-quoted.ts';
 import * as factsRemember from './facts-remember.ts';
 import * as derivationTrust from './derivation-trust.ts';
 import * as chronicleEvents from './chronicle-events.ts';
@@ -122,7 +123,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsQuoted, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,

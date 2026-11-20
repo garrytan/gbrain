@@ -99,6 +99,7 @@ const OOS = {
   factsTrustSites: 'out-of-scope:facts-trust-sites (write-path and capture statements, born in engine-sql/facts-trust.ts; pinned byte-identical by test/facts-repair-sites-sql-pin.test.ts and test/engine-parity/facts-repair-sites.test.ts)',
   factsRestSites: 'out-of-scope:facts-rest-sites (write-path statements, born in engine-sql/facts-trust.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-rest-sites.test.ts)',
   factsRecallSites: 'out-of-scope:facts-recall-sites (recall pool statements, born in engine-sql/facts-recall.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-rest-sites.test.ts)',
+  factsQuotedReads: 'out-of-scope:facts-quoted-reads (quote and slot-history reads, born in engine-sql/facts-recall.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-quoted.test.ts)',
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
   versionReasons: 'out-of-scope:version-reasons (born in engine-sql/version-reasons.ts; pinned by test/engine-parity/versions-raw.test.ts)',
@@ -956,6 +957,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'listCallOffCueFacts': OOS.factsRecallSites,
   'listPoolEntityPairs': OOS.factsRecallSites,
   'listFactRowsByIds': OOS.factsRecallSites,
+  'listFactsFromQuotedPages': OOS.factsQuotedReads,
+  'listFactIdsAtTrustFloor': OOS.factsQuotedReads,
+  'readPageTypesByIds': OOS.factsQuotedReads,
+  'listReadablePageSlugs': OOS.factsQuotedReads,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */

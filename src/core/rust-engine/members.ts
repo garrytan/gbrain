@@ -638,6 +638,10 @@ export const RUST_ENGINE_MEMBERS = {
   listCallOffCueFacts: 'facts',
   listPoolEntityPairs: 'facts',
   listFactRowsByIds: 'facts',
+  listFactsFromQuotedPages: 'facts',
+  listFactIdsAtTrustFloor: 'facts',
+  readPageTypesByIds: 'facts',
+  listReadablePageSlugs: 'facts',
 
   // takes
   addTakesBatch: 'takes',

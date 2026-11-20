@@ -4046,6 +4046,14 @@ export interface BrainEngine {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The whole fact rows of these ids within these sources. */
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
+  /** Of `ids`, the facts taken from a page of one of `pageTypes` (holding page, derivation input, or backstop session page). */
+  listFactsFromQuotedPages(ids: readonly number[], pageTypes: readonly string[], backstopSessions: FactsRecallSql.QuotedBackstopSessions): Promise<number[]>;
+  /** Of `ids`, the facts whose stored tier ranks at or above `floor`. */
+  listFactIdsAtTrustFloor(ids: readonly number[], floor: import('./trust/tier.ts').TrustTier): Promise<number[]>;
+  /** Each page id's stored type, deleted or not; an id with no page is absent. */
+  readPageTypesByIds(ids: readonly number[]): Promise<Array<{ id: number; type: string | null }>>;
+  /** Of `slugs` in `sourceId`, the live pages the read policy of `scope` admits (its sources ignored), at most `limit`. */
+  listReadablePageSlugs(sourceId: string, slugs: readonly string[], scope: PageReadScope, limit: number): Promise<string[]>;
   /** Lowers the rows of `ids` whose stored tier ranks above `tier` to `tier` and `origin`, never raising; resolves the ids lowered (trust/taint.ts). */
   lowerTrustTier(table: import('./trust/tier.ts').TaintTable, ids: readonly number[], tier: import('./trust/tier.ts').TrustTier,
     origin: import('./trust/tier.ts').WriteOrigin | null): Promise<number[]>;

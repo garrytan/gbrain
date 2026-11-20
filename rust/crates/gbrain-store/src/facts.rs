@@ -60,6 +60,7 @@ mod page_purges;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
+pub mod quoted;
 pub mod recall;
 pub mod reconcile;
 pub mod relink;

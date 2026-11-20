@@ -168,6 +168,7 @@ test/engine-parity/facts-cycle.test.ts
 test/engine-parity/facts-doctor.test.ts
 test/engine-parity/facts-purge-sites.test.ts
 test/engine-parity/facts-purge.test.ts
+test/engine-parity/facts-quoted.test.ts
 test/engine-parity/facts-repair-sites.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-rest-sites.test.ts

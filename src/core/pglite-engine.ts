@@ -1822,6 +1822,10 @@ export class PGLiteEngine implements BrainEngine {
   listCallOffCueFacts(scope: factsTrustImpl.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>) { return factsRecallImpl.listCallOffCueFacts(this.rawRead, scope, pairs); }
   listPoolEntityPairs(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters) { return factsRecallImpl.listPoolEntityPairs(this.rawRead, scope, filters); }
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]) { return factsRecallImpl.listFactRowsByIds(this.rawRead, sourceIds, ids); }
+  listFactsFromQuotedPages(ids: readonly number[], pageTypes: readonly string[], backstopSessions: factsRecallImpl.QuotedBackstopSessions) { return factsRecallImpl.listFactsFromQuotedPages(this.rawRead, ids, pageTypes, backstopSessions); }
+  listFactIdsAtTrustFloor(ids: readonly number[], floor: TrustTier) { return factsRecallImpl.listFactIdsAtTrustFloor(this.rawRead, ids, floor); }
+  readPageTypesByIds(ids: readonly number[]) { return factsRecallImpl.readPageTypesByIds(this.rawRead, ids); }
+  listReadablePageSlugs(sourceId: string, slugs: readonly string[], scope: PageReadScope, limit: number) { return factsRecallImpl.listReadablePageSlugs(this.rawRead, sourceId, slugs, scope, limit); }
   lowerTrustTier(table: TaintTable, ids: readonly number[], tier: TrustTier, origin: WriteOrigin | null) { return derivationTrustImpl.lowerTrustTier(this.rawRead, table, ids, tier, origin); }
   countDerivedRowTaint(table: derivationTrustImpl.DerivedTaintTable) { return derivationTrustImpl.countDerivedRowTaint(this.rawRead, table); }
   stampPageFrontmatter(stamp: derivationTrustImpl.PageFrontmatterStamp) { return derivationTrustImpl.stampPageFrontmatter(this.rawRead, stamp); }
