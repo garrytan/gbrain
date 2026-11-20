@@ -134,6 +134,9 @@ gbrain skillpack scaffold --harness openclaw --workspace .
 
 From this point, the agent has working memory and the core skills.
 
+If you also install Retrieval Reflex and your workspace is a subdirectory of
+the host checkout, follow the [nested workspace install steps](../mcp/OPENCLAW.md#install-retrieval-reflex-when-the-workspace-is-inside-a-git-repo).
+
 ---
 
 ## Step 7: Set up Supabase (embeddings and search)
