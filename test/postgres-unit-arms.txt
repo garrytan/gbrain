@@ -393,6 +393,7 @@ test/held-fence-readers-gst2492.test.ts
 test/held-move-plan-gst2497.test.ts
 test/held-private-replies-2900.test.ts
 test/held-read-signals.test.ts
+test/held-row-fact-reads-2979.test.ts
 test/held-row-page-reads-2891.test.ts
 test/held-row-review-2891.test.ts
 test/held-row-writeback-2891.test.ts
