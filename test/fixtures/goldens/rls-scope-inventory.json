@@ -5908,6 +5908,7 @@
         "claimNotifierLease": "none",
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
+        "claimWorktreeBinding": "none",
         "clearCodeTraversalCache": "none",
         "clearWantedMarker": "none",
         "cliReads": "none",
