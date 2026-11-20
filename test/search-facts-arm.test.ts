@@ -1,8 +1,9 @@
 /**
  * Facts arm for `query` (`search.query_facts_arm`, search/facts-arm.ts): with
  * the key on, an active fact that matches the question comes back as a row of
- * its own in spare capacity only (free slots under the row count, what the
- * pages leave of the token budget), never displacing a page; a remote caller never sees a
+ * its own in spare capacity (free slots under the row count, what the
+ * pages leave of the token budget), never displacing a page unless
+ * `search.facts_arm_displace` is on (test/search-facts-exact-widen.test.ts); a remote caller never sees a
  * private fact; page-unit delivery passes the fact row through as written;
  * a page whose typed claim a newer fact covers is stamped superseded_claim;
  * the key is on when unset, and with it off the rows are unchanged; a fact
@@ -14,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { QUERY_FACTS_ARM_KEY, QUERY_FACTS_BLOCK_KEY, matchQueryFacts, queryTerms } from '../src/core/search/facts-arm.ts';
+import { FACTS_ARM_DISPLACE_KEY, QUERY_FACTS_ARM_KEY, QUERY_FACTS_BLOCK_KEY, matchQueryFacts, queryTerms } from '../src/core/search/facts-arm.ts';
 import { resultTokens } from '../src/core/search/token-budget.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
@@ -61,7 +62,8 @@ describe('facts arm', () => {
     expect(JSON.stringify(unset.filter(r => r.result_type !== 'fact').map(r => [r.slug, r.chunk_text]))).toBe(JSON.stringify(off.map(r => [r.slug, r.chunk_text])));
   });
 
-  test('on: the matching fact is a row of its own, newest first, in free slots after every page row', async () => {
+  test('on: the matching fact is a row of its own, best match first, in free slots after every page row', async () => {
+    await engine.setConfig(FACTS_ARM_DISPLACE_KEY, 'false'); // the free-slot rule: displacement has its own tests
     await engine.setConfig(QUERY_FACTS_ARM_KEY, 'false');
     const off = await query({ limit: 10 });
     await engine.setConfig(QUERY_FACTS_ARM_KEY, 'true');
@@ -70,14 +72,15 @@ describe('facts arm', () => {
       expect(on.length).toBeLessThanOrEqual(10);
       expect(on.slice(0, off.length).map(r => [r.slug, r.chunk_id])).toEqual(off.map(r => [r.slug, r.chunk_id]));
       const facts = on.filter(r => r.result_type === 'fact');
-      expect(facts.map(r => r.chunk_text.match(/valid from (\S+?);/)![1])).toEqual(['2025-07-13', '2025-07-12']);
-      expect(facts[1]!.chunk_text).toContain('Missoula');
-      expect(facts[1]!.chunk_text).toContain('valid from 2025-07-12');
-      expect(facts[0]!.chunk_text).toContain('secret');
+      expect(facts.map(r => r.chunk_text.match(/valid from (\S+?);/)![1])).toEqual(['2025-07-12', '2025-07-13']);
+      expect(facts[0]!.chunk_text).toContain('Missoula');
+      expect(facts[0]!.chunk_text).toContain('valid from 2025-07-12');
+      expect(facts[1]!.chunk_text).toContain('secret');
     } finally { await engine.setConfig(QUERY_FACTS_ARM_KEY, 'false'); }
   });
 
   test('on, no spare capacity: a full row count or a spent token budget returns the page rows unchanged', async () => {
+    await engine.setConfig(FACTS_ARM_DISPLACE_KEY, 'false'); // the free-slot rule: displacement has its own tests
     await engine.setConfig(QUERY_FACTS_ARM_KEY, 'false');
     const full = await query();
     const budget = resultTokens(full[0]!);

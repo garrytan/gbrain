@@ -12,8 +12,8 @@
  * the content terms), cosine against the query embedding hybrid search
  * already computed (no extra model call; skipped when there is none), and the
  * facts of the one entity page the query names (in that page's source); the
- * candidate pool is fact-relevance.ts's. Matches are ordered newest
- * valid_from first. Read policy is recall's: source scope, active rows only,
+ * candidate pool is fact-relevance.ts's. Matches are ordered by how many of the
+ * query's content terms they hold, then newest valid_from. Read policy is recall's: source scope, active rows only,
  * audit rows excluded, and world-visible facts with non-private provenance
  * for remote callers.
  */
@@ -36,6 +36,10 @@ import type { Contested } from '../eligibility/labels.ts';
 export { queryTerms } from './fact-relevance.ts';
 
 export const QUERY_FACTS_ARM_KEY = 'search.query_facts_arm';
+/** On by default: a matched fact that holds every query term may take the place of the lowest page rows (at most MAX_FACT_ROWS), #7743. */
+export const FACTS_ARM_DISPLACE_KEY = 'search.facts_arm_displace';
+/** On by default: `search` runs the same facts arm `query` does. */
+export const SEARCH_FACTS_ARM_KEY = 'search.search_facts_arm';
 /** Fact rows added per query at most. */
 export const MAX_FACT_ROWS = 3;
 /** Cosine similarity a fact needs against the query embedding to count as a match on its own. */
@@ -103,15 +107,32 @@ async function poolScope(engine: BrainEngine, scope: FactsArmScope): Promise<Fac
 
 const day = (v: Date | string | null) => (v ? new Date(v).toISOString().slice(0, 10) : null);
 
-/** The active facts that match `query`, newest valid_from first (at most MAX_FACT_ROWS). */
-export async function matchQueryFacts(engine: BrainEngine, query: string, scope: FactsArmScope, queryEmbedding?: Float32Array | null): Promise<FactCandidate[]> {
-  const { candidates } = await collectFactCandidates(engine, query, await poolScope(engine, scope), queryEmbedding, { depth: { keyword: 50, cosine: 10, entity: MAX_FACT_ROWS } });
+/** A matched fact and whether it holds every content term of the query (a strong match). */
+export interface RankedQueryFact { fact: FactCandidate; strong: boolean }
+
+/**
+ * The active facts that match `query`, best match first (at most MAX_FACT_ROWS): the facts that hold more of the
+ * query's content terms (on their stems, as the pool's keyword arm matched them), then the facts of the entity the
+ * query names, then the newest valid_from. `strong` marks a fact that holds every content term.
+ */
+export async function rankQueryFacts(engine: BrainEngine, query: string, scope: FactsArmScope, queryEmbedding?: Float32Array | null): Promise<RankedQueryFact[]> {
+  const pool = await collectFactCandidates(engine, query, await poolScope(engine, scope), queryEmbedding, { depth: { keyword: 50, cosine: 10, entity: MAX_FACT_ROWS } });
   const terms = queryTerms(query);
   const matched = (c: FactCandidate) => { const haystack = `${c.fact} ${c.entity_slug ?? ''}`.toLowerCase(); return terms.filter(t => haystack.includes(t)).length; };
-  return candidates
+  const held = new Map(scoreFactCandidates(query, pool.candidates, pool.terms, pool.stems).map(s => [s.candidate.id, s] as const));
+  const holds = (c: FactCandidate) => held.get(c.id)?.matched ?? 0;
+  const strong = (c: FactCandidate) => { const s = held.get(c.id); return !!s && s.terms > 0 && s.matched === s.terms; };
+  return pool.candidates
     .filter(c => c.entity || (c.similarity ?? -1) >= FACT_COSINE_MIN || (terms.length > 0 && matched(c) >= Math.max(Math.min(2, terms.length), Math.ceil(terms.length * TERM_SHARE_MIN))))
-    .sort((a, b) => new Date(b.valid_from).getTime() - new Date(a.valid_from).getTime() || Number(b.id) - Number(a.id))
-    .slice(0, MAX_FACT_ROWS);
+    .sort((a, b) => Number(strong(b)) - Number(strong(a)) || holds(b) - holds(a) || Number(b.entity) - Number(a.entity)
+      || new Date(b.valid_from).getTime() - new Date(a.valid_from).getTime() || Number(b.id) - Number(a.id))
+    .slice(0, MAX_FACT_ROWS)
+    .map(fact => ({ fact, strong: strong(fact) }));
+}
+
+/** The active facts that match `query`, best match first (at most MAX_FACT_ROWS); see rankQueryFacts. */
+export async function matchQueryFacts(engine: BrainEngine, query: string, scope: FactsArmScope, queryEmbedding?: Float32Array | null): Promise<FactCandidate[]> {
+  return (await rankQueryFacts(engine, query, scope, queryEmbedding)).map(r => r.fact);
 }
 
 /**
@@ -194,23 +215,40 @@ export interface FactsArmOpts extends FactsArmScope {
   queryEmbedding?: Float32Array | null;
   /** The caller's row count (explicit limit or the mode's default), read only when a fact matches. */
   rowCap?: () => Promise<number>;
+  /** `search.facts_arm_displace` (resolved by the caller): a fact that holds every query term may take the place of the lowest page rows. */
+  displace?: boolean;
 }
 
 /**
- * The facts arm: matched facts appended as rows in spare capacity only (free
- * slots under the caller's row count, and what the pages leave of the token
- * budget), so no page row is ever displaced; superseded page claims stamped.
- * No match, no spare capacity or any error: the results unchanged.
+ * The indexes of the `n` lowest-scoring page rows (the later row first on a tie), never a row the identity tiers
+ * placed (an exact slug, title or alias hit) and never a fact row.
+ */
+function lowestPageRows(rows: SearchResult[], n: number): Set<number> {
+  const movable = rows.map((r, i) => ({ r, i })).filter(({ r }) => !r.fact_row && r.result_type !== 'fact' && !r.exact_lookup && !r.alias_hit);
+  return new Set(movable.sort((a, b) => (Number.isFinite(a.r.score) ? a.r.score : -Infinity) - (Number.isFinite(b.r.score) ? b.r.score : -Infinity) || b.i - a.i).slice(0, n).map(m => m.i));
+}
+
+/**
+ * The facts arm: matched facts appended as rows, best match first. Free slots under the caller's row count take
+ * them first (and what the pages leave of the token budget). With `displace` (`search.facts_arm_displace`, #7743)
+ * a fact that holds every query content term and found no free slot takes the place of the lowest-scoring page
+ * row, at most MAX_FACT_ROWS fact rows in all and at most half the row count; a weaker match never displaces a page, and
+ * a token budget keeps the free-slot rule only. Superseded page claims stamped. No match, no room or any error: the results unchanged.
  */
 export async function applyFactsArm(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts): Promise<SearchResult[]> {
   try {
-    const facts = await matchQueryFacts(engine, query, opts, opts.queryEmbedding);
-    if (!facts.length) return results;
-    const free = ((await opts.rowCap?.().catch(() => 0)) ?? 0) - results.length;
-    if (free <= 0) return results;
+    const ranked = await rankQueryFacts(engine, query, opts, opts.queryEmbedding);
+    if (!ranked.length) return results;
+    const cap = (await opts.rowCap?.().catch(() => 0)) ?? 0;
+    const free = Math.max(0, cap - results.length);
+    // Past the free slots only a strong match displaces, and never more than half the row count: a small limit keeps its pages.
+    const extra = !opts.tokenBudget && opts.displace ? ranked.filter((r, i) => i >= free && r.strong).slice(0, Math.floor(cap / 2)) : [];
+    const taken = Math.min(ranked.length, free) + extra.length;
+    if (taken <= 0) return results;
+    const facts = ranked.map(r => r.fact);
     const pages = results.map(r => ({ ...r }));
     const floor = pages.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), pages[0]?.score ?? 1);
-    const shown = facts.slice(0, free);
+    const shown = facts.filter((_, i) => i < free || extra.includes(ranked[i]!)).slice(0, taken);
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, shown.map(f => Number(f.id)));
     const { dates } = await observedDates(engine, shown, opts.readScope);
@@ -220,7 +258,8 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
       rows = rows.filter(r => { const cost = resultTokens(r); if (cost > left) return false; left -= cost; return true; });
     }
     if (!rows.length) return results;
-    const merged = [...pages, ...rows];
+    const dropped = lowestPageRows(pages, Math.max(0, rows.length - free));
+    const merged = [...pages.filter((_, i) => !dropped.has(i)), ...rows];
     await stampSupersededClaims(engine, merged, facts).catch(() => undefined);
     return merged;
   } catch {
@@ -483,3 +522,19 @@ export async function queryFactsArmEnabled(engine: { getConfig(key: string): Pro
     return false;
   }
 }
+
+/** A default-on key: 'false' | 'off' | '0' | 'no' turns it off, and so does any config read error. */
+async function defaultOnKey(engine: { getConfig(key: string): Promise<string | null> }, key: string): Promise<boolean> {
+  try {
+    const raw = (await engine.getConfig(key))?.trim().toLowerCase();
+    return !(raw === 'false' || raw === 'off' || raw === '0' || raw === 'no');
+  } catch {
+    return false;
+  }
+}
+
+/** `search.facts_arm_displace` (default on, #7743): a fact that holds every query term may take the place of the lowest page rows. */
+export const factsArmDisplaceEnabled = (engine: { getConfig(key: string): Promise<string | null> }) => defaultOnKey(engine, FACTS_ARM_DISPLACE_KEY);
+
+/** `search.search_facts_arm` (default on): the `search` op also runs the facts arm. */
+export const searchFactsArmEnabled = (engine: { getConfig(key: string): Promise<string | null> }) => defaultOnKey(engine, SEARCH_FACTS_ARM_KEY);

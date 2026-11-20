@@ -12,7 +12,7 @@ import {
   EXACT_DEFAULT_LIMIT, EXACT_DEFAULT_SECONDS, EXACT_MAX_LIMIT, EXACT_MAX_PHRASE_CHARS, EXACT_MAX_SECONDS, EXACT_SNIPPET_CONTEXT, EXACT_SNIPPETS_PER_PAGE,
   phrasePattern, runExactScan,
 } from '../search/exact-scan.ts';
-import type { ExactMatch } from '../search/exact-scan.ts';
+import type { ExactMatch, ExactScanOpts } from '../search/exact-scan.ts';
 import type { BrainEngine } from '../engine.ts';
 import { heldFenceLines } from '../eligibility/stamp.ts';
 import { chunkVisibleFilter, safeChunksFilter } from '../search/safe-chunks.ts';
@@ -48,8 +48,8 @@ async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, ma
   });
   const rescan = matches.filter(m => m.matching_chunks !== m.snippets.length || m.snippets.some(s => touched.has(s)));
   if (!rescan.length) return matches;
-  const rows = await engine.executeRaw<{ page_id: number; chunk_index: number; chunk_source: string; chunk_text: string }>(
-    `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+  const rows = await engine.executeRaw<{ page_id: number; chunk_index: number; chunk_source: string; chunk_id: number; chunk_text: string }>(
+    `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.id AS chunk_id, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE cc.page_id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')} AND ${safeChunksFilter('p')} ORDER BY cc.page_id, cc.chunk_index`,
     [rescan.map(m => m.page_id)]);
   const owner = new Map(rescan.map(m => [m.page_id, m] as const));
@@ -60,7 +60,7 @@ async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, ma
     const at = find(text);
     if (!at) return;
     const id = Number(r.page_id);
-    hits.set(id, [...(hits.get(id) ?? []), { chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source,
+    hits.set(id, [...(hits.get(id) ?? []), { chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source, chunk_id: Number(r.chunk_id),
       text: text.slice(Math.max(0, at[0] - EXACT_SNIPPET_CONTEXT), at[1] + EXACT_SNIPPET_CONTEXT).split('\u0000').join('') }]);
   });
   return matches.flatMap(m => {
@@ -68,6 +68,70 @@ async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, ma
     const page = hits.get(m.page_id) ?? [];
     return page.length ? [{ ...m, matching_chunks: page.length, snippets: page.slice(0, EXACT_SNIPPETS_PER_PAGE) }] : [];
   });
+}
+
+export interface CallerExactScan {
+  phrase: string;
+  caseSensitive?: boolean;
+  /** The caller's source scope, as the op resolved it. */
+  scope: { sourceId?: string; sourceIds?: string[] };
+  minTrust?: ExactScanOpts['minTrust'];
+  types?: string[];
+  slugPrefix?: string;
+  limit: number;
+  afterPageId?: number;
+  deadlineMs: number;
+  /** The index-narrowed scan (ExactScanOpts.ftsTerms); only the exact widening sets it. */
+  ftsTerms?: string[];
+}
+
+/**
+ * The literal scan under the caller's whole read policy, shared by the `search_exact` op and the exact widening of
+ * `search` and `query` (ops/search-widen.ts): the caller's source scope and trust floor, hard-excluded slug
+ * prefixes, private pages for an untrusted caller, safe chunks for a remote one, and, for a caller whose fact reads
+ * are world-only, no snippet text from a fence row held from it. `visible` is the matches such a caller may be shown.
+ */
+export async function scanExactForCaller(ctx: OperationContext, o: CallerExactScan) {
+  const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const { resolveHardExcludes } = await import('../search/source-boost.ts');
+  const excludeSlugPrefixes = resolveHardExcludes();
+  const caseSensitive = o.caseSensitive === true;
+  const result = await runExactScan(ctx.engine, {
+    phrase: o.phrase,
+    caseSensitive,
+    ...(o.scope.sourceId !== undefined ? { sourceId: o.scope.sourceId } : {}),
+    ...(o.scope.sourceIds !== undefined ? { sourceIds: o.scope.sourceIds } : {}),
+    ...(o.types ? { types: o.types } : {}),
+    ...(o.slugPrefix ? { slugPrefix: o.slugPrefix } : {}),
+    excludeSlugPrefixes,
+    excludePrivate,
+    remote: ctx.remote !== false,
+    ...(o.minTrust ? { minTrust: o.minTrust } : {}),
+    limit: o.limit,
+    ...(o.afterPageId !== undefined ? { afterPageId: o.afterPageId } : {}),
+    deadlineMs: o.deadlineMs,
+    ...(o.ftsTerms?.length ? { ftsTerms: o.ftsTerms } : {}),
+  });
+  const pattern = phrasePattern(o.phrase);
+  const needle = (caseSensitive ? o.phrase.trim() : o.phrase.trim().toLowerCase()).replace(/\s+/g, ' ');
+  const find = (text: string): [number, number] | null => {
+    let folded = '';
+    const at: number[] = [];
+    for (let x = 0; x < text.length; x++) {
+      const space = /\s/.test(text[x]!);
+      if (space && folded.endsWith(' ')) continue;
+      const ch = space ? ' ' : caseSensitive ? text[x]! : text[x]!.toLowerCase();
+      folded += ch;
+      for (let k = 0; k < ch.length; k++) at.push(x);
+    }
+    const i = folded.indexOf(needle);
+    return i === -1 ? null : [at[i]!, at[i + needle.length - 1]! + 1];
+  };
+  const visible = worldOnlyFacts(ctx.remote)
+    ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, find) : []
+    : result.matches;
+  return { result, visible, pattern, find, excludeSlugPrefixes };
 }
 
 function parseParams(ctx: OperationContext, p: Record<string, unknown>) {
@@ -126,44 +190,13 @@ const search_exact: Operation = {
     const scope = federatedSearchScope(ctx, sourceIdParam);
     const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
     await assertExplicitSourceLive(ctx, sourceIdParam);
-    const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
-    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-    const { resolveHardExcludes } = await import('../search/source-boost.ts');
-    const excludeSlugPrefixes = resolveHardExcludes();
-    const result = await runExactScan(ctx.engine, {
-      phrase: params.phrase,
-      caseSensitive: params.caseSensitive,
-      ...scope,
-      ...(params.types ? { types: params.types } : {}),
-      ...(params.slugPrefix ? { slugPrefix: params.slugPrefix } : {}),
-      excludeSlugPrefixes,
-      excludePrivate,
-      remote: ctx.remote !== false,
-      ...(floor ? { minTrust: floor } : {}),
-      limit: params.limit,
-      ...(params.after !== undefined ? { afterPageId: params.after } : {}),
-      deadlineMs: startedAt + params.seconds * 1000,
+    const { result, visible, excludeSlugPrefixes } = await scanExactForCaller(ctx, {
+      phrase: params.phrase, caseSensitive: params.caseSensitive, scope, ...(floor ? { minTrust: floor } : {}),
+      ...(params.types ? { types: params.types } : {}), ...(params.slugPrefix ? { slugPrefix: params.slugPrefix } : {}),
+      limit: params.limit, ...(params.after !== undefined ? { afterPageId: params.after } : {}), deadlineMs: startedAt + params.seconds * 1000,
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
-    const pattern = phrasePattern(params.phrase);
-    const needle = (params.caseSensitive ? params.phrase.trim() : params.phrase.trim().toLowerCase()).replace(/\s+/g, ' ');
-    const find = (text: string): [number, number] | null => {
-      let folded = '';
-      const at: number[] = [];
-      for (let x = 0; x < text.length; x++) {
-        const space = /\s/.test(text[x]!);
-        if (space && folded.endsWith(' ')) continue;
-        const ch = space ? ' ' : params.caseSensitive ? text[x]! : text[x]!.toLowerCase();
-        folded += ch;
-        for (let k = 0; k < ch.length; k++) at.push(x);
-      }
-      const o = folded.indexOf(needle);
-      return o === -1 ? null : [at[o]!, at[o + needle.length - 1]! + 1];
-    };
-    const visible = worldOnlyFacts(ctx.remote)
-      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, find) : []
-      : result.matches;
-    const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
+    const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, snippets: m.snippets.map(({ chunk_id: _id, ...s }) => s), chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
     // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).
     const { quotePageText, quotesStored } = await import('../search/transcript-quote.ts');
     const quoted = <M extends Omit<(typeof matches)[number], 'chunk_text'>>(m: M) => ctx.remote !== false && quotesStored(m.type, (m as { trust_tier?: unknown }).trust_tier)

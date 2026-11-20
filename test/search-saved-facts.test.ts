@@ -16,6 +16,8 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // These tests pin the saved_facts block's own matching; with the search facts arm on, a fact it returns as a row is not repeated there.
+  await engine.setConfig('search.search_facts_arm', 'false');
   await importFromContent(engine, 'crm/numbat-labs', serializeMarkdown({}, 'Account record. Billing contact: Old Person.', '', { type: 'crm', title: 'CRM record: Numbat Labs', tags: [] }), { noEmbed: true, forceRechunk: true });
   await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES
     ('default', 'companies/numbat-labs', 'The billing contact for Numbat Labs is New Person as of 2026-09-15.', 'fact', 'world', 'user update'),

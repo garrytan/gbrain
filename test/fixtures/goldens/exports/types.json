@@ -1728,7 +1728,8 @@
           "trust_tier?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
           "type: string",
           "unconfirmed?: true | undefined",
-          "unverified?: boolean | undefined"
+          "unverified?: boolean | undefined",
+          "widened?: \"exact\" | undefined"
         ],
         "name": "SearchResult"
       },
@@ -10794,7 +10795,8 @@
           "trust_tier?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
           "type: string",
           "unconfirmed?: true | undefined",
-          "unverified?: boolean | undefined"
+          "unverified?: boolean | undefined",
+          "widened?: \"exact\" | undefined"
         ],
         "name": "SearchResult"
       },
