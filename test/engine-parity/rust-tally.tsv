@@ -92,8 +92,8 @@ test/engine-parity/page-read-options.test.ts	3	0
 test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
-test/engine-parity/page-visibility.test.ts	6	0
-test/engine-parity/pages.test.ts	38	2
+test/engine-parity/page-visibility.test.ts	8	0
+test/engine-parity/pages.test.ts	39	2
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	49	0
 test/engine-parity/private-page-reads.test.ts	23	0
@@ -143,6 +143,7 @@ test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
 test/engine-parity/vector-options.test.ts	4	0
+test/engine-parity/version-preimage.test.ts	4	0
 test/engine-parity/versions-raw.test.ts	17	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/wanted-markers.test.ts	4	0

@@ -1842,6 +1842,7 @@ impl Store {
                 reason: reason.map(str::to_owned),
                 history_gap: None,
                 reason_source: None,
+                preimage: None,
             },
         )
     }
@@ -1880,10 +1881,30 @@ impl Store {
                 }
                 (reason, _) => reason,
             };
+            let basis = match &options.preimage {
+                Some(preimage) => {
+                    preimage.check(&page, slug, source)?;
+                    // A segmented page versions as a reference to its live body generation, which this path
+                    // does not write: refused before the history gap or the snapshot, as without a preimage.
+                    if preimage.compiled_truth.is_none()
+                        || crate::page_body::segmented_reference(&*tx, page.id)?.is_some()
+                    {
+                        return Err(StoreError::new(
+                            crate::error::INVALID_STATE,
+                            format!("createVersion refuses a preimage of segmented page {slug} (source={source})"),
+                        ));
+                    }
+                    Some(preimage.basis(&page))
+                }
+                None => None,
+            };
             if options.history_gap == Some(true) {
                 crate::version_prune::record_history_gap(tx, &*self.env, page.id)?;
             }
-            let mut row = snapshot_in(tx, &*self.env, &page)?;
+            let mut row = match &basis {
+                Some(basis) => snapshot_of(tx, &*self.env, basis, false)?,
+                None => snapshot_in(tx, &*self.env, &page)?,
+            };
             // A segmented prune can delete the snapshot it follows; a reason never brings it back.
             let key = keys::version(page.id, row.id);
             if let Some(reason) = reason
@@ -2090,6 +2111,124 @@ pub struct CreateVersionOptions {
     pub reason_source: Option<ReasonSource>,
     /// Record that the page lost history (`version_history_gap_at`) before the snapshot.
     pub history_gap: Option<bool>,
+    /// The page as the caller read it (`createVersion`'s `preimage`): the snapshot takes its text
+    /// and metadata from here, not from the stored page.
+    pub preimage: Option<VersionPreimage>,
+}
+
+/// `createVersion`'s `preimage` (a `PageSnapshot` in wire form): the columns PGLite's
+/// `createPageVersion` inserts from it. The trust tier, write origin and revision receipt still come
+/// from the stored page, as the `page_versions` triggers read them from `pages`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VersionPreimage {
+    pub page_id: u64,
+    /// NULL for a segmented page, which is refused.
+    pub compiled_truth: Option<String>,
+    pub timeline: Option<String>,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
+    pub frontmatter: Map<String, Value>,
+    #[serde(default)]
+    pub content_hash: Option<String>,
+    /// Stored in the order given, as PGLite stores the snapshot's array.
+    pub tags: Vec<String>,
+    /// The page's `knowledge_revision` as read (a UUID).
+    pub revision: String,
+    pub is_deleted: bool,
+    #[serde(default)]
+    pub source_path: Option<String>,
+}
+
+impl VersionPreimage {
+    /// Refusals before any write: NUL in any text (Postgres refuses it), a revision that is not a
+    /// UUID (the insert casts it), a page id that is not the stored page's, and a segmented page.
+    fn check(&self, page: &PageRecord, slug: &str, source: &str) -> Result<()> {
+        crate::links::no_nul(
+            "createVersion",
+            &[
+                (
+                    "preimage.compiledTruth",
+                    self.compiled_truth.as_deref().unwrap_or(""),
+                ),
+                ("preimage.timeline", self.timeline.as_deref().unwrap_or("")),
+                ("preimage.title", &self.title),
+                ("preimage.type", &self.page_type),
+                (
+                    "preimage.contentHash",
+                    self.content_hash.as_deref().unwrap_or(""),
+                ),
+                ("preimage.revision", &self.revision),
+                (
+                    "preimage.sourcePath",
+                    self.source_path.as_deref().unwrap_or(""),
+                ),
+            ],
+        )?;
+        if self.tags.iter().any(|t| t.contains('\0'))
+            || self
+                .frontmatter
+                .iter()
+                .any(|(k, v)| k.contains('\0') || crate::raw_files::has_nul(v))
+        {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                "createVersion: preimage tags and frontmatter must not contain a NUL byte",
+            ));
+        }
+        if !crate::env::is_uuid(&self.revision) {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                "createVersion: preimage.revision must be a UUID",
+            ));
+        }
+        if self.page_id != page.id {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                format!(
+                    "createVersion: preimage page id {} is not page \"{slug}\" (source={source}), id {}",
+                    self.page_id, page.id
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The snapshot basis: the stored page with the preimage's columns. The revision is stored in
+    /// the canonical lower-case form the insert's `::uuid` cast gives it. The revision receipt is
+    /// the stored page's only when the preimage's revision is the stored one, as
+    /// `gbrain_stamp_version_attribution` reads it (`p.knowledge_revision = NEW.knowledge_revision`);
+    /// a stale preimage takes no writer.
+    fn basis(&self, page: &PageRecord) -> PageRecord {
+        let revision = self.revision.to_ascii_lowercase();
+        let revision_receipt = if revision == page.knowledge_revision.to_ascii_lowercase() {
+            page.revision_receipt.clone()
+        } else {
+            RevisionReceipt::default()
+        };
+        PageRecord {
+            compiled_truth: self
+                .compiled_truth
+                .clone()
+                .map_or_else(PageText::null, PageText::from),
+            timeline: self
+                .timeline
+                .clone()
+                .map_or_else(PageText::null, PageText::from),
+            title: self.title.clone(),
+            page_type: self.page_type.clone(),
+            frontmatter: self.frontmatter.clone(),
+            content_hash: self.content_hash.clone(),
+            tags: self.tags.clone(),
+            knowledge_revision: revision,
+            deleted_at_us: self.is_deleted.then_some(page.deleted_at_us.unwrap_or(0)),
+            source_path: self.source_path.clone(),
+            revision_receipt,
+            ..page.clone()
+        }
+    }
 }
 
 /// `stampVersionChangeReason`'s argument.
@@ -2167,9 +2306,22 @@ pub(crate) fn snapshot_in(
     env: &dyn Env,
     page: &PageRecord,
 ) -> Result<VersionRecord> {
+    snapshot_of(tx, env, page, true)
+}
+
+/// `snapshot_in` with the tags sorted (a page read) or kept in the given order (a caller's preimage,
+/// which PGLite stores as given).
+fn snapshot_of(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &PageRecord,
+    sort_tags: bool,
+) -> Result<VersionRecord> {
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
-    tags.sort();
+    if sort_tags {
+        tags.sort();
+    }
     let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
     // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
     // caller supplies its own, so the backfill branch never applies.
@@ -3025,5 +3177,170 @@ mod tests {
 
         store.delete_page("a", None).unwrap();
         assert_eq!(stored_timeline(&store, page.id), None);
+    }
+
+    fn preimage_of(page: &PageRecord, body: &str) -> VersionPreimage {
+        serde_json::from_value(json!({
+            "pageId": page.id, "compiledTruth": body, "timeline": "- t", "title": "Read title", "type": "person",
+            "frontmatter": {"stage": "read"}, "tags": ["zeta", "alpha"], "revision": page.knowledge_revision,
+            "isDeleted": false, "sourcePath": "people/read.md"
+        }))
+        .unwrap()
+    }
+
+    fn with_preimage(preimage: VersionPreimage, reason: Option<&str>) -> CreateVersionOptions {
+        CreateVersionOptions {
+            reason: reason.map(str::to_owned),
+            preimage: Some(preimage),
+            ..CreateVersionOptions::default()
+        }
+    }
+
+    /// `createVersion` with a preimage snapshots the page as the caller read it: text, title, type,
+    /// frontmatter, tags in the given order, revision and source path come from the preimage, and the
+    /// reason is kept. The stored page is not changed.
+    #[test]
+    fn create_version_with_a_preimage_snapshots_the_page_as_read() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/pre");
+        let created = store
+            .create_version_opts(
+                "notes/pre",
+                &with_preimage(preimage_of(&page, "Read body."), Some("why")),
+            )
+            .unwrap();
+        assert_eq!(created["compiled_truth"], json!("Read body."));
+        assert_eq!(created["change_reason"], json!("why"));
+        let rows = versions_of(&*store.read().unwrap(), page.id).unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(&*row.compiled_truth, "Read body.");
+        assert_eq!(&*row.timeline, "- t");
+        assert_eq!(
+            (row.title.as_str(), row.page_type.as_str()),
+            ("Read title", "person")
+        );
+        assert_eq!(row.frontmatter.get("stage"), Some(&json!("read")));
+        assert_eq!(row.tags, vec!["zeta".to_owned(), "alpha".to_owned()]);
+        assert_eq!(row.knowledge_revision, page.knowledge_revision);
+        assert_eq!(row.source_path.as_deref(), Some("people/read.md"));
+        assert!(!row.is_deleted);
+        let stored = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "notes/pre")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (&*stored.compiled_truth, stored.title.as_str()),
+            ("body", "notes/pre")
+        );
+    }
+
+    /// The stored page's revision receipt is the version's writer only when the preimage's revision
+    /// is the stored one (`gbrain_stamp_version_attribution` joins on it): a stale preimage takes no
+    /// writer. The revision is stored lower-case, as the insert's `::uuid` cast stores it, and an
+    /// upper-case spelling of the stored revision still counts as the stored one.
+    #[test]
+    fn create_version_with_a_preimage_takes_the_writer_of_its_own_revision_only() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/attr");
+        let writer = RevisionReceipt {
+            request_id: Some("a0000000-0000-4000-8000-0000000000c1".into()),
+            principal_kind: Some("local_cli".into()),
+            principal_id: Some("writer-a".into()),
+        };
+        store
+            .write(|tx| {
+                let mut stored = read_page(&*tx, DEFAULT_SOURCE, "notes/attr")?.unwrap();
+                stored.revision_receipt = writer.clone();
+                write_page(tx, &stored)
+            })
+            .unwrap();
+        let stored = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "notes/attr")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.revision_receipt, writer);
+
+        let mut current = preimage_of(&stored, "Current body.");
+        current.revision = stored.knowledge_revision.to_ascii_uppercase();
+        let mut stale = preimage_of(&stored, "Stale body.");
+        stale.revision = "B0000000-0000-4000-8000-0000000000C2".into();
+        for preimage in [current, stale] {
+            store
+                .create_version_opts("notes/attr", &with_preimage(preimage, None))
+                .unwrap();
+        }
+        let rows = versions_of(&*store.read().unwrap(), page.id).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].knowledge_revision, stored.knowledge_revision);
+        assert_eq!(rows[0].receipt.written, writer);
+        assert_eq!(
+            rows[1].knowledge_revision,
+            "b0000000-0000-4000-8000-0000000000c2"
+        );
+        assert!(rows[1].receipt.written.is_empty());
+    }
+
+    /// A preimage of another page, a revision that is not a UUID, a NUL byte and a segmented page are
+    /// refused before anything is written: no version and no history gap.
+    #[test]
+    fn create_version_refuses_a_bad_preimage_before_any_write() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/pre");
+        let other = put(&store, "notes/other");
+        let gap = |p: VersionPreimage| CreateVersionOptions {
+            history_gap: Some(true),
+            ..with_preimage(p, None)
+        };
+        let refused =
+            |o: CreateVersionOptions| store.create_version_opts("notes/pre", &o).unwrap_err();
+        let err = refused(gap(preimage_of(&other, "x")));
+        assert_eq!(err.code, INVALID_ARGUMENT);
+        assert_eq!(
+            err.message,
+            format!(
+                "createVersion: preimage page id {} is not page \"notes/pre\" (source=default), id {}",
+                other.id, page.id
+            )
+        );
+        let mut bad = preimage_of(&page, "x");
+        bad.revision = "not-a-uuid".into();
+        assert_eq!(refused(gap(bad)).code, INVALID_ARGUMENT);
+        assert_eq!(
+            refused(gap(preimage_of(&page, "nul \0 byte"))).code,
+            INVALID_ARGUMENT
+        );
+        let mut bad = preimage_of(&page, "x");
+        bad.frontmatter.insert("k".into(), json!("nul \0"));
+        assert_eq!(refused(gap(bad)).code, INVALID_ARGUMENT);
+        let mut null_body = preimage_of(&page, "x");
+        null_body.compiled_truth = None;
+        assert_eq!(refused(gap(null_body)).code, crate::error::INVALID_STATE);
+        let read = store.read().unwrap();
+        assert!(versions_of(&*read, page.id).unwrap().is_empty());
+        let stored = read_page(&*read, DEFAULT_SOURCE, "notes/pre")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.version_history_gap_at_us, None);
+    }
+
+    /// A preimage of a large body prunes the page's large versions past the kept count, from the
+    /// preimage's size, as PGLite's insert does.
+    #[test]
+    fn create_version_with_a_large_preimage_prunes_large_versions() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/big");
+        let big =
+            "x".repeat(usize::try_from(crate::version_prune::PAGE_INLINE_MAX_BYTES).unwrap() + 1);
+        let kept = usize::try_from(crate::version_prune::LARGE_PAGE_VERSIONS_KEPT).unwrap();
+        for _ in 0..kept + 2 {
+            store
+                .create_version_opts("notes/big", &with_preimage(preimage_of(&page, &big), None))
+                .unwrap();
+        }
+        let rows = versions_of(&*store.read().unwrap(), page.id).unwrap();
+        assert_eq!(rows.len(), kept);
+        let stored = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "notes/big")
+            .unwrap()
+            .unwrap();
+        assert!(stored.version_history_gap_at_us.is_some());
     }
 }

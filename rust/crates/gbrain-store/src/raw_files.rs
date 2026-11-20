@@ -162,7 +162,8 @@ pub struct UpsertFileResult {
     pub created: bool,
 }
 
-fn has_nul(value: &Value) -> bool {
+/// Whether any key or string in `value` holds a NUL byte (Postgres refuses `\u0000` in jsonb).
+pub(crate) fn has_nul(value: &Value) -> bool {
     match value {
         Value::String(s) => s.contains('\0'),
         Value::Array(items) => items.iter().any(has_nul),
