@@ -110,6 +110,7 @@ import * as doctorSync from './doctor-sync.ts';
 import * as doctorFactsTrust from './doctor-facts-trust.ts';
 import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
+import * as sweepReads from './sweep-reads.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -125,7 +126,7 @@ export const STORE_MEMBERS = {
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
-  ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
+  ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsProvenance, ...factRelinkAttempts,

@@ -813,6 +813,49 @@ const PINS: Pin[] = [
       WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY source_id COLLATE "C", split_part(slug, '/', 2) COLLATE "C"`],
   },
   {
+    from: 'src/core/sweep.ts:216 runMaintenanceSweep pass 1 (the facts-fence pages, at c231d6c992)',
+    case: { method: 'listFactsFencePages', variant: 'default', run: e => e.listFactsFencePages({ sourceId: 'default', since: '2026-01-01T00:00:00.000Z', scanCap: 500, limit: 8 }) },
+    texts: [`SELECT slug FROM (
+             SELECT id, slug, compiled_truth, body_storage, updated_at FROM pages
+              WHERE source_id = $1
+                AND deleted_at IS NULL
+                AND updated_at >= $2::timestamptz
+              ORDER BY updated_at DESC
+              LIMIT $4
+           ) AS recent
+            WHERE compiled_truth LIKE $3
+               OR (body_storage = 'segmented' AND EXISTS (SELECT 1 FROM page_body_manifest m
+                     WHERE m.page_id = recent.id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots <> '[]'::jsonb))
+            ORDER BY updated_at DESC
+            LIMIT $5`],
+  },
+  {
+    from: 'src/core/sweep.ts:381 runLinksTimelinePass (the link-stale recent pages, at c231d6c992)',
+    case: { method: 'listSweepStalePages', variant: 'default', run: e => e.listSweepStalePages({ sourceId: 'default', since: '2026-01-01T00:00:00.000Z', limit: 8, exclude: ['a'] }) },
+    texts: [`SELECT slug, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS read_at,
+            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso,
+            body_storage, body_bytes
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND updated_at >= $2::timestamptz
+        AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)
+        AND NOT (slug = ANY($4::text[]))
+      ORDER BY updated_at DESC
+      LIMIT $3`],
+  },
+  {
+    from: 'src/core/sweep.ts:655 liveDeferredPages (the deferred pages still stale, at c231d6c992)',
+    case: { method: 'listSweepDeferredPages', variant: 'default', run: e => e.listSweepDeferredPages({ sourceId: 'default', since: '2026-01-01T00:00:00.000Z', slugs: ['a'] }) },
+    texts: [`SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+       FROM pages
+      WHERE source_id = $1
+        AND deleted_at IS NULL
+        AND updated_at >= $2::timestamptz
+        AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)
+        AND slug = ANY($3::text[])`],
+  },
+  {
     from: 'src/core/access/open-pages.ts:187 openPages (the open-page count, rendered in the pinned access context)',
     case: { method: 'countOpenPages', variant: 'default', run: e => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }]) },
     texts: () => [`SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,
