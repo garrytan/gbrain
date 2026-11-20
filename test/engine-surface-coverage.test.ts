@@ -337,9 +337,13 @@ const INTERFACE_METHODS: readonly string[] = [
   'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'trueUpReservations', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
   'claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed',
   'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
-  // A page projection rebuild's queue listing, job reason, keep plan and drained probe (engine-sql/projection-rebuild.ts).
+  // A page projection rebuild's queue listing, job reason, keep plan and drained probe, the deferred chunk
+  // replacement's step, the rebuild loop's queue stamps and the re-seal's pending count (engine-sql/projection-rebuild.ts).
   'listQueuedPageProjections', 'readProjectionJobReason', 'readChunkKeepState', 'clearUnkeptChunkVectors',
-  'setProjectionChunkerVersion', 'hasDrainableProjectionJob',
+  'setProjectionChunkerVersion', 'hasDrainableProjectionJob', 'readChunkRowsFingerprint', 'deleteUnkeptChunks',
+  'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead', 'isDeferredReplacementHeld',
+  'renewDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob', 'stampDeferredProjectionJob',
+  'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).

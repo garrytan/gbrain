@@ -143,6 +143,19 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readProjectionJobReason(key)` | the job's reason, or `null` (the rebuild deletes the job with `deleteProjectionJob` above) | `readProjectionJobReason` |
 | `brain.readChunkKeepState(pageId, model, dims)` / `brain.clearUnkeptChunkVectors(pageId, model, dims, currentIds)` | the chunk ids whose vector the rebuild keeps for the model and dimensions; the clear drops the vector of every other chunk of the page, in one write | `readChunkKeepState`, `clearUnkeptChunkVectors` |
 | `brain.hasDrainableProjectionJob()` | whether a job of a live inline page of an active source is queued with a reason other than `rebuild_failed`; the TypeScript member refuses the `media` option | `hasDrainableProjectionJob` |
+| `brain.readChunkRowsFingerprint(pageId)` | an opaque text that changes when the page's chunk rows (their ids and indexes) change: the row count and the sha256 of the `id:index` pairs. It is compared only with itself, never with the Postgres `hashtext` sum | `readChunkRowsFingerprint` |
+| `brain.deleteUnkeptChunks(pageId, keptIds)` | every chunk row of the page whose id is not in `keptIds` deleted | `deleteUnkeptChunks` |
+| `brain.listStaleChunkVectors(pageId, model, dims, currentIds)` | in chunk order, the ids of the page's chunks that hold a vector the page no longer accepts: another model (or the bare name at other dimensions), embedded from other text, or not in `currentIds` | `listStaleChunkVectors` |
+| `brain.clearChunkVectors(pageId, ids)` | the vector and embedding record of the page's chunks `ids` cleared and marked pending at the transaction clock | `clearChunkVectors` |
+| `brain.readProjectionHead(sourceId, slug)` | `{ id, revision, sealed }` of the live page (`sealed`: its text projection is at its knowledge revision), or `null` | `readProjectionHead` |
+| `brain.isDeferredReplacementHeld(sourceId, slug, revision, claim)` | whether the page's job at `revision` carries a `chunk_replacement_continuing` claim other than `claim` younger than 60 seconds | `isDeferredReplacementHeld` |
+| `brain.renewDeferredReplacementClaim(job, claim)` | the job at its revision given reason `claim` at now | `renewDeferredReplacementClaim` |
+| `brain.hasSegmentedPage(sourceId, slug)` | whether the live page stores a segmented body | `hasSegmentedPage` |
+| `brain.rekeyProjectionJob(job, revision)` | the job at its revision moved to `revision` at now; a non-uuid revision is refused | `rekeyProjectionJob` |
+| `brain.stampDeferredProjectionJob(job, requeue)` | the job at its revision stamped now, and with `requeue` given reason `canonical_change` | `stampDeferredProjectionJob` |
+| `brain.touchUnclaimedProjectionJob(job)` | the job at its revision stamped now unless a live `segmented_projecting` claim holds it | `touchUnclaimedProjectionJob` |
+| `brain.deferProjectionJob(job)` | `true` and the job stamped now when it is queued at its revision; `false` otherwise | `deferProjectionJob` |
+| `brain.countPendingTextChunks(pageId)` | `{ chunks, chars }`: how many of the page's text chunks have no vector, and their length in characters (as Postgres `length` counts) | `countPendingTextChunks` |
 
 ## Op checkpoints
 

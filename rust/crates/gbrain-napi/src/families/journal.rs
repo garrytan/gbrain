@@ -907,6 +907,170 @@ impl Brain {
         self.run(env, move |s| s.has_drainable_projection_job())
     }
 
+    /// `readChunkRowsFingerprint(pageId)`: the store's opaque value of the page's chunk rows.
+    #[napi]
+    pub fn read_chunk_rows_fingerprint<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_chunk_rows_fingerprint(page_id))
+    }
+
+    /// `deleteUnkeptChunks(pageId, keptIds)`: resolves null.
+    #[napi]
+    pub fn delete_unkept_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        kept_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_unkept_chunks(page_id, &kept_ids))
+    }
+
+    /// `listStaleChunkVectors(pageId, provenanceModel, column, currentIds)`: the `embedding`
+    /// column's width is `dims`. Chunk ids in chunk order.
+    #[napi]
+    pub fn list_stale_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+        current_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_chunk_vectors(page_id, model.as_deref(), dims, &current_ids)
+        })
+    }
+
+    /// `clearChunkVectors(pageId, column, ids)`: resolves null.
+    #[napi]
+    pub fn clear_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.clear_chunk_vectors(page_id, &ids))
+    }
+
+    /// `countPendingTextChunks(pageId, column)`: `{ chunks, chars }` of the `embedding` column.
+    #[napi]
+    pub fn count_pending_text_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_pending_text_chunks(page_id))
+    }
+
+    /// `readProjectionHead(sourceId, slug)`: `{ id, revision, sealed }` or null.
+    #[napi]
+    pub fn read_projection_head<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_projection_head(&source_id, &slug))
+    }
+
+    /// `isDeferredReplacementHeld(sourceId, slug, revision, claim)`.
+    #[napi]
+    pub fn is_deferred_replacement_held<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        revision: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_deferred_replacement_held(&source_id, &slug, &revision, &claim)
+        })
+    }
+
+    /// `renewDeferredReplacementClaim({ sourceIncarnation, slug, revision }, claim)`.
+    #[napi]
+    pub fn renew_deferred_replacement_claim<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.renew_deferred_replacement_claim(
+                &required(job, "renewDeferredReplacementClaim job")?,
+                &claim,
+            )
+        })
+    }
+
+    /// `hasSegmentedPage(sourceId, slug)`.
+    #[napi]
+    pub fn has_segmented_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_segmented_page(&source_id, &slug))
+    }
+
+    /// `rekeyProjectionJob({ sourceIncarnation, slug, revision }, revision)`.
+    #[napi]
+    pub fn rekey_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+        revision: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.rekey_projection_job(&required(job, "rekeyProjectionJob job")?, &revision)
+        })
+    }
+
+    /// `stampDeferredProjectionJob({ sourceIncarnation, slug, revision }, requeue)`.
+    #[napi]
+    pub fn stamp_deferred_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+        requeue: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_deferred_projection_job(
+                &required(job, "stampDeferredProjectionJob job")?,
+                requeue,
+            )
+        })
+    }
+
+    /// `touchUnclaimedProjectionJob({ sourceIncarnation, slug, revision })`.
+    #[napi]
+    pub fn touch_unclaimed_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.touch_unclaimed_projection_job(&required(job, "touchUnclaimedProjectionJob job")?)
+        })
+    }
+
+    /// `deferProjectionJob({ sourceIncarnation, slug, revision })`: whether a job was queued.
+    #[napi]
+    pub fn defer_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.defer_projection_job(&required(job, "deferProjectionJob job")?)
+        })
+    }
+
     /// `insertTopologyChange(input)`: the stored row.
     #[napi]
     pub fn insert_topology_change<'env>(

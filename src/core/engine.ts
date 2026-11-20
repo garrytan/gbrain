@@ -3987,6 +3987,32 @@ export interface BrainEngine {
   setProjectionChunkerVersion(sourceId: string, slug: string, version: number): Promise<void>;
   /** Whether a queue row of a live inline page (with `media`, or a sealable image) is queued and not marked failed. */
   hasDrainableProjectionJob(opts?: { media?: boolean }): Promise<boolean>;
+  /** The page's chunk rows as (id, index) pairs, hashed: an opaque value two reads of one engine compare. */
+  readChunkRowsFingerprint(pageId: number): Promise<string>;
+  /** Deletes each chunk row of the page whose id is not in `keptIds`. */
+  deleteUnkeptChunks(pageId: number, keptIds: readonly number[]): Promise<void>;
+  /** The ids, in chunk order, of the page's chunks holding a vector in `column` of another model, embedded from other text, or not in `currentIds`. */
+  listStaleChunkVectors(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn, currentIds: readonly number[]): Promise<number[]>;
+  /** Clears and marks pending the vector in `column` of the page's chunks `ids`. */
+  clearChunkVectors(pageId: number, column: ProjectionRebuildSql.KeepColumn, ids: readonly number[]): Promise<void>;
+  /** How many of the page's text chunks have no vector in `column`, and their characters (a re-seal's embedding work). */
+  countPendingTextChunks(pageId: number, column: ProjectionRebuildSql.KeepColumn): Promise<{ chunks: number; chars: number }>;
+  /** The live page's id, knowledge revision and whether its text projection is sealed at it; null when the page is gone. */
+  readProjectionHead(sourceId: string, slug: string): Promise<ProjectionRebuildSql.ProjectionHead | null>;
+  /** Whether another continuation's live claim (not `claim`) holds the page's deferred chunk replacement at `revision`. */
+  isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string): Promise<boolean>;
+  /** Gives the job still queued at `job.revision` the reason `claim` at now. */
+  renewDeferredReplacementClaim(job: ProjectionRebuildSql.ProjectionJobKey, claim: string): Promise<void>;
+  /** Whether the page is a live segmented page. */
+  hasSegmentedPage(sourceId: string, slug: string): Promise<boolean>;
+  /** Moves the job still queued at `job.revision` to `revision` at now. */
+  rekeyProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey, revision: string): Promise<void>;
+  /** Moves the time of the job still queued at `job.revision` to now; with `requeue`, its reason becomes canonical_change. */
+  stampDeferredProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey, requeue: boolean): Promise<void>;
+  /** Moves the time of the job still queued at `job.revision` to now unless a live segmented claim holds it. */
+  touchUnclaimedProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey): Promise<void>;
+  /** Moves the time of the job still queued at `job.revision` to now; false when no such job is queued. */
+  deferProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey): Promise<boolean>;
 
   // Facts statements, repair classifiers and loop retirement (engine-sql/facts-repair.ts). Each runs the statement its caller ran through executeRaw.
   /** Closed loops whose commitment fact is still active and retirable (same source, no other open loop references it), in id order; `loopId` null is every loop. Reads open_loops. */

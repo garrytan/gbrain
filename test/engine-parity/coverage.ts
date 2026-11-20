@@ -245,10 +245,15 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // purge_plan: a fact purge's request finders and verification probes
   purge_plan: ['listRequestsCarryingClaim', 'listRequestsHoldingStagings', 'countPurgeProbe', 'listPurgeProbeItems'],
 
-  // projection_rebuild: a page projection rebuild's queue listing, job reason, keep plan and drained probe
-  // (its job delete is persistence_journal's deleteProjectionJob)
+  // projection_rebuild: a page projection rebuild's queue listing, job reason, keep plan and drained probe, the
+  // deferred chunk replacement's step, the rebuild loop's queue stamps and the re-seal's pending count (its job
+  // delete is persistence_journal's deleteProjectionJob, its failed mark persistence_journal's
+  // markProjectionRebuildFailed)
   projection_rebuild: ['listQueuedPageProjections', 'readProjectionJobReason', 'readChunkKeepState',
-    'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob'],
+    'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob',
+    'readChunkRowsFingerprint', 'deleteUnkeptChunks', 'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead',
+    'isDeferredReplacementHeld', 'renewDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob',
+    'stampDeferredProjectionJob', 'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks'],
 
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
