@@ -469,7 +469,7 @@ async function scanIntegrityBatch(
     SELECT id, source_id, slug, compiled_truth, body_storage
     FROM pages
     WHERE deleted_at IS NULL ${typeCondition} ${validateCondition}
-    ORDER BY source_id, slug
+    ORDER BY source_id COLLATE "C", slug COLLATE "C"
     LIMIT $1
   `, params);
 
