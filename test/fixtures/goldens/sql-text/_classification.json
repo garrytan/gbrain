@@ -85,6 +85,7 @@
       "out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)": 10,
       "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 25,
       "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)": 2,
+      "out-of-scope:writer-release (born in engine-sql/writer-release.ts; pinned by test/engine-parity/writer-release.test.ts)": 2,
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 3,
       "pages": 41,
       "salience": 5,
@@ -103,6 +104,7 @@
       "addLink": "links",
       "addLinksBatch": "links",
       "addPageTagsById": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)",
+      "addPersistenceCounters": "out-of-scope:writer-release (born in engine-sql/writer-release.ts; pinned by test/engine-parity/writer-release.test.ts)",
       "addSynthesisEvidence": "takes",
       "addTag": "tags",
       "addTakesBatch": "takes",
@@ -1158,7 +1160,8 @@
       "writeReasonPurgeTombstones": "sources",
       "writeSyncPassRow": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)",
-      "writerAdminStore": "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)"
+      "writerAdminStore": "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)",
+      "writerReleaseStore": "out-of-scope:writer-release (born in engine-sql/writer-release.ts; pinned by test/engine-parity/writer-release.test.ts)"
     }
   },
   "normalizer": "sql-text-classification-v1"

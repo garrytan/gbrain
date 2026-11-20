@@ -588,12 +588,11 @@ src/core/page-state/versions.ts	execute_raw	5
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
-src/core/persistence/activation.ts	execute_raw	9
 src/core/persistence/admin-lock.ts	execute_raw	2
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	4
-src/core/persistence/blocking-effects.ts	execute_raw	2
+src/core/persistence/blocking-effects.ts	execute_raw	1
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
@@ -617,7 +616,6 @@ src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
-src/core/persistence/deactivation.ts	execute_raw	19
 src/core/persistence/derived-origin-hold.ts	execute_raw	10
 src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
@@ -668,7 +666,6 @@ src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
 src/core/persistence/journal.ts	execute_raw	41
 src/core/persistence/landing-gaps.ts	execute_raw	3
-src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
@@ -704,7 +701,6 @@ src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	14
-src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
@@ -718,7 +714,7 @@ src/core/persistence/purge-slug-stores.ts	execute_raw	6	GST-2988 PR 3 and GST-30
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
 src/core/persistence/rebuildable-cache.ts	execute_raw	2
-src/core/persistence/reconcile-audit.ts	execute_raw	2
+src/core/persistence/reconcile-audit.ts	execute_raw	1
 src/core/persistence/reconcile-backup.ts	execute_raw	4
 src/core/persistence/reconcile-prepare.ts	execute_raw	1
 src/core/persistence/reconcile-state.ts	execute_raw	5
@@ -787,8 +783,8 @@ src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/takes-prepare.ts	execute_raw	7
 src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-locks.ts	execute_raw	20
-src/core/persistence/topology-receipts.ts	execute_raw	13
+src/core/persistence/topology-locks.ts	execute_raw	19
+src/core/persistence/topology-receipts.ts	execute_raw	9
 src/core/persistence/topology-recovery.ts	execute_raw	17
 src/core/persistence/topology-transaction.ts	execute_raw	1
 src/core/persistence/transfer-administration.ts	execute_raw	1

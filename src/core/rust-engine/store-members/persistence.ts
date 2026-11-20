@@ -27,9 +27,11 @@ import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+import { readBrainMode } from './writer-release.ts';
 
-/** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
-export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
+/** The one singleton row with the stored brain mode (gbrain-store `persistence::worktrees::release`; classic until activated). */
+export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async (brain) =>
+  [{ enabled: (await readBrainMode(brain, 'readManagedModeRows')).enabled }];
 
 /**
  * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the
@@ -263,15 +265,15 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
 /**
  * The belief ledger's view of a source. Belief events, the purge epoch and take and page purges are written only
  * through `executeRaw`, which this engine refuses, so the epoch is 0 and coverage is null; a purge is possible when the
- * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged brain row and the
- * plan-cache mode PGLite reports, which it never changes here.
+ * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the brain row with its stored mode and
+ * the plan-cache mode PGLite reports, which it never changes here.
  */
 export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
   const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
   if (!membership) return null;
   const purgesPossible = await storeCall({ member: 'readLedgerSource' }, () => brain.hasFactPurges(sourceId)) as boolean;
   return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible,
-    ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
+    ...(opts?.batch ? { managedRows: [{ enabled: (await readBrainMode(brain, 'readLedgerSource')).enabled }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
 
 /**

@@ -88,6 +88,7 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
+import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1601,6 +1602,11 @@ export interface BrainEngine {
    * `writerAdminTransaction(engine, body)` opens the transaction and the store.
    */
   writerAdminStore(): Promise<WriterAdminStore>;
+  /**
+   * The store of writer activation, deactivation and the pre-activation claim release (engine-sql/writer-release.ts).
+   * Called on a transaction engine, every store call runs in that transaction.
+   */
+  writerReleaseStore(): Promise<WriterReleaseStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
@@ -3849,6 +3855,8 @@ export interface BrainEngine {
   readAdmissionRate(principal: { kind: string; id: string } | null, opts?: { sample?: boolean }): Promise<AdmissionRate>;
   /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
+  /** Adds `delta` to counter row `key`'s columns (an absent column adds 0); a sum below zero refuses (engine-sql/writer-release.ts). */
+  addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
   insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
   /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */

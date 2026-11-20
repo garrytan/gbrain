@@ -15,6 +15,7 @@
         "addLink",
         "addLinksBatch",
         "addPageTagsById",
+        "addPersistenceCounters",
         "addSynthesisEvidence",
         "addTag",
         "addTakesBatch",
@@ -1050,7 +1051,8 @@
         "writeReasonPurgeTombstones",
         "writeSyncPassRow",
         "writeTextProjectionSeal",
-        "writerAdminStore"
+        "writerAdminStore",
+        "writerReleaseStore"
       ],
       "PostgresEngine": [
         "_searchKeywordCJK",
@@ -1062,6 +1064,7 @@
         "addLink",
         "addLinksBatch",
         "addPageTagsById",
+        "addPersistenceCounters",
         "addSynthesisEvidence",
         "addTag",
         "addTakesBatch",
@@ -2116,7 +2119,8 @@
         "writeReasonPurgeTombstones",
         "writeSyncPassRow",
         "writeTextProjectionSeal",
-        "writerAdminStore"
+        "writerAdminStore",
+        "writerReleaseStore"
       ]
     },
     "subpaths": {

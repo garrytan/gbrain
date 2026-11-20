@@ -7,12 +7,22 @@
  * caller's reader identity and private-readable grant included; any other caller whose policy differs (folder rules,
  * lineage, an owner read) refuses. The store does not read owner-only sources yet, so a policy read refuses while
  * the brain has one, rather than show its pages.
+ *
+ * Identity decisions (listIdentityDecisions): the store keeps none, and applyIdentityDecisions refuses, so no decision
+ * can exist on this engine; the read is the empty read the SQL engines return for a brain with no decisions. Sync's
+ * identity hook (entities/identity-decisions.ts syncIdentityDecisions) reads it after every sync. The answer is true
+ * only while the write refuses: test/rust-identity-decisions-pin.test.ts fails when applyIdentityDecisions is served,
+ * and the lane that types the write must type this read from the stored rows too.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import type { IdentityDecisionsRead } from '../../engine-sql/identity-decisions.ts';
+
+/** No decisions and nothing pending: the store keeps no identity decisions (see the header). */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async () => ({ decisions: [], pending: [], revision: '' });
 
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {

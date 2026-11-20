@@ -36,6 +36,7 @@ mod write_attribution;
 mod write_guards;
 mod write_misc;
 mod write_trust;
+mod writer_release;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;

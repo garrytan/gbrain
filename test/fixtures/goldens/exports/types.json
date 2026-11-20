@@ -60,6 +60,7 @@
           "addLink: (from: string, to: string, context?: string, linkType?: string, linkSource?: string, originSlug?: string, originField?: string, opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string; }) => Promise<void>",
           "addLinksBatch: (links: LinkBatchInput[], opts?: BatchOpts) => Promise<number>",
           "addPageTagsById: (pageId: number, tags: readonly string[], opts?: { tagSource?: \"frontmatter\"; }) => Promise<void>",
+          "addPersistenceCounters: (key: string, delta: Partial<Record<CounterColumn, number>>) => Promise<void>",
           "addSynthesisEvidence: (rows: SynthesisEvidenceInput[]) => Promise<number>",
           "addTag: (slug: string, tag: string, opts?: { sourceId?: string; tagSource?: \"frontmatter\"; }) => Promise<void>",
           "addTakesBatch: (rows: TakeBatchInput[], opts?: BatchOpts) => Promise<number>",
@@ -1073,7 +1074,8 @@
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
-          "writerAdminStore: () => Promise<WriterAdminStore>"
+          "writerAdminStore: () => Promise<WriterAdminStore>",
+          "writerReleaseStore: () => Promise<WriterReleaseStore>"
         ],
         "name": "BrainEngine"
       },
@@ -1908,6 +1910,7 @@
           "addLink: (from: string, to: string, context?: string, linkType?: string, linkSource?: string, originSlug?: string, originField?: string, opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string; }) => Promise<void>",
           "addLinksBatch: (links: LinkBatchInput[], opts?: BatchOpts) => Promise<number>",
           "addPageTagsById: (pageId: number, tags: readonly string[], opts?: { tagSource?: \"frontmatter\"; }) => Promise<void>",
+          "addPersistenceCounters: (key: string, delta: Partial<Record<CounterColumn, number>>) => Promise<void>",
           "addSynthesisEvidence: (rowsIn: SynthesisEvidenceInput[]) => Promise<number>",
           "addTag: (slug: string, tag: string, opts?: { sourceId?: string; tagSource?: \"frontmatter\"; }) => Promise<void>",
           "addTakesBatch: (rowsIn: TakeBatchInput[], opts?: BatchOpts) => Promise<number>",
@@ -2990,7 +2993,8 @@
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
-          "writerAdminStore: () => Promise<WriterAdminStore>"
+          "writerAdminStore: () => Promise<WriterAdminStore>",
+          "writerReleaseStore: () => Promise<WriterReleaseStore>"
         ],
         "name": "PostgresEngine",
         "signature": [
@@ -5311,6 +5315,7 @@
           "addLink: (from: string, to: string, context?: string, linkType?: string, linkSource?: string, originSlug?: string, originField?: string, opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string; }) => Promise<void>",
           "addLinksBatch: (links: LinkBatchInput[], opts?: BatchOpts) => Promise<number>",
           "addPageTagsById: (pageId: number, tags: readonly string[], opts?: { tagSource?: \"frontmatter\"; }) => Promise<void>",
+          "addPersistenceCounters: (key: string, delta: Partial<Record<CounterColumn, number>>) => Promise<void>",
           "addSynthesisEvidence: (rows: SynthesisEvidenceInput[]) => Promise<number>",
           "addTag: (slug: string, tag: string, opts?: { sourceId?: string; tagSource?: \"frontmatter\"; }) => Promise<void>",
           "addTakesBatch: (rows: TakeBatchInput[], opts?: BatchOpts) => Promise<number>",
@@ -6324,7 +6329,8 @@
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
-          "writerAdminStore: () => Promise<WriterAdminStore>"
+          "writerAdminStore: () => Promise<WriterAdminStore>",
+          "writerReleaseStore: () => Promise<WriterReleaseStore>"
         ],
         "name": "BrainEngine"
       },
@@ -9869,6 +9875,7 @@
           "addLink: (from: string, to: string, context?: string, linkType?: string, linkSource?: string, originSlug?: string, originField?: string, opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string; }) => Promise<void>",
           "addLinksBatch: (links: LinkBatchInput[], opts?: BatchOpts) => Promise<number>",
           "addPageTagsById: (pageId: number, tags: readonly string[], opts?: { tagSource?: \"frontmatter\"; }) => Promise<void>",
+          "addPersistenceCounters: (key: string, delta: Partial<Record<CounterColumn, number>>) => Promise<void>",
           "addSynthesisEvidence: (rowsIn: SynthesisEvidenceInput[]) => Promise<number>",
           "addTag: (slug: string, tag: string, opts?: { sourceId?: string; tagSource?: \"frontmatter\"; }) => Promise<void>",
           "addTakesBatch: (rowsIn: TakeBatchInput[], opts?: BatchOpts) => Promise<number>",
@@ -10935,7 +10942,8 @@
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly sourcesImpl.ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
-          "writerAdminStore: () => Promise<WriterAdminStore>"
+          "writerAdminStore: () => Promise<WriterAdminStore>",
+          "writerReleaseStore: () => Promise<WriterReleaseStore>"
         ],
         "name": "PGLiteEngine",
         "signature": [

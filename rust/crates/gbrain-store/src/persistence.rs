@@ -90,7 +90,9 @@ pub use projection_queue::{
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
-pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
+pub use worktrees::{
+    CounterDelta, HostBindingInsert, ReleaseRead, SourceBindingInsert, WorktreeInsert,
+};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;

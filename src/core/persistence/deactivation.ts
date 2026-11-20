@@ -26,7 +26,6 @@
  */
 import { randomUUID } from 'node:crypto';
 import { DATABASE_ONLY_SOURCES_KEY } from './unbound-source.ts';
-import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
 import { existsSync, lstatSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -37,7 +36,7 @@ import { acquireWorktree, getWorktreeBinding, readPersistenceBrain, type Persist
 import { existingHostIdFor } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
-import { assertWriterAdminUnlocked, readWriterAdminLock, WRITER_ADMIN_LOCKED_DOCS } from './admin-lock.ts';
+import { assertStoreAdminUnlocked, parseWriterAdminLock, WRITER_ADMIN_LOCKED_DOCS } from './admin-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { recordTopologyChange } from './topology-receipts.ts';
 import { lockTopologyPrincipal, topologyPrincipal } from './topology-locks.ts';
@@ -102,20 +101,18 @@ function readBrain(engine: BrainEngine, lock = false): Promise<BrainRow> {
 /** Every piece of work that keeps the brain from quiescing, with its CLI exit. Read-only. */
 export async function deactivationBlockers(engine: BrainEngine): Promise<DeactivationBlocker[]> {
   const blockers: DeactivationBlocker[] = [];
-  const lock = await readWriterAdminLock(engine);
+  const store = await engine.writerReleaseStore();
+  const lock = parseWriterAdminLock(await store.adminLockValue());
   if (lock.locked) blockers.push({ kind: 'writer_admin_lock', id: 'persistence.writer_admin_lock', detail: `set at ${lock.set_at ?? 'unknown'}`,
     exit: 'gbrain sources writer unlock' });
-  const requests = await engine.executeRaw<{ request_id: string; source_id: string; slug: string; operation: string; state: string; recovering: boolean }>(
-    `SELECT request_id::text AS request_id, source_id, slug, operation, state, recovery IS NOT NULL AS recovering FROM persistence_requests
-     WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 50`);
+  const requests = await store.blockingRequests(50);
   for (const r of requests) {
     blockers.push({ kind: 'request', id: r.request_id, source_id: r.source_id, detail: `${r.operation} ${r.state}${r.recovering ? ', recovering' : ''} (${r.source_id}:${r.slug})`,
       exit: r.state === 'queued' && !r.recovering ? `gbrain cancel-write-request ${r.request_id} (MCP: cancel_write_request), or wait for the owner to publish it`
         : r.state === 'running' && !r.recovering ? 'wait for the owner to finish publishing it, then rerun deactivate'
           : `gbrain sync --source ${r.source_id} --no-pull` });
   }
-  const topology = await engine.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean; automatic: boolean }>(
-    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only','false')='true' AS automatic FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
+  const topology = await store.recoveringTopologyChanges();
   for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
     detail: !t.admission ? `${t.operation} for ${t.source_id} is recovering`
       : `${t.automatic ? 'automatic expired-archive purge' : t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished`,
@@ -123,7 +120,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
       : t.admission ? `ask the user whether to finish it, because finishing deletes the rest of ${t.source_id}'s pages: to finish, rerun the same gbrain sources ${t.operation} command with all its original flags and --request-id ${t.request_id} (an automatic expired-archive purge finishes on its next run); to keep what is left, any other lifecycle change to the source (gbrain sources restore of an archived source, or archive then restore) abandons the request; then rerun deactivate`
       : `gbrain sources writer status ${t.source_id} --json, then let the owner finish recovery` });
   // GBRA-130 A-15: only work that can still change blocks, as activation checks; terminal failures are failedEffectHistory's.
-  const effects = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state IN ('queued','running') OR e.recovery IS NOT NULL ORDER BY e.id LIMIT 50`);
+  const effects = await store.releaseEffects('blocking');
   for (const e of effects) {
     blockers.push({ kind: 'effect', id: e.effect_id, source_id: e.source_id, detail: `${e.kind} effect ${e.state}${e.recovering ? ', recovering' : ''}${e.error_code ? ` (${e.error_code})` : ''} for request ${e.request_id}`,
       exit: e.kind === 'links' || e.kind === 'facts-backstop'
@@ -147,18 +144,11 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
         ? `run deactivate on host ${carry.owner_host}; or ${resolve}`
         : carry.state_file ? `move ${carry.state_file} aside, then rerun deactivate; or ${resolve}` : resolve });
   }
-  const leases = await engine.executeRaw<{ id: string; holder_host: string; holder_pid: number }>(
-    `SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND ${NOT_PAGE_EMBEDDING_LEASE} ORDER BY id`);
+  const leases = await store.liveLeases();
   for (const l of leases) blockers.push({ kind: 'lease', id: l.id, detail: `held by host ${l.holder_host}, pid ${l.holder_pid}`,
     exit: 'wait for that connector sync or maintenance run to finish (gbrain doctor shows live locks), then rerun deactivate' });
   return blockers;
 }
-
-type EffectRow = { effect_id: string; kind: string; state: string; source_id: string; request_id: string; error_code: string | null; recovering: boolean; source_live: boolean };
-const EFFECT_ROWS = `SELECT e.id::text AS effect_id, e.kind, e.state, COALESCE(e.source_id, r.source_id) AS source_id, r.request_id::text AS request_id, e.error_code,
-       e.recovery IS NOT NULL AS recovering,
-       EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation AND NOT s.archived) AS source_live
-     FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id`;
 
 /**
  * GBRA-130 A-15: terminally failed effects, oldest first (at most 50). They block nothing; each carries the exit that
@@ -167,7 +157,7 @@ const EFFECT_ROWS = `SELECT e.id::text AS effect_id, e.kind, e.state, COALESCE(e
  * the same vector) or an effect whose source was archived, replaced or removed.
  */
 export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEffectEntry[]> {
-  const rows = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') ORDER BY e.id LIMIT 50`);
+  const rows = await (await engine.writerReleaseStore()).releaseEffects('failed');
   return rows.map(e => {
     const retry = `gbrain sources writer retry-effects ${e.source_id} --request-id ${e.request_id} --dry-run`;
     const [exit, why] = !e.source_live ? [null, 'its source was archived, replaced or removed, so nothing can run it']
@@ -189,7 +179,7 @@ export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEf
 export async function physicalRootBlockers(engine: BrainEngine, mode: 'managed' | 'classic'): Promise<DeactivationBlocker[]> {
   const hostId = existingHostIdFor(engine);
   const sources = mode === 'managed'
-    ? await engine.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id')
+    ? (await (await engine.writerReleaseStore()).boundSourceIds()).map(id => ({ id }))
     : (await preActivationClaims(engine)).map(claim => ({ id: claim.source_id }));
   const blockers: DeactivationBlocker[] = [];
   const seen = new Set<string>();
@@ -221,20 +211,19 @@ function blockedError(blockers: DeactivationBlocker[]): OperationError {
 }
 
 async function retiredTopology(engine: BrainEngine): Promise<{ worktrees: Array<{ id: string; roots: string[] }>; bindings: number }> {
-  const rows = await engine.executeRaw<{ id: string; root: string | null }>(`SELECT w.id::text AS id, h.local_path AS root FROM persistence_worktrees w
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id WHERE w.state<>'retired' ORDER BY w.id, h.local_path`);
+  const store = await engine.writerReleaseStore();
+  const rows = await store.liveWorktreeRoots();
   const worktrees = new Map<string, string[]>();
   for (const row of rows) {
     const roots = worktrees.get(row.id) ?? [];
     if (row.root) roots.push(row.root);
     worktrees.set(row.id, roots);
   }
-  const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM persistence_source_bindings');
-  return { worktrees: [...worktrees].map(([id, roots]) => ({ id, roots })), bindings: Number(n) };
+  return { worktrees: [...worktrees].map(([id, roots]) => ({ id, roots })), bindings: await store.sourceBindingCount() };
 }
 
 async function keptSettings(engine: BrainEngine, brain: BrainRow): Promise<DeactivationReport['kept']> {
-  const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT COUNT(*)::int AS n FROM persistence_writer_protocols").catch(() => [{ n: 0 }]);
+  const n = await (await engine.writerReleaseStore()).writerProtocolCount().catch(() => 0);
   return { skill_bundles_enabled: brain.skill_bundles_enabled === true, writer_protocol_floor: brain.writer_protocol_floor ?? 1, writer_protocol_registrations: Number(n) };
 }
 
@@ -272,9 +261,9 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
   let report: DeactivationReport;
   try {
     // Native worktree locks precede the transaction, as in activation.
-    const sources = await engine.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id');
+    const sources = await (await engine.writerReleaseStore()).boundSourceIds();
     const local = new Map<string, Awaited<ReturnType<typeof getWorktreeBinding>>>();
-    for (const { id } of sources) {
+    for (const id of sources) {
       const binding = await getWorktreeBinding(engine, id, hostId);
       if (binding && binding.owner_host_id === hostId && binding.local_path) local.set(binding.worktree_id, binding);
     }
@@ -285,17 +274,17 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
       locks.push(lock);
     }
     report = await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('lock_timeout','5000ms',true),set_config('synchronous_commit','on',true)");
+      const store = await tx.writerReleaseStore();
+      await store.begin(5000);
       const current = await readBrain(tx, true);
       await assertWriterAdminState(tx, opts.expectedState);
-      await assertWriterAdminUnlocked(tx);
+      await assertStoreAdminUnlocked(store);
       if (!current.enabled) {
         throw opError('writer_admin_state_changed', 'The brain was deactivated concurrently.',
           'Another process already deactivated managed persistence, so this run changed nothing more. Confirm the state in writer status; no further deactivation is needed.',
           { fix: readFix('Shows whether managed persistence is enabled, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] }) });
       }
-      await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR UPDATE');
+      await store.lockWorktreesAndSources();
       await opts.hooks?.afterLocks?.();
       const inside = await deactivationBlockers(tx);
       if (inside.length) throw blockedError(inside);
@@ -303,13 +292,10 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
       const carried_holds = await carryHoldsToClassicState(tx, hostId);
       const failed_effects = await failedEffectHistory(tx);
       const retired = await retiredTopology(tx);
-      const [epoch] = await tx.executeRaw<{ mode_epoch: string }>(
-        'UPDATE persistence_brain SET enabled=false, mode_epoch=mode_epoch+1 WHERE singleton=1 RETURNING mode_epoch::text');
-      await tx.executeRaw("UPDATE persistence_worktrees SET state='retired' WHERE state<>'retired'");
-      await tx.executeRaw('DELETE FROM persistence_source_bindings');
-      await tx.executeRaw('DELETE FROM persistence_host_bindings');
+      const epoch = { mode_epoch: await store.setBrainEnabled(false) };
+      await store.releaseBindings(null);
       await tx.unsetConfig(DATABASE_ONLY_SOURCES_KEY);
-      const sourceRoots = (await tx.executeRaw<{ local_path: string }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL')).map(r => r.local_path);
+      const sourceRoots = await store.sourceLocalPaths();
       const outcome = { brain_id: current.brain_id, retired_mode_epoch: Number(current.mode_epoch), mode_epoch: Number(epoch.mode_epoch),
         worktrees: retired.worktrees, source_roots: sourceRoots };
       await lockTopologyPrincipal(tx, principal);
@@ -360,8 +346,8 @@ export async function cleanupRetiredManagedMarkers(engine: BrainEngine): Promise
   const [brain, retired] = await Promise.all([brainRead, readRetired(engine, brainRead)]);
   const current = Number(brain.mode_epoch ?? 1);
   if (!retired.epochs.size && !retired.worktrees.size) return report;
-  const activeRoots = new Set(brain.enabled ? (await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM persistence_host_bindings'))
-    .map(row => { try { return canonicalFilesystemPath(row.local_path); } catch { return row.local_path; } }) : []);
+  const activeRoots = new Set(brain.enabled ? (await (await engine.writerReleaseStore()).hostBindingRoots())
+    .map(path => { try { return canonicalFilesystemPath(path); } catch { return path; } }) : []);
   const known = retired.epochs.size > 0;
   /** removable, keep (normal), or a pending reason. */
   const judge = (value: Record<string, unknown>, root: string | null): 'remove' | 'keep' | string => {

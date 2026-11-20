@@ -27,6 +27,7 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `d 0x09 0x01 <worktree id>` | one `persistence_worktrees` row, JSON (worktrees.rs) |
 | `d 0x09 0x02 <worktree id> 0x00 <host id>` | one `persistence_host_bindings` row, JSON (worktrees.rs) |
 | `d 0x09 0x03 <source id>` | one `persistence_source_bindings` row, JSON (worktrees.rs) |
+| `d 0x09 0x04` | the brain mode `{ enabled, mode_epoch, activated_at_us }` of `persistence_brain`, JSON (worktrees/release.rs); absent reads as `enabled` false, `mode_epoch` 1 |
 
 A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`).
 
@@ -442,8 +443,8 @@ store keeps the three rows and refuses what the tables' keys, foreign keys and C
 | `brain.markWorktreeDraining(id, manifest)`, `brain.reactivateWorktree(id)` | the worktree is `draining` with the manifest plus `prepared_at` (now, jsonb `timestamptz` text); `active` with no manifest. A missing worktree changes nothing; a manifest that is not an object is `invalid_argument` | the transfer prepare and cancel `UPDATE`s |
 
 A source binding has no foreign key to its source, as on Postgres: a removed or re-created source
-leaves its binding, and the readers compare incarnations. Rows are not deleted on this engine yet: no
-rebind or source purge runs here.
+leaves its binding, and the readers compare incarnations. Only a writer release deletes binding rows
+("Writer release" below); no rebind or source purge runs here.
 
 ### Writer admin state
 
@@ -462,20 +463,56 @@ The document has the SQL's keys and row shapes. Source ids, binding source ids a
 byte order on every engine (`COLLATE "C"` in the SQL). An empty table is `null`, as `jsonb_agg`
 over no rows gives. Two parts differ from a SQL brain:
 
-- **`brain`.** This engine keeps no `persistence_brain` columns besides the brain id. The other
-  columns hold their defaults: `enabled` and `skill_bundles_enabled` false, `writer_protocol_floor`
-  and `mode_epoch` 1. A store with no brain id has no row, so `brain` is `null`.
+- **`brain`.** `enabled` and `mode_epoch` are the stored brain mode (`d 0x09 0x04`, "Writer
+  release" below). The other columns hold their defaults: `skill_bundles_enabled` false and
+  `writer_protocol_floor` 1. A store with no brain id has no row, so `brain` is `null`.
 - **The digest.** Each brain has its own id, so a state reviewed on one brain never matches
   another, on any engine.
 
 `acceptWriterTransfer` still reads raw SQL and refuses here.
 
+## Writer release
+
+`gbrain sources writer deactivate` and `activate` (`src/core/persistence/deactivation.ts`,
+`activation.ts`, `pre-activation-release.ts`) and the counter charges of a topology receipt
+(`topology-receipts.ts`) run on the BrainEngine members `writerReleaseStore()` and
+`addPersistenceCounters(key, delta)` of `src/core/engine-sql/writer-release.ts`. On this engine the
+store is `store-members/writer-release.ts`: each read is one `brain.writerReleaseRows({ kind, ... })`
+call (`persistence::ReleaseRead`) with the rows of the SQL it replaces. The lock calls and `begin`
+change nothing (one write transaction at a time, durable commit). `writerProtocolCount` is 0: no
+writer protocol registration exists here.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.writerReleaseRows({ kind: 'blocking_requests', limit })` | the first `limit` requests that are outstanding or hold a recovery record, by sequence | `BLOCKING_REQUESTS_SQL` |
+| `kind: 'recovering_topology_changes'` | the first 20 topology changes `recovering` or holding a recovery record, oldest first | `RECOVERING_TOPOLOGY_SQL` |
+| `kind: 'release_effects', which` | the first 50 effects by id, `blocking` (queued, running or recovering) or `failed` (failed, no recovery record, not settled), joined to their request by its internal id | `BLOCKING_EFFECTS_SQL`, `FAILED_EFFECTS_SQL` |
+| `kind: 'blocking_effects', sourceId, limit, recoveringOnly` | the effects `listBlockingEffects` names | `LIST_BLOCKING_EFFECTS_SQL` |
+| `kind: 'has_recovering_effect'` | whether an effect holds a recovery record | the deactivation's recovery check |
+| `kind: 'live_leases'`, `'legacy_locks'` | the cycle locks that are not page embedding leases, by id (unexpired only for `live_leases`; `age_ms` for `legacy_locks`) | `LIVE_LEASES_SQL`, `LEGACY_LOCKS_SQL` |
+| `kind: 'live_worktree_roots'`, `'claim_roots'` | each worktree that is not retired, or each source binding, with each host root (one null root when none) | `LIVE_WORKTREE_ROOTS_SQL`, `CLAIM_ROOTS_SQL` |
+| `kind: 'bound_source_ids'`, `'source_binding_count'`, `'live_bound_source_count'` | the bound source ids, their count, and the count whose incarnation is live | the binding reads |
+| `kind: 'configured_sources'`, `'source_local_paths'`, `'host_binding_roots'` | the sources that are not archived (`{ id, incarnation, local_path, kind }`, by id), every source local path, every host root | `SOURCES_SQL` and the path reads |
+| `kind: 'retired_deactivations'` | `[{ outcome }]` of every committed `writer_deactivate` topology change | `listRetiredDeactivations` |
+| `kind: 'brain_mode'` | `{ enabled, mode_epoch }`, the epoch as text | the brain row read |
+| `kind: 'audit_pages', sourceId, after, limit` | the source's live markdown pages after `after`, by slug, with `bytes` (null for a segmented body) | the activation preview's drift-audit read |
+| `brain.setBrainEnabled(enabled)` | moves `mode_epoch` by one and returns it as text; the first enable records `activated_at_us`. `invalid_argument` on a store with no brain id | `ENABLE_SQL`, `DISABLE_SQL` |
+| `brain.releaseWorktreeBindings(ids \| null)` | retires the named worktrees (or all), deletes every source binding and the named worktrees' host bindings (or all) | the release `UPDATE` and `DELETE`s |
+| `brain.addPersistenceCounters(key, delta)` | adds each column of `delta` to counter row `key`; a missing row changes nothing; a column below zero is `constraint_violation` | `ADD_COUNTERS_SQL` |
+
+Differences from a SQL brain: slugs and source ids sort in byte order; the store keeps no
+`database_only_reason` (always null); an audit page's frontmatter size is its compact JSON text
+(only the audit's 5 MB skip reads it). Managed writes still refuse on this engine
+(`managed_persistence`), so an activated Rust brain can be deactivated but not written through the
+journal.
+
 ## TypeScript members with no stored state
 
 | Member | Answer | Why |
 | --- | --- | --- |
-| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible }`, `purgesPossible` true when the source holds a fact purge tombstone (`hasFactPurges`, rust/docs/store/facts.md "The fact purge ledger"); a batch adds `managedRows: [{ enabled: false }]` and `planModePrev: 'auto'` | Belief events, the purge epoch and take and page purges are written only through `executeRaw`, which this engine refuses. |
+| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible }`, `purgesPossible` true when the source holds a fact purge tombstone (`hasFactPurges`, rust/docs/store/facts.md "The fact purge ledger"); a batch adds `managedRows: [{ enabled }]` (the stored brain mode, "Writer release") and `planModePrev: 'auto'` | Belief events, the purge epoch and take and page purges are written only through `executeRaw`, which this engine refuses. |
 | `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | `[]` | One process owns this engine's brain, so it keeps no consumer heartbeat rows. PGLite, which also admits one process, answers the same in its callers (`listHostConsumers`, `probeLiveFullConsumer`) without a read. |
 | `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)` | resolve with no effect | The heartbeat has no row to renew or delete. `stampWorktreeHeartbeats` is served; see "Worktree bindings". |
 | `lockEffectGuard(worktreeId)` | resolves `null` | The store is single-writer, so the brain-row share lock has nothing to wait on, and this engine has no worktree to read. A worktree id that is not a uuid refuses with the uuid syntax message. |
 | `requireSynchronousCommit()` | resolves with no effect | A store commit makes every write durable before it returns (`kv.rs` `commit`), so there is no asynchronous commit to turn off. |
+| `listIdentityDecisions()` | `{ decisions: [], pending: [], revision: '' }` | The store keeps no duplicate decisions: `applyIdentityDecisions` refuses (`engine_capability_missing`) and the shadow seed copies no identity relation. Pinned by `test/rust-identity-decisions-pin.test.ts`, which fails when the write is served. |

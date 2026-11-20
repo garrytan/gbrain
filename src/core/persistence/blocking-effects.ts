@@ -1,6 +1,7 @@
 /** Names the queued, running or recovering work that keeps a brain from quiescing (#5629). Read-only. */
 import { OperationError } from '../ops/contract.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 
 export interface BlockingEffect {
@@ -30,13 +31,13 @@ export function blockingEffectHint(effect: BlockingEffect): string {
 }
 
 /** `writer_not_quiesced` naming the first blocking request, else the first blocking effect. */
-export async function notQuiescedError(tx: SqlEngine, message: string, opts: { queuedEffects: boolean }): Promise<OperationError> {
-  const [request] = await tx.executeRaw<{ request_id: string; source_id: string; slug: string; operation: string; state: string }>(
-    `SELECT request_id::text AS request_id,source_id,slug,operation,state FROM persistence_requests
-     WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 1`);
+export async function notQuiescedError(tx: Pick<BrainEngine, 'writerReleaseStore'>, message: string, opts: { queuedEffects: boolean }): Promise<OperationError> {
+  const store = await tx.writerReleaseStore();
+  const [request] = await store.blockingRequests(1);
   if (request) return new OperationError('writer_not_quiesced', message, `${WRITER_INSPECTION_HINT} Blocking request ${request.request_id} `
     + `(${request.operation}, ${request.state}) for source ${request.source_id}, page ${request.slug}. Inspect it with: ${inspect(request.source_id)}. `
     + 'Let the resident owner publish or recover it, then retry.');
-  const [effect] = await listBlockingEffects(tx, { limit: 1, recoveringOnly: !opts.queuedEffects });
+  const [row] = await store.blockingEffects({ sourceId: null, limit: 1, recoveringOnly: !opts.queuedEffects });
+  const effect = row ? { ...row, inspect: inspect(row.source_id) } : undefined;
   return new OperationError('writer_not_quiesced', message, effect ? blockingEffectHint(effect) : WRITER_INSPECTION_HINT);
 }

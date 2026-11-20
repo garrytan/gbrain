@@ -2,9 +2,9 @@
  * The connect gate's persistence reads (BrainEngine hasPersistenceTable, listManagedRootBindings,
  * readGraduationGateRow, listRetiredDeactivations), answered in TypeScript from what the store keeps.
  *
- * The store keeps the persistence state of one unmanaged brain (readManagedModeRows answers `enabled: false`), so
- * every persistence table reads as present and holds nothing a gate acts on but the worktree bindings an unmanaged
- * claim keeps: no graduation custody row (no graduation targets this engine) and no committed writer deactivation.
+ * The store keeps one brain row with its stored mode (readManagedModeRows), so every persistence table reads as present.
+ * A gate acts on the worktree bindings a claim keeps and on the committed writer deactivations; there is no graduation
+ * custody row (no graduation targets this engine).
  * `listManagedRootBindings` lists this host's bound sources and the sources with a local path, as PGLite's UNION does.
  *
  * What each member answers and why: rust/docs/store/journal.md ("TypeScript journal members").
@@ -38,5 +38,6 @@ export const listManagedRootBindings: StoreMember<[hostId: string, opts?: { sign
 /** No graduation targets or leaves this engine, so there is no custody row. */
 export const readGraduationGateRow: StoreMember<[opts?: { withRunSetting?: boolean }], GraduationGateRow | null> = async () => null;
 
-/** A brain on this engine is never managed, so no writer deactivation ever committed. */
-export const listRetiredDeactivations: StoreMember<[], RetiredDeactivationRow[]> = async () => [];
+/** The outcome of every committed `writer_deactivate` topology change (gbrain-store `persistence::topology`). */
+export const listRetiredDeactivations: StoreMember<[], RetiredDeactivationRow[]> = (brain) =>
+  storeCall({ member: 'listRetiredDeactivations' }, () => brain.writerReleaseRows({ kind: 'retired_deactivations' }));
