@@ -69,6 +69,7 @@ pub mod persistence;
 pub mod raw_files;
 pub mod relations;
 pub mod salience;
+pub mod source_cr_mode;
 pub mod stats;
 pub mod synopsis_tier;
 pub mod takes;

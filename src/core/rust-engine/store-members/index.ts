@@ -97,6 +97,7 @@ import * as writeContext from './write-context.ts';
 import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as synopsisTier from './synopsis-tier.ts';
+import * as sourceCrMode from './source-cr-mode.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -168,6 +169,8 @@ export const STORE_MEMBERS = {
   ...decideStore,
   // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).
   ...synopsisTier,
+  // A source's own contextual-retrieval mode (rust/docs/store/source-cr-mode.md).
+  ...sourceCrMode,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

@@ -4,6 +4,7 @@
 use crate::Store;
 use crate::error::Result;
 use crate::pages::all_pages;
+use crate::source_cr_mode::source_modes;
 use crate::sources::all_sources;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -28,18 +29,23 @@ pub struct SynopsisTierQuery {
 impl Store {
     /// `readSynopsisTierSources({ skipFrontmatter })`: `{ sourceIds, frontmatterPicks }`.
     ///
-    /// `sourceIds` is empty: the store keeps no source contextual-retrieval mode. `frontmatterPicks`
+    /// `sourceIds` lists the sources that are not archived and whose own mode
+    /// (`source_cr_mode.rs`) is per_chunk_synopsis, by id in byte order. `frontmatterPicks`
     /// is true when a live markdown page whose source is not archived (a page with no source row
     /// counts as not archived, as the SQL's `LEFT JOIN` does) has the frontmatter value
     /// `contextual_retrieval: per_chunk_synopsis` as a JSON string, and its frontmatter is trusted:
     /// it is on the host source (the store keeps no `trust_frontmatter_overrides`, so no other
     /// source trusts it).
     pub fn read_synopsis_tier_sources(&self, q: &SynopsisTierQuery) -> Result<Value> {
-        let source_ids: Vec<String> = Vec::new();
+        let read = self.read()?;
+        let source_ids: Vec<String> = source_modes(&*read)?
+            .into_iter()
+            .filter(|(_, (mode, archived))| mode == SYNOPSIS_MODE && !archived)
+            .map(|(id, _)| id)
+            .collect();
         if q.skip_frontmatter {
             return Ok(json!({ "sourceIds": source_ids, "frontmatterPicks": false }));
         }
-        let read = self.read()?;
         let archived: BTreeMap<String, bool> = all_sources(&*read)?
             .into_iter()
             .map(|s| (s.id, s.archived))

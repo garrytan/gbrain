@@ -7,7 +7,7 @@
  *    listAccessTokens, isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
  *    listAudienceAccessMembers, readLiveMember, hasLabelledOnlyMember, readFolderAccess, expireMemoryProposals,
  *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
- *    readHealthMemoClock, listSynopsisSourceIds, readSynopsisTierSources,
+ *    readHealthMemoClock, listSynopsisSourceIds, readSynopsisTierSources, setSourceContextualMode,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
@@ -16,7 +16,7 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, access tokens, notifier state, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
+ *    Rust store keeps no skillpacks, chronicle state, access members, access tokens, notifier state, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). It keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
  *    since the store lists them in path order and the SQL engines in no stated order.
@@ -363,18 +363,11 @@ describe('engine parity: write misc', () => {
   });
 
   // The synopsis sources order by bytes on every engine: a hyphenated id sorts before its letters even on a Postgres
-  // database with a linguistic collation (en_US ignores the hyphen). The seed is `sources` admin raw SQL, so on Rust it
-  // stops on the typed refusal, as the listSynopsisSourceIds case below.
-  parityTest('readSynopsisTierSources orders the synopsis sources by bytes, whatever the database collation', { methods: ['readSynopsisTierSources'] }, async (engine, backend) => {
-    for (const id of ['coop', 'cob', 'co-op']) await createSource(engine, backend, id);
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw(`UPDATE sources SET contextual_retrieval_mode = 'per_chunk_synopsis' WHERE id IN ('coop', 'cob', 'co-op')`);
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.readSynopsisTierSources(true)).toEqual({ sourceIds: [], frontmatterPicks: false });
-      throw seeded;
+  // database with a linguistic collation (en_US ignores the hyphen).
+  parityTest('readSynopsisTierSources orders the synopsis sources by bytes, whatever the database collation', { methods: ['readSynopsisTierSources', 'setSourceContextualMode'] }, async (engine, backend) => {
+    for (const id of ['coop', 'cob', 'co-op']) {
+      await createSource(engine, backend, id);
+      expect(await engine.setSourceContextualMode(id, 'per_chunk_synopsis')).toBe(true);
     }
     const tier = await engine.readSynopsisTierSources(true);
     expect(tier).toEqual({ sourceIds: ['co-op', 'cob', 'coop'], frontmatterPicks: false });
@@ -383,23 +376,49 @@ describe('engine parity: write misc', () => {
     return { tier, configured: config.configured };
   });
 
-  // A source's own contextual-retrieval mode is written by `sources` admin raw SQL; on Rust the seed refuses, because no
-  // Rust brain keeps one, and the member answers none, as the fresh-brain case.
-  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['listSynopsisSourceIds'] }, async (engine, backend) => {
-    for (const id of ['work', 'alt', 'old']) await createSource(engine, backend, id);
-    await archiveSource(engine, backend, 'old');
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw(`UPDATE sources SET contextual_retrieval_mode = 'per_chunk_synopsis' WHERE id IN ('work', 'alt', 'old')`);
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.listSynopsisSourceIds()).toEqual([]);
-      throw seeded;
+  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['listSynopsisSourceIds', 'setSourceContextualMode'] }, async (engine, backend) => {
+    for (const id of ['work', 'alt', 'old']) {
+      await createSource(engine, backend, id);
+      expect(await engine.setSourceContextualMode(id, 'per_chunk_synopsis')).toBe(true);
     }
+    await archiveSource(engine, backend, 'old');
     const ids = await engine.listSynopsisSourceIds();
     expect(ids).toEqual(['alt', 'work']);
     return { ids, configured: (await readSynopsisTierConfig(engine)).configured };
+  });
+
+  // `gbrain sources set-cr-mode` writes through setSourceContextualMode: an unknown source writes nothing and answers
+  // false (the command exits 4); a set mode reads back through getSource, archived sources included; null clears it, and
+  // only per_chunk_synopsis puts a source in the synopsis tier.
+  parityTest('setSourceContextualMode sets and clears a source mode that getSource and the synopsis tier read back', { methods: ['setSourceContextualMode', 'getSource', 'listSynopsisSourceIds'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await createSource(engine, backend, 'alt');
+    const mode = async (id: string) => (await engine.getSource(id))?.contextual_retrieval_mode ?? null;
+    const view = {
+      missing: await engine.setSourceContextualMode('no-such-source', 'title'),
+      fresh: await mode('work'),
+      set: await engine.setSourceContextualMode('work', 'per_chunk_synopsis'),
+      setAlt: await engine.setSourceContextualMode('alt', 'title'),
+      modes: [await mode('work'), await mode('alt')],
+      tier: await engine.listSynopsisSourceIds(),
+      archived: await (async () => { await archiveSource(engine, backend, 'work'); return [await mode('work'), await engine.listSynopsisSourceIds()]; })(),
+      cleared: await engine.setSourceContextualMode('work', null),
+      afterClear: await mode('work'),
+      unknownRow: await engine.getSource('no-such-source'),
+    };
+    expect(view).toEqual({
+      missing: false,
+      fresh: null,
+      set: true,
+      setAlt: true,
+      modes: ['per_chunk_synopsis', 'title'],
+      tier: ['work'],
+      archived: ['per_chunk_synopsis', []],
+      cleared: true,
+      afterClear: null,
+      unknownRow: null,
+    });
+    return view;
   });
 
   // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer

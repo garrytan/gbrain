@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 904/904
+# covered: 905/905
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 35/35
+# write_misc: 36/36
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -115,7 +115,7 @@ applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	2	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
-getSource	pages	yes	7	no	yes	yes	serves
+getSource	pages	yes	8	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 readPlainSyncSource	pages	yes	1	no	yes	yes	serves
@@ -858,8 +858,9 @@ appendOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
-listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
+listSynopsisSourceIds	write_misc	yes	3	no	yes	yes	serves
 readSynopsisTierSources	write_misc	yes	3	no	yes	yes	serves
+setSourceContextualMode	write_misc	yes	3	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 listAwaitingMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 readMemoryProposal	write_misc	yes	2	no	yes	yes	serves

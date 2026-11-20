@@ -6546,6 +6546,7 @@
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
         "setSourceChunkerVersion": "none",
+        "setSourceContextualMode": "none",
         "setWriteContext": "none",
         "settleFactsReconcile": "none",
         "settleNoopEmbeddingRows": "none",

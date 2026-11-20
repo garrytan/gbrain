@@ -124,6 +124,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readHealthMemoClock', 'listSynopsisSourceIds',
   // The synopsis tier's configuration read (engine-sql/synopsis-tier.ts; covered by test/engine-parity/write-misc.test.ts)
   'readSynopsisTierSources',
+  // A source's own contextual-retrieval mode (engine-sql/source-cr-mode.ts; covered by test/engine-parity/write-misc.test.ts)
+  'setSourceContextualMode',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',
   // CLI export and segmented-body reads (engine-sql/export-reads.ts; covered by test/engine-parity/cli-reads-export.test.ts)
