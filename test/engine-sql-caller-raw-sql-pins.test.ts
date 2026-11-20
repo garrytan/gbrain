@@ -1729,6 +1729,44 @@ SELECT source_id, type FROM pairs`],
     ON CONFLICT (publication_id) DO NOTHING`],
   },
   {
+    from: 'src/core/belief/lifetimes.ts readOpenLifetimes (the moved statement also filters l.source_id = $3: an incarnation names one source, and the Rust store keys lifetimes by source)',
+    case: { method: 'readOpenLifetimes', variant: 'default', run: e => e.readOpenLifetimes('default', [{ incarnation: '00000000-0000-4000-8000-000000000001', slug: 'a' }]) },
+    texts: [`SELECT l.page_lifetime::text AS page_lifetime, l.source_incarnation::text AS source_incarnation, l.slug, l.page_id
+    FROM belief_page_lifetimes l JOIN unnest($1::uuid[], $2::text[]) AS n(i, s) ON l.source_incarnation = n.i AND l.slug = n.s
+    WHERE l.ended_at IS NULL AND l.source_id = $3`],
+  },
+  {
+    from: 'src/core/belief/lifetimes.ts mintLifetime',
+    case: { method: 'mintLifetime', variant: 'default', run: e => e.mintLifetime({ sourceId: 'default', incarnation: '00000000-0000-4000-8000-000000000001', slug: 'a', pageId: 1 }), rows: [[/INSERT INTO belief_page_lifetimes/, [{ page_lifetime: '00000000-0000-4000-8000-000000000003' }]]] },
+    texts: [`INSERT INTO belief_page_lifetimes (page_lifetime, source_id, source_incarnation, slug, page_id)
+    VALUES ($1::uuid, $2, $3::uuid, $4, $5) ON CONFLICT (source_incarnation, slug) WHERE ended_at IS NULL DO NOTHING RETURNING page_lifetime::text AS page_lifetime`],
+  },
+  {
+    from: 'src/core/belief/lifetimes.ts mintLifetime (the read of the lifetime already open, after the insert conflicted)',
+    case: { method: 'mintLifetime', variant: 'conflict', run: e => e.mintLifetime({ sourceId: 'default', incarnation: '00000000-0000-4000-8000-000000000001', slug: 'a', pageId: 1 }), rows: [[/SELECT page_lifetime::text/, [{ page_lifetime: '00000000-0000-4000-8000-000000000003' }]]] },
+    texts: [`INSERT INTO belief_page_lifetimes (page_lifetime, source_id, source_incarnation, slug, page_id)
+    VALUES ($1::uuid, $2, $3::uuid, $4, $5) ON CONFLICT (source_incarnation, slug) WHERE ended_at IS NULL DO NOTHING RETURNING page_lifetime::text AS page_lifetime`,
+    `SELECT page_lifetime::text AS page_lifetime FROM belief_page_lifetimes
+    WHERE source_incarnation = $1::uuid AND slug = $2 AND ended_at IS NULL`],
+  },
+  {
+    from: 'src/core/belief/lifetimes.ts endLifetime',
+    case: { method: 'endLifetime', variant: 'default', run: e => e.endLifetime('00000000-0000-4000-8000-000000000003') },
+    texts: ['UPDATE belief_page_lifetimes SET ended_at = clock_timestamp() WHERE page_lifetime = $1::uuid AND ended_at IS NULL'],
+  },
+  {
+    from: 'src/core/belief/lifetimes.ts renameLifetime',
+    case: { method: 'renameLifetime', variant: 'default', run: e => e.renameLifetime('00000000-0000-4000-8000-000000000003', 'b', 2) },
+    texts: ['UPDATE belief_page_lifetimes SET slug = $2, page_id = $3 WHERE page_lifetime = $1::uuid'],
+  },
+  {
+    from: 'src/core/belief/lifetimes.ts resolveLifetimes (the page join; the member is readMovedLifetimes)',
+    case: { method: 'readMovedLifetimes', variant: 'default', run: e => e.readMovedLifetimes([1, 2]) },
+    texts: [`SELECT l.page_id, l.source_incarnation::text AS source_incarnation,
+      l.page_lifetime::text AS page_lifetime FROM belief_page_lifetimes l JOIN pages p ON p.id = l.page_id AND p.slug = l.slug
+      WHERE l.page_id = ANY($1::int[]) AND l.ended_at IS NULL`],
+  },
+  {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
     case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
     texts: [

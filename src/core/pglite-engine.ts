@@ -229,6 +229,7 @@ import * as collateCycleWindowImpl from './engine-sql/collate-cycle-window.ts';
 import * as collateIdentityDowngradesImpl from './engine-sql/collate-identity-downgrades.ts';
 import * as collateBeliefReadsImpl from './engine-sql/collate-belief-reads.ts';
 import * as collateBeliefWritesImpl from './engine-sql/collate-belief-writes.ts';
+import * as collateBeliefLifetimesImpl from './engine-sql/collate-belief-lifetimes.ts';
 import * as collatePhantomRedirectImpl from './engine-sql/collate-phantom-redirect.ts';
 import * as collateTakeProposalsImpl from './engine-sql/collate-take-proposals.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
@@ -1929,6 +1930,11 @@ export class PGLiteEngine implements BrainEngine {
   releaseBeliefRedactions(ids: readonly number[], publicationId: string, releasedHash: string) { return collateBeliefWritesImpl.releaseBeliefRedactions(this.rawRead, ids, publicationId, releasedHash); }
   insertBeliefEvents(rows: readonly collateBeliefWritesImpl.BeliefEventRow[]) { return collateBeliefWritesImpl.insertBeliefEvents(this.rawRead, rows); }
   recordBeliefCommitMarks(publicationIds: readonly string[]) { return collateBeliefWritesImpl.recordBeliefCommitMarks(this.rawRead, publicationIds); }
+  readOpenLifetimes(sourceId: string, pairs: readonly { incarnation: string; slug: string }[]) { return collateBeliefLifetimesImpl.readOpenLifetimes(this.rawRead, sourceId, pairs); }
+  mintLifetime(need: collateBeliefLifetimesImpl.LifetimeNeed) { return collateBeliefLifetimesImpl.mintLifetime(this.rawRead, need); }
+  endLifetime(lifetime: string) { return collateBeliefLifetimesImpl.endLifetime(this.rawRead, lifetime); }
+  renameLifetime(lifetime: string, slug: string, pageId: number) { return collateBeliefLifetimesImpl.renameLifetime(this.rawRead, lifetime, slug, pageId); }
+  readMovedLifetimes(pageIds: readonly number[]) { return collateBeliefLifetimesImpl.readMovedLifetimes(this.rawRead, pageIds); }
   recordFailureTombstone(input: collateTakeProposalsImpl.FailureTombstoneInput) { return collateTakeProposalsImpl.recordFailureTombstone(this.rawRead, input); }
   listFailureTombstones(sourceId: string, claimPrefix: string) { return collateTakeProposalsImpl.listFailureTombstones(this.rawRead, sourceId, claimPrefix); }
   readCycleListingInstant() { return collateCycleWindowImpl.readCycleListingInstant(this.rawRead); }

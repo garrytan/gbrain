@@ -233,6 +233,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   collate_belief_reads: ['listOrphanLifetimes'],
   // collate_belief_writes: the belief ledger's event insert, commit marks, redaction register and coverage reads
   collate_belief_writes: ['readBeliefCoverage', 'hasBaselineEvent', 'countBaselinedSlugs', 'listPendingBaselineSlugs', 'listPurgedFingerprints', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'insertBeliefEvents', 'recordBeliefCommitMarks'],
+  // collate_belief_lifetimes: the belief ledger's page lifetime reads and writes
+  collate_belief_lifetimes: ['readOpenLifetimes', 'mintLifetime', 'endLifetime', 'renameLifetime', 'readMovedLifetimes'],
   // collate_phantom_redirect: the phantom-redirect pass's root-page walk
   collate_phantom_redirect: ['listRootPageSlugsAfter'],
   // collate_take_proposals: the propose_takes failure tombstones (take_proposals rows)

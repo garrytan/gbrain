@@ -4234,6 +4234,16 @@ export interface BrainEngine {
   insertBeliefEvents(rows: readonly import('./engine-sql/collate-belief-writes.ts').BeliefEventRow[]): Promise<number>;
   /** Records the commit observation of each given publication that has events and no mark yet. */
   recordBeliefCommitMarks(publicationIds: readonly string[]): Promise<void>;
+  /** The open lifetimes of the source at each (incarnation, slug) pair (engine-sql/collate-belief-lifetimes.ts). */
+  readOpenLifetimes(sourceId: string, pairs: readonly { incarnation: string; slug: string }[]): Promise<import('./engine-sql/collate-belief-lifetimes.ts').OpenLifetimeRow[]>;
+  /** An open lifetime for the page at its (incarnation, slug), or the one already open there; returns its uuid. */
+  mintLifetime(need: import('./engine-sql/collate-belief-lifetimes.ts').LifetimeNeed): Promise<string>;
+  /** Closes a page lifetime that is open. */
+  endLifetime(lifetime: string): Promise<void>;
+  /** Moves a page lifetime to a slug and page hint; an open lifetime may not take a slug another holds open at its incarnation. */
+  renameLifetime(lifetime: string, slug: string, pageId: number): Promise<void>;
+  /** The open lifetimes whose page hint names a page now at the lifetime's slug. */
+  readMovedLifetimes(pageIds: readonly number[]): Promise<import('./engine-sql/collate-belief-lifetimes.ts').MovedLifetimeRow[]>;
   /** Records a propose_takes failure tombstone (a `rejected` take_proposals row); true when it inserted, false when the claim was already recorded for the page, content hash and prompt version (engine-sql/collate-take-proposals.ts). */
   recordFailureTombstone(input: import('./engine-sql/collate-take-proposals.ts').FailureTombstoneInput): Promise<boolean>;
   /** A source's unacted `rejected` proposals whose claim text starts with `claimPrefix`, by page slug bytes. */

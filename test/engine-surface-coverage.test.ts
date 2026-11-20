@@ -159,6 +159,12 @@ const INTERFACE_METHODS: readonly string[] = [
   'releaseBeliefRedactions',
   'insertBeliefEvents',
   'recordBeliefCommitMarks',
+  // Belief ledger page lifetimes (engine-sql/collate-belief-lifetimes.ts; covered by test/engine-parity/belief-ledger-lifetimes.test.ts)
+  'readOpenLifetimes',
+  'mintLifetime',
+  'endLifetime',
+  'renameLifetime',
+  'readMovedLifetimes',
   // Propose-takes failure tombstones (engine-sql/collate-take-proposals.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'recordFailureTombstone', 'listFailureTombstones',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)

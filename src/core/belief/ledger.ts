@@ -20,7 +20,7 @@ import type { LedgerSource } from '../engine-sql/belief.ts';
 import { heldKey, lifetimeRef, pageKey, sha256Hex, canonicalJson, factKeySubject, slugRef } from './keys.ts';
 import { readBeliefState, readFactsById, type RawPage, type RawState } from './state.ts';
 import { keyedSubjects, keyFact, pageNeeds, type KeyContext, type Subject } from './subjects.ts';
-import { endLifetime, mintLifetime, readOpenLifetimes, renameLifetime, resolveLifetimes } from './lifetimes.ts';
+import { endLifetime, mintLifetime, readOpenLifetimes, readOpenLifetimesOf, renameLifetime, resolveLifetimes } from './lifetimes.ts';
 import { appendBeliefEvents, redactionReleasedDraft, type BeliefEventDraft, type BeliefOrigin, type RedactionRelease } from './append.ts';
 import { missingPreimages, preimageInvariantEnforced } from './preimages.ts';
 
@@ -144,7 +144,7 @@ function matchStreams(slugs: readonly string[], pre: RawState, post: RawState): 
 async function streamLifetimes(tx: BrainEngine, sourceId: string, incarnation: string, streams: Stream[]): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   const pairs = streams.flatMap(s => [s.pre, s.post]).filter((p): p is RawPage => !!p).map(p => ({ incarnation, slug: p.slug }));
-  const open = await readOpenLifetimes(tx, pairs);
+  const open = await readOpenLifetimes(tx, sourceId, pairs);
   const fits = (row: { page_id: number | null } | null, id: number) => !!row && (row.page_id == null || row.page_id === id);
   const mint = (page: RawPage) => mintLifetime(tx, { sourceId, incarnation, slug: page.slug, pageId: page.id });
   // Renamed pages keep their lifetimes. Each moving lifetime is parked first, so renames that swap or chain slugs in one
@@ -491,7 +491,7 @@ export async function currentStateHash(tx: BrainEngine, sourceId: string, incarn
 
 /** resolveLifetimes without writes (a read-only drift scan): a page with no fitting open lifetime gets a placeholder, so its hash cannot match a recorded one. */
 async function peekLifetimes(tx: BrainEngine, needs: ReturnType<typeof pageNeeds>): Promise<Map<number, string>> {
-  const open = await readOpenLifetimes(tx, needs);
+  const open = await readOpenLifetimesOf(tx, needs);
   return new Map(needs.map(n => {
     const row = open.get(`${n.incarnation}\u0000${n.slug}`);
     return [n.pageId, row && (row.page_id == null || row.page_id === n.pageId) ? row.page_lifetime : `unminted:${n.pageId}`];

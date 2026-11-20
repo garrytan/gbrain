@@ -1125,6 +1125,12 @@ export const RUST_ENGINE_MEMBERS = {
   releaseBeliefRedactions: 'belief_ledger',
   insertBeliefEvents: 'belief_ledger',
   recordBeliefCommitMarks: 'belief_ledger',
+  // belief_ledger: the page lifetime writes (engine-sql/collate-belief-lifetimes.ts)
+  readOpenLifetimes: 'belief_ledger',
+  mintLifetime: 'belief_ledger',
+  endLifetime: 'belief_ledger',
+  renameLifetime: 'belief_ledger',
+  readMovedLifetimes: 'belief_ledger',
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
   listPageRefsByIds: 'pages',

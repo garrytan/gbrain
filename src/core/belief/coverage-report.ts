@@ -217,7 +217,7 @@ async function driftOf(engine: BrainEngine, sourceId: string, incarnation: strin
   return engine.transaction(async tx => {
     const [{ hash, state }, last] = [await currentStateHash(tx, sourceId, incarnation, slug, { readOnly: true }), await newestEvent(tx, sourceId, incarnation, slug)];
     if (last?.state_hash === hash) return null;
-    const open = await readOpenLifetimes(tx, [{ incarnation, slug }]);
+    const open = await readOpenLifetimes(tx, sourceId, [{ incarnation, slug }]);
     if (!last && !state.pages.some(p => p.slug === slug) && !state.facts.length && !open.size) return null;
     return { slug, recorded_hash: last?.state_hash ?? null, current_hash: hash, last_event_id: last?.id ?? null };
   });
@@ -281,7 +281,7 @@ export async function reconcileSlug(engine: BrainEngine, sourceId: string, slug:
           links: bound.filter(s => s.kind === 'link').length, link_transitions: bound.filter(s => s.kind === 'link_transition').length }, ...(page.deleted ? { deleted: true } : {}) },
         cause });
     } else {
-      const open = (await readOpenLifetimes(tx, [{ incarnation: source.incarnation, slug }])).get(`${source.incarnation}\u0000${slug}`);
+      const open = (await readOpenLifetimes(tx, sourceId, [{ incarnation: source.incarnation, slug }])).get(`${source.incarnation}\u0000${slug}`);
       if (open) {
         await endLifetime(tx, open.page_lifetime);
         drafts.push({ ...base, lifetime: open.page_lifetime, subjectKind: 'page', subjectKey: pageKey(open.page_lifetime), trustTier: 'unknown', tierBasis: 'unknown',

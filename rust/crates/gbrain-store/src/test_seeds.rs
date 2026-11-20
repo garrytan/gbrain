@@ -14,11 +14,10 @@
 //! `pages::write_page`.
 
 use crate::Store;
-use crate::belief_ledger::{LifetimeRecord, lifetime_key};
+use crate::belief_ledger::{LifetimeRecord, lifetime_key, put_lifetime};
 use crate::error::{Result, StoreError};
 use crate::kv::scan_prefix;
 use crate::pages::{read_page, write_page};
-use crate::put_json;
 use crate::sources::require_source;
 
 impl Store {
@@ -102,11 +101,7 @@ impl Store {
                     started_at_us: now,
                     ended_at_us: None,
                 };
-                put_json(
-                    tx,
-                    &lifetime_key(source_id, slug, &record.page_lifetime),
-                    &record,
-                )?;
+                put_lifetime(tx, &record)?;
                 minted.push(slug.clone());
             }
             Ok(minted)
