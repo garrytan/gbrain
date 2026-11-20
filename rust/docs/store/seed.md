@@ -127,6 +127,50 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
 | `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_generation_clock`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
 
+### Swap readiness: the gaps a real-shaped brain fills (measured 2026-11-20)
+
+The gap count (`src/shadow/seed-gaps.ts`) ran on three PGLite brains built at commit `fb2c18687f`:
+
+- A: a fresh `gbrain init --pglite --no-embedding`.
+- B: A, then the real CLI. The commands imported and synced a 12-page corpus with facts and takes fences, ran
+  `extract`, `sync` with a git rename, `auth` tokens and OAuth clients with `POST /token`, `access` members, groups,
+  rules, sources and links, `loops mute`, `questions pin`, `guests init`, `watch`, `takes horizon set`,
+  `beliefs enable` and `forget --purge`.
+- C: the graduation legacy fixture (`test/fixtures/graduation/legacy-brain.ts`).
+
+Every gap below held rows on at least one of them, so each blocks a swap of such a brain until the seed copies it.
+Its Rust family must reach master first. "Branch" is the newest branch with a real family on 2026-11-20 (UTC).
+
+| Gap | Rows A / B / C | Rust family | Branch, head | On `rust-engine/main` |
+| --- | --- | --- | --- | --- |
+| `git_canonical_brain` | 1 / 1 / 1 | none | none | no |
+| `page_generation_clock` | 1 / 1 / 1 | none | none | no |
+| `page_write_guards` | 0 / 32 / 7 | none (`write_guards.rs` holds other guards) | none | no |
+| `shared_skill_state` | 1 / 1 / 1 | `shared_skill_members.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
+| `shared_skill_heads`, `shared_skill_revisions`, `shared_skill_policies`, `shared_skill_policy_audit` | 3, 3, 1, 1 / same / 0 | `shared_skill_catalog.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
+| `shared_skill_packs` | 1 / 1 / 0 | `shared_skill_publication.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
+| `chronicle_page_state` | 0 / 4 / 0 | `chronicle_ledger.rs`, `chronicle_state.rs` | `rust-engine/page-mutation-reads` cb983366e3 (also `rust-engine/chronicle-decision-rust` e4420913f5) | no |
+| `link_relationships`, `link_transitions` | 0 / 68, 7 / 0 | `link_queries/link_temporal.rs` | `rust-engine/main` 0ce95bbf7f | yes |
+| `sync_identity_downgrades` | 0 / 1 / 0 | `persistence/identity_downgrade.rs` (reader); `persistence/op_checkpoint.rs` (writer, on main) | `rust-engine/identity-downgrade-rust` 73096ca1f8 | writer only |
+| `access_tokens` | 0 / 3 / 2 | `jobs/access_tokens.rs` | `rust-engine/main` 0ce95bbf7f (newer: `rust-engine/page-mutation-reads` cb983366e3) | yes |
+| `oauth_tokens` | 0 / 3 / 1 | `jobs/oauth_tokens.rs` | `rust-engine/write-path-stops-rust` d1ec6f64c1 | no |
+| `oauth_grant_audit` | 0 / 3 / 0 | `jobs/client_grants.rs` | `rust-engine/admin-followups-rust` 8e72de1bb6 | no |
+| `access_members`, `access_groups`, `access_group_members` | 0 / 2, 1, 2 / 0 | `access_members.rs` | `rust-engine/coll-pa3` 9e0c35e58c | no |
+| `access_rules`, `access_policy_state`, `access_policy_revisions` | 0 / 2, 1, 2 / 0 | `access_rules.rs` | `rust-engine/page-mutation-reads` cb983366e3 | no |
+| `access_member_links` | 0 / 1 / 0 | `access_member_links.rs` | `rust-engine/admin-followups-rust` 8e72de1bb6 | no |
+| `access_member_sources` | 0 / 1 / 0 | none | none | no |
+| `loop_suppressions` | 0 / 2 / 2 | `facts/loops/mutes.rs` | `rust-engine/repair-rust` 90a7284da0 | no |
+| `belief_events`, `belief_commit_marks`, `belief_page_lifetimes` | 0 / 24, 22, 18 / 0 | `trust/belief_events.rs`, `trust/belief_lifetimes.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
+| `fact_purges` | 0 / 1 / 0 | `facts/purge_ledger.rs` | `rust-engine/main` 0ce95bbf7f | yes |
+| `take_purges` | 0 / 1 / 0 | `facts/take_purges.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
+| `take_horizons` | 0 / 1 / 0 | `takes/horizons.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
+| `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/collate-equal` 3a2532707c | no |
+| `pinned_questions` | 0 / 1 / 0 | `jobs/pinned_questions.rs` | `rust-engine/collate-equal` 3a2532707c | no |
+| `context_volunteer_events` | 0 / 1 / 0 | `volunteer_events.rs` | `rust-engine/collate-equal` 3a2532707c | no |
+
+No measured brain wrote rows to the other 39 gap tables. Those tables need a paid model key, a browser or tty step,
+or an event the run did not make, so this measurement does not clear them.
+
 ## What the seed does not keep
 
 Nothing is dropped silently. `unmapped_columns` names each column that held a value other than its default in some
