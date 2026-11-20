@@ -365,7 +365,8 @@ describeE2E('a temp table or view named like a ledger hides nothing from the gua
     }
   }, 300_000);
 
-  test('10. v330 leaves a fact guard another role owns with its earlier body and names it with the fix', async () => {
+  test('10. v330 leaves a fact guard another role owns with its earlier body, names it with the fix, and a migration run after the fix installs the current body', async () => {
+    const { ledgerGuardsWithoutCheck } = await import('../../src/core/guard-ledger-checks.ts');
     const { REFUSE_PURGED_FACT_FUNCTION_SQL } = await import('../../src/core/facts/purge-schema.ts');
     const brain = await freshBrain();
     const migrator = `gbrain_test_guard_migrator_${suffix}`;
@@ -376,8 +377,8 @@ describeE2E('a temp table or view named like a ledger hides nothing from the gua
       "SELECT strpos(prosrc, 'body before v330') = 0 AS current FROM pg_proc WHERE proname = 'gbrain_refuse_purged_fact'"))[0]!.current;
     const engine = new PostgresEngine();
     try {
-      // A body other than the one v330 installs.
-      await brain.conn.unsafe(REFUSE_PURGED_FACT_FUNCTION_SQL.replace('$fn$', '$fn$\n-- body before v330\n'));
+      // A body other than the one v330 installs, without its case-fold legacy branch (the marker legacy_fold).
+      await brain.conn.unsafe(REFUSE_PURGED_FACT_FUNCTION_SQL.replace('$fn$', '$fn$\n-- body before v330\n').replaceAll('legacy_fold', 'earlier_fold'));
       await brain.conn.unsafe(`GRANT USAGE, CREATE ON SCHEMA public TO ${migrator};
         DO $$ DECLARE r RECORD; BEGIN
           FOR r IN SELECT c.oid::regclass AS rel FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -402,6 +403,14 @@ describeE2E('a temp table or view named like a ledger hides nothing from the gua
         + 'the next migration run re-creates them (docs/ENGINES.md#purge-and-withdrawal-guards).\n');
       expect(stderr).not.toContain('left without pg_temp');
       expect(await current()).toBe(false);
+      expect((await ledgerGuardsWithoutCheck(engine)).map(g => ({ sig: g.sig, owner: g.owner, owned: g.owned })))
+        .toEqual([{ sig: 'gbrain_refuse_purged_fact()', owner: other, owned: false }]);
+      await brain.conn.unsafe(`ALTER FUNCTION public.gbrain_refuse_purged_fact() OWNER TO ${migrator}`);
+      const after = await capturingStderr(() => runMigrations(engine));
+      expect(after.value.applied).toBe(0);
+      expect(after.stderr).not.toContain('guards:');
+      expect(await current()).toBe(true);
+      expect(await ledgerGuardsWithoutCheck(engine)).toEqual([]);
     } finally {
       await engine.disconnect().catch(() => {});
       await brain.conn.end();

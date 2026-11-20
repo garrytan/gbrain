@@ -16,15 +16,15 @@ import { DERIVATION_SCOPE_ENTRY_FUNCTION_SQL, REFUSE_PURGING_DERIVATION_FUNCTION
 
 /**
  * Each guard, the ledger whose check marks its current body, that body, and for a guard a later migration changed again
- * a text only its current body holds (GBRA-574 v321: the facts guards' name-key branch), so the migration run of a role
- * that owns it re-creates it too.
+ * a text only its current body holds (v330: `legacy_fold`, the alias of the PGLite-fold legacy fingerprint, which the
+ * four fact and take guards hold beside v321's name-key branch), so the migration run of a role that owns it re-creates it too.
  */
 const LEDGER_GUARDS: ReadonlyArray<{ name: string; ledger: string; sql: string; marker?: string }> = [
-  { name: 'gbrain_refuse_purged_fact', ledger: 'fact_purges', sql: REFUSE_PURGED_FACT_FUNCTION_SQL, marker: 'unbacked_page' },
-  { name: 'gbrain_refuse_purged_take', ledger: 'take_purges', sql: REFUSE_PURGED_TAKE_FUNCTION_SQL },
+  { name: 'gbrain_refuse_purged_fact', ledger: 'fact_purges', sql: REFUSE_PURGED_FACT_FUNCTION_SQL, marker: 'legacy_fold' },
+  { name: 'gbrain_refuse_purged_take', ledger: 'take_purges', sql: REFUSE_PURGED_TAKE_FUNCTION_SQL, marker: 'legacy_fold' },
   { name: 'gbrain_refuse_purged_page', ledger: 'page_purges', sql: REFUSE_PURGED_PAGE_FUNCTION_SQL },
-  { name: 'gbrain_preserve_fact_withdrawal', ledger: 'fact_withdrawals', sql: FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL, marker: 'memory/scope' },
-  { name: 'gbrain_guard_inserted_facts', ledger: 'fact_withdrawals', sql: FACT_INSERT_GUARD_FUNCTION_SQL, marker: 'memory/scope' },
+  { name: 'gbrain_preserve_fact_withdrawal', ledger: 'fact_withdrawals', sql: FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL, marker: 'legacy_fold' },
+  { name: 'gbrain_guard_inserted_facts', ledger: 'fact_withdrawals', sql: FACT_INSERT_GUARD_FUNCTION_SQL, marker: 'legacy_fold' },
   { name: 'gbrain_mark_derivation_scope_entry', ledger: 'page_segment_derivation_purges', sql: DERIVATION_SCOPE_ENTRY_FUNCTION_SQL },
   { name: 'gbrain_refuse_purging_derivation', ledger: 'page_segment_derivation_purges', sql: REFUSE_PURGING_DERIVATION_FUNCTION_SQL },
 ];
