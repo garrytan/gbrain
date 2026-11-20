@@ -1801,10 +1801,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     // #5405: coordinated on managed brains; #7130: `automatic` keeps managed sync tombstones with no live twin.
     const purgedPages = await purgeDeletedPagesCoordinated(engine, retentionHours, { automatic: true });
     const purgedClones = await purgeOrphanClones(retentionHours);
-    const rebuild = await readHeldConcepts(engine, isAvailable('chat')).catch((e: unknown) => { // #9653: kept for the next concept synthesis
-      console.warn(`[cycle] held-concept report skipped: ${e instanceof Error ? e.message : String(e)}`);
-      return { held: [], kept: [] };
-    });
+    const rebuild = await readHeldConcepts(engine, isAvailable('chat')); // #9653: kept for the next concept synthesis
     // #6770: request-log rows past cycle.purge.mcp_request_log_retention_days, when set (logic in mcp-request-log-retention.ts).
     let purgedMcpLog = 0;
     try { purgedMcpLog = (await (await import('./mcp-request-log-retention.ts')).runMcpLogRetention(engine))?.deleted ?? 0; } catch (e) { console.warn(`[cycle] request-log retention skipped: ${e instanceof Error ? e.message : String(e)}`); }
