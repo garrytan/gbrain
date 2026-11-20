@@ -29,6 +29,7 @@ import { lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { engineKey } from '../../engine-key.ts';
 import { requestSignal } from '../../request-signal.ts';
+import { OperationError } from '../../ops/contract.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
 import { callerAccessRecord } from '../../search/private-visibility.ts';
@@ -433,7 +434,11 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
         const startedAt = Date.now();
         const signals = callerSignals(args);
         const { deadlineAt } = callDeadline();
-        await rejoin().catch(() => undefined);
+        // An election that fails ends this call with its own error (a store that would not open, a disconnect that won),
+        // not with the `engine_closed` the emptied engine would give; a call the election could not place still ends
+        // `owner_unavailable` (`not_sent`) below.
+        const failure = await rejoin().then(() => null, (error: unknown) => ({ error }));
+        if (failure && !(failure.error instanceof OperationError && failure.error.code === 'owner_unavailable')) throw failure.error;
         const now = record[member];
         if (now !== value && typeof now === 'function') {
           for (const signal of signals) if (signal.aborted) throw abortError(member, signal, startedAt, false);

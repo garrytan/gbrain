@@ -333,7 +333,10 @@ describe('openRustEngine', () => {
       await gate.opening();
       expect(engine.ownerRole).toBe('owner');
       gate.failOpen();
-      expect(await call).not.toBe('resolved');
+      // The call that ran the failed takeover ends with the store's own error, not the engine_closed the emptied engine gives.
+      const failure = await call;
+      expect(failure).not.toBe('resolved');
+      expect(failure).not.toBe('engine_closed');
       expect({ connected: engine.connected, role: engine.ownerRole, stats: engine.ownerStats() }).toEqual({ connected: false, role: null, stats: null });
       expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
       // The lock and the socket were given up: another process can take the brain, and nothing answers there.
