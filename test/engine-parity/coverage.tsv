@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1225/1231
+# covered: 1225/1232
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -16,7 +16,7 @@
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 47/47
-# extraction: 8/10
+# extraction: 8/11
 # links: 23/23
 # tags: 5/5
 # timeline: 23/23
@@ -271,6 +271,7 @@ stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
+listPageRefsForSlugs	extraction	no	0	no	-	-	-
 addLink	links	yes	121	yes	yes	yes	serves
 addLinksBatch	links	yes	28	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	15	no	yes	yes	serves

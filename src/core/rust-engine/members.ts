@@ -99,6 +99,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsFencePages: 'pages',
   listSweepStalePages: 'pages',
   listSweepDeferredPages: 'pages',
+  listPageRefsForSlugs: 'pages',
   markPagesExtractedBatch: 'pages',
   markPagesAttendanceBlocked: 'pages',
   countStaleFrontmatterKeyPages: 'pages',

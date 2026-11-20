@@ -44,4 +44,16 @@ impl Brain {
             s.list_sweep_deferred_pages(&required(input, "listSweepDeferredPages input")?)
         })
     }
+
+    /// `listPageRefsForSlugs({ slugs })`: resolves the live pages of any source with those slugs.
+    #[napi]
+    pub fn list_page_refs_for_slugs<'env>(
+        &self,
+        env: &'env Env,
+        input: serde_json::Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_page_refs_for_slugs(&required(input, "listPageRefsForSlugs input")?)
+        })
+    }
 }

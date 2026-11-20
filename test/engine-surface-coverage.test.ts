@@ -295,7 +295,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readEmbeddingCompletion', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings',
   'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows', 'deleteChunks',
   // Extraction watermark
-  'countStalePagesForExtraction', 'listStalePagesForExtraction', 'listFactsFencePages', 'listSweepStalePages', 'listSweepDeferredPages', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
+  'countStalePagesForExtraction', 'listStalePagesForExtraction', 'listFactsFencePages', 'listSweepStalePages', 'listSweepDeferredPages', 'listPageRefsForSlugs', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
   // #6454 stale reserved frontmatter keys
   'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys',
   // Links + graph
