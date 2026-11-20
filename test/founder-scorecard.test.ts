@@ -12,6 +12,7 @@
 import { describe, test, expect } from 'bun:test';
 import { computeFounderScorecard } from '../src/commands/founder-scorecard.ts';
 import type { TrajectoryPoint, Take } from '../src/core/engine.ts';
+import { detectRegressions } from '../src/core/trajectory.ts';
 
 function pt(args: {
   id: number;
@@ -240,5 +241,50 @@ describe('computeFounderScorecard — red_flags', () => {
       ],
     });
     expect(sc.red_flags).toEqual([]);
+  });
+});
+
+describe('computeFounderScorecard — growth delta on negative-valued metrics', () => {
+  test('a net_income loss shrinking from -100000 to -50000 reads up, +50%', () => {
+    const sc = computeFounderScorecard({
+      entitySlug: 'companies/acme-example',
+      windowSince: null, windowUntil: null,
+      points: [
+        pt({ id: 1, metric: 'net_income', value: -100000, date: '2026-01-01' }),
+        pt({ id: 2, metric: 'net_income', value: -50000, date: '2026-02-01' }),
+      ],
+      takes: [],
+    });
+    expect(sc.growth_trajectory).toEqual([
+      { metric: 'net_income', direction: 'up', latest_delta_pct: 0.5 },
+    ]);
+  });
+
+  test('a net_income loss deepening from -50000 to -100000 reads down, -100%', () => {
+    const sc = computeFounderScorecard({
+      entitySlug: 'companies/acme-example',
+      windowSince: null, windowUntil: null,
+      points: [
+        pt({ id: 1, metric: 'net_income', value: -50000, date: '2026-01-01' }),
+        pt({ id: 2, metric: 'net_income', value: -100000, date: '2026-02-01' }),
+      ],
+      takes: [],
+    });
+    expect(sc.growth_trajectory).toEqual([
+      { metric: 'net_income', direction: 'down', latest_delta_pct: -1 },
+    ]);
+  });
+
+  test('growth delta agrees with the regression delta on the same loss (abs denominator)', () => {
+    const points = [
+      pt({ id: 1, metric: 'net_income', value: -50000, date: '2026-01-01' }),
+      pt({ id: 2, metric: 'net_income', value: -100000, date: '2026-02-01' }),
+    ];
+    const sc = computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, points, takes: [],
+    });
+    const regression = detectRegressions(points);
+    expect(regression).toHaveLength(1);
+    expect(sc.growth_trajectory[0].latest_delta_pct).toBe(regression[0].delta_pct);
   });
 });
