@@ -129,7 +129,7 @@ key of their own. The `derivation_inputs` edges are not kept on this store line:
 
 | Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
 | --- | --- | --- |
-| `lowerTrustTier` | `lower_trust_tier`: pages only (the member refuses `takes` and `timeline_entries`); lowers each listed page, soft-deleted included, whose stored rank is above the tier; keeps the revision; returns the ids lowered by id | `UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
+| `lowerTrustTier` | `lower_trust_tier`: facts, takes, timeline rows or pages; lowers each listed row whose stored rank is above the tier (a page soft-deleted or not, keeping its revision; a timeline row found by a scan of `E`); the stamp runs as for an UPDATE naming both columns with no content change; returns the ids lowered by id | `UPDATE <table> SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
 | `countDerivedRowTaint` | `count_derived_row_taint`: pages, takes or timeline entries whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` | `SELECT count(*) FILTER (…) … FROM <table>` |
 | `countDerivedFactTaint` | `count_derived_fact_taint`: the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
 | `stampPageFrontmatter` | `stamp_page_frontmatter`: merges `retired_by`/`retired_at` into soft-deleted pages, or `source_hash` into live `atom` pages; a page the merge leaves unchanged is not written | `UPDATE pages SET frontmatter=frontmatter\|\|jsonb_build_object(…) WHERE …` |

@@ -49,7 +49,7 @@ pub mod withdrawals;
 pub mod write_gate;
 
 pub(crate) use eligibility::TrustPolicy;
-pub(crate) use row_trust::{RowTrust, stamp_row};
+pub(crate) use row_trust::{RowTrust, set_row_trust, stamp_row};
 pub(crate) use write_gate::activation_suppressed;
 
 pub(crate) use stamp::{

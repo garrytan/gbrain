@@ -15,7 +15,7 @@ use gbrain_store::trust::derivation::{FrontmatterStampSpec, LowerTierSpec, Taint
 
 #[napi]
 impl Brain {
-    /// `lowerTrustTier(spec)`: lowers listed pages; resolves the ids lowered.
+    /// `lowerTrustTier(spec)`: lowers listed rows of one table; resolves the ids lowered.
     #[napi]
     pub fn lower_trust_tier<'env>(
         &self,

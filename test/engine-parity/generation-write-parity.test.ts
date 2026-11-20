@@ -1,7 +1,8 @@
 /**
  * BrainEngine parity — the trust writes of a derived page generation answer PGLite's output on Postgres and on a Rust
- * brain: a single-page derivation publish (the dream summary of cycle/synthesize.ts), a derived retirement, and an atom
- * generation publish with its completion stamp and the retirement of an atom the extraction no longer produced.
+ * brain: a single-page derivation publish (the dream summary of cycle/synthesize.ts), a derived retirement, an atom
+ * generation publish with its completion stamp and the retirement of an atom the extraction no longer produced, and the
+ * derived-tier lowering (lowerTrustTier) of facts, takes and timeline rows.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres and the Rust engine: the derivation's tier, origin
@@ -9,21 +10,21 @@
  *    each derived page, its recorded input edges and what is derived from a row through them
  *    (facts/derivation-inputs.ts), the explicit lowering of a page whose content did not change (lowerDerivedPage), the
  *    derived share doctor reads, the retirement stamp (`retired_by`, `retired_at`) on soft-deleted pages only with
- *    their tier and origin kept, and the atom completion stamp (`source_hash`).
+ *    their tier and origin kept, the atom completion stamp (`source_hash`), and which facts, takes and timeline rows
+ *    lowerTrustTier lowers and the tier and origin each keeps (a row at or below the tier is never raised).
  *  - Regression: these flows sent raw SQL (taint.ts, derived-retirement-hold.ts and the atom adapter's
  *    completeItems), so a Rust brain stopped on `raw_sql` at the first derived write: no dream summary, no retirement
- *    and no atom generation published there.
- *  - Rust arm on this branch: the retirement case matches PGLite. The derivation publish and the atoms publish record
- *    derivation edges (facts/derivation-inputs.ts), which still send raw SQL here, so those two cases stop on the
- *    typed `raw_sql` refusal (rust-tally.tsv). The derivation edges are typed on rust-engine/derivation-hide.
+ *    and no atom generation published there. The Rust lowerTrustTier served pages only and refused a fact, take or
+ *    timeline row with `engine_capability_missing`, so a derived fact or take was never lowered there.
  *  - Why existing coverage misses it: generation-output-parity.test.ts publishes a single page with no derivation and
- *    reads atom inputs, but publishes no derivation, retires nothing and publishes no atom.
+ *    reads atom inputs, but publishes no derivation, retires nothing and publishes no atom; the derivation publish case
+ *    here lowers pages only.
  *  - Seam: none. Typed members and the real generation paths only (no executeRaw: D18). Page ids differ between
  *    engines, so every answer names a page by its slug. Postgres runs when DATABASE_URL is set (testBackends); the
  *    Rust arm runs through test/engine-parity/harness.ts.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { maintenanceTransaction } from '../../src/core/persistence/attribution.ts';
@@ -176,6 +177,51 @@ describe('engine parity: derived generation trust writes', () => {
     expect(answers.first.state).toBe('published');
     expect(answers.afterFirst.edges).toEqual(['pages:atoms/one 1', 'pages:atoms/two 1']);
     expect(answers.afterSecond.stamp['atoms/two']).toEqual({ deleted: true, source_hash: true, retired_by: 'extract-atoms' });
+    return answers;
+  });
+
+  parityTest('lowerTrustTier lowers facts, takes and timeline rows ranked above the tier, keeps the rest and never raises', {
+    methods: ['putPage', 'transaction', 'insertFact', 'addTakesBatch', 'listTakes', 'addTimelineEntry', 'getTimeline', 'readRowTrustRows',
+      'lowerTrustTier'],
+  }, async (engine) => {
+    const page = await engine.putPage('people/lower-example', { type: 'person', title: 'L', compiled_truth: 'L', timeline: '' });
+    const fact = (text: string) => (tx: BrainEngine) =>
+      tx.insertFact({ fact: text, entity_slug: 'people/lower-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
+    const take = (row_num: number, claim: string) => ({ page_id: page.id, row_num, claim, kind: 'take' as const, holder: 'h', weight: 0.5 });
+    const seeds: Array<[TrustTier | null, string]> = [['operator_curated', 'curated'], ['external_untrusted', 'external'], [null, 'bare']];
+    const factIds = new Map<number, string>();
+    for (const [i, [tier, name]] of seeds.entries()) {
+      const write = async (tx: BrainEngine) => {
+        factIds.set((await fact(name)(tx)).id, name);
+        await tx.addTakesBatch([take(i + 1, name)]);
+        await tx.addTimelineEntry('people/lower-example', { date: `2026-08-0${i + 1}`, summary: name });
+      };
+      if (tier) await maintenanceTransaction(engine, write, trustAt(tier));
+      else await write(engine);
+    }
+    const takeIds = new Map((await engine.listTakes({ page_id: page.id })).map(t => [Number(t.id), t.claim]));
+    const entryIds = new Map((await engine.getTimeline('people/lower-example')).map(e => [Number(e.id), e.summary]));
+    const tables = { facts: factIds, takes: takeIds, timeline_entries: entryIds } as const;
+    const origin = { channel: 'derive:test' };
+    const answers: Record<string, unknown> = {};
+    for (const [table, names] of Object.entries(tables) as Array<[keyof typeof tables, Map<number, string>]>) {
+      const ids = [...names.keys()];
+      const lowered = await engine.lowerTrustTier(table, [...ids, Math.max(...ids) + 1000], 'agent_written', origin);
+      const again = await engine.lowerTrustTier(table, ids, 'agent_written', origin);
+      const rows = await engine.readRowTrustRows({ table, ids });
+      answers[table] = {
+        lowered: lowered.map(id => names.get(Number(id))),
+        again: again.length,
+        trust: Object.fromEntries(sorted(rows.map(r => [names.get(Number(r.id)), { tier: r.trust_tier, origin: r.write_origin }] as const), ([n]) => String(n))),
+      };
+    }
+    answers.none = await engine.lowerTrustTier('facts', [], 'agent_written', origin);
+    expect(answers.facts).toEqual({
+      lowered: ['curated'], again: 0,
+      trust: { bare: { tier: 'unknown', origin: null }, curated: { tier: 'agent_written', origin }, external: { tier: 'external_untrusted', origin: { channel: 'test:fixture' } } },
+    });
+    expect(answers.takes).toEqual(answers.facts);
+    expect(answers.timeline_entries).toEqual(answers.facts);
     return answers;
   });
 });

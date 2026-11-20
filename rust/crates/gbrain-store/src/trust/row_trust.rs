@@ -43,6 +43,37 @@ impl RowTrust {
     }
 }
 
+/// The columns the trigger would store for an `UPDATE` of a row of `table` stored with `old` that
+/// sets both `trust_tier` to `tier` and `write_origin` to `origin` and no content column (the
+/// derived-tier lowering of `lowerTrustTier`): the stamp reads `tier` as the new tier and keeps
+/// the set origin.
+pub(crate) fn set_row_trust(
+    table: TrustTable,
+    old: &RowTrust,
+    tier: super::TrustTier,
+    origin: Option<Value>,
+) -> Result<RowTrust> {
+    let context = stamp_context::current()?;
+    let stamped = stamp(
+        &context,
+        table,
+        StampRow::Update {
+            old: old.tier(),
+            new: tier,
+            content_changed: false,
+            origin_set: old.write_origin != origin,
+        },
+    )?;
+    Ok(RowTrust {
+        trust_tier: (stamped.tier != super::TrustTier::Unknown)
+            .then(|| stamped.tier.as_str().to_owned()),
+        write_origin: match stamped.origin {
+            OriginStamp::Keep => origin,
+            OriginStamp::Set(set) => set,
+        },
+    })
+}
+
 /// The columns the trigger would store for a row of `table` under the open write's trust
 /// context: an insert carrying `supplied`, or an update of a row stored with `old` whose content
 /// columns changed when `content_changed`.

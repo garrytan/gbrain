@@ -3,19 +3,17 @@
  * (rust/crates/gbrain-store/src/trust/derivation.rs): the tier lowering, the taint counts and the frontmatter stamps
  * read and write the page, take, timeline and fact records.
  *
- * `lowerTrustTier` is served for pages; on facts, takes and timeline rows it refuses with `engine_capability_missing`,
- * because no derivation the store serves lowers those yet.
+ * `lowerTrustTier` lowers facts, takes, timeline rows and pages, as the SQL engines do.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-/** Lowers the pages of `ids` whose stored tier ranks above `tier`; resolves the ids lowered. */
+/** Lowers the rows of `table` among `ids` whose stored tier ranks above `tier`; resolves the ids lowered. */
 export const lowerTrustTier: Member<'lowerTrustTier'> = async (brain, table, ids, tier, origin) => {
-  if (table !== 'pages') refuseMember('lowerTrustTier', `a ${table} row`);
   if (!ids.length) return [];
-  return storeCall({ member: 'lowerTrustTier' }, () => brain.lowerTrustTier({ ids: [...ids], tier, origin: origin ?? null }));
+  return storeCall({ member: 'lowerTrustTier' }, () => brain.lowerTrustTier({ table, ids: [...ids], tier, origin: origin ?? null }));
 };
 
 /** How many take, timeline or page rows carry `taint_inputs`, and how many of those are external_untrusted. */
