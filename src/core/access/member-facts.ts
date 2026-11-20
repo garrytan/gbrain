@@ -177,12 +177,19 @@ export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, 
  * derivation-private (private, privacy alias, readable_by, folder rule), missing or quarantined (factPagesOpenSql, the
  * same pages `gbrain repair open-facts` refuses to open), and that has a page to check: never an unpaged or
  * transcript-lane fact (unpagedFactSql), conversation archive included. FALSE outside such a grant. Source ids passed
- * isValidSourceId, so they embed as literals.
+ * isValidSourceId, so they embed as literals. GST-2979: a held row (a restatement with a visibility proposal) is admitted
+ * only when the grant also reads every copy its proposals name, so no fact read hands a grant text the page overlay
+ * holds from it (fence-overlay.ts heldRowSql uses this same predicate).
  */
 export function grantedPrivateFactSql(alias: string): string {
   const sources = privateFactSources();
   if (!sources.length) return 'FALSE';
-  return `(${alias}.visibility = 'private' AND ${alias}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(alias)}, false) AND ${factPagesOpenSql(alias)})`;
+  const opens = (a: string) => `(${a}.visibility = 'private' AND ${a}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(a)}, false) AND ${factPagesOpenSql(a)})`;
+  return `(${opens(alias)} AND NOT EXISTS (SELECT 1 FROM trust_proposals held_prop
+    LEFT JOIN facts held_copy ON held_prop.target_table = 'facts' AND held_copy.id = held_prop.target_id
+    WHERE held_prop.related_table = 'facts' AND held_prop.related_id = ${alias}.id AND held_prop.action IN ('supersede_fact', 'confirm')
+      AND held_prop.before_state->'visibility' IS NOT NULL
+      AND (held_copy.id IS NULL OR NOT (${memberFactAdmitSql('held_copy')} OR ${opens('held_copy')}))))`;
 }
 
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql and grantedPrivateFactSql. */
