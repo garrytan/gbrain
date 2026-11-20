@@ -266,3 +266,230 @@ describe('engine parity: the grade_takes verdict cache and gbrain takes grades',
     return got;
   });
 });
+
+/** Fixture: takes at rows 1..n of a new page in `sourceId`, all made on 2023-02-01; their ids by row. */
+async function datedTakes(engine: BrainEngine, slug: string, claims: string[], sourceId = 'default') {
+  const page = await engine.putPage(slug, body(slug), { sourceId });
+  const pageId = Number(page.id);
+  await engine.addTakesBatch(claims.map((claim, i) => ({ page_id: pageId, row_num: i + 1, claim, kind: 'bet', holder: 'alice-example', weight: 0.6, since_date: '2023-02-01' })));
+  const ids: number[] = [];
+  for (let row = 1; row <= claims.length; row++) ids.push((await engine.findTakeId(pageId, row))!);
+  return { pageId, ids };
+}
+
+describe('engine parity: the horizons of gbrain takes horizon and the forecast journal', () => {
+  parityTest('takes horizon scans, sets and clears the same horizons; an edited claim reads as not current; a deleted take drops its horizon', {
+    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'softDeletePage', 'deletePage', 'readTakeClaim', 'upsertTakeHorizon', 'deleteTakeHorizon', 'listTakeHorizons', 'listHorizonScanRows'],
+  }, async (engine, backend) => {
+    const { readTakeHorizons } = await import('../../src/core/takes-horizon.ts');
+    await createSource(engine, backend, 'other');
+    const scan = await datedTakes(engine, 'notes/h-scan', [
+      'Acme-example will reach $5M ARR by the end of 2024',
+      'Cobalt-example has the strongest team in its market',
+      'Bluefin-example will open a Berlin office within 18 months',
+    ]);
+    const other = await datedTakes(engine, 'notes/h-other', ['Other-example will ship by Q3 2025'], 'other');
+    await datedTakes(engine, 'notes/h-gone', ['Gone-example will be acquired before 2025']);
+    await engine.softDeletePage('notes/h-gone');
+    const drop = await datedTakes(engine, 'notes/h-drop', ['Drop-example will reach profit by March 2026']);
+    // Take ids never compare across arms: name them in the output.
+    const names = new Map<number, string>([[scan.ids[0]!, 'acme'], [scan.ids[1]!, 'cobalt'], [scan.ids[2]!, 'bluefin'], [other.ids[0]!, 'other'], [drop.ids[0]!, 'drop']]);
+    const named = (text: string) => [...names].reduce((t, [id, name]) => t.replaceAll(`"take_id": ${id},`, `"take_id": "${name}",`).replaceAll(`take ${id}:`, `take ${name}:`), text);
+    const horizon = async (...args: string[]) => {
+      const run = await runCommand(() => runTakes(engine, ['horizon', ...args]));
+      return { ...run, stdout: named(run.stdout) };
+    };
+    const journal = async (ids?: number[]) => [...(await readTakeHorizons(engine, ids))].map(([id, h]) => {
+      expect(h.set_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(h.take_id).toBe(id);
+      return [names.get(id), h.horizon_date, h.basis, h.current];
+    }).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const got: Record<string, unknown> = {};
+    got.preview = await horizon('scan', '--json');
+    got.journalBefore = await journal();
+    got.applied = await horizon('scan', '--apply', '--json');
+    got.again = await horizon('scan');
+    got.set = await horizon('set', 'notes/h-scan', '--row', '2', '--date', '2025-06-30');
+    got.badDate = await horizon('set', 'notes/h-scan', '--row', '1', '--date', '2025-02-30');
+    // An edited claim keeps its horizon row, which now reads as not current; the scan proposes the new deadline.
+    await engine.addTakesBatch([{ page_id: scan.pageId, row_num: 1, claim: 'Acme-example will reach $5M ARR by the end of 2025', kind: 'bet', holder: 'alice-example', weight: 0.6, since_date: '2023-02-01' }]);
+    got.afterEdit = await horizon('scan', '--json');
+    got.otherSource = await horizon('scan', '--source-id', 'other', '--json');
+    got.journal = await journal();
+    got.journalSome = await journal([scan.ids[1]!, other.ids[0]!, drop.ids[0]! + 1000]);
+    got.cleared = await horizon('clear', 'notes/h-scan', '--row', '2');
+    got.clearedAgain = await horizon('clear', 'notes/h-scan', '--row', '2');
+    await engine.deletePage('notes/h-drop');
+    got.afterDelete = await journal();
+    const json = (value: unknown) => ({ code: null, stdout: JSON.stringify(value, null, 2), stderr: '' });
+    const proposal = (take: string, claim: string, date: string, basis: string, phrase: string, replaces: string | null = null) =>
+      ({ take_id: take, claim, horizon_date: date, basis, phrase, replaces });
+    const acme = proposal('acme', 'Acme-example will reach $5M ARR by the end of 2024', '2024-12-31', 'stated', 'by the end of 2024');
+    const bluefin = proposal('bluefin', 'Bluefin-example will open a Berlin office within 18 months', '2024-08-01', 'stated_relative', 'within 18 months');
+    const otherP = proposal('other', 'Other-example will ship by Q3 2025', '2025-09-30', 'stated', 'by Q3 2025');
+    const dropP = proposal('drop', 'Drop-example will reach profit by March 2026', '2026-03-31', 'stated', 'by March 2026');
+    expect(got).toEqual({
+      preview: json({ applied: false, proposed: [acme, bluefin, otherP, dropP], written: 0, kept_owner: 0, unparsed: 1 }),
+      journalBefore: [],
+      applied: json({ applied: true, proposed: [acme, bluefin, otherP, dropP], written: 4, kept_owner: 0, unparsed: 1 }),
+      again: { code: null, stderr: '', stdout: '0 stated horizon(s) to write. 0 owner horizon(s) kept, 1 take(s) state no single deadline.' },
+      set: { code: null, stderr: '', stdout: 'Set the horizon of notes/h-scan#2 to 2025-06-30 (owner).' },
+      badDate: { code: 1, stdout: '', stderr: 'horizon date "2025-02-30" is not a calendar day in YYYY-MM-DD form\n' },
+      afterEdit: json({ applied: false, proposed: [proposal('acme', 'Acme-example will reach $5M ARR by the end of 2025', '2025-12-31', 'stated', 'by the end of 2025', '2024-12-31')], written: 0, kept_owner: 1, unparsed: 0 }),
+      otherSource: json({ applied: false, proposed: [], written: 0, kept_owner: 0, unparsed: 0 }),
+      journal: [['acme', '2024-12-31', 'stated', false], ['bluefin', '2024-08-01', 'stated_relative', true], ['cobalt', '2025-06-30', 'owner', true],
+        ['drop', '2026-03-31', 'stated', true], ['other', '2025-09-30', 'stated', true]],
+      journalSome: [['cobalt', '2025-06-30', 'owner', true], ['other', '2025-09-30', 'stated', true]],
+      cleared: { code: null, stderr: '', stdout: 'Cleared the horizon of notes/h-scan#2.' },
+      clearedAgain: { code: null, stderr: '', stdout: 'notes/h-scan#2 had no horizon.' },
+      afterDelete: [['acme', '2024-12-31', 'stated', false], ['bluefin', '2024-08-01', 'stated_relative', true], ['other', '2025-09-30', 'stated', true]],
+    });
+    return got;
+  });
+
+  parityTest('the horizon members refuse a horizon for a missing take and read a missing take as null', {
+    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'readTakeClaim', 'upsertTakeHorizon', 'deleteTakeHorizon', 'listTakeHorizons', 'listHorizonScanRows'],
+  }, async (engine) => {
+    const { ids } = await datedTakes(engine, 'notes/h-member', ['Member-example will ship by 2027']);
+    const missing = ids[0]! + 1000;
+    const got = {
+      claim: await engine.readTakeClaim(ids[0]!),
+      missingClaim: await engine.readTakeClaim(missing),
+      missingUpsert: await engine.upsertTakeHorizon({ takeId: missing, claimSha256: 'x', horizonDate: '2027-12-31', basis: 'owner' }).then(() => 'ok', (e: Error) => e.message),
+      missingDelete: await engine.deleteTakeHorizon(missing),
+      none: await engine.listTakeHorizons([missing]),
+      // The scan reads every live take with no horizon as a row with null horizon fields; the id is left out (not stable across arms).
+      scan: (await engine.listHorizonScanRows('default')).map(({ id: _id, ...rest }) => rest),
+      otherSource: await engine.listHorizonScanRows('no-such-source'),
+    };
+    expect(got).toEqual({
+      claim: 'Member-example will ship by 2027', missingClaim: null,
+      missingUpsert: 'insert or update on table "take_horizons" violates foreign key constraint "take_horizons_take_id_fkey"',
+      missingDelete: false, none: [],
+      scan: [{ claim: 'Member-example will ship by 2027', since_date: '2023-02-01', basis: null, claim_sha256: null, horizon_date: null }],
+      otherSource: [],
+    });
+    return got;
+  });
+});
+
+describe('engine parity: the page grade_takes resolves a judged take on', () => {
+  parityTest('readLiveTakePage finds the live page holding the claim at its row, in any source, and nothing else', {
+    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'softDeletePage', 'readLiveTakePage'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const live = await datedTakes(engine, 'notes/g-live', ['one', 'two']);
+    const elsewhere = await datedTakes(engine, 'notes/g-other', ['one'], 'other');
+    const gone = await datedTakes(engine, 'notes/g-gone', ['one']);
+    await engine.softDeletePage('notes/g-gone');
+    const at = (pageId: number, rowNum: number, claim: string) => engine.readLiveTakePage({ pageId, rowNum, claim });
+    const got = {
+      live: await at(live.pageId, 2, 'two'),
+      otherSource: await at(elsewhere.pageId, 1, 'one'),
+      changedClaim: await at(live.pageId, 1, 'two'),
+      missingRow: await at(live.pageId, 3, 'two'),
+      deleted: await at(gone.pageId, 1, 'one'),
+      noPage: await at(gone.pageId + 1000, 1, 'one'),
+    };
+    expect(got).toEqual({
+      live: { slug: 'notes/g-live', source_id: 'default' }, otherSource: { slug: 'notes/g-other', source_id: 'other' },
+      changedClaim: null, missingRow: null, deleted: null, noPage: null,
+    });
+    return got;
+  });
+});
+
+/** Fixture: `gbrain calibration <args>`, with its stdout writes and stderr captured. */
+async function calibration(engine: BrainEngine, args: string[]) {
+  const { runCalibration } = await import('../../src/commands/calibration.ts');
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  let stdout = '';
+  let stderr = '';
+  process.stdout.write = ((chunk: unknown) => { stdout += String(chunk); return true; }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: unknown) => { stderr += String(chunk); return true; }) as typeof process.stderr.write;
+  try {
+    await runCalibration(engine, args, {} as never);
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+  }
+  return { stdout, stderr };
+}
+
+describe('engine parity: gbrain calibration --undo-wave', () => {
+  parityTest('undo-wave counts a wave on a dry run, then reverts the same resolutions, verdicts, profiles and nudges', {
+    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'resolveTake', 'insertTakeGrade', 'insertCalibrationProfile', 'insertTakeNudge',
+      'listWaveAppliedTakeIds', 'revertWaveTakeResolutions', 'unapplyWaveTakeGrades', 'purgeCalibrationProfilesByWave', 'purgeTakeNudgesByWave',
+      'listTakes', 'listLatestTakeGrades'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const wave = 'v9.9.9.0';
+    const old = 'v0.36.1.0';
+    const { pageId, ids } = await datedTakes(engine, 'notes/w-takes', ['one by 2025', 'two by 2025', 'three by 2025', 'four by 2025']);
+    const graded = 'gbrain:grade_takes';
+    await engine.resolveTake(pageId, 1, { quality: 'correct', resolvedBy: graded });
+    await engine.resolveTake(pageId, 2, { quality: 'incorrect', resolvedBy: graded });
+    // Row 3 was graded by the wave, but a manual resolve overrode it: undo-wave leaves it.
+    await engine.resolveTake(pageId, 3, { quality: 'partial', resolvedBy: 'cli:alice-example' });
+    const grade = (row: number, waveVersion: string, applied: boolean, gradedAt: string) => engine.insertTakeGrade({
+      takeId: ids[row - 1]!, promptVersion: 'p1', judgeModelId: 'j1', evidenceSignature: `sig-${row}-${waveVersion}`,
+      verdict: 'correct', confidence: 0.9, applied, gradedAt, waveVersion,
+    });
+    await grade(1, old, true, '2026-01-01T00:00:00Z');
+    await grade(1, wave, true, '2026-02-01T00:00:00Z');
+    await grade(2, wave, true, '2026-02-01T00:00:00Z');
+    await grade(3, wave, true, '2026-02-01T00:00:00Z');
+    await grade(4, wave, false, '2026-02-01T00:00:00Z');
+    const profile = (waveVersion: string) => engine.insertCalibrationProfile({
+      sourceId: 'default', holder: 'alice-example', totalResolved: 3, brier: 0.2, accuracy: 0.5, partialRate: 0.1, gradeCompletion: 1,
+      domainScorecards: {}, patternStatements: [], voiceGatePassed: true, voiceGateAttempts: 1, activeBiasTags: [], modelId: 'm1', waveVersion,
+    });
+    await profile(wave);
+    await profile(old);
+    const nudge = (row: number, waveVersion: string, sourceId = 'default') => engine.insertTakeNudge({ sourceId, takeId: ids[row - 1]!, nudgePattern: 'stale-take', waveVersion });
+    await nudge(1, wave);
+    await nudge(2, wave, 'other');
+    await nudge(1, old);
+    const badNudge = await engine.insertTakeNudge({ sourceId: 'default', nudgePattern: 'stale-take', waveVersion: wave }).then(() => 'ok', (e: Error) => e.message);
+    const undo = async (...args: string[]) => {
+      const run = await calibration(engine, ['--undo-wave', ...args]);
+      return { ...run, stdout: args.includes('--json') ? JSON.parse(run.stdout) : run.stdout };
+    };
+    const state = async () => ({
+      takes: (await engine.listTakes({ page_id: pageId })).map(t => [t.row_num, t.resolved_quality, t.resolved_by, t.resolved_at !== null]).sort((a, b) => Number(a[0]) - Number(b[0])),
+      grades: (await engine.listLatestTakeGrades({ verdict: null, minConfidence: null, applied: null, limit: 10 })).map(g => [g.row_num, g.applied]).sort((a, b) => Number(a[0]) - Number(b[0])),
+    });
+    const got = {
+      badNudge,
+      dryRun: await undo(wave, '--dry-run', '--json'),
+      afterDryRun: await state(),
+      real: await undo(wave),
+      after: await state(),
+      again: await undo(wave, '--json'),
+      oldWave: await undo(old, '--dry-run', '--json'),
+    };
+    const counts = (dryRun: boolean, resolutions: number, profiles: number, nudges: number, grades: number, waveVersion = wave) => ({
+      wave_version: waveVersion, dry_run: dryRun, resolutions_reverted: resolutions, profiles_deleted: profiles, nudges_purged: nudges,
+      grade_cache_unapplied: grades, gstack_scrub_attempted: false, warnings: [],
+    });
+    const stderr = (dry: boolean, waveVersion = wave) => `[calibration] ${dry ? '[dry-run] ' : ''}reversing wave ${waveVersion}...\n`;
+    const before = {
+      takes: [[1, 'correct', graded, true], [2, 'incorrect', graded, true], [3, 'partial', 'cli:alice-example', true], [4, null, null, false]],
+      grades: [[1, true], [2, true], [3, true], [4, false]],
+    };
+    expect(got).toEqual({
+      badNudge: 'new row for relation "take_nudge_log" violates check constraint "take_nudge_log_target_xor"',
+      dryRun: { stdout: counts(true, 2, 1, 2, 3), stderr: stderr(true) },
+      afterDryRun: before,
+      real: { stderr: stderr(false), stdout: 'reverted:\n  2 take resolutions\n  1 calibration profile(s)\n  2 nudge log row(s)\n  3 grade-cache rows marked unapplied\n' },
+      after: {
+        takes: [[1, null, null, false], [2, null, null, false], [3, 'partial', 'cli:alice-example', true], [4, null, null, false]],
+        grades: [[1, false], [2, false], [3, false], [4, false]],
+      },
+      again: { stdout: counts(false, 0, 0, 0, 0), stderr: stderr(false) },
+      oldWave: { stdout: counts(true, 0, 1, 1, 1, old), stderr: stderr(true, old) },
+    });
+    return got;
+  });
+});

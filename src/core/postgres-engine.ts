@@ -3986,6 +3986,17 @@ export class PostgresEngine implements BrainEngine {
   async readTakeGrade(key: takesReads.TakeGradeKey) { return takesReads.readTakeGrade(this, key); }
   async insertTakeGrade(row: Parameters<typeof takesReads.insertTakeGrade>[1]) { return takesReads.insertTakeGrade(this, row); }
   async deleteTakeGrade(key: takesReads.TakeGradeKey) { return takesReads.deleteTakeGrade(this, key); }
+  async readLiveTakePage(at: Parameters<typeof takesReads.readLiveTakePage>[1]) { return takesReads.readLiveTakePage(this, at); }
+  async readTakeClaim(takeId: number) { return takesReads.readTakeClaim(this, takeId); }
+  async upsertTakeHorizon(h: Parameters<typeof takesReads.upsertTakeHorizon>[1]) { return takesReads.upsertTakeHorizon(this, h); }
+  async deleteTakeHorizon(takeId: number) { return takesReads.deleteTakeHorizon(this, takeId); }
+  async listTakeHorizons(takeIds: readonly number[] | null) { return takesReads.listTakeHorizons(this, takeIds); }
+  async listHorizonScanRows(sourceId: string | null) { return takesReads.listHorizonScanRows(this, sourceId); }
+  async listWaveAppliedTakeIds(waveVersion: string) { return takesReads.listWaveAppliedTakeIds(this, waveVersion); }
+  async revertWaveTakeResolutions(spec: Parameters<typeof takesReads.revertWaveTakeResolutions>[1]) { return takesReads.revertWaveTakeResolutions(this, spec); }
+  async unapplyWaveTakeGrades(spec: Parameters<typeof takesReads.unapplyWaveTakeGrades>[1]) { return takesReads.unapplyWaveTakeGrades(this, spec); }
+  async purgeTakeNudgesByWave(spec: Parameters<typeof takesReads.purgeTakeNudgesByWave>[1]) { return takesReads.purgeTakeNudgesByWave(this, spec); }
+  async insertTakeNudge(n: takesReads.TakeNudgeInput) { return takesReads.insertTakeNudge(this, n); }
   async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
   async listTakeSupersessionCandidates(sourceIds: readonly string[]) { return takesReads.listTakeSupersessionCandidates(this, sourceIds); }
   async countZeroWeightWithTakes() { return takesReads.countZeroWeightWithTakes(this); }

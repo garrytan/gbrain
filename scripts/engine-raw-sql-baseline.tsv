@@ -276,7 +276,6 @@ src/core/budget/daily-ledger.ts	execute_raw	6
 src/core/by-mention.ts	execute_raw	6
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
-src/core/calibration/undo-wave.ts	execute_raw	7
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
 src/core/chronicle/event-identity.ts	execute_raw	1
@@ -332,7 +331,6 @@ src/core/cycle/extract-atoms.ts	execute_raw	6
 src/core/cycle/extract-facts.ts	execute_raw	11
 src/core/cycle/extract-takes.ts	execute_raw	3
 src/core/cycle/filing-rules.ts	execute_raw	1
-src/core/cycle/grade-takes.ts	execute_raw	1
 src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1
 src/core/cycle/patterns-plan.ts	execute_raw	1
@@ -998,7 +996,6 @@ src/core/sync-upstream.ts	execute_raw	2
 src/core/sync.ts	execute_raw	1
 src/core/synopsis-sweep.ts	execute_raw	4	master #9683: readSynopsisTierConfig reads the source rows and the frontmatter-override probe in one statement; rust-engine/write-attribution-reads' typed listSynopsisSourceIds answers the source rows only, so the sweep keeps this statement until a typed member returns both (TODOS.md rust-synopsis-tier-config)
 src/core/take-proposals.ts	execute_raw	8
-src/core/takes-horizon.ts	execute_raw	5
 src/core/takes-quality-eval/receipt-write.ts	execute_raw	1
 src/core/takes-quality-eval/replay.ts	execute_raw	1
 src/core/takes-quality-eval/runner.ts	execute_raw	1

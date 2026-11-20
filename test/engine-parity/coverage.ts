@@ -96,7 +96,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listTakeSupersessionCandidates', 'listHeldFenceTakeRows',
     // the reads and the delete of `gbrain extract takes`
     'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId',
-    'listLatestTakeGrades', 'readTakeGrade', 'insertTakeGrade', 'deleteTakeGrade'],
+    'listLatestTakeGrades', 'readTakeGrade', 'insertTakeGrade', 'deleteTakeGrade',
+    'readLiveTakePage', 'readTakeClaim', 'upsertTakeHorizon', 'deleteTakeHorizon', 'listTakeHorizons', 'listHorizonScanRows', 'listWaveAppliedTakeIds', 'revertWaveTakeResolutions', 'unapplyWaveTakeGrades', 'purgeTakeNudgesByWave', 'insertTakeNudge'],
   dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
   contradictions: ['writeContradictionsRun', 'loadContradictionsTrend', 'getContradictionCacheEntry', 'putContradictionCacheEntry',
     'sweepContradictionCache'],

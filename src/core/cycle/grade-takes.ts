@@ -838,9 +838,7 @@ class GradeTakesPhase extends BaseCyclePhase {
           if (managed) {
             // Resolve the judged take by page identity, not the cached slug: a
             // rename during judging must not redirect the resolution to another page.
-            const [page] = await engine.executeRaw<{ slug: string; source_id: string }>(
-              `SELECT p.slug, p.source_id FROM pages p JOIN takes t ON t.page_id=p.id
-                WHERE p.id=$1 AND p.deleted_at IS NULL AND t.row_num=$2 AND t.claim=$3`, [take.page_id, take.row_num, take.claim]);
+            const page = await engine.readLiveTakePage({ pageId: take.page_id, rowNum: take.row_num, claim: take.claim });
             if (!page) throw new Error('the judged take moved or changed during grading; it is graded again next run');
             const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
             // The resolution publishes against this exact revision, so the judged

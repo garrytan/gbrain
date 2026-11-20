@@ -648,6 +648,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readLivePageIdBySlug': OOS.extractTakes, 'readPageTierRef': OOS.extractTakes, 'readPageTierRows': OOS.extractTakes, 'pageHasFrontmatterKey': OOS.extractTakes,
   'listTakeIdsLeavingFence': OOS.extractTakes, 'listTakePreimages': OOS.extractTakes, 'deleteTakesByIds': OOS.extractTakes, 'findTakeId': OOS.extractTakes,
   'listLatestTakeGrades': OOS.takesReads, 'readTakeGrade': OOS.takesReads, 'insertTakeGrade': OOS.takesReads, 'deleteTakeGrade': OOS.takesReads,
+  'readLiveTakePage': OOS.takesReads, 'readTakeClaim': OOS.takesReads, 'upsertTakeHorizon': OOS.takesReads, 'deleteTakeHorizon': OOS.takesReads, 'listTakeHorizons': OOS.takesReads, 'listHorizonScanRows': OOS.takesReads, 'listWaveAppliedTakeIds': OOS.takesReads, 'revertWaveTakeResolutions': OOS.takesReads, 'unapplyWaveTakeGrades': OOS.takesReads, 'purgeTakeNudgesByWave': OOS.takesReads, 'insertTakeNudge': OOS.takesReads,
   'countMcpResolvedTakes': OOS.takesReads,
   'listTakeSupersessionCandidates': OOS.takesReads,
   'countZeroWeightWithTakes': OOS.takesReads,

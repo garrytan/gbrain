@@ -89,7 +89,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef, PageQuoteTier, PageQuoteTierSpec,
@@ -4401,9 +4401,31 @@ export interface BrainEngine {
   /** grade_takes: the cached verdict at `key`, or null (engine-sql/takes-reads.ts). */
   readTakeGrade(key: TakeGradeKey): Promise<TakeGrade | null>;
   /** grade_takes: cache a verdict; a row already at its key stays (engine-sql/takes-reads.ts). */
-  insertTakeGrade(row: TakeGradeKey & TakeGrade & { gradedAt?: string }): Promise<void>;
+  insertTakeGrade(row: TakeGradeKey & TakeGrade & { gradedAt?: string; waveVersion?: string }): Promise<void>;
   /** grade_takes: drop the cached verdict at `key` (engine-sql/takes-reads.ts). */
   deleteTakeGrade(key: TakeGradeKey): Promise<void>;
+  /** grade_takes' managed resolve: the live page whose take at `rowNum` still holds `claim`, or null (engine-sql/takes-reads.ts). */
+  readLiveTakePage(at: { pageId: number; rowNum: number; claim: string }): Promise<{ slug: string; source_id: string } | null>;
+  /** `gbrain takes horizon` and the forecast journal (take_horizons; SQL in engine-sql/takes-reads.ts): a take's claim, or null. */
+  readTakeClaim(takeId: number): Promise<string | null>;
+  /** Set or replace a take's horizon, stamped now; a missing take refuses. */
+  upsertTakeHorizon(h: { takeId: number; claimSha256: string; horizonDate: string; basis: HorizonBasis }): Promise<void>;
+  /** Remove a take's horizon; true when it had one. */
+  deleteTakeHorizon(takeId: number): Promise<boolean>;
+  /** The horizons of the takes (null: all), by take id, with each take's claim now. */
+  listTakeHorizons(takeIds: readonly number[] | null): Promise<TakeHorizonRow[]>;
+  /** The takes on live pages of a source (null: all), by id, with their horizons. */
+  listHorizonScanRows(sourceId: string | null): Promise<HorizonScanRow[]>;
+  /** `gbrain calibration --undo-wave` (SQL in engine-sql/takes-reads.ts): the takes a wave's verdicts applied to. */
+  listWaveAppliedTakeIds(waveVersion: string): Promise<number[]>;
+  /** Clear the resolutions `resolvedBy` wrote on the takes; their count (a dry run counts only). */
+  revertWaveTakeResolutions(spec: { takeIds: readonly number[]; resolvedBy: string; dryRun: boolean }): Promise<number>;
+  /** Mark a wave's applied verdicts unapplied; their count (a dry run counts only). */
+  unapplyWaveTakeGrades(spec: { waveVersion: string; dryRun: boolean }): Promise<number>;
+  /** Delete a wave's take_nudge_log rows; their count (a dry run counts only). */
+  purgeTakeNudgesByWave(spec: { waveVersion: string; dryRun: boolean }): Promise<number>;
+  /** Log a fired nudge at a take or a take proposal; its id. */
+  insertTakeNudge(n: TakeNudgeInput): Promise<number>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

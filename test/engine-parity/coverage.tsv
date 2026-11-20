@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 910/910
+# covered: 921/921
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 20/20
 # ontology: 4/4
 # raw_files: 6/6
-# takes: 32/32
+# takes: 43/43
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
@@ -93,13 +93,13 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	546	yes	yes	yes	serves
+putPage	pages	yes	550	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	21	yes	yes	yes	serves
+deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	155	yes	yes	yes	serves
+softDeletePage	pages	yes	157	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -299,9 +299,9 @@ upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	49	yes	yes	yes	serves
+addTakesBatch	takes	yes	53	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	22	no	yes	yes	serves
+listTakes	takes	yes	23	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -309,7 +309,7 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	2	no	yes	yes	serves
 supersedeTake	takes	yes	2	no	yes	yes	serves
-resolveTake	takes	yes	13	no	yes	yes	serves
+resolveTake	takes	yes	14	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	3	no	yes	yes	serves
@@ -324,11 +324,22 @@ listHeldFenceTakeRows	takes	yes	1	no	yes	yes	serves
 listTakeIdsLeavingFence	takes	yes	1	no	yes	yes	serves
 listTakePreimages	takes	yes	1	no	yes	yes	serves
 deleteTakesByIds	takes	yes	1	no	yes	yes	serves
-findTakeId	takes	yes	3	no	yes	yes	serves
-listLatestTakeGrades	takes	yes	1	no	yes	yes	serves
+findTakeId	takes	yes	7	no	yes	yes	serves
+listLatestTakeGrades	takes	yes	2	no	yes	yes	serves
 readTakeGrade	takes	yes	1	no	yes	yes	serves
-insertTakeGrade	takes	yes	1	no	yes	yes	serves
+insertTakeGrade	takes	yes	2	no	yes	yes	serves
 deleteTakeGrade	takes	yes	1	no	yes	yes	serves
+readLiveTakePage	takes	yes	1	no	yes	yes	refuses:takes
+readTakeClaim	takes	yes	2	no	yes	yes	refuses:takes
+upsertTakeHorizon	takes	yes	2	no	yes	yes	refuses:takes
+deleteTakeHorizon	takes	yes	2	no	yes	yes	refuses:takes
+listTakeHorizons	takes	yes	2	no	yes	yes	refuses:takes
+listHorizonScanRows	takes	yes	2	no	yes	yes	refuses:takes
+listWaveAppliedTakeIds	takes	yes	1	no	yes	yes	refuses:takes
+revertWaveTakeResolutions	takes	yes	1	no	yes	yes	refuses:takes
+unapplyWaveTakeGrades	takes	yes	1	no	yes	yes	refuses:takes
+purgeTakeNudgesByWave	takes	yes	1	no	yes	yes	refuses:takes
+insertTakeNudge	takes	yes	1	no	yes	yes	refuses:takes
 countMcpResolvedTakes	takes	yes	4	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
@@ -787,9 +798,9 @@ logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
 getLatestCalibrationProfile	calibration_profiles	yes	3	no	yes	yes	serves
 isCalibrationProfileUnchanged	calibration_profiles	yes	1	no	yes	yes	serves
-insertCalibrationProfile	calibration_profiles	yes	5	no	yes	yes	serves
+insertCalibrationProfile	calibration_profiles	yes	6	no	yes	yes	serves
 readVoiceGateHealth	calibration_profiles	yes	1	no	yes	yes	serves
-purgeCalibrationProfilesByWave	calibration_profiles	yes	1	no	yes	yes	serves
+purgeCalibrationProfilesByWave	calibration_profiles	yes	2	no	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	10	yes	yes	yes	serves
