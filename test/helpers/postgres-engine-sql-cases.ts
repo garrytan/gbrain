@@ -137,7 +137,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'invalidateWithdrawnPages': OOS.withdrawalPages,
   'listSegmentedPages': OOS.withdrawalPages,
   'searchRead': OOS.helper,
-  'timelineRead': OOS.helper,
+  'timelineRead': OOS.helper, 'timelineBoundedRead': OOS.helper, 'decideRead': OOS.helper,
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
   'readFieldUsageSamples': OOS.fieldUsage,
