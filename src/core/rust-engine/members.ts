@@ -496,6 +496,7 @@ export const RUST_ENGINE_MEMBERS = {
   getFile: 'files',
   listFilesForPage: 'files',
   listFiles: 'files',
+  listReadableFileRows: 'files',
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',

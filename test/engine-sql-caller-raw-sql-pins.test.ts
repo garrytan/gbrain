@@ -536,6 +536,20 @@ const PINS: Pin[] = [
     case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] }) },
     texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
   },
+  // The caller composed the text with a template string; the member renders it from trustedSql literals and fragments.
+  ...([
+    ['all', undefined, false],
+    ['page', 'people/alice-example', false],
+    ['private_excluded', 'people/alice-example', true],
+  ] as const).map(([variant, slug, excludePrivate]): Pin => ({
+    from: `src/core/ops/files.ts:44 file_list (${variant}), at dded7edc51`,
+    case: { method: 'listReadableFileRows', variant, run: e => e.listReadableFileRows(slug, excludePrivate) },
+    texts: () => [`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
+      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${excludePrivate
+    ? `NOT EXISTS (SELECT 1 FROM pages fp WHERE (fp.id = f.page_id OR fp.slug = f.page_slug) AND NOT ${privatePagesFilterForCaller('fp')})`
+    : 'TRUE'}
+      ORDER BY ${slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C", id' : 'filename COLLATE "C", id'} LIMIT $1`],
+  })),
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },

@@ -61,6 +61,7 @@ mod facts_purge;
 mod facts_repair;
 mod facts_trust;
 mod facts_trust_reads;
+mod files_ops;
 mod jobs;
 mod keyword;
 mod link_queries;

@@ -3273,6 +3273,39 @@
           "src-a,src-b"
         ]
       },
+      "listReadableFileRows#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listReadableFileRows#page": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listReadableFileRows#private_excluded": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listReservationsAfter#default": {
         "flagOffLanes": [
           "pool"
@@ -7197,6 +7230,7 @@
         "listPrivateQueueHealth": "none",
         "listQualifiedSymbolNames": "none",
         "listQueueWedgeCounts": "none",
+        "listReadableFileRows": "none",
         "listRecentFailedJobErrors": "none",
         "listRecentLeasePressure": "none",
         "listRecentSynthesisCompletions": "none",

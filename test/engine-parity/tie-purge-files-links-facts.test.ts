@@ -89,12 +89,13 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return { completion: receipt.completion, exit_code: receipt.exit_code };
   });
 
-  parityTest('file_list returns the first 100 files by file id when slug and filename tie', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('file_list returns the first 100 files by file id when slug and filename tie', { methods: ['upsertFile', 'listReadableFileRows'] }, async (engine) => {
     const op = operations.find(o => o.name === 'file_list')!;
     // 120 files of one page and one filename; storage paths run opposite to ids, and every third row is rewritten so heap order is not id order.
-    await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash)
-      SELECT 'tie/page', 'same.txt', 'tie/' || lpad((121 - g)::text, 3, '0'), 'h' FROM generate_series(1, 120) g`);
-    await engine.executeRaw(`UPDATE files SET mime_type = 'text/plain' WHERE id % 3 = 0`);
+    const spec = (path: string, mime?: string) => ({ page_slug: 'tie/page', filename: 'same.txt', storage_path: path, content_hash: 'h', ...(mime ? { mime_type: mime } : {}) });
+    const ids: number[] = [];
+    for (let g = 1; g <= 120; g++) ids.push((await engine.upsertFile(spec(`tie/${String(121 - g).padStart(3, '0')}`))).id);
+    for (let g = 1; g <= 120; g++) if (ids[g - 1]! % 3 === 0) await engine.upsertFile(spec(`tie/${String(121 - g).padStart(3, '0')}`, 'text/plain'));
     const first100 = Array.from({ length: 100 }, (_, i) => `tie/${String(120 - i).padStart(3, '0')}`);
     const all = await op.handler(ctxFor(engine), {}) as Array<{ storage_path: string }>;
     expect(all.map(r => r.storage_path)).toEqual(first100);

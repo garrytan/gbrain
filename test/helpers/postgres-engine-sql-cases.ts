@@ -646,6 +646,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFolderAccess': OOS.callerRawSql,
   'upsertSessionState': OOS.callerRawSql,
   'listFactProvenance': OOS.callerRawSql,
+  'listReadableFileRows': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
   'readDeltaSessionRow': OOS.callerRawSql,
   'readCheckpointManifestRow': OOS.callerRawSql,
@@ -1539,6 +1540,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readDeltaSessionRow', [['default', (e) => e.readDeltaSessionRow('default', 'local', 's')]]),
   ...variants('readCheckpointManifestRow', [['default', (e) => e.readCheckpointManifestRow('default', 'local', 's')]]),
   ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] })]]),
+  ...variants('listReadableFileRows', [['all', (e) => e.listReadableFileRows(undefined, false)], ['page', (e) => e.listReadableFileRows('people/alice-example', false)], ['private_excluded', (e) => e.listReadableFileRows('people/alice-example', true)]]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

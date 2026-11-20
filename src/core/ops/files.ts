@@ -11,14 +11,10 @@ import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
+import { FILE_LIST_LIMIT } from '../engine-sql/collate-page-reads.ts';
 import { embeddedSettingsRecord, isEmbeddedEngine } from '../embedded-engine.ts';
 
 // --- File Operations ---
-
-// Both branches need a LIMIT. Without one, the slug-filtered branch materializes
-// every file for that slug — an MCP caller can force unbounded memory consumption
-// by targeting a page with many attachments.
-const FILE_LIST_LIMIT = 100;
 
 /**
  * GBRA-218: a caller under the read policy (every remote caller, stdio included) sees no file attached to a page it
@@ -42,9 +38,7 @@ const file_list: Operation = {
   localOnly: true,
   handler: async (ctx, p) => {
     const slug = p.slug as string | undefined;
-    const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
-      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${await fileReadableSql(ctx)}
-      ORDER BY ${slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C", id' : 'filename COLLATE "C", id'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+    const rows = await ctx.engine.listReadableFileRows(slug, await resolveExcludePrivatePages(ctx.engine, ctx.remote));
     // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
     // throws on those, breaking MCP callers. PGLite returns Number already.
     // 9 PB ceiling (2^53 bytes) is far above any plausible file size.

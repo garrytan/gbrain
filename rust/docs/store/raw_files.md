@@ -30,6 +30,7 @@ read by a member, so the store does not keep it.
 | `brain.getFile(sourceId, storagePath)` | the `FileRow` at that path when it belongs to `sourceId`, else `null` | `getFile` |
 | `brain.listFiles(pageSlug, limit)` | `FileRow[]`: with a `pageSlug` (not `null`), the files of that slug in any source by `filename`; with `null`, every file by `page_slug` (files with no slug last), then `filename`. Ties go by id. At most `limit`, which must be a whole `integer` and not negative (`invalid_argument` otherwise); a NUL byte in `pageSlug` is `invalid_argument` | `listFiles` |
 | `brain.listFilesForPage(pageId)` | `FileRow[]` whose `page_id` is `pageId`, `created_at ASC`. `pageId` must be a whole `integer` (`invalid_argument` otherwise); one that names no page lists nothing | `listFilesForPage` |
+| `brain.listReadableFiles(slug?, policy?)` | `listReadableFileRows(slug, excludePrivate)`: up to 100 rows (id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at) of the files `policy` lets the caller read: the files of `slug` by `filename`, or with no slug every file by `page_slug` (no slug last), then `filename`; ties go by id. `policy` is the caller's page policy, or null for none (every file is readable). A file is hidden when the policy hides its page by `page_id`, or any page at its `page_slug` in any source (soft-deleted pages count: the SQL has no `deleted_at` test), so a file that names its page loosely fails closed. A NUL byte in `slug` is `invalid_argument` | `file_list` (`engine-sql/collate-page-reads.ts`) |
 
 `FileRow.size_bytes` is a number. A size past 2^31 crosses N-API as a double; the store takes any whole
 double inside the `bigint` range.
@@ -49,6 +50,7 @@ Differences from PGLite:
   scope, `default` first, then by source id), then source name.
 - `listFilesForPage`: equal `created_at` stamps come in no fixed order on PGLite; the store breaks ties by
   id.
+- `listReadableFiles`: text sorts by bytes and equal names fall to the file id, as `file_list`'s `COLLATE "C"` ordering does on every engine arm. The store reads the page policy in `raw_files/ops.rs`.
 - `listFiles`: the store sorts `page_slug` and `filename` by bytes, as PGLite's C collation does; a Postgres
   database with another collation (`en_US.UTF-8`) can order mixed-case or punctuated names differently.
 - `upsertFile`: Postgres takes a serial id even when the insert turns into an update, so its ids can skip

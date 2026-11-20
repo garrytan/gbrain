@@ -152,13 +152,13 @@ describe('census, size states and file lists', () => {
     return slugs;
   });
 
-  parityTest('file_list lists files by page slug, then by filename, in byte order', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('file_list lists files by page slug, then by filename, in byte order', { methods: ['upsertFile', 'listReadableFileRows'] }, async (engine) => {
     const op = operations.find(o => o.name === 'file_list')!;
     for (const slug of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash) VALUES ($1, 'one', $2, 'h')`, [slug, `p/${slug}/one`]);
+      await engine.upsertFile({ page_slug: slug, filename: 'one', storage_path: `p/${slug}/one`, content_hash: 'h' });
     }
     for (const filename of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash) VALUES ('shared', $1, $2, 'h')`, [filename, `shared/${filename}`]);
+      await engine.upsertFile({ page_slug: 'shared', filename, storage_path: `shared/${filename}`, content_hash: 'h' });
     }
     const all = await op.handler(ctxFor(engine), {}) as Array<{ page_slug: string; filename: string }>;
     const bySlug = all.filter(r => r.page_slug !== 'shared').map(r => r.page_slug);

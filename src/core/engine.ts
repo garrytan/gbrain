@@ -3610,6 +3610,8 @@ export interface BrainEngine {
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
   /** The stored provenance (`facts.source`) of the named facts of one source (ops/facts.ts `withProvenance`). */
   listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
+  /** file_list: the files of one page (or every page) the caller can read, at most 100; text sorts by byte and equal names fall to the file id. */
+  listReadableFileRows(slug: string | undefined, excludePrivate: boolean): Promise<Array<Record<string, unknown>>>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

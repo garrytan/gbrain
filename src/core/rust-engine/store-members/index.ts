@@ -30,6 +30,7 @@ import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
 import * as stats from './stats.ts';
 import * as rawFiles from './raw-files.ts';
+import * as filesOps from './files-ops.ts';
 import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
 import * as keyword from './keyword.ts';
@@ -159,6 +160,8 @@ export const STORE_MEMBERS = {
   ...sessionState,
   // The access member and group writes and the active-member read (rust/docs/store/access-members.md).
   ...accessMembers,
+  // The readable file list file_list runs (rust/docs/store/raw_files.md).
+  ...filesOps,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

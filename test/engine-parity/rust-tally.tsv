@@ -18,7 +18,7 @@ test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	3	3
 test/engine-parity/collate-belief-cycle-walks.test.ts	0	6
 test/engine-parity/collate-command-listings.test.ts	5	3
-test/engine-parity/collate-core-page-lists.test.ts	0	16
+test/engine-parity/collate-core-page-lists.test.ts	1	15
 test/engine-parity/collate-facts-home.test.ts	0	1
 test/engine-parity/collate-ontology-config.test.ts	4	2
 test/engine-parity/collate-referrer-ties.test.ts	3	0
@@ -113,7 +113,7 @@ test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	26	1
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	0	4
-test/engine-parity/tie-purge-files-links-facts.test.ts	0	5
+test/engine-parity/tie-purge-files-links-facts.test.ts	1	4
 test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	32	0
 test/engine-parity/transaction-settings.test.ts	9	1
