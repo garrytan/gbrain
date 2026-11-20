@@ -101,8 +101,7 @@ function item(atom: RestorableAtom, hash: string, last: boolean): RestoreItem {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, atoms: RestorableAtom[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'atoms-restore-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, atoms };
 }
 

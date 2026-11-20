@@ -330,7 +330,7 @@ export async function mergeLegacyTwin(ctx: OperationContext, pair: LegacyTwinPai
     await tx.lockPageKeys([{ sourceId: pair.source_id, slug: pair.legacy.slug }, { sourceId: pair.source_id, slug: pair.twin.slug }]);
     const reason = await pairLocked(tx, pair);
     if (reason) return reason;
-    const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [pair.source_id]);
+    const source = await tx.readSourceIncarnation(pair.source_id);
     await applyTwinMerge(tx, pair, source!.incarnation);
     return null;
   });

@@ -136,8 +136,7 @@ function item(atom: StaleAtom, hash: string, last: boolean): StaleAtomItem {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, atoms: StaleAtom[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'stale-atoms-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, atoms };
 }
 
@@ -212,7 +211,7 @@ async function retireStaleAtom(ctx: OperationContext, atom: StaleAtom): Promise<
 async function stampRetirement(tx: BrainEngine, atom: StaleAtom, stamp = true): Promise<void> {
   if (stamp) await stampDerivedRetirement(tx, atom.source_id, [atom.slug], STALE_ATOMS_RETIRED_BY);
   if (atom.origin_page_id === null) return;
-  const [{ incarnation }] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [atom.source_id]);
+  const { incarnation } = (await tx.readSourceIncarnation(atom.source_id))!;
   await bumpAtomGeneration(tx, atom.source_id, incarnation, atom.origin_page_id, atom.class === 'origin_changed' ? atom.origin_hash : null);
 }
 

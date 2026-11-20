@@ -18,6 +18,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { PREVIEW_APPROVAL_OP } from '../src/core/persistence/preview-approval.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -96,10 +97,10 @@ describe('whole-class apply reruns', () => {
     const m = (await preview(engine)).class_manifest!;
     let failed = false;
     const flaky = new Proxy(engine, { get(target, key, receiver) {
-      if (key !== 'executeRaw') return Reflect.get(target, key, receiver);
-      return (sql: string, params?: unknown[]) => {
-        if (!failed && sql.includes('AS fresh')) { failed = true; return Promise.reject(new Error('connection terminated unexpectedly')); }
-        return target.executeRaw(sql, params as never);
+      if (key !== 'readOpCheckpointRecord') return Reflect.get(target, key, receiver);
+      return (op: string, fingerprint: string, opts?: { freshWithinDays?: number }) => {
+        if (!failed && op === PREVIEW_APPROVAL_OP) { failed = true; return Promise.reject(new Error('connection terminated unexpectedly')); }
+        return target.readOpCheckpointRecord(op, fingerprint, opts);
       };
     } }) as BrainEngine;
     const error = await apply({ ...ctx, engine: flaky }, m.hash).then(() => null, e => e);

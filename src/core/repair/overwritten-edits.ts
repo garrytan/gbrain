@@ -185,7 +185,7 @@ async function holdDivergentFile(engine: BrainEngine, edit: ApprovedEdit, reques
   const bytes = readBlobContents(gitRoot, [blob]).get(blob.oid);
   if (bytes === undefined) return { held: false, file: relativePath, why: 'file_over_read_bound' };
   if (await fileMatchesSnapshot(engine, edit.slug, bytes, snapshot, scannerSourcePath(root, target, mode))) return { held: false, file: relativePath, why: 'file_matches' };
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [edit.source_id]);
+  const source = await engine.readSourceIncarnation(edit.source_id);
   const record = (await readSyncImportProvenances(engine, edit.source_id, source!.incarnation, [edit.page_id])).get(edit.page_id);
   const sides = record?.disk_blob_oid === blob.oid ? 'database' as const : 'both' as const;
   const held = fileDriftHold({ path: relativePath, sourcePath: snapshot.page.source_path, action: 'import', working: false }, edit.slug, edit.page_id,

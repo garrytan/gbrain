@@ -226,7 +226,7 @@ export async function foldMovedPage(ctx: OperationContext, pair: MovedPair, owne
     await tx.lockPageKeys([{ sourceId: pair.source_id, slug: pair.survivor.slug }, { sourceId: pair.source_id, slug: pair.old.slug }].sort((a, b) => a.slug.localeCompare(b.slug)));
     const reason = await pairLocked(tx, pair);
     if (reason) return { reason };
-    const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [pair.source_id]);
+    const source = await tx.readSourceIncarnation(pair.source_id);
     return { receipt: await applyFold(tx, pair, source!.incarnation) };
   });
   return 'reason' in result ? changed(result.reason!) : { applied: true, outcome: 'folded', detail: result.receipt };

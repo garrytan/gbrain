@@ -403,7 +403,7 @@ async function candidatePaths(engine: BrainEngine, src: FenceSource, selection: 
 
 /** The hash a preview of this selection prints when it finds nothing to repair. */
 async function emptyPlanHash(engine: BrainEngine, scope: RepairScope, selection: Selection): Promise<string> {
-  const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sourcesRows = await engine.listSourceIncarnations(scope.source_ids);
   return previewHash({ kind: 'slug-conflicts-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: [] });
 }
 
@@ -509,7 +509,7 @@ export const slugConflictsRepair: RepairHandler = {
     if (opts?.apply) approved.splice(0, approved.length, ...rotate(approved, rotationKey, await rotationAfter(engine, ROTATION_OP, scope.brain_id)));
     let waiting = 0;
     for (const entry of [...approved].reverse()) { if (entry.tier === 'llm') waiting++; entry.llm_waiting = entry.tier === 'llm' ? waiting : 0; }
-    const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sourcesRows = await engine.listSourceIncarnations(scope.source_ids);
     const hash = previewHash({ kind: 'slug-conflicts-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: approved });
     if (approved.length && !opts?.apply) await saveApprovedSet<ApprovedSetItem>(engine, { command: 'slug-conflicts', hash }, approved.map(entry => ({ ...entry, selection })));
     const listing: RepairListing[] = [
@@ -543,7 +543,7 @@ export const slugConflictsRepair: RepairHandler = {
   async onItemFailures(ctx, failures) {
     for (const { item } of failures) {
       const { entry } = item as ConflictItem;
-      const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [entry.source_id]);
+      const source = await ctx.engine.readSourceIncarnation(entry.source_id);
       if (!source) continue;
       await recordHoldAttempt(ctx.engine, { sourceId: entry.source_id, incarnation: source.incarnation, path: entry.path, code: CONTENT_REPAIR_HOLD_CODE });
     }

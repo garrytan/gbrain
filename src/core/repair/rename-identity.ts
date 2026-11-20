@@ -78,9 +78,9 @@ const refuse = (code: string, message: string, suggestion: string, fix: Action, 
 };
 
 /** The new file as the carry imports it, from the source checkout; a missing file refuses: there is nothing to carry onto. */
-async function readNewFile(engine: Pick<BrainEngine, 'executeRaw'>, record: IdentityDowngrade): Promise<{ path: string; text: string }> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [record.source_id]);
-  const path = source?.local_path ? join(source.local_path, record.to) : null;
+async function readNewFile(engine: Pick<BrainEngine, 'readSourceLocalPath'>, record: IdentityDowngrade): Promise<{ path: string; text: string }> {
+  const localPath = await engine.readSourceLocalPath(record.source_id);
+  const path = localPath ? join(localPath, record.to) : null;
   if (!path || !existsSync(path)) throw changedSincePreview(record, `the new file ${record.to} is not in the source checkout`);
   return { path, text: readFileSync(path, 'utf8') };
 }

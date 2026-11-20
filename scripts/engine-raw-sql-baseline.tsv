@@ -437,7 +437,6 @@ src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9
 src/core/fence-repair/census.ts	execute_raw	6
 src/core/fence-repair/hold-fix.ts	execute_raw	2
-src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
@@ -455,7 +454,7 @@ src/core/generations/fence.ts	execute_raw	4
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
-src/core/generations/repair.ts	execute_raw	6
+src/core/generations/repair.ts	execute_raw	5
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
@@ -831,7 +830,7 @@ src/core/repair/access.ts	execute_raw	2
 src/core/repair/agent-session-facts.ts	execute_raw	7
 src/core/repair/aliases.ts	execute_raw	3
 src/core/repair/atom-fence-rows.ts	execute_raw	2
-src/core/repair/atoms-restore.ts	execute_raw	5
+src/core/repair/atoms-restore.ts	execute_raw	4
 src/core/repair/attribution-backfill.ts	execute_raw	7
 src/core/repair/captured-facts.ts	execute_raw	3
 src/core/repair/connector-fences.ts	execute_raw	2
@@ -842,24 +841,24 @@ src/core/repair/duplicate-facts.ts	execute_raw	5
 src/core/repair/extractor-facts.ts	execute_raw	6
 src/core/repair/fact-claim-dates.ts	execute_raw	2
 src/core/repair/facts-rehome.ts	execute_raw	3
-src/core/repair/failed-writes.ts	execute_raw	19
-src/core/repair/fences.ts	execute_raw	4
-src/core/repair/file-drift-class.ts	execute_raw	12	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
-src/core/repair/file-drift.ts	execute_raw	6
-src/core/repair/frontmatter.ts	execute_raw	8
+src/core/repair/failed-writes.ts	execute_raw	17
+src/core/repair/fences.ts	execute_raw	2
+src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
+src/core/repair/file-drift.ts	execute_raw	4
+src/core/repair/frontmatter.ts	execute_raw	2
 src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
-src/core/repair/legacy-twins.ts	execute_raw	8
+src/core/repair/legacy-twins.ts	execute_raw	7
 src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
-src/core/repair/moved-pages.ts	execute_raw	4
+src/core/repair/moved-pages.ts	execute_raw	3
 src/core/repair/ontology-facts.ts	execute_raw	2
 src/core/repair/open-facts.ts	execute_raw	11
 src/core/repair/origin-carry.ts	execute_raw	4
 src/core/repair/origin-twins-heal.ts	execute_raw	4
-src/core/repair/origin-twins.ts	execute_raw	11
+src/core/repair/origin-twins.ts	execute_raw	9
 src/core/repair/orphan-children.ts	execute_raw	6
-src/core/repair/overwritten-edits.ts	execute_raw	3
+src/core/repair/overwritten-edits.ts	execute_raw	2
 src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	2
 src/core/repair/purged-change-reasons.ts	execute_raw	3
@@ -867,18 +866,17 @@ src/core/repair/purged-page-facts.ts	execute_raw	3
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/receipt-compaction.ts	execute_raw	3
 src/core/repair/redacted-facts.ts	execute_raw	4
-src/core/repair/rename-identity.ts	execute_raw	7
+src/core/repair/rename-identity.ts	execute_raw	6
 src/core/repair/rotation.ts	execute_raw	2
-src/core/repair/rows-behind.ts	execute_raw	1
 src/core/repair/safe-chunks.ts	execute_raw	1
 src/core/repair/secret-spans.ts	execute_raw	25	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
-src/core/repair/segmented-mirror.ts	execute_raw	5
-src/core/repair/segmented-tiling.ts	execute_raw	7
+src/core/repair/segmented-mirror.ts	execute_raw	4
+src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/settle.ts	execute_raw	1
 src/core/repair/slug-autoheal.ts	execute_raw	1
-src/core/repair/slug-conflicts.ts	execute_raw	5
+src/core/repair/slug-conflicts.ts	execute_raw	2
 src/core/repair/split-facts.ts	execute_raw	2
-src/core/repair/stale-atoms.ts	execute_raw	3
+src/core/repair/stale-atoms.ts	execute_raw	1
 src/core/repair/take-supersession.ts	execute_raw	3
 src/core/repair/timeline-comments.ts	execute_raw	5
 src/core/repair/timeline-order.ts	execute_raw	3

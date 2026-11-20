@@ -149,7 +149,7 @@ async function applyRow(ctx: OperationContext, row: ApprovedRow, embed: boolean)
   const engine: BrainEngine = ctx.engine;
   const context = await sourceContext(engine, row.source_id);
   if (!context.ok || !sameOwner(context.owner, row.owner)) return changed('owner_changed');
-  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [row.source_id]);
+  const source = await engine.getSource(row.source_id);
   if (source?.last_commit !== row.checkpoint) return changed('checkpoint_moved', { checkpoint: source?.last_commit ?? null });
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if (!snapshot || Number(snapshot.page.id) !== row.page_id || snapshot.revision !== row.revision || snapshot.page.deleted_at != null) return changed('page_moved');

@@ -653,7 +653,7 @@ async function applyKeepDeleted(ctx: OperationContext, page: ApprovedPage, artif
     if (error instanceof OperationError && error.code === 'changed_since_preview') return changed(error.message);
     throw error;
   }
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [page.source_id]);
+  const source = await ctx.engine.readSourceIncarnation(page.source_id);
   const recorded = await ctx.engine.transaction(tx => recordKeepDeleted(tx, { sourceId: page.source_id, incarnation: source!.incarnation, path: pin.path, observedAt: pin.observed_at,
     state: pin.state, decision: { request_id: requestId, decided_at: new Date().toISOString(), page_id: pin.page_id, revision: pin.revision } }));
   if (!recorded) return changed('its hold was re-checked or cleared');
@@ -967,7 +967,7 @@ export const fileDriftRepair: RepairHandler = {
     const targets: Array<{ slug: string | null; held?: HeldTarget }> = held ? held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, held: target })) : slugs.map(slug => ({ slug }));
     const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
     let previewed = 0;
-    const [source] = held ? [] : await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+    const source = held ? null : await engine.readSourceIncarnation(sourceId);
     const newerPages: string[] = [];
     opts.progress?.start('repair.file_drift.preview', targets.length);
     await asLocalCli(engine, async () => {

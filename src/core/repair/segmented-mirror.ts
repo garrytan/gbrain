@@ -157,7 +157,8 @@ async function admitRemirror(ctx: OperationContext, stale: StaleMirror, hash: st
   const callerIntent = { kind: 'segmented_mirror', slug: stale.slug, page_id: stale.page_id, preview_hash: hash, file_sha256: stale.file_sha256, expected_sha256: stale.expected_sha256 };
   return retryWriteAdmission(requestId, remaining => engine.transaction(async tx => {
     await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
-    const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [stale.source_id]);
+    await tx.lockSourceRow(stale.source_id);
+    const source = await tx.readSourceState(stale.source_id);
     if (!source || source.archived) throw opError('source_changed', 'The source is missing or archived.',
       `Source ${stale.source_id} is archived or missing, so ${stale.slug} was not re-mirrored. Run ${previewCommand({ source_ids: [stale.source_id] })} again.`);
     const prior = await getWriteRequest(tx, principal, requestId);

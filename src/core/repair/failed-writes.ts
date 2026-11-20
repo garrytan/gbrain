@@ -508,8 +508,7 @@ export const failedWritesRepair: RepairHandler = {
           else residuals[verdict.class] = (residuals[verdict.class] ?? 0) + 1;
           listing.push({ item: label, class: verdict.class, ...(verdict.detail ? { detail: verdict.detail } : {}) });
         }
-        const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-          'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+        const sources = await engine.listSourceIncarnations(scope.source_ids);
         const hash = previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids },
           replay: replay.map(write => ({ id: write.id, digest: write.digest, revision: write.revision })) });
         if (replay.length) await saveApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash }, replay);
@@ -526,7 +525,7 @@ export const failedWritesRepair: RepairHandler = {
         'docs/guides/repair.md#failed-writes');
     }
     const approved = await loadApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash: opts.expect, previewCommand: command,
-      emptyHash: async () => previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection: { source_ids: scope.source_ids }, replay: [] }) });
+      emptyHash: async () => previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources: (await engine.listSourceIncarnations(scope.source_ids)), selection: { source_ids: scope.source_ids }, replay: [] }) });
     if (approved.items.some(write => JSON.stringify(write.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map((write, index) => item(write, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };

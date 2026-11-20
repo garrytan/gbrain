@@ -92,7 +92,7 @@ export async function originOwnerContext(engine: BrainEngine, sourceId: string):
   try { gitRoot = syncGit(root, ['rev-parse', '--show-toplevel']).trim(); } catch { return { ok: false, reason: 'not_owner_host' }; }
   const slugMode = await scannerSlugRootMode(engine, sourceId, root);
   const scope = relative(realpathSync.native(gitRoot), realpathSync.native(root)).split('\\').join('/');
-  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   return { ok: true, root, gitRoot, scope: { sourceId, root, scope, slugMode }, commit: source?.last_commit ?? null,
     owner: { host_id: hostId, worktree_id: binding.worktree_id, owner_epoch: String(binding.owner_epoch), source_incarnation: binding.source_incarnation } };
 }
@@ -326,7 +326,7 @@ export async function resolveOriginTwin(ctx: OperationContext, pair: OriginTwinP
     await tx.lockPageKeys([{ sourceId: pair.source_id, slug: pair.survivor.slug }, { sourceId: pair.source_id, slug: pair.twin.slug }].sort((a, b) => a.slug.localeCompare(b.slug)));
     const reason = await pairLocked(tx, pair);
     if (reason) return { reason };
-    const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [pair.source_id]);
+    const source = await tx.readSourceIncarnation(pair.source_id);
     return { receipt: await applyOriginTwin(tx, pair, source!.incarnation) };
   });
   return 'reason' in result ? changed(result.reason!) : { applied: true, outcome: pair.mode === 'merge' ? 'merged' : 'detached', detail: result.receipt };
