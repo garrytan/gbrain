@@ -22,6 +22,9 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { randomUUID } from 'node:crypto';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { managedBrain } from './helpers/managed-brain.ts';
 
 let engine: PGLiteEngine;
 let calls: string[] = [];
@@ -84,6 +87,7 @@ describe('GST-3251 conversation fact extraction', () => {
       expect(run.pages_processed).toBe(0);
       expect(run.declined_windows).toEqual([{ slug: 'conversations/planning', start: '2026-03-02T09:02:00Z', end: '2026-03-02T09:03:00Z', reason }]);
       expect(run.failed_pages[0]!.error).toContain('declined 1 window(s): 2026-03-02T09:02:00Z..2026-03-02T09:03:00Z');
+      expect(run.failed_pages[0]!.error).toContain('3 new fact(s) from the other windows were published');
       const after = await facts('conversations/planning');
       expect(after.claims).toEqual(['The team discussed topic-alpha', 'The team discussed topic-beta', 'The team discussed topic-epsilon']);
       expect(after.terminal).toBe(false);
@@ -93,6 +97,7 @@ describe('GST-3251 conversation fact extraction', () => {
       const again = await extract('conversations/planning', stub(reason));
       expect(again.pages_skipped_completed).toBe(0);
       expect(again.pages_failed).toBe(1);
+      expect(again.failed_pages[0]!.error).toContain('0 new fact(s) from the other windows were published');
       expect((await facts('conversations/planning')).claims).toHaveLength(3);
     });
   }
@@ -139,3 +144,23 @@ describe('GST-3251 conversation fact extraction', () => {
     expect((await facts('conversations/options')).claims).toEqual(['The team discussed topic-alpha']);
   });
 });
+
+test('GST-3251: a managed brain publishes nothing for a page with a declined window and calls the model again next run', async () => {
+  await managedBrain(async brain => {
+    const slug = 'conversations/planning';
+    await submitPageMutation(brain.ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), content: THREE_WINDOWS } });
+    await disposePersistenceConsumer(brain.engine);
+    const run = () => runExtractConversationFactsCore(brain.engine, { sourceId: 'default', slugs: [slug], sleepMs: 0, overrideDisabled: true, extractor: stub() });
+    calls = [];
+    const first = await run();
+    expect(first.pages_failed).toBe(1);
+    expect(first.declined_windows).toHaveLength(1);
+    expect(first.failed_pages[0]!.error).toContain('no facts were published (managed brain)');
+    expect(await brain.engine.executeRaw('SELECT fact FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', ['default', slug])).toEqual([]);
+    expect(calls).toHaveLength(5);
+    calls = [];
+    const again = await run();
+    expect(again.pages_failed).toBe(1);
+    expect(calls).toHaveLength(5);
+  });
+}, 120_000);

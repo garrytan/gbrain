@@ -1021,7 +1021,7 @@ async function processPage(
     const published = !state.managed && pageRows.length > 0 ? await publishPageFacts(state, page.slug, pageRows, 'partial') : null;
     state.result.facts_inserted += published?.facts_inserted ?? 0; state.result.orphan_facts_cleaned += published?.deleted ?? 0;
     const note = `the extraction model declined ${declined.length} window(s): ${declined.map(w => `${w.start}..${w.end} (${w.reason})`).join(', ')}; `
-      + `${state.managed ? 'no facts were published (managed brain)' : `the other windows' ${pageRows.length} fact(s) were kept`}; the page stays unfinished and retries next run`;
+      + `${state.managed ? 'no facts were published (managed brain)' : `${published?.facts_inserted ?? 0} new fact(s) from the other windows were published`}; the page stays unfinished and retries next run`;
     state.result.pages_failed++; recordFailedPage(state.result, page.slug, note);
     process.stderr.write(`[extract-conversation-facts] ${page.slug}: ${note}; retry: gbrain extract-conversation-facts --source-id ${state.sourceId} --slug ${page.slug}\n`);
     return { newEndIso: null };
