@@ -59,7 +59,7 @@ pub use link_temporal::{
 };
 mod retrieval_coverage;
 pub use retrieval_coverage::{
-    CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
+    CoverageRelevance, CoverageScope, HeldCount, PendingCount, PendingCountInput, ReadinessRow,
     RebuildProgress,
 };
 mod site_reads;
