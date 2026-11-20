@@ -10,9 +10,12 @@
  *    (facts/derivation-inputs.ts), the explicit lowering of a page whose content did not change (lowerDerivedPage), the
  *    derived share doctor reads, the retirement stamp (`retired_by`, `retired_at`) on soft-deleted pages only with
  *    their tier and origin kept, and the atom completion stamp (`source_hash`).
- *  - Regression: these flows sent raw SQL (taint.ts, derivation-inputs.ts, derived-retirement-hold.ts and the atom
- *    adapter's completeItems), so a Rust brain stopped on `raw_sql` at the first derived write: no dream summary, no
- *    retirement and no atom generation published there.
+ *  - Regression: these flows sent raw SQL (taint.ts, derived-retirement-hold.ts and the atom adapter's
+ *    completeItems), so a Rust brain stopped on `raw_sql` at the first derived write: no dream summary, no retirement
+ *    and no atom generation published there.
+ *  - Rust arm on this branch: the retirement case matches PGLite. The derivation publish and the atoms publish record
+ *    derivation edges (facts/derivation-inputs.ts), which still send raw SQL here, so those two cases stop on the
+ *    typed `raw_sql` refusal (rust-tally.tsv). The derivation edges are typed on rust-engine/derivation-hide.
  *  - Why existing coverage misses it: generation-output-parity.test.ts publishes a single page with no derivation and
  *    reads atom inputs, but publishes no derivation, retires nothing and publishes no atom.
  *  - Seam: none. Typed members and the real generation paths only (no executeRaw: D18). Page ids differ between
@@ -67,8 +70,7 @@ async function trustOf(engine: BrainEngine, slugs: readonly string[], scrub: (v:
 
 describe('engine parity: derived generation trust writes', () => {
   parityTest('a single-page derivation publish stamps the derived tier, records its input edges and lowers a page whose content did not change', {
-    methods: ['putPage', 'getPage', 'readPageTrustRows', 'readRowTrustRows', 'transaction', 'lowerTrustTier', 'insertDerivationInputs', 'listDerivationDependents',
-      'countDerivedFactTaint', 'countDerivedRowTaint'],
+    methods: ['putPage', 'getPage', 'readPageTrustRows', 'readRowTrustRows', 'transaction', 'lowerTrustTier', 'countDerivedFactTaint', 'countDerivedRowTaint'],
   }, async (engine) => {
     await putAt(engine, 'notes/alpha', 'operator_curated', 'alpha body');
     await putAt(engine, 'notes/beta', 'tool_observed', 'beta body');
@@ -145,7 +147,7 @@ describe('engine parity: derived generation trust writes', () => {
 
   parityTest('an atom generation publish stamps its atoms at the origin taint, records their edges, stamps source_hash and retires an atom it no longer produced', {
     methods: ['putPage', 'getPage', 'readPageTrustRows', 'readAtomOriginInput', 'readGenerationPageRows', 'transaction', 'softDeletePages', 'createVersion',
-      'lowerTrustTier', 'insertDerivationInputs', 'listDerivationDependents', 'stampPageFrontmatter'],
+      'lowerTrustTier', 'stampPageFrontmatter'],
   }, async (engine) => {
     const origin = 'notes/origin';
     await putAt(engine, origin, 'tool_observed', 'the origin page');

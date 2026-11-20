@@ -3406,10 +3406,6 @@ export interface BrainEngine {
     origin: import('./trust/tier.ts').WriteOrigin | null): Promise<number[]>;
   /** How many take, timeline or page rows carry taint inputs in their write origin, and how many of those are external_untrusted. */
   countDerivedRowTaint(table: DerivationTrustSql.DerivedTaintTable): Promise<{ derived: number; external: number }>;
-  /** Records an input edge (`derivation_inputs`) from the derived row to each input; an edge already recorded is kept. */
-  insertDerivationInputs(derived: DerivationTrustSql.DerivedRowKey, inputs: readonly DerivationTrustSql.DerivationEdgeRef[]): Promise<void>;
-  /** One hop of the derived-row walk: the distinct rows derived from any of `frontier`, by table then id, at most `limit`. */
-  listDerivationDependents(frontier: readonly DerivationTrustSql.DerivationEdgeRef[], limit: number): Promise<DerivationTrustSql.DerivationDependentRow[]>;
   /** One fixed frontmatter stamp: the retirement stamp on soft-deleted pages, or an atom generation's `source_hash` on its live atoms. */
   stampPageFrontmatter(stamp: DerivationTrustSql.PageFrontmatterStamp): Promise<void>;
 

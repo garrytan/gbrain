@@ -123,21 +123,12 @@ Rust guesses and gaps (1x parity):
 
 ## Derivation trust (`trust::derivation`)
 
-The `derivation_inputs` edges (src/schema.sql): the row `derived_table`/`derived_id` was derived from the row
-`input_table`/`input_id`. Ids are text, as in the table. Keys:
-
-- `t 0x09 derived_table\0derived_id\0input_table\0input_id` → the edge's `source_id` and creation time.
-- `t 0x0A input_table\0input_id\0derived_table\0derived_id` → empty: the by-input index the dependents walk reads.
-
-The table has no foreign key to the rows it names, so deleting a page, fact or take keeps its edges. Deleting a source
-removes the edges recorded with it (`ON DELETE CASCADE`, through `cascade::remove_source_rows`). The owner-only
-lineage walk (`owner_only::lineage_owner_only`) follows these edges up to 8 hops, as `gbrain_owner_only_lineage`
-(schema migration v320) does.
+The derived-row trust writes and counts. They read and write the page, take, timeline and fact records and keep no
+key of their own. The `derivation_inputs` edges are not kept on this store line: `recordDerivationInputs` and
+`derivedRowsFrom` (src/core/facts/derivation-inputs.ts) still send raw SQL.
 
 | Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
 | --- | --- | --- |
-| `insertDerivationInputs` | `insert_derivation_inputs`: skips an edge that exists; an unknown source refuses as the foreign key does | `INSERT … SELECT … jsonb_to_recordset($4::text::jsonb) … ON CONFLICT DO NOTHING` |
-| `listDerivationDependents` | `list_derivation_dependents`: the distinct derived rows of the frontier, sorted by table then id (bytes), cut to `limit` | `SELECT DISTINCT … ORDER BY d.derived_table,d.derived_id LIMIT $2` |
 | `lowerTrustTier` | `lower_trust_tier`: pages only (the member refuses `takes` and `timeline_entries`); lowers each listed page, soft-deleted included, whose stored rank is above the tier; keeps the revision; returns the ids lowered by id | `UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
 | `countDerivedRowTaint` | `count_derived_row_taint`: pages, takes or timeline entries whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` | `SELECT count(*) FILTER (…) … FROM <table>` |
 | `countDerivedFactTaint` | `count_derived_fact_taint`: the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
@@ -147,9 +138,9 @@ Rust guesses and gaps (1x parity):
 
 - A frontmatter stamp that changes a page moves its revision, as the `gbrain_advance_page_revision` trigger does; a
   stamp that changes nothing keeps it (Postgres runs the `UPDATE` and the trigger sees no content change either).
-- `propagateTierLowering` (src/core/trust/propagation.ts) still lowers the rows derived from a lowered row and queues
-  `needs_rederive` through `executeRaw`, so a lowering whose row has recorded dependents stops on a Rust brain with
-  `raw_sql`.
+- `propagateTierLowering` (src/core/trust/propagation.ts) walks the rows derived from a lowered row through
+  `derivedRowsFrom`, lowers them and queues `needs_rederive` through `executeRaw`, so on a Rust brain every
+  `lowerToDerivedTier` that lowers a row then stops with `raw_sql`.
 
 ## The write gate (`trust::write_gate`)
 

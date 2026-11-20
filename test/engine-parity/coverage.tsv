@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 756/756
+# covered: 754/754
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -49,7 +49,7 @@
 # facts_repair: 10/10
 # facts_trust: 8/8
 # trust_tier_reads: 13/13
-# derivation_trust: 5/5
+# derivation_trust: 3/3
 # raw_sql: 4/4
 # code_edges: 9/9
 # eval_capture: 5/5
@@ -694,8 +694,6 @@ readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 lowerTrustTier	derivation_trust	yes	2	no	yes	yes	serves
 countDerivedRowTaint	derivation_trust	yes	1	no	yes	yes	serves
-insertDerivationInputs	derivation_trust	yes	2	no	yes	yes	serves
-listDerivationDependents	derivation_trust	yes	2	no	yes	yes	serves
 stampPageFrontmatter	derivation_trust	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql

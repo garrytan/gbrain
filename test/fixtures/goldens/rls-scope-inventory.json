@@ -2413,17 +2413,6 @@
           "src-a"
         ]
       },
-      "listDerivationDependents#default": {
-        "flagOffLanes": [
-          "pool"
-        ],
-        "flagOffOpensTransaction": false,
-        "flagOn": "unscoped",
-        "flagOnLanes": [
-          "pool"
-        ],
-        "flagOnScopes": []
-      },
       "listEffectRecoveries#after": {
         "flagOffLanes": [
           "pool"
@@ -5941,7 +5930,6 @@
         "holdSchemaMigrationLock": "none",
         "inboundLinkCoverage": "none",
         "initSchema": "none",
-        "insertDerivationInputs": "none",
         "insertFact": "none",
         "insertFactWithdrawal": "none",
         "insertFacts": "none",
@@ -5991,7 +5979,6 @@
         "listCorePageRows": "none",
         "listCorpusSample": "direct",
         "listDeadFactsAbsorbJobsByKeys": "none",
-        "listDerivationDependents": "none",
         "listDueWakeWatches": "none",
         "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",

@@ -446,6 +446,7 @@ fn list_texts<'a>(name: &'a str, list: &'a Option<Vec<Option<String>>>) -> Vec<(
 // Record access.
 
 /// The take at `id`.
+#[allow(dead_code)]
 pub(crate) fn read_take(read: &dyn KvRead, id: u64) -> Result<Option<TakeRecord>> {
     get_json(read, &take_key(id))
 }

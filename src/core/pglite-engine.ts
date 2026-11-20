@@ -1597,8 +1597,6 @@ export class PGLiteEngine implements BrainEngine {
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.rawRead); }
   lowerTrustTier(table: TaintTable, ids: readonly number[], tier: TrustTier, origin: WriteOrigin | null) { return derivationTrustImpl.lowerTrustTier(this.rawRead, table, ids, tier, origin); }
   countDerivedRowTaint(table: derivationTrustImpl.DerivedTaintTable) { return derivationTrustImpl.countDerivedRowTaint(this.rawRead, table); }
-  insertDerivationInputs(derived: derivationTrustImpl.DerivedRowKey, inputs: readonly derivationTrustImpl.DerivationEdgeRef[]) { return derivationTrustImpl.insertDerivationInputs(this.rawRead, derived, inputs); }
-  listDerivationDependents(frontier: readonly derivationTrustImpl.DerivationEdgeRef[], limit: number) { return derivationTrustImpl.listDerivationDependents(this.rawRead, frontier, limit); }
   stampPageFrontmatter(stamp: derivationTrustImpl.PageFrontmatterStamp) { return derivationTrustImpl.stampPageFrontmatter(this.rawRead, stamp); }
 
 

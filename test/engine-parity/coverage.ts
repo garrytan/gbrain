@@ -185,8 +185,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listVersionTrustTiers', 'listVersionReasonWriters', 'listValidTimeIdentities', 'pickValidTimeEdition',
     'listAmendmentsNotApplied', 'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive'],
 
-  // derivation_trust: derivation_inputs edges and the derived-row trust writes (engine-sql/derivation-trust.ts)
-  derivation_trust: ['lowerTrustTier', 'countDerivedRowTaint', 'insertDerivationInputs', 'listDerivationDependents', 'stampPageFrontmatter'],
+  // derivation_trust: the derived-row trust writes (engine-sql/derivation-trust.ts)
+  derivation_trust: ['lowerTrustTier', 'countDerivedRowTaint', 'stampPageFrontmatter'],
 
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',

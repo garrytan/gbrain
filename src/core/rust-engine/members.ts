@@ -532,9 +532,7 @@ export const RUST_ENGINE_MEMBERS = {
   pendingTrustProposalsFor: 'facts',
   updatePendingTrustProposalAfter: 'facts',
   transitionTrustProposal: 'facts',
-  // trust: the derivation edges and the derived-row trust writes (engine-sql/derivation-trust.ts)
-  insertDerivationInputs: 'facts',
-  listDerivationDependents: 'facts',
+  // trust: the derived-row trust writes (engine-sql/derivation-trust.ts)
   lowerTrustTier: 'pages',
   countDerivedRowTaint: 'pages',
   stampPageFrontmatter: 'pages',

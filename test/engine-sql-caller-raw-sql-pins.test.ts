@@ -81,21 +81,6 @@ const PINS: Pin[] = [
                 count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM takes`],
   },
   {
-    from: 'src/core/facts/derivation-inputs.ts:39 recordDerivationInputs (at d7fb3a97b7)',
-    case: { method: 'insertDerivationInputs', variant: 'default', run: e => e.insertDerivationInputs({ table: 'pages', id: '7', sourceId: 'default' }, [{ input_table: 'pages', input_id: '3' }]) },
-    texts: [`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
-    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
-    ON CONFLICT DO NOTHING`],
-  },
-  {
-    from: 'src/core/facts/derivation-inputs.ts:58 derivedRowsFrom (at d7fb3a97b7)',
-    case: { method: 'listDerivationDependents', variant: 'default', run: e => e.listDerivationDependents([{ input_table: 'pages', input_id: '3' }], 1_001) },
-    texts: [`SELECT DISTINCT d.derived_table,d.derived_id
-      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
-        ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`],
-  },
-  {
     from: 'src/core/persistence/derived-retirement-hold.ts:51 stampDerivedRetirement (at d7fb3a97b7)',
     case: { method: 'stampPageFrontmatter', variant: 'retired', run: e => e.stampPageFrontmatter({ match: 'retired', sourceId: 'default', slugs: ['synth/a'], retiredBy: 'synthesis-cleanup', retiredAt: '2026-01-01T00:00:00.000Z' }) },
     texts: [`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)

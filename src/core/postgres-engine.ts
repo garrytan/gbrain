@@ -1248,8 +1248,6 @@ export class PostgresEngine implements BrainEngine {
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
   lowerTrustTier(table: TaintTable, ids: readonly number[], tier: TrustTier, origin: WriteOrigin | null) { return derivationTrustImpl.lowerTrustTier(this.executeRaw.bind(this), table, ids, tier, origin); }
   countDerivedRowTaint(table: derivationTrustImpl.DerivedTaintTable) { return derivationTrustImpl.countDerivedRowTaint(this.executeRaw.bind(this), table); }
-  insertDerivationInputs(derived: derivationTrustImpl.DerivedRowKey, inputs: readonly derivationTrustImpl.DerivationEdgeRef[]) { return derivationTrustImpl.insertDerivationInputs(this.executeRaw.bind(this), derived, inputs); }
-  listDerivationDependents(frontier: readonly derivationTrustImpl.DerivationEdgeRef[], limit: number) { return derivationTrustImpl.listDerivationDependents(this.executeRaw.bind(this), frontier, limit); }
   stampPageFrontmatter(stamp: derivationTrustImpl.PageFrontmatterStamp) { return derivationTrustImpl.stampPageFrontmatter(this.executeRaw.bind(this), stamp); }
 
 
