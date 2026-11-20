@@ -499,7 +499,7 @@ src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
-src/core/link-reconciliation.ts	execute_raw	4
+src/core/link-reconciliation.ts	execute_raw	2
 src/core/link-single-value.ts	execute_raw	2
 src/core/link-source-check-repair.ts	execute_raw	3
 src/core/links-fence-projection.ts	execute_raw	8
@@ -826,7 +826,6 @@ src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
-src/core/quarantine.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1
 src/core/questions/freshness.ts	execute_raw	3
 src/core/questions/pages.ts	execute_raw	1

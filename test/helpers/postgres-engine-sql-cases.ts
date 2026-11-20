@@ -230,6 +230,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readRowTrustRows': OOS.cliReadsImport,
   'readDatabaseClock': OOS.cliReadsImport,
   'listLinkPageMetadata': OOS.cliReadsImport,
+  'listLinkPageMetadataForSlugs': OOS.cliReadsImport,
+  'listAttendedOriginSlugs': OOS.cliReadsImport,
   'listStoredTimelineRows': OOS.cliReadsImport,
   'filterPagesAtRevision': OOS.cliReadsImport,
   'lockRegisteredSourceIds': OOS.wantedLinks,
@@ -540,7 +542,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
-  'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
+  'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'listQuarantinedSlugs': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
@@ -1079,6 +1081,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
   ...variants('advanceSourceCommit', [['default', (e) => e.advanceSourceCommit(SRC, 'abc123')], ['newest', (e) => e.advanceSourceCommit(SRC, 'abc123', '2026-01-02T00:00:00.000Z')], ['clearNewest', (e) => e.advanceSourceCommit(SRC, 'abc123', null)]]),
   ...variants('listSourcePathPages', [['default', (e) => e.listSourcePathPages(SRC)]]),
+  ...variants('listQuarantinedSlugs', [['default', (e) => e.listQuarantinedSlugs(SRC)]]),
   ...variants('readRenameIdentityRows', [['default', (e) => e.readRenameIdentityRows(SRC, ['a.md'], ['a'])]]),
   ...variants('readLiveIdentityHolders', [['default', (e) => e.readLiveIdentityHolders(SRC, ['doc-1'], ['A title'])]]),
   ...variants('readPageSizeRows', [['default', (e) => e.readPageSizeRows(SRC, 1048576, null)], ['slugs', (e) => e.readPageSizeRows(SRC, 1048576, ['notes/a'])]]),

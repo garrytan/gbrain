@@ -4,8 +4,9 @@
  * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages, insertSource creates a source and
  * advanceSourceCommit records the commit a git sync reached; listSourcePathPages, readRenameIdentityRows and
- * readLiveIdentityHolders are a git sync's page reads, and readPageSizeRows its size-state read (store side: the same
- * cli_reads/sources.rs, and sources.rs for advanceSourceCommit).
+ * readLiveIdentityHolders are a git sync's page reads, readPageSizeRows its size-state read and listQuarantinedSlugs the
+ * pages its link and timeline extraction skips (store side: the same cli_reads/sources.rs, and sources.rs for
+ * advanceSourceCommit).
  */
 import type { SourceRecordRow } from '../../engine.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcePathPageRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -81,6 +82,9 @@ export const writeReasonPurgeTombstones: StoreMember<[sourceId: string, pairs: r
 
 export const listSourcePathPages: StoreMember<[sourceId: string], SourcePathPageRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourcePathPages', sourceId }, () => brain.listSourcePathPages(sourceId))) as SourcePathPageRow[];
+
+export const listQuarantinedSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  (await storeCall({ member: 'listQuarantinedSlugs', sourceId }, () => brain.listQuarantinedSlugs(sourceId))) as string[];
 
 export const readRenameIdentityRows: StoreMember<[sourceId: string, paths: readonly string[], slugs: readonly string[]], RenameIdentityRow[]> = async (brain, sourceId, paths, slugs) =>
   (await storeCall({ member: 'readRenameIdentityRows', sourceId }, () => brain.readRenameIdentityRows(sourceId, [...paths], [...slugs]))) as RenameIdentityRow[];

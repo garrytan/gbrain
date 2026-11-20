@@ -292,6 +292,9 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listQuarantinedSlugs#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
     "listSourcePathPages#default": {
       "raw": 1

@@ -960,6 +960,31 @@ const PINS: Pin[] = [
     texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
   },
   {
+    from: 'src/core/quarantine.ts:116 quarantinedSlugs (at 90ede8f55a)',
+    case: { method: 'listQuarantinedSlugs', variant: 'default', run: e => e.listQuarantinedSlugs('default') },
+    texts: [`SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')`],
+  },
+  {
+    from: 'src/core/link-reconciliation.ts:220 fileLinkOwnership scoped metadata (at 90ede8f55a)',
+    case: { method: 'listLinkPageMetadataForSlugs', variant: 'default', run: e => e.listLinkPageMetadataForSlugs('default', ['a']) },
+    texts: [`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`],
+  },
+  {
+    from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
+    case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default') },
+    texts: [`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id`],
+  },
+  {
+    from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership scoped attendance origins (at 90ede8f55a)',
+    case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default', ['a']) },
+    texts: [`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
+  },
+  {
     from: 'src/core/sync-pending.ts:106 readFirstDue (at 4e39797ed0)',
     case: { method: 'readFirstDue', variant: 'default', run: e => e.readFirstDue(['default']) },
     texts: [`SELECT s.id AS source_id, n.observed_head,

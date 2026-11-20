@@ -3064,6 +3064,17 @@
           "src-a,src-b"
         ]
       },
+      "listQuarantinedSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listReservationsAfter#default": {
         "flagOffLanes": [
           "pool"
@@ -6166,6 +6177,7 @@
         "listAllSources": "none",
         "listAmendmentsNotApplied": "none",
         "listAppliedPolicyRevisions": "none",
+        "listAttendedOriginSlugs": "none",
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
@@ -6222,6 +6234,7 @@
         "listLexicalContestCandidates": "none",
         "listLinkEndpointPages": "none",
         "listLinkPageMetadata": "none",
+        "listLinkPageMetadataForSlugs": "none",
         "listLinkSources": "direct",
         "listLivePageSummaries": "none",
         "listLocalPathSources": "none",
@@ -6241,6 +6254,7 @@
         "listPrefixSampledPages": "direct",
         "listPrivateQueueHealth": "none",
         "listQualifiedSymbolNames": "none",
+        "listQuarantinedSlugs": "none",
         "listQueueWedgeCounts": "none",
         "listRecentFailedJobErrors": "none",
         "listRecentLeasePressure": "none",
