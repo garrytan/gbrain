@@ -154,6 +154,7 @@ test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/search-deep-query.test.ts

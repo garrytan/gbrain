@@ -45,6 +45,7 @@ import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
+import { guardUnsourcedPut } from '../persistence/unsourced-put-fork.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -377,6 +378,7 @@ const put_page: Operation = {
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation } = await pageMutations();
     const sourceId = pageMutationSource(ctx, p, 'put_page');
+    await guardUnsourcedPut(ctx, sourceId, p); // an unsourced put never forks another source's page
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);
