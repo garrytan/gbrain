@@ -5,6 +5,7 @@
  * run these statements. Each one is the text its caller ran through executeRaw; the decisions (which drafts assert, which
  * suppressions apply, when a lifetime is ended or minted) stay with the callers.
  */
+import { COVERAGE_KEY } from '../belief/keys.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 
@@ -34,6 +35,44 @@ export async function readBeliefTombstones(exec: LegacyUnscopedRead, sourceId: s
     UNION SELECT claim_hash AS fp FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($3::text[])`,
   [sourceId, [...factFps], [...takeFps]]);
   return rows.map(r => r.fp);
+}
+
+/** The newest coverage event of a source's current incarnation other than `coverage.restored`: its type, `cause->>'run'`, ISO `recorded_at` and id. */
+export interface BeliefCoverageRow { event_type: string; run: string | null; recorded_at: string; id: number }
+
+/** The source's coverage state (src/core/belief/coverage.ts `latestCoverage`), or null; a restore never starts or stops recording. */
+export async function readLatestBeliefCoverage(exec: LegacyUnscopedRead, sourceId: string): Promise<BeliefCoverageRow | null> {
+  const [row] = await exec.executeRaw<{ event_type: string; run: string | null; recorded_at: string | Date; id: number | string }>(`SELECT e.event_type, e.cause->>'run' AS run, e.recorded_at, e.id
+    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
+    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 AND e.event_type <> 'coverage.restored' ORDER BY e.id DESC LIMIT 1`, [sourceId, COVERAGE_KEY]);
+  return row ? { event_type: row.event_type, run: row.run, recorded_at: new Date(row.recorded_at).toISOString(), id: Number(row.id) } : null;
+}
+
+/** Whether `slug` of the source has a baseline event of run `runId` (any incarnation). */
+export async function hasBeliefBaseline(exec: LegacyUnscopedRead, sourceId: string, slug: string, runId: string): Promise<boolean> {
+  return (await exec.executeRaw(`SELECT 1 FROM belief_events
+  WHERE source_id = $1 AND slug = $2 AND event_type = 'baseline' AND cause->>'run' = $3 LIMIT 1`, [sourceId, slug, runId])).length > 0;
+}
+
+/**
+ * Slugs of the source still lacking a baseline of run `runId`: live and soft-deleted pages, then page-less database-only
+ * fact subjects; after `after` and not in `skip`, the first `limit` in byte order (COLLATE "C", as PGLite and the Rust store sort).
+ */
+export async function listBeliefBaselinePending(exec: LegacyUnscopedRead, sourceId: string, runId: string, after: string, skip: readonly string[], limit: number): Promise<string[]> {
+  const rows = await exec.executeRaw<{ slug: string }>(`SELECT slug FROM (
+      SELECT p.slug FROM pages p WHERE p.source_id = $1
+      UNION SELECT f.entity_slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.expired_at IS NULL AND f.entity_slug IS NOT NULL
+      UNION SELECT f.source_markdown_slug FROM facts f WHERE f.source_id = $1 AND f.dimension IS NOT NULL AND f.row_num IS NULL AND f.expired_at IS NULL AND f.source_markdown_slug IS NOT NULL
+    ) s WHERE s.slug COLLATE "C" > $3 AND NOT (s.slug = ANY($4::text[])) AND NOT EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = $1 AND e.slug = s.slug AND e.event_type = 'baseline' AND e.cause->>'run' = $2)
+    ORDER BY s.slug COLLATE "C" LIMIT $5`, [sourceId, runId, after, [...skip], limit]);
+  return rows.map(r => r.slug);
+}
+
+/** How many distinct slugs of the source have a baseline event of run `runId`. */
+export async function countBeliefBaselineSlugs(exec: LegacyUnscopedRead, sourceId: string, runId: string): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: number }>(`SELECT count(DISTINCT slug)::int AS n FROM belief_events WHERE source_id = $1 AND event_type = 'baseline' AND cause->>'run' = $2`,
+    [sourceId, runId]);
+  return Number(row?.n ?? 0);
 }
 
 /** The source's suppressions on any of `subjectKeys` or on a field whose text hashes to one of `fieldHashes`. No set order. */

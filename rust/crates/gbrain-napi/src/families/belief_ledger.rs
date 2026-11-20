@@ -1,6 +1,7 @@
 //! The belief ledger's writes and the reads its append makes: events, commit marks, page
 //! lifetimes, suppressions and purge tombstones (src/core/engine-sql/belief-ledger.ts); and its
-//! history and source reads (engine-sql/trust-tier-reads.ts, engine-sql/belief.ts).
+//! history and source reads (engine-sql/trust-tier-reads.ts, engine-sql/belief.ts); and the
+//! coverage reads of its activation (engine-sql/belief-ledger.ts, belief/coverage.ts).
 //!
 //! One `#[napi] impl Brain` block; each method decodes its JSON arguments, runs one
 //! `gbrain_store::trust::belief_*` call on the pool through `Brain::run` and resolves plain JSON.
@@ -18,6 +19,17 @@ use gbrain_store::trust::belief_events::{EventInsert, TombstoneQuery};
 use gbrain_store::trust::belief_history::{HistoryQuery, VisibleLifetimesQuery};
 use gbrain_store::trust::belief_lifetimes::{LifetimeMint, LifetimePair};
 use gbrain_store::trust::belief_redactions::{RedactionInsert, RedactionQuery, RedactionRelease};
+
+/// `listBeliefBaselinePending`'s arguments.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PendingArgs {
+    source_id: String,
+    run_id: String,
+    after: String,
+    skip: Vec<String>,
+    limit: u32,
+}
 
 /// `renameBeliefLifetime`'s arguments.
 #[derive(Deserialize)]
@@ -214,5 +226,61 @@ impl Brain {
         subject_key: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_covered_sources(&subject_key))
+    }
+
+    /// `readLatestBeliefCoverage(sourceId)`: resolves the newest coverage event, or null.
+    #[napi]
+    pub fn read_latest_belief_coverage<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_latest_belief_coverage(&source_id))
+    }
+
+    /// `hasBeliefBaseline(sourceId, slug, runId)`: resolves whether the slug has the run's baseline.
+    #[napi]
+    pub fn has_belief_baseline<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        run_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_belief_baseline(&source_id, &slug, &run_id)
+        })
+    }
+
+    /// `countBeliefBaselineSlugs(sourceId, runId)`: resolves how many slugs have the run's baseline.
+    #[napi]
+    pub fn count_belief_baseline_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        run_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_belief_baseline_slugs(&source_id, &run_id)
+        })
+    }
+
+    /// `listBeliefBaselinePending({ sourceId, runId, after, skip, limit })`: resolves the slugs.
+    #[napi]
+    pub fn list_belief_baseline_pending<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PendingArgs = required(args, "listBeliefBaselinePending args")?;
+            s.list_belief_baseline_pending(
+                &a.source_id,
+                &a.run_id,
+                &a.after,
+                &a.skip,
+                a.limit as usize,
+            )
+        })
     }
 }

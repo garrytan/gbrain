@@ -37,7 +37,7 @@ const QUARANTINE_KEY: &str = "quarantine";
 /// The event type that hides the earlier events of its subject.
 const HIDDEN: &str = "derived.hidden";
 /// `COVERAGE_KEY` (src/core/belief/keys.ts).
-const COVERAGE_KEY: &str = "[\"coverage\"]";
+pub(super) const COVERAGE_KEY: &str = "[\"coverage\"]";
 /// How many candidate events the history read takes per scan.
 const BATCH: usize = 256;
 
@@ -95,7 +95,7 @@ fn timestamptz(text: &Option<String>) -> Result<Option<i64>> {
 }
 
 /// `prefix` and the id range `[from, to)` after it.
-fn id_range(prefix: &[u8], from: u64, to: Option<u64>) -> (Vec<u8>, Vec<u8>) {
+pub(super) fn id_range(prefix: &[u8], from: u64, to: Option<u64>) -> (Vec<u8>, Vec<u8>) {
     let at = |id: u64| [prefix, &id.to_be_bytes()[..]].concat();
     let end = match to {
         Some(to) => at(to),
@@ -111,7 +111,7 @@ fn key_id(key: &[u8]) -> Option<u64> {
 }
 
 /// The `(incarnation, id)` of every entry of an index range, read before any event is loaded.
-fn index_entries(
+pub(super) fn index_entries(
     read: &dyn KvRead,
     (start, end): (Vec<u8>, Vec<u8>),
     reverse: bool,
@@ -126,7 +126,7 @@ fn index_entries(
     Ok(out)
 }
 
-fn load_event(
+pub(super) fn load_event(
     read: &dyn KvRead,
     op: &str,
     source: &str,
@@ -136,7 +136,7 @@ fn load_event(
     get_json::<EventRecord>(read, &event_key_of(source, inc, id))?.ok_or_else(|| corrupt(op))
 }
 
-fn subject_prefix(source: &str, kind: &str, key: &str) -> Vec<u8> {
+pub(super) fn subject_prefix(source: &str, kind: &str, key: &str) -> Vec<u8> {
     part_key(&[keys::TRUST, EVENTS, SUBJECT], &[source, kind, key], None)
 }
 

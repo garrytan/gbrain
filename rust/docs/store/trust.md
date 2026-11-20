@@ -241,12 +241,14 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   `version_history_gap_at`.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
 
-## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`, `trust::belief_history`)
+## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`, `trust::belief_history`, `trust::belief_coverage`)
 
 The store keeps the belief ledger's four tables (src/core/belief/schema.ts) and serves the eleven statements of
 src/core/engine-sql/belief-ledger.ts as store members (src/core/rust-engine/store-members/belief-ledger.ts), the
-history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) and the source probes (`readLedgerSource`,
-`listCoveredSources`). The history and source reads keep no keys of their own (`trust::belief_history`).
+history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`), the source probes (`readLedgerSource`,
+`listCoveredSources`) and the coverage reads src/core/belief/coverage.ts makes (`trust::belief_coverage`). The
+history and source reads keep no keys of their own (`trust::belief_history`); the coverage reads use the baseline
+index.
 
 | Key | Value | PGLite row or index |
 | --- | --- | --- |
@@ -255,6 +257,7 @@ history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) and the so
 | `t 0x09 0x02 publication_id` | `{observed_at_us}` | `belief_commit_marks` |
 | `t 0x09 0x03 source \0 subject_kind \0 subject_key \0 id` | incarnation | `belief_events_subject` |
 | `t 0x09 0x04 publication_id \0 id` | `recorded_at_us` | `belief_events_publication` |
+| `t 0x09 0x05 source \0 run \0 slug \0 id` | incarnation, baseline events only | the `cause->>'run'` baseline reads |
 | `t 0x0a 0x00 page_lifetime` | the lifetime record | `belief_page_lifetimes` |
 | `t 0x0a 0x01 incarnation \0 slug` | the open lifetime | `belief_page_lifetimes_open` (partial unique) |
 | `t 0x0a 0x02 page_id \0 page_lifetime` | empty, open lifetimes only | the moved read's `page_id = ANY` |
@@ -271,7 +274,9 @@ hyphenated form or 32 hex digits, either case. Event and lifetime times are the 
 Differences from the design sketch: the open-lifetime key has no source (the unique index is on incarnation and
 slug alone); a suppression is keyed by id alone, since a release names ids across every source; the subject index
 carries `subject_kind`, as `belief_events_subject` does; and `t 0x09 0x04` is new, for the commit mark's newest
-`recorded_at`. The page tier index the trust module doc reserved moves from `t 0x09` to `t 0x0d`.
+`recorded_at`. The page tier index the trust module doc reserved moves from `t 0x09` to `t 0x0d`. `t 0x09 0x05` is
+written for a `baseline` event whose slug and `cause.run` (a string) have no NUL; it came without a format bump,
+because enable refused on this engine before it, so no store could hold a baseline event without the index.
 
 - `insertBeliefEvents` casts every row first (uuid, timestamptz, jsonb, `decode(hex)`), then inserts in `ord` order
   (a null `ord` last). Each row takes an id, a skipped one too, as the `BIGSERIAL` default runs before
@@ -302,7 +307,15 @@ carries `subject_kind`, as `belief_events_subject` does; and `t 0x09 0x04` is ne
   answers `purgesPossible` from the purge epoch and the fact, take and page purge ledgers. In batch mode it adds the
   store's one managed-mode row and the plan mode it would replace, which the store does not change.
   `listCoveredSources` lists, in byte order, the sources with a coverage event about the key in their current
-  incarnation.
+  incarnation. Inside a transaction a batch probe with coverage active sets the transaction's `plan_cache_mode` to
+  `force_generic_plan` (store-members/transactions.ts keeps it; the store has no planner, so it changes nothing else).
+- The coverage reads (`trust::belief_coverage`): `readLatestBeliefCoverage` answers the newest coverage event of the
+  current incarnation that is not `coverage.restored` (run, recorded time, id), or none for an unknown source.
+  `hasBeliefBaseline` and `countBeliefBaselineSlugs` read the baseline index of one run in any incarnation.
+  `listBeliefBaselinePending` lists, in byte order after the cursor, the slugs of live and soft-deleted pages, of
+  unexpired page-less database-only facts (their entity) and of unexpired slot facts with no row (their page), less
+  the run's baselined slugs and the skip list, up to the limit. The source row lock `enableBeliefLedger` and
+  `disableBeliefLedger` take is `lockSourceRow`, a plain read here: the store runs one write transaction at a time.
 - No table has a foreign key, so a source delete keeps the ledger's rows, as Postgres does; a source created again
   has another incarnation, and the reads by incarnation do not see the old rows. The suppression and claim reads are
   by source id and do see them, as on Postgres.

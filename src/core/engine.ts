@@ -4486,6 +4486,14 @@ export interface BrainEngine {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
   /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
+  /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored`, or null. */
+  readLatestBeliefCoverage(sourceId: string): Promise<BeliefLedgerSql.BeliefCoverageRow | null>;
+  /** Whether `slug` of the source has a baseline event of run `runId`. */
+  hasBeliefBaseline(sourceId: string, slug: string, runId: string): Promise<boolean>;
+  /** The source's slugs (pages, then page-less database-only fact subjects) lacking a baseline of run `runId`, after `after` and not in `skip`; the first `limit` in byte order. */
+  listBeliefBaselinePending(sourceId: string, runId: string, after: string, skip: readonly string[], limit: number): Promise<string[]>;
+  /** How many distinct slugs of the source have a baseline event of run `runId`. */
+  countBeliefBaselineSlugs(sourceId: string, runId: string): Promise<number>;
   /** The source's suppressions on any of `subjectKeys` or on a field whose text hashes to one of `fieldHashes`. No set order. */
   readBeliefRedactions(sourceId: string, subjectKeys: readonly string[], fieldHashes: readonly string[]): Promise<BeliefLedgerSql.BeliefSuppression[]>;
   /** Copies one suppression onto a successor subject; returns the new suppression's id. */

@@ -10,6 +10,10 @@
 //!   `belief_events_subject` index (the take holder and `derived.hidden` reads).
 //! - `t 0x09 0x04 publication_id \0 id` -> the event's `recorded_at_us`: the
 //!   `belief_events_publication` index, for the commit mark.
+//! - `t 0x09 0x05 source \0 run \0 slug \0 id` -> the event's incarnation: the activation
+//!   baseline index, for a `baseline` event whose `cause->>'run'` is not null (the coverage reads,
+//!   [`super::belief_coverage`]). No Rust brain could hold a baseline event before this index was
+//!   written (enabling the ledger refused on Rust until then), so it needs no format bump.
 //! - `t 0x0b source \0 claim_fp \0 id` -> the event's incarnation: the `belief_events_claim_fp`
 //!   index (the `later_private` read), for an event with a claim fingerprint.
 //!
@@ -21,6 +25,7 @@
 //! incarnation, so its reads never see them.
 
 use super::belief_lifetimes::{canonical_uuid, cast_uuid};
+use crate::cli_reads::entities::arrow_text;
 use crate::env::parse_iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvWrite, scan_prefix};
@@ -37,6 +42,7 @@ const EVENT_KEY: u8 = 0x01;
 const COMMIT_MARK: u8 = 0x02;
 pub(crate) const SUBJECT: u8 = 0x03;
 const PUBLICATION: u8 = 0x04;
+pub(crate) const BASELINE: u8 = 0x05;
 
 const TABLE: &str = "belief_events";
 const SUBJECT_KINDS: [&str; 6] = [
@@ -323,7 +329,26 @@ fn store_event(tx: &mut dyn KvWrite, unique: &[u8], rec: &EventRecord) -> Result
             incarnation,
         )?;
     }
+    if let Some(run) = baseline_run(rec) {
+        tx.put(
+            &part_key(
+                &[keys::TRUST, EVENTS, BASELINE],
+                &[&rec.source_id, &run, &rec.slug],
+                Some(rec.id),
+            ),
+            incarnation,
+        )?;
+    }
     Ok(())
+}
+
+/// The run of a `baseline` event (`cause->>'run'`), when the baseline index can hold it: not
+/// null, and neither it nor the slug has a NUL byte (text PostgreSQL cannot store either).
+fn baseline_run(rec: &EventRecord) -> Option<String> {
+    if rec.event_type != "baseline" || rec.slug.contains('\0') {
+        return None;
+    }
+    arrow_text(rec.cause.get("run")?).filter(|run| !run.contains('\0'))
 }
 
 impl Store {

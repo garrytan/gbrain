@@ -1314,6 +1314,10 @@ export const RUST_ENGINE_MEMBERS = {
   listVisibleBeliefLifetimes: 'belief_ledger',
   // belief ledger writes (engine-sql/belief-ledger.ts): the append guards and insert, the commit marks and the page lifetimes
   readBeliefTombstones: 'belief_ledger',
+  readLatestBeliefCoverage: 'belief_ledger',
+  hasBeliefBaseline: 'belief_ledger',
+  listBeliefBaselinePending: 'belief_ledger',
+  countBeliefBaselineSlugs: 'belief_ledger',
   readBeliefRedactions: 'belief_ledger',
   insertBeliefRedaction: 'belief_ledger',
   releaseBeliefRedactions: 'belief_ledger',

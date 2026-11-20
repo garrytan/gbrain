@@ -265,7 +265,7 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  */
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
-    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
+    // The Rust arm runs the same production path; a source with no pages enables there (a page's baseline still reads raw SQL).
     case 'rust':
     case 'pglite':
     case 'postgres':

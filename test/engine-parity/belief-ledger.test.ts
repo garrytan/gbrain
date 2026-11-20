@@ -6,19 +6,20 @@
  *    the redaction copies and releases, the tombstone read and the purge-epoch read return the same observable result
  *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1). The
  *    Rust store serves every write, the append's reads and the history, visible-lifetime, ledger-source and
- *    covered-source reads; it still refuses a tombstone read whose fact half needs a fact purge tombstone read by
- *    fingerprint. A failed event insert keeps the ids its rows took, as a Postgres sequence does, so the ids after it
+ *    covered-source reads, and the coverage reads enable and disable make (newest coverage event, a slug's baseline by
+ *    run, the pending slugs, the baselined count), so enabling a source with no pages runs on every arm. A failed event insert keeps the ids its rows took, as a Postgres sequence does, so the ids after it
  *    match. One case fills the ledger through the real writers (resolveLifetimes, appendBeliefEvents with a take
  *    tombstone, a redaction and an owner release, markBeliefCommits) and compares every read over it.
  *  - Regression: an engine that mints a second open lifetime at one (incarnation, slug), that reports a renamed page's
  *    lifetime as moved, that re-inserts an event key, that drops a redaction's release, or that answers 0 instead of
- *    null for an unknown source's purge epoch: the ledger would fork a page's history or lose a suppression.
+ *    null for an unknown source's purge epoch, or that sorts the pending baseline slugs by locale instead of bytes:
+ *    the ledger would fork a page's history, lose a suppression or skip a page when a run resumes.
  *  - Why existing coverage misses it: the belief ledger tests drive these statements on PGLite alone; no case compares
  *    engines.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { BeliefEventInsertRow } from '../../src/core/engine-sql/belief-ledger.ts';
@@ -26,6 +27,9 @@ import { appendBeliefEvents, markBeliefCommits, type BeliefEventDraft } from '..
 import { renameLifetime, resolveLifetimes } from '../../src/core/belief/lifetimes.ts';
 import { readBeliefHistory } from '../../src/core/belief/history.ts';
 import { COVERAGE_KEY, fieldHash } from '../../src/core/belief/keys.ts';
+import { disableBeliefLedger, enableBeliefLedger, latestCoverage } from '../../src/core/belief/coverage.ts';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const { parityTest } = parityArms(testBackends());
 
@@ -291,6 +295,84 @@ describe('engine parity: belief ledger writes', () => {
         none: await engine.readBeliefTombstones('default', [], []),
       };
       expect(answer).toEqual({ mixed: ['fp2', 'shared'], otherSource: ['fp3'], none: [] });
+      return answer;
+    },
+  );
+
+  parityTest(
+    'the coverage reads: the newest coverage event of the current incarnation, a slug\'s baseline by run, the pending slugs in byte order after a cursor, and the baselined count',
+    { methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'readLedgerSource', 'insertBeliefEvents', 'readLatestBeliefCoverage', 'hasBeliefBaseline',
+      'listBeliefBaselinePending', 'countBeliefBaselineSlugs'] },
+    async (engine) => {
+      const page = (slug: string) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', timeline: '' });
+      // 'notes-x' sorts before 'notes/a' in byte order ('-' < '/') and after it in a locale collation that skips punctuation.
+      for (const slug of ['notes/b', 'notes/a', 'notes-x', 'gone/page']) await page(slug);
+      await engine.softDeletePage('gone/page');
+      // A page-less database-only fact names its entity; a fence fact names its page, which is already a page.
+      await engine.insertFact({ fact: 'db only', entity_slug: 'people/q-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
+      await engine.insertFacts([{ fact: 'fenced', entity_slug: 'people/r-example', source_markdown_slug: 'notes/b', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never,
+        { source_id: 'default' });
+      const inc = await incarnationOf(engine);
+      const pendingBefore = await engine.listBeliefBaselinePending('default', 'r1', '', [], 10);
+      const noCoverage = await engine.readLatestBeliefCoverage('default');
+      const cov = (key: string, ord: number, type: string, run: string) => event(inc, key, ord, { slug: '', page_lifetime: null, subject_kind: 'coverage',
+        subject_key: COVERAGE_KEY, event_type: type, value: null, value_hash: null, state_hash: '', cause: JSON.stringify({ op: type, run }), claim_fp: null });
+      const base = (key: string, ord: number, slug: string, run: string) => event(inc, key, ord, { slug, subject_kind: 'page', subject_key: `page:${slug}`,
+        event_type: 'baseline', origin: 'baseline', cause: JSON.stringify({ op: 'baseline', run }) });
+      await engine.insertBeliefEvents([cov('cc01', 0, 'coverage.started', 'r1'), base('ba01', 1, 'notes/b', 'r1'), base('ba02', 2, 'notes-x', 'r2'),
+        base('ba03', 3, 'people/q-example', 'r1'), cov('cc02', 4, 'coverage.restored', 'r1')]);
+      const latest = await engine.readLatestBeliefCoverage('default');
+      expect(latest?.recorded_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+      const answer = {
+        noCoverage,
+        latest: latest && { event_type: latest.event_type, run: latest.run, idIsNumber: Number.isSafeInteger(latest.id) },
+        unknownSource: await engine.readLatestBeliefCoverage('no-such-source'),
+        has: await Promise.all([['notes/b', 'r1'], ['notes/b', 'r2'], ['notes-x', 'r2'], ['notes/a', 'r1']].map(([slug, run]) => engine.hasBeliefBaseline('default', slug!, run!))),
+        pendingBefore,
+        pendingR1: await engine.listBeliefBaselinePending('default', 'r1', '', [], 10),
+        pendingR2: await engine.listBeliefBaselinePending('default', 'r2', '', [], 10),
+        afterCursor: await engine.listBeliefBaselinePending('default', 'r1', 'notes-x', [], 10),
+        skipped: await engine.listBeliefBaselinePending('default', 'r1', '', ['gone/page', 'notes/a'], 10),
+        limited: await engine.listBeliefBaselinePending('default', 'r1', '', [], 2),
+        counts: { r1: await engine.countBeliefBaselineSlugs('default', 'r1'), r2: await engine.countBeliefBaselineSlugs('default', 'r2'),
+          none: await engine.countBeliefBaselineSlugs('default', 'r9') },
+      };
+      expect(answer.pendingBefore).toEqual(['gone/page', 'notes-x', 'notes/a', 'notes/b', 'people/q-example']);
+      expect(answer.pendingR1).toEqual(['gone/page', 'notes-x', 'notes/a']);
+      expect(answer.latest).toEqual({ event_type: 'coverage.started', run: 'r1', idIsNumber: true });
+      expect(answer.counts).toEqual({ r1: 2, r2: 1, none: 0 });
+      return answer;
+    },
+  );
+
+  parityTest(
+    'enableBeliefLedger on a source with no pages completes a run under the source row lock, a second enable resumes it, and disable stops it once',
+    { methods: ['transaction', 'lockSourceRow', 'readLedgerSource', 'readLatestBeliefCoverage', 'insertBeliefEvents', 'markBeliefCommits', 'listBeliefBaselinePending',
+      'countBeliefBaselineSlugs', 'readBeliefHistoryRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const first = await enableBeliefLedger(engine, 'work');
+      expect(first.runId).toMatch(UUID);
+      const again = await enableBeliefLedger(engine, 'work');
+      const complete = await latestCoverage(engine, 'work');
+      const rows = await engine.readBeliefHistoryRows({ sourceId: 'work', slug: null, subjectKey: null, afterId: 0, limit: 10, recordedAfter: null, recordedUntil: null,
+        subjectKeys: [COVERAGE_KEY], beforeId: null, descending: false });
+      const causes = rows.map(r => { const c = (typeof r.cause === 'string' ? JSON.parse(r.cause) : r.cause) as Record<string, unknown>;
+        return { event_type: r.event_type, op: c.op, sameRun: c.run === first.runId, pages: c.pages ?? null }; });
+      const stopped = await disableBeliefLedger(engine, 'work');
+      const stoppedAgain = await disableBeliefLedger(engine, 'work');
+      const afterStop = await latestCoverage(engine, 'work');
+      const missing = await enableBeliefLedger(engine, 'no-such-source').then(() => 'ok', (e: Error) => e.message);
+      const answer = {
+        first: { ...first, runId: 'uuid' }, again: { ...again, runId: again.runId === first.runId ? 'same' : 'other' },
+        complete: complete && { type: complete.type, sameRun: complete.run === first.runId }, causes, stopped, stoppedAgain,
+        afterStop: afterStop && { type: afterStop.type, sameRun: afterStop.run === first.runId }, missing,
+      };
+      expect(answer.first).toMatchObject({ resumed: false, pages: 0, complete: true, unkeyable: [] });
+      expect(answer.again).toMatchObject({ runId: 'same', resumed: true, complete: true });
+      expect(answer.causes.map(c => c.event_type)).toEqual(['coverage.started', 'coverage.complete']);
+      expect({ stopped, stoppedAgain, afterStop: answer.afterStop, missing }).toEqual({ stopped: true, stoppedAgain: false,
+        afterStop: { type: 'coverage.stopped', sameRun: true }, missing: 'source not found: no-such-source' });
       return answer;
     },
   );

@@ -20,12 +20,13 @@
 //! - `t 0x06 id` -> a trust proposal; `t 0x07 action \0 target_table \0 target_id \0
 //!   related_table \0 related_id` -> the id of the pending one; `t 0x08 table \0 row_id
 //!   proposal_id` -> empty, a proposal that names the row ([`proposals`]).
-//! - `t 0x09` (events, their event-key, subject and publication indexes, and commit marks) and
+//! - `t 0x09` (events, their event-key, subject, publication and baseline indexes, and commit marks) and
 //!   `t 0x0b` (the claim fingerprint index): the belief ledger's events ([`belief_events`]).
 //! - `t 0x0a`: the belief ledger's page lifetimes ([`belief_lifetimes`]).
 //! - `t 0x0c`: the belief ledger's suppressions ([`belief_redactions`]).
 //!
-//! The belief ledger's history and source reads ([`belief_history`]) have no keys of their own.
+//! The belief ledger's history and source reads ([`belief_history`]) and its coverage reads
+//! ([`belief_coverage`]) have no keys of their own.
 //!
 //! A page's trust tier and write origin have no key of their own: they are fields of the page
 //! record (`pages::PageRecord`, stamped by `pages::write_page`) and of each version record (copied
@@ -42,6 +43,7 @@
 #[allow(dead_code)]
 mod stamp;
 
+pub mod belief_coverage;
 pub mod belief_events;
 pub mod belief_history;
 pub mod belief_lifetimes;

@@ -6,6 +6,7 @@
  * `readBeliefTombstones` answers the fact half from the fact purge ledger and the take half from the take purge ledger.
  */
 import type { BrainEngine } from '../../engine.ts';
+import type { BeliefCoverageRow } from '../../engine-sql/belief-ledger.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -17,6 +18,21 @@ export const readBeliefTombstones: Member<'readBeliefTombstones'> = async (brain
     () => brain.readBeliefTombstones({ sourceId, factFps: [...factFps], takeFps: [...takeFps] })) as TombstoneAnswer;
   return answer.fps;
 };
+
+// The store's recorded_at carries microseconds; PGLite returns a Date, which the engine-sql member turns to ISO milliseconds.
+export const readLatestBeliefCoverage: Member<'readLatestBeliefCoverage'> = async (brain, sourceId) => {
+  const row = await storeCall({ member: 'readLatestBeliefCoverage', sourceId }, () => brain.readLatestBeliefCoverage(sourceId)) as BeliefCoverageRow | null;
+  return row ? { ...row, recorded_at: new Date(row.recorded_at).toISOString(), id: Number(row.id) } : null;
+};
+
+export const hasBeliefBaseline: Member<'hasBeliefBaseline'> = (brain, sourceId, slug, runId) =>
+  storeCall({ member: 'hasBeliefBaseline', sourceId }, () => brain.hasBeliefBaseline(sourceId, slug, runId));
+
+export const listBeliefBaselinePending: Member<'listBeliefBaselinePending'> = (brain, sourceId, runId, after, skip, limit) =>
+  storeCall({ member: 'listBeliefBaselinePending', sourceId }, () => brain.listBeliefBaselinePending({ sourceId, runId, after, skip: [...skip], limit }));
+
+export const countBeliefBaselineSlugs: Member<'countBeliefBaselineSlugs'> = (brain, sourceId, runId) =>
+  storeCall({ member: 'countBeliefBaselineSlugs', sourceId }, () => brain.countBeliefBaselineSlugs(sourceId, runId));
 
 export const readBeliefRedactions: Member<'readBeliefRedactions'> = (brain, sourceId, subjectKeys, fieldHashes) =>
   storeCall({ member: 'readBeliefRedactions', sourceId },
