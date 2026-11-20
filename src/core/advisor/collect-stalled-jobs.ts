@@ -19,14 +19,7 @@ export const collectStalledJobs: AdvisorCollector = {
 
     // Stuck active jobs: lock lapsed or stalled-counter climbing.
     try {
-      const rows = await ctx.engine.executeRaw<{ name: string; n: number }>(
-        `SELECT name, count(*)::int AS n
-           FROM minion_jobs
-          WHERE status = 'active'
-            AND (lock_until < now() OR stalled_counter >= 2)
-          GROUP BY name
-          ORDER BY n DESC`,
-      );
+      const rows = await ctx.engine.listStuckActiveJobsByName();
       for (const r of rows) {
         findings.push({
           id: `stalled_job:${r.name}`,

@@ -8,6 +8,7 @@ import { FENCE_MAX_BYTES } from '../page-body/limits.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import type { BodyRegion } from '../page-body/types.ts';
 import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import type { WithdrawalDiscoveryCandidate, WithdrawalDiscoveryKey } from '../engine-sql/withdrawal-discovery.ts';
 
 export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanMs: 10_000, batch: 128, matchRows: 16_384, matchBytes: 8 * 1024 * 1024 } as const;
 export interface WithdrawalTarget { slug: string; page_id: number; revision: string }
@@ -23,8 +24,7 @@ function refuse(code = 'withdrawal_capacity'): never {
 }
 
 async function refuseAffected(engine: BrainEngine, sourceId: string, affected: Set<number>): Promise<never> {
-  const sample = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug LIMIT 20',
-    [sourceId, [...affected]]);
+  const sample = await engine.readWithdrawalDiscovery({ kind: 'sample_slugs', sourceId, ids: [...affected] });
   throw new OperationError('withdrawal_capacity',
     `This claim is carried by more than ${WITHDRAWAL_LIMITS.targets} pages (${affected.size} matched before discovery stopped), the bound for one atomic withdrawal. Source size is not the limit. Nothing was committed; earlier durable intent remains retained.`,
     `Reduce the pages that carry this claim, then retry: forget the entity-scoped copies of the fact first (each changes only its own entity's pages), or edit the claim out of pages that should not carry it. Matched pages include: ${sample.map(row => row.slug).join(', ')}. ${RECOVERY}`);
@@ -78,13 +78,7 @@ async function* splitFactsFences(engine: BrainEngine, sourceId: string, keyed: r
   AsyncIterable<{ id: number; slug: string; fence: string }> {
   for (let after: [number, string, number] = [0, '', -1]; ;) {
     if (performance.now() > deadline) refuse();
-    const fences = await engine.executeRaw<{ page_id: number; slug: string; region: string; open_start: string; bytes: string }>(`SELECT m.page_id,p.slug,m.region,
-        (s->>'open_start')::bigint::text AS open_start,sum((s->>'end')::bigint-(s->>'start')::bigint)::text AS bytes
-      FROM page_body_manifest m JOIN pages p ON p.id=m.page_id CROSS JOIN LATERAL jsonb_array_elements(m.facts_slots) s
-      WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb AND s ? 'open_start'
-        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region,(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
-      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region,(s->>'open_start')::bigint LIMIT $6`,
-    [sourceId, subjects, after[0], after[1], after[2], WITHDRAWAL_LIMITS.batch]);
+    const fences = await engine.readWithdrawalDiscovery({ kind: 'split_fence_slots', sourceId, subjects, after, limit: WITHDRAWAL_LIMITS.batch });
     for (const f of fences) {
       if (performance.now() > deadline) refuse();
       // Its slots hold part of the fence (a cut inside a marker leaves the marker's bytes outside them), so slots over the
@@ -114,16 +108,12 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
   if (!claims.length) return [];
   if (claims.length > WITHDRAWAL_LIMITS.targets) refuse();
   const deadline = performance.now() + WITHDRAWAL_LIMITS.scanMs;
-  const keyed = await engine.executeRaw<KeyedClaim>(`WITH w AS (
-      SELECT w.visibility,w.fact_hash,COALESCE(w.subject,'*') AS subject,gbrain_fact_normalize(COALESCE(w.claim,
-        (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint(f.fact)=w.fact_hash LIMIT 1),
-        (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint_v1(f.fact)=w.fact_hash LIMIT 1))) AS norm
-      FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
-    ) SELECT * FROM w`,
-  [sourceId, JSON.stringify(claims.map(c => ({ visibility: c.visibility, fact_hash: c.fact_hash, subject: c.subject ?? '*', claim: c.claim ?? null })))]);
-  const keys = JSON.stringify(keyed.map(k => ({ ...k,
+  const keyed: KeyedClaim[] = await engine.readWithdrawalDiscovery({ kind: 'claim_keys', sourceId,
+    claims: claims.map(c => ({ visibility: c.visibility, fact_hash: c.fact_hash, subject: c.subject ?? '*', claim: c.claim ?? null })) });
+  const keyList: WithdrawalDiscoveryKey[] = keyed.map(k => ({ ...k,
     patterns: (k.norm ? k.norm.split(' ').filter(Boolean) : []).map(token => `%${token.replace(/[\\%_]/g, '\\$&')}%`),
-  })));
+  }));
+  const keys = JSON.stringify(keyList);
   const subjects = keyed.some(k => k.subject === '*') ? null : [...new Set(keyed.map(k => k.subject))];
   const affected = new Set<number>();
   const provenance = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT p.id
@@ -134,18 +124,14 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     JOIN pages p ON p.source_id=f.source_id AND p.slug=COALESCE(f.source_markdown_slug,f.entity_slug)`, [sourceId, keys]);
   for (const row of provenance) affected.add(row.id);
   if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
-  const match = async (incoming: Array<{ id: number; slug: string; claim: string; visibility: string | null; ambiguous: boolean }>, splitFence?: string) => {
+  const match = async (incoming: WithdrawalDiscoveryCandidate[], splitFence?: string) => {
     if (!incoming.length) return;
     const bytes = Buffer.byteLength(JSON.stringify(incoming));
     if (incoming.length > WITHDRAWAL_LIMITS.matchRows || bytes > WITHDRAWAL_LIMITS.matchBytes) {
       if (splitFence !== undefined) splitFenceTooLarge(sourceId, splitFence, incoming.length, bytes);
       refuse();
     }
-    const matches = await engine.executeRaw<{ id: number; ambiguous: boolean }>(`SELECT DISTINCT i.id,i.ambiguous
-      FROM jsonb_to_recordset($1::text::jsonb) i(id integer,slug text,claim text,visibility text,ambiguous boolean)
-      JOIN jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text)
-        ON (i.visibility IS NULL OR i.visibility=w.visibility) AND (w.subject='*' OR w.subject=i.slug)
-          AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v1(i.claim))`, [JSON.stringify(incoming), keys]);
+    const matches = await engine.readWithdrawalDiscovery({ kind: 'claim_matches', incoming, keys: keyList });
     if (matches.some(row => row.ambiguous)) refuse('withdrawal_provenance');
     for (const row of matches) affected.add(row.id);
     if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
@@ -202,7 +188,7 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     if (chunks.length < WITHDRAWAL_LIMITS.batch) break;
     after = chunks[chunks.length - 1].id;
   }
-  const targets = await engine.executeRaw<WithdrawalTarget>('SELECT slug,id AS page_id,knowledge_revision AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])', [sourceId, [...affected]]);
+  const targets: WithdrawalTarget[] = await engine.readWithdrawalDiscovery({ kind: 'target_pages', sourceId, ids: [...affected] });
   if (performance.now() > deadline || Buffer.byteLength(JSON.stringify(targets)) > WITHDRAWAL_LIMITS.targetBytes) refuse();
   return targets.sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
 }
