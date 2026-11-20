@@ -136,6 +136,7 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
   const schemaBehind = await readSchemaBehind(engine);
   const span = Math.max(t.windowDays, 8);
   const days = Array.from({ length: 7 }, (_, i) => `count(*) FILTER (WHERE state IN ('failed','conflict','cancelled') AND ended_at <= now()-interval '${i + 1} day' AND ended_at > now()-interval '${i + 2} day')::int AS d${i + 2}`).join(',\n      ');
+  // The order is not output: the sources are sorted in JS below, and rows of one source tie, so the SQL order never reaches the result.
   const rows = await bounded<KeyColumns & { set: number; resolved: boolean | null; rows: number; in_window: number; n_24h: number; oldest: string | null; oldest_age: number | null;
     distinct_slugs: number; distinct_intents: number; recovery_ids: string[] | null; recovery_slugs: string[] | null } & Record<string, number>>(engine,
     `WITH base AS (

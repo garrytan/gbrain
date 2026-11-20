@@ -33,7 +33,7 @@ async function storedFenceState(engine: BrainEngine, pageId: number): Promise<{ 
   const [edges, statements] = await Promise.all([
     engine.executeRaw<FencedEdge>(
       `SELECT l.to_page_id, t.slug AS to, l.link_type AS type, l.link_source AS source, l.context FROM links l JOIN pages t ON t.id=l.to_page_id
-        WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2 ORDER BY t.slug, l.link_type, l.link_source`, [pageId, LINKS_FENCE_ORIGIN_FIELD]),
+        WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2 ORDER BY t.slug COLLATE "C", l.link_type COLLATE "C", l.link_source COLLATE "C"`, [pageId, LINKS_FENCE_ORIGIN_FIELD]),
     engine.executeRaw<Statement>(
       `SELECT to_page_id, link_type AS type, link_source AS source, kind, occurred_on::text AS on FROM link_transitions
         WHERE origin_page_id=$1 AND from_page_id=$1 AND producer='manual'`, [pageId]),
@@ -191,8 +191,8 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
     if (keys.length) await refreshRelationships(tx, keys);
     const outcome = await prepared.apply(tx);
     if (fence) await projectLinksFence(tx, origin, fence);
-    const derived = await tx.executeRaw<{ link_type: string; link_source: string }>(`SELECT DISTINCT l.link_type, l.link_source FROM links l, pages t
-      WHERE ${RELATIONSHIP} AND l.link_source = ANY($4::text[]) ORDER BY l.link_type, l.link_source`, params);
+    const derived = await tx.executeRaw<{ link_type: string; link_source: string }>(`SELECT DISTINCT l.link_type COLLATE "C" AS link_type, l.link_source COLLATE "C" AS link_source FROM links l, pages t
+      WHERE ${RELATIONSHIP} AND l.link_source = ANY($4::text[]) ORDER BY l.link_type COLLATE "C", l.link_source COLLATE "C"`, params);
     return { ...outcome, status: 'ok', removed: before - await count(), ...(derived.length ? { derived_from_text: derived,
       derived_message: `${derived.length === 1 ? 'An edge' : `${derived.length} edges`} from ${row.slug} to ${to} ${derived.length === 1 ? 'comes' : 'come'} from the page text (links, wikilinks or frontmatter), so remove_link kept ${derived.length === 1 ? 'it' : 'them'}. Edit the text of ${row.slug} (edit_page) to remove ${derived.length === 1 ? 'it' : 'them'}.` } : {}) };
   } };

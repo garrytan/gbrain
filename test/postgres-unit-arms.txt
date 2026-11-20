@@ -142,6 +142,7 @@ test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/collate-engine-sql.test.ts
 test/engine-parity/collate-persistence-a.test.ts
+test/engine-parity/collate-persistence-b.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts

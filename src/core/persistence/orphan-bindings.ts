@@ -26,7 +26,7 @@ const ORPHANS = `SELECT b.source_id, b.source_incarnation::text AS source_incarn
   WHERE s.id IS NULL OR s.incarnation <> b.source_incarnation`;
 
 export async function listOrphanBindings(engine: Pick<BrainEngine, 'executeRaw'>, opts: { limit?: number } = {}): Promise<OrphanBinding[]> {
-  return engine.executeRaw<OrphanBinding>(`${ORPHANS} ORDER BY b.source_id${opts.limit ? ` LIMIT ${Math.floor(opts.limit)}` : ''}`);
+  return engine.executeRaw<OrphanBinding>(`${ORPHANS} ORDER BY b.source_id COLLATE "C"${opts.limit ? ` LIMIT ${Math.floor(opts.limit)}` : ''}`);
 }
 
 /**

@@ -105,7 +105,7 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
   const bindings = await engine.executeRaw<BindingRow>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, COALESCE(h.local_path, s.local_path) AS root, s.last_commit
     FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
     LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id::text=$2
-    WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id`, [opts.sourceIds ?? null, existingHostIdFor(engine)]);
+    WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id COLLATE "C"`, [opts.sourceIds ?? null, existingHostIdFor(engine)]);
   const commitTimes = opts.commitTimes ?? readGitCommitTimes;
   const behindOf = opts.behind ?? readGitBehind;
   const out: SourceFreshness[] = [];

@@ -51,7 +51,7 @@ export async function movedPhysicalRoot(tx: SqlEngine, path: string, hostId: str
     FROM persistence_brain WHERE singleton=1`, [moved.worktreeId, hostId]);
   if (row?.brain_id !== moved.brainId || row.owner_host_id !== hostId || row.local_path !== moved.recorded) return null;
   const members = await tx.executeRaw<{ source_id: string; relative_path: string }>(
-    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id', [moved.worktreeId]);
+    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"', [moved.worktreeId]);
   return { ...moved, members: members.map(member => ({ sourceId: member.source_id, relativePath: member.relative_path })) };
 }
 /** #8625: the full moved-checkout refusal for a trusted local caller (paths, worktree, exit); null when `root` is no moved checkout of this host, or not of `recorded`. */

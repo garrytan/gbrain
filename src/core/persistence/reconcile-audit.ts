@@ -60,8 +60,8 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
   const rows = await engine.executeRaw<{ slug: string; bytes: number; source_path: string | null; source_uri: string | null; database_only_reason: string | null }>(
     `SELECT slug, source_path, source_uri, database_only_reason,
     octet_length(compiled_truth)+octet_length(COALESCE(timeline,''))+octet_length(frontmatter::text) AS bytes
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND page_kind='markdown' AND slug>$2
-    ORDER BY slug LIMIT $3`, [sourceId, options.after ?? '', limit + 1]);
+    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND page_kind='markdown' AND slug COLLATE "C" > $2
+    ORDER BY slug COLLATE "C" LIMIT $3`, [sourceId, options.after ?? '', limit + 1]);
   const report: ReconcileAuditReport = { source_id: sourceId, inspected: 0, drifted: 0, errors: 0, database_only: 0, findings: [],
     next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true,
     ...(options.classify ? { classified: { structurally_additive: 0, additive_with_suggestions: 0, review_required: 0, formatting_only: 0, slug_rule_mismatch: 0, error: 0 } } : {}) };

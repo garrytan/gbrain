@@ -1,0 +1,584 @@
+/**
+ * BrainEngine parity — the persistence readers that list text keys (source ids, slugs, fingerprints, paths) sort them by
+ * byte on every engine and locale.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: the managed-persistence doctor, sync, purge and recovery readers that return rows or name a first row in
+ *    text-key order (orphan, pre-activation, freshness, movement, parked-group, terminal-failure and moved-root listings;
+ *    purge selections, purge parks, sync tombstones; the reconcile audit's pages and its keyset cursor; moved-page
+ *    verdicts; origin twin counts and revival refusals; manual link fences; recovery resolutions, suppressed writes,
+ *    sync-failure acknowledgements and hold listings) return the same order on every engine arm (PGLite always; Postgres
+ *    with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each case stops on the typed raw_sql refusal):
+ *    byte order, as PGLite sorts and as Postgres sorts with `COLLATE "C"`.
+ *  - Regression: on an en_US Postgres these reads sorted by the locale, which skips punctuation (`ab` before `a-z`), so
+ *    a doctor list, a purge preview, a refusal naming "the first" source or edge, and the reconcile audit's pages and
+ *    `next_after` cursor came back in another order than on PGLite, and a page crossing a cursor could repeat or vanish.
+ *  - Why existing coverage misses it: the cases used ids that sort the same in every locale, and CI's Postgres runs in
+ *    C.UTF-8. Every case here mixes `a-z`, `ab`, `a.b` and `a_b`; run it against an en_US Postgres to see it fail.
+ *  - Seam: none. Rows are seeded through the production writers where one exists (putPage, recordPurgeFailure) and raw
+ *    SQL for persistence tables that only the managed lifecycle writes; the readers run unchanged.
+ */
+import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSource, enableBeliefCoverage, parityArms } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { localHostId, registerLocalWriter } from '../../src/core/persistence/identity.ts';
+import { listOrphanBindings } from '../../src/core/persistence/orphan-bindings.ts';
+import { preActivationClaims } from '../../src/core/persistence/pre-activation-release.ts';
+import { readSyncFreshness } from '../../src/core/persistence/sync-freshness.ts';
+import { readSourceMovement } from '../../src/core/persistence/sync-movement.ts';
+import { readParkedGroups } from '../../src/core/persistence/parked-groups.ts';
+import { movedPhysicalRoot } from '../../src/core/persistence/physical-root.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
+import { recordPurgeFailure, readPurgeParks, PURGE_PARK_LIMIT, purgeParkKey } from '../../src/core/persistence/purge-parks.ts';
+import { selectPurgeCandidates } from '../../src/core/persistence/purge-deleted.ts';
+import { readUnreviewedSyncTombstones, SYNC_DELETE_TOMBSTONE_OP } from '../../src/core/persistence/sync-delete-tombstones.ts';
+import { auditCanonicalSource } from '../../src/core/persistence/reconcile-audit.ts';
+import { assertRevivalUnclaimed } from '../../src/core/persistence/origin-guard.ts';
+import { ORIGIN_INDEX, originTwinCounts } from '../../src/core/persistence/origin-index.ts';
+import { prepareManualLinkMutation } from '../../src/core/persistence/manual-links.ts';
+import { readMovedPage } from '../../src/core/persistence/moved-pages.ts';
+import { readResolutions, RESOLUTION_OP } from '../../src/core/persistence/recovery-resolve.ts';
+import { listSuppressedWrites } from '../../src/core/persistence/refusal-breaker.ts';
+import { acknowledgeManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
+import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, readGitHoldListing } from '../../src/core/persistence/sync-holds.ts';
+import { refreshWorktree } from '../../src/core/persistence/worktree-refresh.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
+import { commitFile, git, page as refreshPage } from '../helpers/worktree-refresh-fixture.ts';
+import { withTopologyLocks } from '../../src/core/persistence/topology-locks.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+/** Runs `run` with a private GBRAIN_HOME, so the host identity file and locks never touch the real one. */
+async function inHome<T>(run: (home: string) => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-collate-pb-'));
+  try { return await withEnv({ GBRAIN_HOME: home }, () => run(home)); } finally { rmSync(home, { recursive: true, force: true }); }
+}
+
+async function addSource(engine: BrainEngine, id: string): Promise<string> {
+  const [row] = await engine.executeRaw<{ incarnation: string }>(
+    'INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT (id) DO UPDATE SET name=sources.name RETURNING incarnation::text AS incarnation', [id]);
+  return row!.incarnation;
+}
+
+async function addWorktree(engine: BrainEngine, owner: string | null = null, state = 'active'): Promise<string> {
+  const [row] = await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id,state) VALUES($1::uuid,$2) RETURNING id::text AS id', [owner, state]);
+  return row!.id;
+}
+
+async function bind(engine: BrainEngine, sourceId: string, incarnation: string, worktreeId: string, relativePath = ''): Promise<void> {
+  await engine.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id,relative_path) VALUES($1,$2::uuid,$3::uuid,$4)',
+    [sourceId, incarnation, worktreeId, relativePath]);
+}
+
+async function hostBind(engine: BrainEngine, worktreeId: string, hostId: string, localPath: string): Promise<void> {
+  await engine.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)',
+    [worktreeId, hostId, localPath, `${localPath}.lock`]);
+}
+
+/** One worktree per id, a binding for each, and (with `real`) a source row behind it. */
+async function bindEach(engine: BrainEngine, ids: readonly string[], real: boolean): Promise<Map<string, { worktree: string; incarnation: string }>> {
+  const made = new Map<string, { worktree: string; incarnation: string }>();
+  for (const id of ids) {
+    const incarnation = real ? await addSource(engine, id) : randomUUID();
+    const worktree = await addWorktree(engine);
+    await bind(engine, id, incarnation, worktree);
+    made.set(id, { worktree, incarnation });
+  }
+  return made;
+}
+
+describe('persistence binding listings sort source ids by byte', () => {
+  parityTest('listOrphanBindings lists orphan bindings by byte source id, and its limit keeps the byte-first ones', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => {
+    await bindEach(engine, MIXED_IDS, false);
+    const all = (await listOrphanBindings(engine)).map(row => row.source_id);
+    const limited = (await listOrphanBindings(engine, { limit: 3 })).map(row => row.source_id);
+    expect(all).toEqual([...BYTE_IDS]);
+    expect(limited).toEqual(BYTE_IDS.slice(0, 3));
+    return { all, limited };
+  });
+
+  parityTest('preActivationClaims, readSyncFreshness and readSourceMovement list bound sources by byte id, and a claim lists its roots by byte path', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => inHome(async () => {
+    const made = await bindEach(engine, MIXED_IDS, true);
+    const host = localHostId();
+    const other = randomUUID();
+    const worktree = made.get('ab')!.worktree;
+    await hostBind(engine, worktree, host, '/collate/ab');
+    await hostBind(engine, worktree, other, '/collate/a-z');
+    const claims = await preActivationClaims(engine as never);
+    const fresh = await readSyncFreshness(engine, { behind: async () => null, commitTimes: async () => new Map() });
+    const moved = await readSourceMovement(engine);
+    expect(claims.map(claim => claim.source_id)).toEqual([...BYTE_IDS]);
+    expect(claims.find(claim => claim.source_id === 'ab')!.roots).toEqual(['/collate/a-z', '/collate/ab']);
+    expect(fresh.map(row => row.source_id)).toEqual([...BYTE_IDS]);
+    expect(moved.map(row => row.source_id)).toEqual([...BYTE_IDS]);
+    return { claims: claims.map(claim => ({ id: claim.source_id, roots: claim.roots })), fresh: fresh.map(row => row.source_id), moved: moved.map(row => row.source_id) };
+  }));
+});
+
+
+interface SeedRequest {
+  source: string; incarnation: string; slug?: string; state?: string; operation?: string; errorCode?: string | null; intent?: Record<string, unknown> | null;
+  completed?: boolean; digest?: string; worktree?: string | null; errorDetail?: Record<string, unknown> | null;
+}
+
+/** One persistence_requests row (a terminal one by default), written the way the managed journal does: inside a transaction at protocol 2. */
+async function seedRequest(engine: BrainEngine, r: SeedRequest): Promise<{ id: string; requestId: string }> {
+  const requestId = randomUUID();
+  return engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+    const [row] = await tx.executeRaw<{ id: string }>(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,
+        intent_bytes,terminal_reservation,state,intent,error_code,worktree_id,completed_at)
+      VALUES ('local_cli','collate',$1::uuid,$2,$3,$4::uuid,$5,$6,'{}'::jsonb,0,0,$7,$8::text::jsonb,$9,$10::uuid,${(r.completed ?? true) ? 'now()' : 'NULL'}) RETURNING id::text AS id`,
+    [requestId, r.operation ?? 'put_page', r.source, r.incarnation, r.slug ?? 'notes/x', r.digest ?? 'x', r.state ?? 'failed', r.intent === undefined ? null : JSON.stringify(r.intent),
+      r.errorCode ?? null, r.worktree ?? null]);
+    return { id: row!.id, requestId };
+  });
+}
+
+describe('persistence doctor groupings sort source ids and codes by byte', () => {
+  parityTest('readParkedGroups lists parked Git targets by byte source id, then byte code', {
+    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+  }, async (engine) => {
+    const codes = ['c_b', 'c-z', 'cb', 'c.b'];
+    for (const id of ['ab', 'a-z']) {
+      const incarnation = await addSource(engine, id);
+      const request = await seedRequest(engine, { source: id, incarnation, operation: 'put_page' });
+      await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+        await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,state,error_code,source_id,source_incarnation) VALUES ($1::uuid,'git',$2::text::jsonb,'failed','targets_parked',$3,$4::uuid)`,
+          [request.id, JSON.stringify({ parked: codes.map(code => ({ slug: 'notes/x', error_code: code })) }), id, incarnation]);
+      });
+    }
+    const groups = (await readParkedGroups(engine)).map(group => `${group.source_id}:${group.code}`);
+    expect(groups).toEqual(['a-z', 'ab'].flatMap(id => byteOrder(codes).map(code => `${id}:${code}`)));
+    return groups;
+  });
+});
+
+describe('moved-checkout members and topology refusals name sources by byte', () => {
+  parityTest('movedPhysicalRoot lists the members of a moved checkout by byte source id', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => inHome(async home => {
+    const root = join(home, 'brains', 'old', 'root');
+    const members = ['ab', 'a-z', 'a.b'];
+    for (const id of members) mkdirSync(join(root, id), { recursive: true });
+    execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+    await withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      for (const id of members) {
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, join(root, id)]);
+        await claimWorktree(engine, id, join(root, id));
+      }
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    });
+    const moved = join(home, 'brains', 'moved-root');
+    renameSync(root, moved);
+    const found = await movedPhysicalRoot(engine as never, moved, localHostId());
+    expect(found).not.toBeNull();
+    const ids = found!.members.map(member => member.sourceId);
+    expect(ids).toEqual(byteOrder(members));
+    return ids;
+  }));
+
+  parityTest('a topology lock refusal names the byte-first member of the worktree that holds the root', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => inHome(async () => {
+    const owner = randomUUID();
+    const worktree = await addWorktree(engine, owner);
+    for (const id of MIXED_IDS) await bind(engine, id, await addSource(engine, id), worktree);
+    await hostBind(engine, worktree, localHostId(), '/collate/root');
+    const refusal = await withTopologyLocks(engine, 'unbound', async () => 'locked', '/collate/root/inside', 0)
+      .then(() => null, (error: Error) => error);
+    expect(refusal).not.toBeNull();
+    const named = /The worktree holding source (\S+) is owned/.exec((refusal as { suggestion?: string }).suggestion ?? '')?.[1];
+    expect(named).toBe(byteOrder(MIXED_IDS)[0]);
+    return named;
+  }));
+});
+
+const TOMBSTONE_SOURCES = ['ab', 'a-z'] as const;
+
+/** Every slug of MIXED_SLUGS in both TOMBSTONE_SOURCES, soft-deleted at one instant 48 hours ago (so only the keys break the tie). */
+async function seedTombstones(engine: BrainEngine, backend: Parameters<typeof createSource>[1]): Promise<Array<{ source_id: string; slug: string; deleted_us: string }>> {
+  for (const source of TOMBSTONE_SOURCES) {
+    await createSource(engine, backend, source);
+    for (const slug of MIXED_SLUGS) {
+      await engine.putPage(slug, { type: 'note', title: `${source} ${slug}`, compiled_truth: `body of ${source} ${slug}`, timeline: '' }, { sourceId: source });
+    }
+  }
+  await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '48 hours' WHERE source_id = ANY($1::text[])", [[...TOMBSTONE_SOURCES]]);
+  return engine.executeRaw<{ source_id: string; slug: string; deleted_us: string }>(
+    'SELECT source_id, slug, floor(extract(epoch FROM deleted_at)*1000000)::bigint::text AS deleted_us FROM pages WHERE source_id = ANY($1::text[])', [[...TOMBSTONE_SOURCES]]);
+}
+
+/** Tombstone keys in the order a byte sort gives. */
+const BYTE_TOMBSTONES = byteOrder(TOMBSTONE_SOURCES).flatMap(source => BYTE_SLUGS.map(slug => `${source}/${slug}`));
+
+describe('purge reads sort tombstones and park records by byte', () => {
+  parityTest('selectPurgeCandidates on an unmanaged brain lists parked tombstones by byte source id, then byte slug', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    const tombstones = await seedTombstones(engine, backend);
+    for (const source of TOMBSTONE_SOURCES) await enableBeliefCoverage(engine, backend, source);
+    for (const row of tombstones) for (let i = 0; i < PURGE_PARK_LIMIT; i++) await recordPurgeFailure(engine as never, { ...row, code: 'purge_failed', reason: 'the delete failed' });
+    const selection = await selectPurgeCandidates(engine, 24);
+    const parked = selection.parked.map(row => `${row.source_id}/${row.slug}`);
+    expect(selection.managed).toBe(false);
+    expect(parked).toEqual(BYTE_TOMBSTONES);
+    return parked;
+  });
+
+  parityTest('selectPurgeCandidates on a managed brain lists candidates by byte source id, then byte slug, and readPurgeParks lists records by byte key', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => inHome(async () => {
+    const tombstones = await seedTombstones(engine, backend);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    for (const row of tombstones) await recordPurgeFailure(engine as never, { ...row, code: 'purge_failed', reason: 'the delete failed' });
+    const selection = await selectPurgeCandidates(engine, 24);
+    const candidates = selection.candidates.map(row => `${row.source_id}/${row.slug}`);
+    const keys = [...(await readPurgeParks(engine as never)).keys()];
+    expect(selection.managed).toBe(true);
+    expect(candidates).toEqual(BYTE_TOMBSTONES);
+    expect(keys).toEqual(byteOrder(tombstones.map(row => purgeParkKey(row.source_id, row.slug, row.deleted_us))));
+    // The deletion time differs between arms, so only the order of the keys is returned.
+    return { candidates, keyOrder: keys.map(key => (JSON.parse(key) as string[]).slice(0, 2).join('/')) };
+  }));
+
+  parityTest('readUnreviewedSyncTombstones lists sync-deleted tombstones by byte source id, then byte slug', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    await seedTombstones(engine, backend);
+    await engine.executeRaw(`INSERT INTO op_checkpoints(op, fingerprint, completed_keys)
+      SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'slug', p.slug, 'deleted_at', p.deleted_at)) FROM pages p WHERE p.deleted_at IS NOT NULL`, [SYNC_DELETE_TOMBSTONE_OP]);
+    const rows = (await readUnreviewedSyncTombstones(engine, 24)).map(row => `${row.source_id}/${row.slug}`);
+    expect(rows).toEqual(BYTE_TOMBSTONES);
+    return rows;
+  });
+});
+
+describe('the reconcile audit pages by byte slug', () => {
+  parityTest('auditCanonicalSource walks the pages of a source in byte slug order, and its next_after cursor neither repeats nor skips a page', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => inHome(async home => {
+    const slugs = [...MIXED_SLUGS, 'b-x', 'b/x', 'bx'];
+    const incarnation = await addSource(engine, 'ab');
+    const worktree = await addWorktree(engine, localHostId());
+    await bind(engine, 'ab', incarnation, worktree);
+    const root = join(home, 'canonical');
+    mkdirSync(root, { recursive: true });
+    await hostBind(engine, worktree, localHostId(), root);
+    for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '' }, { sourceId: 'ab' });
+    const cursors: Array<string | null> = [];
+    let inspected = 0;
+    let after: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const report = await auditCanonicalSource(engine, 'ab', { limit: 2, ...(after === undefined ? {} : { after }) });
+      inspected += report.inspected;
+      cursors.push(report.next_after);
+      if (report.complete) break;
+      after = report.next_after!;
+    }
+    const bytes = byteOrder(slugs);
+    expect(cursors).toEqual([bytes[1]!, bytes[3]!, null]);
+    expect(inspected).toBe(slugs.length);
+    return { cursors, inspected };
+  }));
+});
+
+describe('origin reads sort source ids by byte', () => {
+  const page = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
+
+  parityTest('originTwinCounts lists the sources holding twin pages by byte id, and its limit keeps the byte-first ones', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    await engine.executeRaw(`DROP INDEX IF EXISTS ${ORIGIN_INDEX.name}`);
+    try {
+      for (const id of MIXED_IDS) {
+        await createSource(engine, backend, id);
+        for (const slug of ['twin-one', 'twin-two']) await engine.putPage(slug, page(slug), { sourceId: id });
+        await engine.executeRaw('UPDATE pages SET source_path = $2 WHERE source_id = $1', [id, 'shared.md']);
+      }
+      const all = (await originTwinCounts(engine)).map(row => row.source_id);
+      const limited = (await originTwinCounts(engine, 3)).map(row => row.source_id);
+      expect(all).toEqual([...BYTE_IDS]);
+      expect(limited).toEqual(BYTE_IDS.slice(0, 3));
+      return { all, limited };
+    } finally {
+      await engine.executeRaw('DELETE FROM pages');
+      await engine.executeRaw(ORIGIN_INDEX.sql);
+    }
+  });
+
+  parityTest('assertRevivalUnclaimed checks the sources of a revived slug in byte id order, so the refusal names the byte-first source', {
+    methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    for (const id of ['ab', 'a-z']) {
+      await createSource(engine, backend, id);
+      await engine.putPage('notes/revived', page('revived'), { sourceId: id });
+      await engine.putPage('notes/holder', page('holder'), { sourceId: id });
+    }
+    await engine.executeRaw("UPDATE pages SET source_path = 'notes/revived.md' WHERE slug = 'notes/holder'");
+    await engine.executeRaw("UPDATE pages SET source_path = 'notes/revived.md', deleted_at = now() WHERE slug = 'notes/revived'");
+    const refusal = await engine.transaction(tx => assertRevivalUnclaimed(tx, 'notes/revived')).then(() => null, (error: Error) => error);
+    expect(refusal).not.toBeNull();
+    expect(refusal!.message).toContain('source a-z ');
+    return refusal!.message;
+  });
+});
+
+describe('manual link reads sort text keys by byte', () => {
+  const page = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
+  const SRC = 'lk';
+
+  async function linkFixture(engine: BrainEngine, backend: Parameters<typeof createSource>[1], targets: readonly string[]) {
+    await createSource(engine, backend, SRC);
+    await engine.putPage('people/from', page('from'), { sourceId: SRC });
+    for (const slug of targets) await engine.putPage(slug, page(slug), { sourceId: SRC });
+    const [from] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, 'people/from']);
+    return Number(from!.id);
+  }
+  const request = (operation: string, pageId: number, intent: Record<string, unknown>) => ({
+    request_id: randomUUID(), operation, slug: 'people/from', source_id: SRC, page_id: pageId, intent,
+    authority: { remote: false },
+  }) as never;
+
+  parityTest('an add_link refused for undated statements names the byte-first target among several unattributed relationships', {
+    methods: ['executeRaw', 'putPage', 'readPageSnapshot'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    const targets = MIXED_SLUGS.map(slug => `people/${slug}`);
+    const fromId = await linkFixture(engine, backend, targets);
+    // Each target holds two fenced edges and a statement stored before rows had sources, so every target is refusable.
+    for (const slug of targets) {
+      for (const source of ['manual', 'crm']) {
+        await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source, origin_page_id, origin_field, context)
+          SELECT $1, t.id, 'works_at', $4, $1, 'links_fence', '' FROM pages t WHERE t.source_id=$2 AND t.slug=$3`, [fromId, SRC, slug, source]);
+      }
+      await engine.executeRaw(`INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
+        SELECT $2, $1, t.id, 'works_at', 'start', '2020-01-01', 'manual', $1 FROM pages t WHERE t.source_id=$2 AND t.slug=$3`, [fromId, SRC, slug]);
+    }
+    const refusal = await prepareManualLinkMutation(engine, request('add_link', fromId, { to: 'people/new-target' }), { engine: engine.kind } as never)
+      .then(() => null, (error: Error) => error);
+    expect(refusal).not.toBeNull();
+    expect((refusal as { code?: string }).code).toBe('link_dates_unattributed');
+    const named = /The link to (\S+) \(/.exec(refusal!.message)?.[1];
+    expect(named).toBe(byteOrder(targets)[0]);
+    return named;
+  });
+
+  parityTest('a remove_link names the edges it kept for the page text in byte order of link type, then of source', {
+    methods: ['executeRaw', 'putPage', 'readPageSnapshot', 'transaction'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    const fromId = await linkFixture(engine, backend, ['people/target']);
+    const kinds = ['ab', 'a-z', 'a.b', 'a_b'];
+    for (const type of kinds) {
+      for (const source of ['mentions', 'markdown', 'frontmatter']) {
+        await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source, context)
+          SELECT $1, t.id, $4, $5, '' FROM pages t WHERE t.source_id=$2 AND t.slug=$3`, [fromId, SRC, 'people/target', type, source]);
+      }
+    }
+    const prepared = await prepareManualLinkMutation(engine, request('remove_link', fromId, { to: 'people/target' }), { engine: engine.kind } as never);
+    const outcome = await engine.transaction(tx => prepared.apply(tx)) as { derived_from_text?: Array<{ link_type: string; link_source: string }> };
+    const derived = (outcome.derived_from_text ?? []).map(edge => `${edge.link_type}/${edge.link_source}`);
+    const expected = byteOrder(kinds).flatMap(type => byteOrder(['mentions', 'markdown', 'frontmatter']).map(source => `${type}/${source}`));
+    expect(derived).toEqual(expected);
+    return derived;
+  });
+});
+
+describe('moved-page verdicts sort the pages they name by byte', () => {
+  const page = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
+  const SRC = 'mv';
+  const GIT_IDENTITY = { GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
+
+  /** A repository whose first commit adds `files` and whose second commit deletes `gone` and adds `added`. */
+  function repo(root: string, files: Record<string, string>, gone: readonly string[], added: Record<string, string>) {
+    const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { env: { ...process.env, ...GIT_IDENTITY }, stdio: 'pipe' });
+    const write = (entries: Record<string, string>) => {
+      for (const [path, content] of Object.entries(entries)) {
+        mkdirSync(join(root, path, '..'), { recursive: true });
+        writeFileSync(join(root, path), content);
+      }
+    };
+    mkdirSync(root, { recursive: true });
+    git('init', '-q', '-b', 'main');
+    write(files);
+    git('add', '-A'); git('commit', '-q', '-m', 'add');
+    for (const path of gone) rmSync(join(root, path));
+    write(added);
+    git('add', '-A'); git('commit', '-q', '-m', 'delete');
+  }
+
+  async function livePage(engine: BrainEngine, slug: string, sourcePath: string, frontmatterId?: string) {
+    await engine.putPage(slug, page(slug), { sourceId: SRC });
+    await engine.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [SRC, slug, sourcePath]);
+    if (frontmatterId) await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{id}', to_jsonb($3::text)) WHERE source_id=$1 AND slug=$2`, [SRC, slug, frontmatterId]);
+    const [row] = await engine.executeRaw<{ id: number; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]);
+    return { page_id: Number(row!.id), slug, revision: String(row!.revision), path: sourcePath };
+  }
+
+  // Slugs whose first five differ between byte order and an en_US locale, which files `a-z` and `a/z` after `ae`.
+  const SIX = ['a-z', 'a/z', 'ab', 'ac', 'ad', 'ae'];
+
+  parityTest('a ghost page whose file name is shared names the byte-first five live pages, not the locale-first five', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => inHome(async home => {
+    await createSource(engine, backend, SRC);
+    const root = join(home, 'repo');
+    repo(root, { 'old/note.md': 'alpha\n' }, ['old/note.md'], { 'new/other.md': 'unrelated\n' });
+    const old = await livePage(engine, 'ghost', 'old/note.md');
+    for (const [index, slug] of SIX.entries()) await livePage(engine, slug, `dir${index}/note.md`);
+    const verdict = await readMovedPage(engine, { sourceId: SRC, root, old });
+    expect(verdict).toMatchObject({ verdict: 'held', reason: 'first_blob_differs' });
+    const candidates = (verdict as { candidates: string[] }).candidates;
+    expect(candidates).toEqual(byteOrder(SIX).slice(0, 5));
+    return candidates;
+  }));
+
+  parityTest('a ghost page with no file-name match names the byte-first five live pages that share its frontmatter id', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => inHome(async home => {
+    await createSource(engine, backend, SRC);
+    const root = join(home, 'repo');
+    repo(root, { 'old/note.md': 'alpha\n' }, ['old/note.md'], { 'new/other.md': 'unrelated\n' });
+    const old = await livePage(engine, 'ghost', 'old/note.md', 'shared-id');
+    for (const [index, slug] of SIX.entries()) await livePage(engine, slug, `dir${index}/elsewhere.md`, 'shared-id');
+    const verdict = await readMovedPage(engine, { sourceId: SRC, root, old });
+    expect(verdict).toMatchObject({ verdict: 'held', reason: 'same_id_body_differs' });
+    const candidates = (verdict as { candidates: string[] }).candidates;
+    expect(candidates).toEqual(byteOrder(SIX).slice(0, 5));
+    return candidates;
+  }));
+
+  parityTest('a shared survivor lists the other deleted paths that still back a live page in byte path order', {
+    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+  }, async (engine, backend) => inHome(async home => {
+    await createSource(engine, backend, SRC);
+    const root = join(home, 'repo');
+    const deleted = ['del/ab.md', 'del/a-z.md', 'del/a.b.md', 'del/a_b.md'];
+    repo(root, Object.fromEntries(deleted.map(path => [path, 'shared\n'])), deleted, { 'new/moved.md': 'shared\n' });
+    const old = await livePage(engine, 'ghost', 'del/ab.md');
+    for (const [index, path] of deleted.slice(1).entries()) await livePage(engine, `backed-${index}`, path);
+    await livePage(engine, 'survivor', 'new/moved.md');
+    const verdict = await readMovedPage(engine, { sourceId: SRC, root, old });
+    expect(verdict).toMatchObject({ verdict: 'held', reason: 'shared_survivor' });
+    const listed = /^(.*?) were deleted holding/.exec((verdict as { detail: string }).detail)?.[1];
+    expect(listed).toBe(['del/ab.md', ...byteOrder(deleted.slice(1))].join(', '));
+    return listed;
+  }));
+});
+
+describe('checkpoint and receipt listings sort their text keys by byte', () => {
+  /** Inserts one op_checkpoints row. */
+  const checkpoint = (engine: BrainEngine, op: string, fingerprint: string, record: Record<string, unknown>) =>
+    engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)', [op, fingerprint, JSON.stringify([record])]);
+
+  parityTest('readResolutions returns the finished resolutions of one preview hash in byte fingerprint order', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => {
+    for (const fingerprint of MIXED_SLUGS) await checkpoint(engine, RESOLUTION_OP, fingerprint, { preview_hash: 'H', fingerprint });
+    await checkpoint(engine, RESOLUTION_OP, 'other', { preview_hash: 'not-H', fingerprint: 'other' });
+    const found = (await readResolutions(engine, 'H')).map(entry => (entry as unknown as { fingerprint: string }).fingerprint);
+    expect(found).toEqual([...BYTE_SLUGS]);
+    return found;
+  });
+
+  parityTest('listSuppressedWrites lists the slugs the breaker holds back in byte order, and its limit keeps the byte-first ones', {
+    methods: ['executeRaw', 'getConfig', 'transaction'], requires: 'raw_sql',
+  }, async (engine) => {
+    const incarnation = await addSource(engine, 'ab');
+    for (const slug of MIXED_SLUGS) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await seedRequest(engine, { source: 'ab', incarnation, slug, operation: 'submit_job', state: 'failed', errorCode: 'revision_conflict', intent: {}, digest: `d-${slug}` });
+      }
+    }
+    const all = (await listSuppressedWrites(engine, 'ab')).map(row => row.slug);
+    const limited = (await listSuppressedWrites(engine, 'ab', 3)).map(row => row.slug);
+    expect(all).toEqual([...BYTE_SLUGS]);
+    expect(limited).toEqual(BYTE_SLUGS.slice(0, 3));
+    return { all, limited };
+  });
+
+  parityTest('acknowledgeManagedSyncFailures refuses every matching failure in byte fingerprint order', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => {
+    const incarnation = await addSource(engine, 'ab');
+    for (const fingerprint of MIXED_SLUGS) {
+      await checkpoint(engine, 'managed-sync-failure', fingerprint, {
+        source_id: 'ab', source_incarnation: randomUUID(), path: 'shared.md', code: 'x', message: 'x', request_id: null, run_id: 'r', target: null,
+        cursor_key: fingerprint, phase: 'discovery', state: 'failed', observation_id: fingerprint, first_seen: 'x', attempts: 1,
+      });
+    }
+    const outcome = await acknowledgeManagedSyncFailures(engine, { sourceId: 'ab', incarnation, root: '/collate', gitRoot: '/collate', target: 'x' }, 'shared.md');
+    expect(outcome.cleared).toEqual([]);
+    const refused = outcome.refused.map(entry => entry.failure.observation_id);
+    expect(outcome.refused.every(entry => entry.reason === 'source_changed')).toBe(true);
+    expect(refused).toEqual([...BYTE_SLUGS]);
+    return refused;
+  });
+
+  parityTest('readGitHoldListing lists each source in byte id order and its holds in byte fingerprint order, within the limit', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => {
+    for (const id of ['ab', 'a-z']) {
+      const incarnation = await addSource(engine, id);
+      await checkpoint(engine, GIT_HOLD_SUMMARY_OP, `${id}:${incarnation}`, { count: MIXED_SLUGS.length });
+      for (const slug of MIXED_SLUGS) await checkpoint(engine, GIT_HOLD_OP, `${id}/${slug}`, { source_id: id, incarnation, code: 'x', path: slug });
+    }
+    const listing = await readGitHoldListing(engine, ['ab', 'a-z'], 3);
+    expect(listing.map(entry => entry.sourceId)).toEqual(['a-z', 'ab']);
+    for (const entry of listing) expect(entry.holds.map(hold => (hold as unknown as { path: string }).path)).toEqual(BYTE_SLUGS.slice(0, 3));
+    return listing.map(entry => ({ id: entry.sourceId, holds: entry.holds.map(hold => (hold as unknown as { path: string }).path) }));
+  });
+});
+
+describe('a worktree refresh orders its member sources by byte', () => {
+  parityTest('refreshWorktree plans the members of one worktree in byte id order, so the topology fence accepts the plan and the refresh completes', {
+    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+  }, async (engine) => {
+    await engine.executeRaw('SELECT 1');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-collate-refresh-'));
+    try {
+      return await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
+        try {
+          const remote = join(dir, 'origin.git'), upstream = join(dir, 'upstream'), root = join(dir, 'brain');
+          const members = ['ab', 'a-z', 'a.b'];
+          execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+          execFileSync('git', ['clone', '-q', remote, upstream], { stdio: 'ignore' });
+          git(upstream, 'checkout', '-q', '-b', 'main');
+          for (const id of members) commitFile(upstream, `${id}/one.md`, refreshPage(`${id} one`, `The first ${id} observation.`));
+          git(upstream, 'push', '-q', 'origin', 'main');
+          execFileSync('git', ['clone', '-q', remote, root], { stdio: 'ignore' });
+          await registerLocalWriter(engine, 'cli');
+          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+          for (const id of members) {
+            await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, join(root, id), JSON.stringify({ remote_url: remote })]);
+            await claimWorktree(engine, id, join(root, id));
+          }
+          await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+          for (const id of members) await performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true });
+          const dry = await refreshWorktree(engine, 'ab', { dryRun: true });
+          expect(dry.status).toBe('dry_run');
+          expect(dry.source_ids).toEqual(byteOrder(members));
+          commitFile(upstream, 'ab/two.md', refreshPage('ab two', 'A later ab observation.'));
+          git(upstream, 'push', '-q', 'origin', 'main');
+          const done = await refreshWorktree(engine, 'ab', { fetchTimeoutMs: 60_000 });
+          expect(done.status).toBe('completed');
+          return { planned: dry.source_ids, status: done.status };
+        } finally { await disposePersistenceConsumer(engine); }
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});

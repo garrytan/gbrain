@@ -38,7 +38,7 @@ export async function readParkedGroups(engine: Pick<BrainEngine, 'executeRaw'>, 
      SELECT source_id, code, former, count(DISTINCT id)::int AS effects, count(*)::int AS targets, min(rule) AS rule,
             array_agg(DISTINCT worktree_id::text) AS worktree_ids, (array_agg(DISTINCT request_id::text))[1:5] AS requests,
             (SELECT sb.worktree_id::text FROM persistence_source_bindings sb WHERE sb.source_id=parked.source_id) AS current_worktree_id
-       FROM parked GROUP BY source_id, code, former ORDER BY source_id, code, former NULLS FIRST`, [sourceIds ?? null]);
+       FROM parked GROUP BY source_id, code, former ORDER BY source_id COLLATE "C", code COLLATE "C", former COLLATE "C" NULLS FIRST`, [sourceIds ?? null]);
   return rows.map(({ rule, former, worktree_ids, current_worktree_id, requests, ...row }) => {
     if (former) {
       const command = ['gbrain', 'sources', 'writer', 'settle-effects', row.source_id, '--parked-code', row.code, ...(former === 'source_replaced' ? ['--retire'] : []), '--dry-run'];

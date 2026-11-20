@@ -70,7 +70,7 @@ export async function listSuppressedWrites(engine: BrainEngine, sourceId: string
       count(*)::text AS refusals,(array_agg(request_id::text ORDER BY sequence DESC))[1] AS last_request_id,(array_agg(error_detail->>'origin' ORDER BY sequence DESC))[1] AS cause
     FROM persistence_requests WHERE source_id=$1 AND intent IS NOT NULL AND NOT compacted AND operation='submit_job' AND state IN ('failed','conflict')
       AND error_code IS NOT NULL AND completed_at > now()-($2::double precision*interval '1 hour')
-    GROUP BY slug,digest,error_code HAVING count(*) >= $3 ORDER BY slug LIMIT $4`, [sourceId, REFUSAL_BREAKER_WINDOW_HOURS, threshold, limit]);
+    GROUP BY slug,digest,error_code HAVING count(*) >= $3 ORDER BY slug COLLATE "C" LIMIT $4`, [sourceId, REFUSAL_BREAKER_WINDOW_HOURS, threshold, limit]);
   return rows.map(row => ({ source_id: sourceId, slug: row.slug, error_code: row.error_code, refusals: Number(row.refusals), last_request_id: row.last_request_id, cause: row.cause,
     exit: row.cause === 'canonical_file_missing'
       ? `gbrain sources reconcile ${sourceId} ${row.slug} --brain host --preview (import the deletion or restore the file)`

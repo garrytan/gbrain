@@ -101,6 +101,7 @@ export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, source
     [sourceId, telemetry.pass_id, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.started_at, incarnation]);
   if (row?.banked === true) return true;
   for (let after = ''; ;) {
+    // The page order never reaches output: the pass only asks whether any held row qualifies, and ORDER BY and the `h.fingerprint > $7` cursor both use the default collation, so they agree and paging stays consistent.
     const rewritten = await engine.executeRaw<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(`SELECT h.fingerprint, h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
       FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
       WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz

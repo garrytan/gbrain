@@ -46,7 +46,7 @@ const LIVE_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.source_id=o.comple
 /** Read-only: every failure record whose tombstone still exists as recorded, keyed by purgeParkKey. */
 export async function readPurgeParks(engine: SqlEngine): Promise<Map<string, PurgePark>> {
   const rows = await engine.executeRaw<{ fingerprint: string; park: PurgePark | string }>(
-    `SELECT o.fingerprint, o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${LIVE_TOMBSTONE} ORDER BY o.fingerprint`, [PURGE_PARK_OP]);
+    `SELECT o.fingerprint, o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${LIVE_TOMBSTONE} ORDER BY o.fingerprint COLLATE "C"`, [PURGE_PARK_OP]);
   return new Map(rows.map(row => [row.fingerprint, typeof row.park === 'string' ? JSON.parse(row.park) as PurgePark : row.park]));
 }
 

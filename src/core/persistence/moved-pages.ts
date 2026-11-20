@@ -121,11 +121,11 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   if (!rows.length) {
     const name = basename(old.path);
     const named = await engine.executeRaw<{ slug: string; source_path: string }>(`SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2
-      AND source_path IS NOT NULL AND (source_path=$3 OR right(source_path, length($3) + 1)='/' || $3) ORDER BY slug LIMIT 5`, [sourceId, old.page_id, name]);
+      AND source_path IS NOT NULL AND (source_path=$3 OR right(source_path, length($3) + 1)='/' || $3) ORDER BY slug COLLATE "C" LIMIT 5`, [sourceId, old.page_id, name]);
     if (named.length) return held('first_blob_differs', `${named.map(row => row.source_path).join(', ')} has the same file name, but neither its first committed content nor its content in commit ${short(commit)} is ${old.path}'s last committed content (blob ${short(blob)}), so it is not proven to be the moved file`,
       named.map(row => row.slug));
     const [own] = await engine.executeRaw<{ id: string | null }>('SELECT frontmatter->>\'id\' AS id FROM pages WHERE id=$1', [old.page_id]);
-    const twins = own?.id ? await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND frontmatter->>'id'=$3 ORDER BY slug LIMIT 5`,
+    const twins = own?.id ? await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND frontmatter->>'id'=$3 ORDER BY slug COLLATE "C" LIMIT 5`,
       [sourceId, old.page_id, own.id]) : [];
     if (twins.length) return held('same_id_body_differs', `${twins.map(row => row.slug).join(', ')} has the same frontmatter id, but no page started from ${old.path}'s last committed content (blob ${short(blob)}), so the bodies differ and a fold would drop one side's edits`,
       twins.map(row => row.slug));
@@ -135,7 +135,7 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   const gone = [...first.deleted].filter(path => path !== old.path);
   const back = inHead(root, gone);
   const others = gone.length ? await engine.executeRaw<{ source_path: string }>(`SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2
-    AND source_path=ANY($3::text[]) ORDER BY source_path`, [sourceId, old.page_id, gone.filter(path => !back.has(path))]) : [];
+    AND source_path=ANY($3::text[]) ORDER BY source_path COLLATE "C"`, [sourceId, old.page_id, gone.filter(path => !back.has(path))]) : [];
   if (others.length) return held('shared_survivor', `${[old.path, ...others.map(other => other.source_path)].join(', ')} were deleted holding the same content (blob ${short(blob)}) and each still backs a live page, so which of them moved to ${row.source_path} is a person's decision`, [row.slug]);
   const [storage] = await engine.executeRaw<{ segmented: boolean }>(`SELECT EXISTS (SELECT 1 FROM pages WHERE id=$1 AND body_storage<>'inline')
     OR EXISTS (SELECT 1 FROM page_versions WHERE page_id=$1 AND body_storage<>'inline') AS segmented`, [old.page_id]);

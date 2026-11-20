@@ -140,7 +140,7 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
   const now = opts.now ?? Date.now();
   const bindings = await engine.executeRaw<BindingRow>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, w.owner_host_id::text AS owner_host_id
     FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
-    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id`, [opts.sourceIds ?? null]);
+    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id COLLATE "C"`, [opts.sourceIds ?? null]);
   if (!bindings.length) return [];
   let unknown: MovementUnknown | null = null;
   let backlogRows: ManagedSyncBacklog[] = [];

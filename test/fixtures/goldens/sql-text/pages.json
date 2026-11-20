@@ -1367,8 +1367,8 @@
               "null",
               "null"
             ],
-            "sql": "SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$3) ORDER BY source_id",
-            "textSha256": "8d4bea0f03c96cfdea2bad6a82c4050073b3cad615d0115bb66cf05aaa9f9300"
+            "sql": "SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$3) ORDER BY source_id COLLATE \"C\"",
+            "textSha256": "d8f28011279986cb92a6c9e674452f0eb1ce96f94dd7a0d1cbaad48f46b6806c"
           },
           {
             "lane": "tx",
@@ -1396,8 +1396,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$3) ORDER BY source_id",
-            "textSha256": "8d4bea0f03c96cfdea2bad6a82c4050073b3cad615d0115bb66cf05aaa9f9300"
+            "sql": "SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$3) ORDER BY source_id COLLATE \"C\"",
+            "textSha256": "d8f28011279986cb92a6c9e674452f0eb1ce96f94dd7a0d1cbaad48f46b6806c"
           },
           {
             "lane": "tx",

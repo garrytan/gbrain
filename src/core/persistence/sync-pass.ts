@@ -563,6 +563,7 @@ async function readMarkers(exec: Exec, sourceId: string, incarnation: string): P
  */
 async function readLegacyDeletions(exec: Exec, sourceId: string, incarnation: string, slugs: string[]): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
+  // The slug order never reaches output: DISTINCT ON only keeps the newest committed delete per slug, and the rows fold into a Map looked up by slug.
   const rows = await exec.executeRaw<{ slug: string; id: string }>(`SELECT DISTINCT ON (slug) slug, id::text AS id FROM persistence_requests
     WHERE source_id=$1 AND source_incarnation=$2::uuid AND state='committed' AND slug=ANY($3::text[])
       AND (operation='delete_page' OR intent->>'kind'='managed_sync_delete') ORDER BY slug, sequence DESC`, [sourceId, incarnation, slugs]);

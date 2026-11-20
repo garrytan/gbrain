@@ -106,6 +106,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   signal?.throwIfAborted();
   // The first read is a typed keyed read (its rows ordered by key, as this statement orders them); the re-check under
   // lock keeps the statement, for its FOR SHARE.
+  // The row order never reaches output: the two keys sort the same by byte and by locale, and the rows fold into one signature text.
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = embeddingConfigText(await readConfigRows(engine, EMBEDDING_CONFIG_KEYS));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
