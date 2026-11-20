@@ -759,7 +759,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (output) await writeStdoutFinal(output);
     if (noticeText) process.stderr.write(noticeText);
     reportInBandFailure(result, command);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -863,7 +863,7 @@ async function runThinClientRouted(
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
     reportInBandFailure(result, op.cliHints?.name ?? op.name);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {

@@ -12,9 +12,12 @@
  * transcript/note containers; otherwise ties break on GREATEST(updated_at,
  * last_retrieved_at) — "last_touched" is the card's OUTPUT name, not a
  * column. Multi-hit → best match wins, runners-up land in `suggestions`.
- * Miss → `found: false` + keyword near-misses with create_safety hints. NEVER
- * throws for data reasons; each arm is guarded so a pre-page_aliases brain
- * still resolves via arm 2 (same posture as the shipped reflex).
+ * Miss → `found: false` + keyword near-misses with create_safety hints. A
+ * missing name never throws; a pre-page_aliases brain still resolves via arm 2
+ * (same posture as the shipped reflex). A lookup read that FAILS is never read
+ * as a miss: it reports `entity_lookup_failed` (a DegradedStageEntry, the
+ * shape search uses) beside whatever the remaining arms found, and the Rust
+ * engine's typed capability refusal passes through untouched.
  *
  * Privacy: `summary` runs through safeSynopsis (the get_page fence boundary);
  * facts respect visibility for remote callers (world-only).
@@ -38,7 +41,10 @@ import type { NameMatchKind } from '../entities/name-variants.ts';
 import { exactMatchPreference } from '../entities/exact-match-preference.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
-import type { Link, SearchResult } from '../types.ts';
+import type { DegradedStageEntry, Link, SearchResult } from '../types.ts';
+import { isTimeoutError, pushDegraded } from '../search/hybrid/degraded.ts';
+import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { NewerMentions } from '../mentions/newer-mentions.ts';
 import { linkableTypesFor, loadLinkableTypes, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
@@ -197,6 +203,8 @@ export interface EntityCardResult {
   ambiguous?: true;
   /** #6723: the source of the resolved page (absent on a miss). */
   source_id?: string;
+  /** A lookup read failed (`entity_lookup_failed`): a miss or a hit here is not proof the entity is absent or the best match. */
+  degraded?: DegradedStageEntry[];
   /**
    * #6724: the full fact rows the card read (newest first, visibility and
    * eligibility already applied), for context_pack's `entity_facts`. Never part
@@ -306,13 +314,24 @@ export type EntityCandidates =
   | { kind: 'miss'; suggestions: EntitySuggestion[]; ambiguous?: true }
   | { kind: 'withheld' };
 
-/** Resolve a trimmed, non-empty name to its candidates. Every arm is fail-soft. */
+/**
+ * A lookup read failed: the arm contributes nothing, and `degraded` says so (a miss is then not proof the entity is
+ * absent). The Rust engine's typed capability refusal is not a database failure and ends the call; the raw error text goes
+ * to stderr only, never onto the wire.
+ */
+function lookupReadFailed(err: unknown, degraded: DegradedStageEntry[] | undefined): void {
+  rethrowCapabilityRefusal(err);
+  warnOncePerProcess('entity-lookup-failed', `[gbrain] entity lookup read failed (reported as degraded): ${err instanceof Error ? err.message : String(err)}`);
+  if (degraded) pushDegraded(degraded, 'entity_lookup_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
+}
+
+/** Resolve a trimmed, non-empty name to its candidates. A failed read is reported through `opts.degraded`, never as a miss. */
 export async function selectEntityCandidates(
   engine: BrainEngine,
   sourceId: string,
   trimmed: string,
   scope: EntityLookupScope,
-  opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean } = {},
+  opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean; degraded?: DegradedStageEntry[] } = {},
 ): Promise<EntityCandidates> {
   const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
   // Predicate text lives ONCE (private-visibility.ts) — both card queries
@@ -340,8 +359,10 @@ export async function selectEntityCandidates(
     try {
       const aliasMap = await engine.resolveAliases([norm], { sourceId });
       for (const hit of aliasMap.get(norm) ?? []) consider(hit.slug, ARM_ALIAS);
-    } catch {
-      /* no page_aliases table — degrade to arm 2 [E3] */
+    } catch (err) {
+      // Only the pre-migration brain (no page_aliases table yet) has an empty alias arm by design [E3]; any other
+      // failure leaves the alias arm unread and says so.
+      if (!isMissingSchemaObject(err, 'table', 'page_aliases')) lookupReadFailed(err, opts.degraded);
     }
   }
 
@@ -359,7 +380,8 @@ export async function selectEntityCandidates(
              OR slug LIKE $4 )${privatePredicate}`,
       [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
     );
-  } catch {
+  } catch (err) {
+    lookupReadFailed(err, opts.degraded);
     rows = [];
   }
   const rowBySlug = new Map<string, CardPageRow>();
@@ -380,8 +402,9 @@ export async function selectEntityCandidates(
         [sourceId, missing],
       );
       for (const r of extra) rowBySlug.set(r.slug, r);
-    } catch {
-      /* stale alias rows — drop */
+    } catch (err) {
+      // A stale alias row hydrates to no page (zero rows, no error, dropped above); a read that throws is a failure.
+      lookupReadFailed(err, opts.degraded);
     }
   }
 
@@ -456,7 +479,7 @@ export async function selectAcrossSources(
   sources: readonly string[],
   trimmed: string,
   remote: boolean,
-  opts: { omitQuarantined?: boolean; scopes?: Map<string, Promise<EntityLookupScope>>; variants?: boolean } = {},
+  opts: { omitQuarantined?: boolean; scopes?: Map<string, Promise<EntityLookupScope>>; variants?: boolean; degraded?: DegradedStageEntry[] } = {},
 ): Promise<{ sourceId: string; scope: EntityLookupScope; selected: EntityCandidates }> {
   let first: { sourceId: string; scope: EntityLookupScope; selected: EntityCandidates } | undefined;
   const variantHits: Array<{ sourceId: string; scope: EntityLookupScope; selected: Extract<EntityCandidates, { kind: 'hit' }> }> = [];
@@ -464,7 +487,7 @@ export async function selectAcrossSources(
   for (const sourceId of sources) {
     if (opts.scopes && !opts.scopes.has(sourceId)) opts.scopes.set(sourceId, entityLookupScope(engine, sourceId, remote));
     const scope = await (opts.scopes?.get(sourceId) ?? entityLookupScope(engine, sourceId, remote));
-    const selected = await selectEntityCandidates(engine, sourceId, trimmed, scope, { omitQuarantined: opts.omitQuarantined, suggest: first === undefined, variants: opts.variants });
+    const selected = await selectEntityCandidates(engine, sourceId, trimmed, scope, { omitQuarantined: opts.omitQuarantined, suggest: first === undefined, variants: opts.variants, degraded: opts.degraded });
     // #7160: an exact hit in any source beats a name-variant guess, and a guess must be unique across every source read.
     if (selected.kind === 'hit' && !selected.match) return { sourceId, scope, selected };
     if (selected.kind === 'hit') variantHits.push({ sourceId, scope, selected });
@@ -492,17 +515,21 @@ export async function buildEntityCard(
   // Covers entity, context_pack, and delta (all route through buildEntityCard).
   // #6723: the source with the hit owns the card; every read below uses it.
   const sources = opts.sources?.length ? opts.sources : [sourceId];
-  const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, trimmed, opts.remote, { omitQuarantined: opts.omitQuarantined, variants: opts.variants });
-  if (selected.kind === 'withheld') return { found: false, suggestions: [] };
+  const lookupDegraded: DegradedStageEntry[] = [];
+  const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, trimmed, opts.remote, { omitQuarantined: opts.omitQuarantined, variants: opts.variants, degraded: lookupDegraded });
+  // A failed lookup read rides every outcome below: the caller must not read a miss (or the best of what was read) as final.
+  const degraded = lookupDegraded.length ? { degraded: lookupDegraded } : {};
+  if (selected.kind === 'withheld') return { found: false, suggestions: [], ...degraded };
   if (selected.kind === 'miss') {
     const ambiguous = selected.ambiguous ? { ambiguous: selected.ambiguous } : {};
-    if (!opts.includeReferences) return { found: false, suggestions: selected.suggestions, ...ambiguous };
+    if (!opts.includeReferences) return { found: false, suggestions: selected.suggestions, ...ambiguous, ...degraded };
     const textMentions = await readTextMentions(engine, sources, trimmed, { remote: opts.remote, excludePrivate: scope.excludePrivate, omitQuarantined: opts.omitQuarantined });
     return {
       found: false, suggestions: selected.suggestions,
       coverage: await readMentionCoverage(engine, [...sources]).catch(() => undefined),
       ...(textMentions?.total || textMentions?.unread ? { text_mentions: textMentions } : {}),
       ...ambiguous,
+      ...degraded,
     };
   }
 
@@ -534,6 +561,7 @@ export async function buildEntityCard(
     source_id: hitSource,
     factRows,
     ...(runnersUp.length ? { suggestions: runnersUp } : {}),
+    ...degraded,
   };
 }
 
