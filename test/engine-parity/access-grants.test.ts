@@ -167,10 +167,12 @@ describe('engine parity: access-grant reads', () => {
   });
 
   parityTest('a revoked local writer member grant carries its revoked_at, so membership denies it', {
-    methods: ['insertLocalWriterRow', 'readLocalWriterMemberGrant'],
+    methods: ['insertLocalWriterRow', 'revokeLocalWriterRow', 'readLocalWriterMemberGrant'],
   }, async (engine) => {
     await engine.insertLocalWriterRow({ id: WRITER, lane: 'cli', credentialHash: 'e'.repeat(64), grant: GRANT });
-    await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=now() WHERE id=$1::uuid', [WRITER]);
+    // True when the registration exists, false for an id no writer holds.
+    expect({ revoked: await engine.revokeLocalWriterRow(WRITER), unknown: await engine.revokeLocalWriterRow(UNKNOWN) })
+      .toEqual({ revoked: true, unknown: false });
     const row = await engine.readLocalWriterMemberGrant(WRITER);
     // The read keeps the revoked row (the caller refuses it); a reader that dropped revoked_at would hide the mark.
     expect({ revoked: row?.revoked_at != null, ceiling: row?.grant_ceiling }).toEqual({ revoked: true, ceiling: GRANT });

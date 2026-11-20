@@ -501,37 +501,44 @@ describe('engine parity: write misc', () => {
     return identities;
   });
 
-  // The member write here is raw SQL, which a Rust brain refuses, so the Rust arm stops on the typed raw_sql refusal;
-  // access-members.test.ts covers Rust through the typed writes.
-  parityTest('readLiveMember finds a live member with its groups through each binding, and none once it is disabled', { methods: ['readLiveMember'] }, async (engine, backend) => {
-    const write = await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example'), ('bob-example')").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readLiveMember('member', 'alice-example')).toBeNull();
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw("INSERT INTO access_groups (id) VALUES ('team-b'), ('team-a')");
-    await engine.executeRaw("INSERT INTO access_group_members (group_id, member_id) VALUES ('team-b', 'alice-example'), ('team-a', 'alice-example')");
+  // Every arm seeds through typed members, so the Rust arm compares its answer with PGLite's.
+  parityTest('readLiveMember finds a live member with its groups through each binding, and none once it is disabled', {
+    methods: ['readLiveMember', 'insertAccessMember', 'insertAccessToken', 'insertOauthClient', 'writeCredentialBinding', 'setAccessMemberDisabled', 'deleteOAuthClient'],
+  }, async (engine) => {
+    // Seeded through the typed writes `gbrain access member add`, `gbrain auth create` and `register-client` use.
+    const person = (id: string, groups: string[]) => ({ id, displayName: null, email: null, kind: 'person' as const, groups, bindTokenId: null });
+    await engine.insertAccessMember(person('alice-example', ['team-b', 'team-a']));
+    await engine.insertAccessMember(person('bob-example', []));
     await engine.setConfig('mcp.stdio_member', ' bob-example\t');
-    const [token] = await engine.executeRaw<{ id: string }>(
-      "INSERT INTO access_tokens (name, token_hash, member_id) VALUES ('t', 'hash-example', 'alice-example') RETURNING id::text AS id");
-    await engine.executeRaw("INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ('client-example', 'c', 'bob-example')");
+    const token = await engine.insertAccessToken({
+      name: 't', token_hash: 'hash-example', scopes: ['read'], permissions: {}, source_grant: null, source_id: null,
+      federated_read: null, allowed_operations: null, takes_holders: null, member_id: 'alice-example',
+    });
+    const client = (id: string, deleted: boolean) => engine.insertOauthClient({
+      client_id: id, client_secret_hash: null, client_name: 'c', redirect_uris: [], grant_types: ['client_credentials'], scope: 'read',
+      token_endpoint_auth_method: 'none', client_id_issued_at: 0, deleted_at: deleted ? new Date() : null,
+    });
+    await client('client-example', false);
+    // A deleted client bound to a live member: the binding read must drop it on its deleted_at.
+    await client('client-deleted', true);
+    const bindBob = { member: 'bob-example', mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null };
+    for (const id of ['client-example', 'client-deleted']) await engine.writeCredentialBinding({ kind: 'client', id }, bindBob);
     const alice = { id: 'alice-example', groups: ['team-a', 'team-b'] };
     const bob = { id: 'bob-example', groups: [] };
     const live = {
       member: await engine.readLiveMember('member', 'alice-example'),
       stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
-      legacyToken: await engine.readLiveMember('legacy_token', token!.id),
+      legacyToken: await engine.readLiveMember('legacy_token', token.id),
       oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
+      deletedClient: await engine.readLiveMember('oauth_client', 'client-deleted'),
       unknown: await engine.readLiveMember('member', 'carol-example'),
     };
-    expect(live).toEqual({ member: alice, stdioConfig: bob, legacyToken: alice, oauthClient: bob, unknown: null });
-    await engine.executeRaw("UPDATE access_members SET disabled_at = now() WHERE id = 'alice-example'");
-    await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-example'");
+    expect(live).toEqual({ member: alice, stdioConfig: bob, legacyToken: alice, oauthClient: bob, deletedClient: null, unknown: null });
+    await engine.setAccessMemberDisabled('alice-example', true);
+    expect(await engine.deleteOAuthClient('client-example')).not.toBeNull();
     const after = {
       member: await engine.readLiveMember('member', 'alice-example'),
-      legacyToken: await engine.readLiveMember('legacy_token', token!.id),
+      legacyToken: await engine.readLiveMember('legacy_token', token.id),
       oauthClient: await engine.readLiveMember('oauth_client', 'client-example'),
       stdioConfig: await engine.readLiveMember('stdio_config', 'mcp.stdio_member'),
     };
@@ -1100,20 +1107,17 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: a group carries only its own members, in id order; a group with no members carries none; an id matches
-  // exactly one group, never a member id, another case or an injected predicate. The fixture writes raw SQL, which a Rust
-  // brain refuses, so the write stops on the raw_sql refusal; access-members.test.ts covers Rust through the typed writes.
-  parityTest('readAccessGroups lists every group with only its own members, and finds one group by its exact id', { methods: ['readAccessGroups'] }, async (engine, backend) => {
-    const write = await engine.executeRaw(
-      `INSERT INTO access_members (id, kind) VALUES ('alice-example', 'person'), ('bob-example', 'person'), ('carol-example', 'person')`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readAccessGroups(null)).toEqual([]);
-      throw write;
+  // exactly one group, never a member id, another case or an injected predicate. Every arm seeds through typed members.
+  parityTest('readAccessGroups lists every group with only its own members, and finds one group by its exact id', {
+    methods: ['readAccessGroups', 'insertAccessMember', 'addAccessGroupMembers'],
+  }, async (engine) => {
+    // Seeded through the typed writes `gbrain access member add` and `gbrain access group add` use.
+    for (const id of ['alice-example', 'bob-example', 'carol-example']) {
+      await engine.insertAccessMember({ id, displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null });
     }
-    expect(write).toBeNull();
-    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-b'), ('team-a'), ('team-empty')`);
-    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
-      ('team-a', 'carol-example'), ('team-a', 'alice-example'), ('team-b', 'bob-example')`);
+    await engine.addAccessGroupMembers('team-b', ['bob-example']);
+    await engine.addAccessGroupMembers('team-a', ['carol-example', 'alice-example']);
+    await engine.addAccessGroupMembers('team-empty', []);
     const answers = {
       all: await engine.readAccessGroups(null),
       byId: await engine.readAccessGroups('team-a'),

@@ -910,6 +910,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAccessMembers': OOS.callerRawSql,
   'readAccessCredentials': OOS.callerRawSql,
   'revokeAccessTokensNamed': OOS.callerRawSql,
+  'revokeLocalWriterRow': OOS.callerRawSql,
   'revokeAccessToken': OOS.callerRawSql,
   'deleteOAuthClient': OOS.callerRawSql,
   'listAccessTokens': OOS.callerRawSql,

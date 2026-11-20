@@ -1541,6 +1541,7 @@ export class PostgresEngine implements BrainEngine {
   readSharedSkillDeliveryBatch(token: string, installationId: string, epoch: number) { return sharedSkillMembersImpl.readSharedSkillDeliveryBatch(this.engineSql, token, installationId, epoch); }
   acknowledgeSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchAcknowledge) { return sharedSkillMembersImpl.acknowledgeSharedSkillDeliveryBatch(this.engineSql, spec); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
+  revokeLocalWriterRow(id: string) { return persistenceStateImpl.revokeLocalWriterRow(this.autocommitSql, id); }
   readJournalLimitRows() { return this.preparationRead(exec => persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(exec, 'persistence: journal limit read ran unscoped through executeRaw'))); }
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return this.preparationRead(exec => persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(exec, 'persistence: hold read ran unscoped through executeRaw'), pageIds)); }
   readHeldCoverageRows(sourceIds: string[] | null) { return this.preparationRead(exec => persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(exec, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds)); }

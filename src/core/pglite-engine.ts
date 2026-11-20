@@ -1866,6 +1866,7 @@ export class PGLiteEngine implements BrainEngine {
   readSharedSkillDeliveryBatch(token: string, installationId: string, epoch: number) { return sharedSkillMembersImpl.readSharedSkillDeliveryBatch(this.engineSql, token, installationId, epoch); }
   acknowledgeSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchAcknowledge) { return sharedSkillMembersImpl.acknowledgeSharedSkillDeliveryBatch(this.engineSql, spec); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.engineSql, row); }
+  revokeLocalWriterRow(id: string) { return persistenceStateImpl.revokeLocalWriterRow(this.engineSql, id); }
   readJournalLimitRows() { return persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(this.engineSql, 'persistence: journal limit read ran unscoped through executeRaw')); }
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(this.engineSql, 'persistence: hold read ran unscoped through executeRaw'), pageIds); }
   readHeldCoverageRows(sourceIds: string[] | null) { return persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(this.engineSql, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds); }

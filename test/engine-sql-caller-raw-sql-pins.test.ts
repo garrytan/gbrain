@@ -1094,6 +1094,11 @@ const PINS: Pin[] = [
     texts: ['SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE'],
   },
   {
+    from: 'src/core/persistence/identity.ts:404 revokeLocalWriter (at 6631e1bb57)',
+    case: { method: 'revokeLocalWriterRow', variant: 'default', run: e => e.revokeLocalWriterRow('00000000-0000-4000-8000-0000000000c1') },
+    texts: ['UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id'],
+  },
+  {
     from: 'src/core/oauth-provider.ts:1021 verifyAccessToken legacy fallback (at d51679a5fd)',
     case: { method: 'readActiveAccessTokenByHash', variant: 'provider', run: e => e.readActiveAccessTokenByHash('hash-x', 'provider') },
     texts: [`

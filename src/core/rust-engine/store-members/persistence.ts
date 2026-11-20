@@ -1,6 +1,6 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
- * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
+ * insertLocalWriterRow, revokeLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
@@ -49,6 +49,10 @@ export const insertLocalWriterRow: StoreMember<[row: LocalWriterInsert], boolean
   storeCall({ member: 'insertLocalWriterRow' }, () => brain.insertLocalWriterRow({
     id: row.id, lane: row.lane, credentialHash: row.credentialHash, grantCeiling: row.grant,
   }));
+
+/** Revokes a local writer, keeping an earlier revocation time; true when the store holds the registration. */
+export const revokeLocalWriterRow: StoreMember<[id: string], boolean> = (brain, id) =>
+  storeCall({ member: 'revokeLocalWriterRow' }, () => brain.revokeLocalWriter(id));
 
 /** `config` keys `LIKE 'persistence.limits.%'`: the prefix, then anything (no `_` in it, so no single-character wildcard). */
 const LIMITS_PREFIX = 'persistence.limits.';
