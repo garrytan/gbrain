@@ -1,6 +1,7 @@
 //! The primary tables the seed does not copy on purpose: job queue, telemetry, caches and
 //! machine-local state, each with the read that differs on a seeded store. This is the only list
-//! of tables the seed may leave behind. Every other primary table that the seed does not copy is a
+//! of tables the seed may leave behind. A table on the list can still hold rows that are brain
+//! state ([`GapRows`]): those rows are counted as a gap of their own. Every other primary table that the seed does not copy is a
 //! gap: the seed counts its rows (`unseeded_gap_rows` in `seed.json`), and a swap to the seeded
 //! store is refused while any gap count is above zero. A table added to the schema is a gap until
 //! the seed copies it or this list names it.
@@ -24,6 +25,16 @@ pub enum LossKind {
     SegmentedBody,
 }
 
+/// The rows of a not-copied table that are brain state, not machine state: the rows whose
+/// `column` equals `equals`. The seed counts them as the gap `gap`, so a swap is refused while any
+/// exist, until a relation copies them.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GapRows {
+    pub gap: &'static str,
+    pub column: &'static str,
+    pub equals: &'static str,
+}
+
 /// One table the seed does not copy.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NotCopied {
@@ -31,10 +42,17 @@ pub struct NotCopied {
     pub kind: LossKind,
     /// The read that differs on the seeded store.
     pub read: &'static str,
+    /// Rows of the table that are a gap, not a loss.
+    pub gap_rows: Option<GapRows>,
 }
 
 const fn t(table: &'static str, kind: LossKind, read: &'static str) -> NotCopied {
-    NotCopied { table, kind, read }
+    NotCopied {
+        table,
+        kind,
+        read,
+        gap_rows: None,
+    }
 }
 
 use LossKind::{Cache, Jobs, MachineLocal, SegmentedBody, Telemetry};
@@ -171,11 +189,18 @@ pub const NOT_COPIED: &[NotCopied] = &[
         MachineLocal,
         "an interrupted bulk operation starts again",
     ),
-    t(
-        "op_checkpoints",
-        MachineLocal,
-        "an interrupted bulk operation starts again",
-    ),
+    NotCopied {
+        table: "op_checkpoints",
+        kind: MachineLocal,
+        read: "an interrupted bulk operation starts again",
+        // A pending rename repair (src/core/sync-identity-downgrades.ts): the purge of deleted
+        // pages holds the old page of such a record, and the rename repair reads it.
+        gap_rows: Some(GapRows {
+            gap: "sync_identity_downgrades",
+            column: "op",
+            equals: "sync-identity-downgrade",
+        }),
+    },
     t(
         "page_body_manifest",
         SegmentedBody,

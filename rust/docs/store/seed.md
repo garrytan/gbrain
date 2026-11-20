@@ -84,7 +84,10 @@ missing is `source_not_found` or `page_not_found`.
 Any primary table that is neither copied, carried (`page_projection_jobs` rides in `pages`) nor on that list is a
 gap: `gbrain engine shadow seed` counts its rows into `unseeded_gap_rows` in `seed.json`, and a swap to the seeded
 store is refused while any gap count is above zero. A table a migration adds is a gap until the seed copies it or the
-list names it.
+list names it. A listed table can still hold rows that are brain state (`gap_rows`): those rows are a gap of their
+own. `op_checkpoints` rows of op `sync-identity-downgrade` are pending rename repairs (the purge of deleted pages holds
+the old page of such a record, and the rename repair reads it), so they count as the gap `sync_identity_downgrades`; checkpoints of
+every other op are machine-local.
 
 ### Left behind on purpose (`seed::NOT_COPIED`)
 
@@ -96,7 +99,7 @@ list names it.
 | `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
 | `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call) |
 | `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text (`segmented_body`) |
-| `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints`, `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again |
+| `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints` (except the rows below), `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again |
 
 ### Gaps: not served by the Rust store on master
 
@@ -119,6 +122,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `entity_identities`, `link_relationships`, `link_transitions`, `fact_purges` | `rust-engine/main` | entity identity unions, link temporal state and the fact purge guard are missing |
 | `derivation_inputs`, `needs_rederive` | `rust-engine/derivation-trust`; `derivation_inputs` also on `rust-engine/sweep-facts-rust` | rows derived from owner-only inputs, and rows the primary hides for re-derivation, show |
 | `take_purges` | `rust-engine/page-purge-rust` (with the `putPage` purged-content guard) | a purged take or page can be written again |
+| `sync_identity_downgrades` (`op_checkpoints` rows of op `sync-identity-downgrade`) | `rust-engine/main`, `rust-engine/identity-downgrade-rust` | pending rename repairs are lost: the purge of deleted pages no longer holds the old page, so the repair can find nothing to restore |
 | `budget_ledger`, `budget_reservations` | key tag only on `rust-engine/main` | the resolver's daily budget restarts at zero |
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
 | `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_generation_clock`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
@@ -147,5 +151,5 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.seedPlan()` | `{ relations: [{ relation, key }], carried: [[table, relation]], not_copied: [{ table, kind, read }] }`: the relations in import order with their key columns, the tables carried in them, and the tables left behind on purpose | none |
+| `brain.seedPlan()` | `{ relations: [{ relation, key }], carried: [[table, relation]], not_copied: [{ table, kind, read, gap_rows }] }`: the relations in import order with their key columns, the tables carried in them, and the tables left behind on purpose | none |
 | `brain.importRelation(seedId, relation, rows)` | `{ imported, skipped, dropped, unmapped_columns, losses }` for the batch. `imported` counts rows stored (for `sources` and `config`, also rows that replaced a different value), `skipped` rows already held, `dropped` rows the store cannot hold. `invalid_argument` for an unknown relation, an empty seed id or a NUL byte; `invalid_state` for a store another seed owns or a store that is not fresh | none (the seed reads the primary's tables) |

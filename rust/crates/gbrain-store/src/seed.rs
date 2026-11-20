@@ -28,7 +28,7 @@ mod tests;
 mod wake;
 
 pub use decode::SeedRow;
-pub use not_copied::{LossKind, NOT_COPIED, NotCopied};
+pub use not_copied::{GapRows, LossKind, NOT_COPIED, NotCopied};
 
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};

@@ -850,3 +850,30 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
         assert!(plan.carried.iter().all(|(t, _)| *t != n.table));
     }
 }
+
+/// `op_checkpoints` rows of the sync identity downgrade op are brain state, not machine state: the
+/// purge of deleted pages holds the old page of such a record, and the rename repair reads them. The seed does not
+/// copy them yet, so they are counted as gap rows (`sync_identity_downgrades`) and block a swap.
+/// Every other op's rows stay a machine-local loss.
+#[test]
+fn identity_downgrade_checkpoints_are_gap_rows_inside_a_not_copied_table() {
+    let entry = NOT_COPIED
+        .iter()
+        .find(|n| n.table == "op_checkpoints")
+        .unwrap();
+    assert_eq!(entry.kind, LossKind::MachineLocal);
+    assert_eq!(
+        entry.gap_rows,
+        Some(GapRows {
+            gap: "sync_identity_downgrades",
+            column: "op",
+            equals: "sync-identity-downgrade",
+        })
+    );
+    let with_gap_rows: Vec<_> = NOT_COPIED
+        .iter()
+        .filter(|n| n.gap_rows.is_some())
+        .map(|n| n.table)
+        .collect();
+    assert_eq!(with_gap_rows, ["op_checkpoints"]);
+}
