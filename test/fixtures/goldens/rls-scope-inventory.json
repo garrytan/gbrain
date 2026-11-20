@@ -6400,6 +6400,7 @@
         "readMcpLogPruneCutoff": "none",
         "readMcpRollupPrunedBefore": "none",
         "readMemoryProposal": "none",
+        "readMentionIndexStatus": "none",
         "readMentionLastPass": "none",
         "readMirrorGateRows": "none",
         "readNoopEmbeddingCandidates": "none",

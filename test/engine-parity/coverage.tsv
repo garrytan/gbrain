@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 916/916
+# covered: 919/919
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 13/13
 # persistence_journal: 85/85
-# entity_reads: 10/10
+# entity_reads: 13/13
 # cycle_locks: 10/10
 # minion_jobs: 8/8
 # minion_queue: 86/86
@@ -94,13 +94,13 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	576	yes	yes	yes	serves
+putPage	pages	yes	584	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	159	yes	yes	yes	serves
+softDeletePage	pages	yes	167	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -183,9 +183,9 @@ listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
 readReferrerGroupRows	link_temporal	yes	2	no	yes	yes	serves
 readReferrerPageDetails	link_temporal	yes	1	no	yes	yes	serves
 readReferrerTargetCounts	link_temporal	yes	3	no	yes	yes	serves
-listReferrerTargetSources	link_temporal	yes	3	no	yes	yes	serves
-countReferrerRows	link_temporal	yes	5	no	yes	yes	serves
-readReferrerRows	link_temporal	yes	5	no	yes	yes	serves
+listReferrerTargetSources	link_temporal	yes	4	no	yes	yes	serves
+countReferrerRows	link_temporal	yes	6	no	yes	yes	serves
+readReferrerRows	link_temporal	yes	6	no	yes	yes	serves
 readReferrerRecordCandidates	link_temporal	yes	2	no	yes	yes	serves
 readReferrerRecordPages	link_temporal	yes	2	no	yes	yes	serves
 readReferrerTypes	link_temporal	yes	1	no	yes	yes	serves
@@ -253,7 +253,7 @@ countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	117	yes	yes	yes	serves
-addLinksBatch	links	yes	24	yes	yes	yes	serves
+addLinksBatch	links	yes	30	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
@@ -394,13 +394,13 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	20	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	20	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	28	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	16	no	yes	yes	serves
-setConfig	config	yes	32	no	yes	yes	serves
+setConfig	config	yes	33	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -504,6 +504,9 @@ readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
+readMentionIndexStatus	entity_reads	yes	2	no	yes	yes	serves
+countLivePagesInSource	entity_reads	yes	2	no	yes	yes	serves
+countMentionDueSince	entity_reads	yes	2	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
 findExactSlug	entity_reads	yes	1	no	yes	yes	serves
