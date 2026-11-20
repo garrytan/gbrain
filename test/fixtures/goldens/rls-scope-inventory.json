@@ -434,6 +434,17 @@
         ],
         "flagOnScopes": []
       },
+      "countPageCarryRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -3067,6 +3078,17 @@
           "src-a,src-b"
         ]
       },
+      "listLivePagesAtOrigin#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listLivePagesNamingReader#default": {
         "flagOffLanes": [
           "pool"
@@ -3439,6 +3461,17 @@
         "flagOnScopes": []
       },
       "listResumableRefreshes#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceChangedPagesAfter#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4499,6 +4532,17 @@
         ],
         "flagOnScopes": []
       },
+      "readCycleListingInstant#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readDeltaSessionRow#default": {
         "flagOffLanes": [
           "pool"
@@ -5168,6 +5212,17 @@
         ],
         "flagOnScopes": []
       },
+      "readOpCheckpointValues#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readOwnerOnlySourceConfig#default": {
         "flagOffLanes": [
           "pool"
@@ -5384,6 +5439,17 @@
         "flagOnScopes": []
       },
       "readSharedSkillServingEpoch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSoftDeletedPageAtOrigin#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6953,6 +7019,17 @@
           "pool"
         ],
         "flagOnScopes": []
+      },
+      "writeOpCheckpointValues#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       }
     },
     "static": {
@@ -7097,6 +7174,7 @@
         "countOrphanedAliasRows": "none",
         "countOutstandingBySource": "none",
         "countOversizedEmbedSkips": "none",
+        "countPageCarryRows": "none",
         "countPagesBy": "direct",
         "countPagesDueForMentions": "none",
         "countPendingProjectionPages": "none",
@@ -7424,6 +7502,7 @@
         "listLinkPageMetadata": "none",
         "listLinkSources": "direct",
         "listLivePageSummaries": "none",
+        "listLivePagesAtOrigin": "none",
         "listLivePagesNamingReader": "none",
         "listLocalPathSources": "none",
         "listManagedRootBindings": "none",
@@ -7469,6 +7548,7 @@
         "listSharedSkillPackRoots": "none",
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
+        "listSourceChangedPagesAfter": "none",
         "listSourceIds": "none",
         "listSourceIncarnations": "none",
         "listSourceLastCommits": "none",
@@ -7645,6 +7725,7 @@
         "readCredentialBindingForUpdate": "none",
         "readCurrentWriteTrust": "none",
         "readCursorEdition": "none",
+        "readCycleListingInstant": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readDecideState": "none",
@@ -7732,6 +7813,7 @@
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
+        "readOpCheckpointValues": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAccessRows": "none",
@@ -7783,6 +7865,7 @@
         "readSegmentedEmbedPage": "none",
         "readSessionCursor": "none",
         "readSharedSkillServingEpoch": "none",
+        "readSoftDeletedPageAtOrigin": "none",
         "readSoleSourceId": "none",
         "readSourceCheckoutRoot": "none",
         "readSourceChunkerVersion": "none",
@@ -8012,6 +8095,7 @@
         "writeNotifierCoverage": "none",
         "writeNotifierState": "none",
         "writeOpCheckpointKeys": "none",
+        "writeOpCheckpointValues": "none",
         "writeTextProjectionSeal": "none"
       }
     }

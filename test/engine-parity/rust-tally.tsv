@@ -113,7 +113,7 @@ test/engine-parity/stats.test.ts	9	0
 test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	26	1
 test/engine-parity/telemetry.test.ts	10	0
-test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	1	3
+test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	0	4
 test/engine-parity/tie-purge-files-links-facts.test.ts	1	4
 test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	32	0
