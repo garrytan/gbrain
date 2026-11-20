@@ -19,6 +19,7 @@
  *    and a rejected pair is not judged again; apply mode writes the closure line, undo reopens it, and a closure line the
  *    user deletes makes the proposal reverted_by_user. The doctor edge_validity check counts the stored proposals by
  *    status within the source scope it is given and warns on open ones.
+ *    get_health over MCP names, for a remote caller, only the most_connected hubs the caller may see (listVisiblePageSlugs).
  *  - Regression: an engine that drops a clause hands the contradiction judge a private page's text, closes a stranger's
  *    relationship or names a private page to a remote caller in `most_connected`.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18),
@@ -35,6 +36,8 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { applyEdgeProposal, rejectEdgeProposal, runPhaseEdgeContradictions, undoEdgeProposal, type EdgeJudgeFn } from '../../src/core/cycle/edge-contradictions.ts';
 import { edgeValidityStats, edgeValidityVerdict } from '../../src/commands/doctor/checks/edge-validity.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
@@ -533,6 +536,70 @@ describe('engine parity: admin read statements', () => {
     expect(out.readOther).toEqual(['notes/elsewhere']);
     expect(out.none).toEqual([]);
     return out;
+  });
+
+  /** One get_health call over MCP: whether it failed, its error code, and the `hubs/` entries of most_connected. */
+  async function healthHubs(engine: BrainEngine, remote: boolean, refusals: unknown[] = []) {
+    // Keeps what listVisiblePageSlugs threw: the tool call turns it into an error payload.
+    const keeping = new Proxy(engine, { get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop !== 'listVisiblePageSlugs' || typeof value !== 'function') return value;
+      return (...args: unknown[]) => (value as (...a: unknown[]) => Promise<unknown>).apply(target, args)
+        .catch((error: unknown) => { refusals.push(error); throw error; });
+    } });
+    try {
+      const r = await dispatchToolCall(keeping, 'get_health', {}, { remote, sourceId: 'default' });
+      const payload = JSON.parse(r.content[0]!.text) as { most_connected?: Array<{ slug: string; link_count: number }>; error?: string; code?: string };
+      return { isError: Boolean(r.isError), error: payload.code ?? payload.error ?? null,
+        hubs: (payload.most_connected ?? []).filter((c) => c.slug.startsWith('hubs/')).map((c) => `${c.slug}|${c.link_count}`) };
+    } finally {
+      await disposePersistenceConsumer(engine).catch(() => undefined);
+    }
+  }
+
+  /** Hub pages (people: most_connected ranks entity pages only) and the links that rank them. */
+  async function seedHubs(engine: BrainEngine, hubs: Array<[slug: string, frontmatter: Record<string, unknown>, links: number]>) {
+    for (const n of [0, 1, 2, 3]) await engine.putPage(`notes/n${n}`, page(`Note ${n}`, 'note'));
+    for (const [slug, frontmatter, links] of hubs) {
+      await engine.putPage(slug, page(slug, 'person', frontmatter));
+      for (let n = 0; n < links; n++) await engine.addLink(slug, `notes/n${n}`, '', 'mentions');
+    }
+  }
+
+  // get_health over MCP on a seeded brain: a remote caller's most_connected keeps only the hubs its get_page would show
+  // (ops/admin.ts visibleMostConnected, which reads listVisiblePageSlugs). The private hub has the most links, so an
+  // engine that skips the filter names it, and an engine that refuses the read fails the whole tool call.
+  parityTest('get_health over MCP names only the most_connected hubs a remote caller may see', {
+    methods: ['putPage', 'addLink', 'getHealth', 'listVisiblePageSlugs'],
+  }, async (engine) => {
+    await seedHubs(engine, [['hubs/private', { visibility: 'private' }, 4], ['hubs/open', {}, 2]]);
+    const local = await healthHubs(engine, false);
+    expect(local).toEqual({ isError: false, error: null, hubs: ['hubs/private|4', 'hubs/open|2'] });
+    const remote = await healthHubs(engine, true);
+    expect(remote).toEqual({ isError: false, error: null, hubs: ['hubs/open|2'] });
+    return { local, remote };
+  });
+
+  // The same read on a brain where a page names its readers: an anonymous remote caller sees neither the private hub
+  // nor the hub only alice-example reads. Rust known stop (owner: rust-engine/caller-raw-sql, b93fac23d8, the typed
+  // readFolderAccess member): on a restricted brain the caller's folder access read (access/caller.ts
+  // folderAccessForAll) still runs raw SQL, so it fails closed, the rendered page policy reads FALSE, and the store
+  // refuses that policy. When readFolderAccess lands, this case is equal on all three arms and the pin goes.
+  parityTest('get_health over MCP hides a hub that names its readers from an anonymous remote caller', {
+    methods: ['putPage', 'addLink', 'getHealth', 'listVisiblePageSlugs'],
+  }, async (engine, backend) => {
+    await seedHubs(engine, [['hubs/private', { visibility: 'private' }, 4], ['hubs/readers', { readable_by: ['alice-example'] }, 3], ['hubs/open', {}, 2]]);
+    const local = await healthHubs(engine, false);
+    expect(local).toEqual({ isError: false, error: null, hubs: ['hubs/private|4', 'hubs/readers|3', 'hubs/open|2'] });
+    const refusals: unknown[] = [];
+    const remote = await healthHubs(engine, true, refusals);
+    if (backend === 'rust') {
+      expect(remote).toEqual({ isError: true, error: 'engine_capability_missing', hubs: [] });
+      expect(refusals.length).toBe(1);
+      throw refusals[0];
+    }
+    expect(remote).toEqual({ isError: false, error: null, hubs: ['hubs/open|2'] });
+    return { local, remote };
   });
 
   parityTest('readPagesForVersionHistory reads the slug, source and frontmatter of the pages a history belongs to', {

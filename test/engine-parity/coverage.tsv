@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1140/1140
+# covered: 1140/1141
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -28,7 +28,7 @@
 # facts: 19/19
 # segmented_body: 16/16
 # versions: 6/6
-# stats_ingest: 7/7
+# stats_ingest: 7/8
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
@@ -93,7 +93,7 @@ getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	551	yes	yes	yes	serves
+putPage	pages	yes	553	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -230,7 +230,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	110	yes	yes	yes	serves
+addLink	links	yes	112	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	14	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -443,9 +443,10 @@ pruneHoldingPageVersions	versions	yes	1	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
-getHealth	stats_ingest	yes	5	yes	yes	yes	serves
-listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
+getHealth	stats_ingest	yes	7	yes	yes	yes	serves
+listVisiblePageSlugs	stats_ingest	yes	3	no	yes	yes	serves
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
+readHealthMemoRows	stats_ingest	no	0	no	-	-	-
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	18	no	yes	yes	serves

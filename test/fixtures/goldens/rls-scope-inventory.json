@@ -6747,6 +6747,7 @@
         "readGraduationGateRow": "none",
         "readGroupSpendTotals": "none",
         "readGuestSourceRow": "none",
+        "readHealthMemoRows": "none",
         "readHeldAccessState": "none",
         "readHeldConfigValue": "none",
         "readHeldCoverageRows": "none",
