@@ -38,6 +38,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
+import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
 import { authorizeStoredRequest, sharedWriterRow, storedAuthorizationReads } from './authority.ts';
 import { hostIdFor } from './identity.ts';
 import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL, sharedWorktreeBinding } from './ownership.ts';
@@ -219,6 +220,8 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     // The source's unlocked state and the shared skill packs (engine-sql/write-misc.ts), once for the group.
     if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    // The sync reason scan's purge epoch, typed since it left caller raw SQL: answered once when a caller names its statement.
+    if (key === 'readSourcePurgeEpoch' && stable.has(SOURCE_PURGE_EPOCH_SQL)) return (sourceId: string) => once(JSON.stringify([key, sourceId]), () => target.readSourcePurgeEpoch(sourceId));
     if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
     if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
     // The worktree binding, once per source and host for the group, taking no member's deadline or signal (an absence is read again).
