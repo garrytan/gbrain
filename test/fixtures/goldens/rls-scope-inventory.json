@@ -6404,6 +6404,7 @@
         "readProjectionReadiness": "none",
         "readProjectionReadinessGeneration": "none",
         "readProposalReviewRates": "none",
+        "readQueryCacheStats": "none",
         "readQueueDivergence": "none",
         "readQueueFamilyStats": "none",
         "readQueueHealthSignals": "none",

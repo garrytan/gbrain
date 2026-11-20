@@ -1,6 +1,6 @@
 /**
  * Search telemetry and MCP usage statements: the search telemetry flush and window read (`search/telemetry.ts`),
- * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), the MCP request log insert (the
+ * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), the query cache summary (`search/query-cache.ts`), the MCP request log insert (the
  * request, surface, access-admin, webhook, memory setting audit and legacy HTTP transport rows), the request log
  * retention prune and the lifetime usage read (`mcp-request-log-retention.ts`), which ran through
  * `engine.executeRaw`, once for both engines.
@@ -116,6 +116,25 @@ export function readSearchStats(exec: LegacyUnscopedRead, cutoffDate: string): P
        GROUP BY mode, intent`,
     [cutoffDate],
   );
+}
+
+/** The query cache's row count, hit sum and fresh / stale split (`gbrain cache stats`, the `cache_stats` tool). */
+export interface QueryCacheStatsRow { total_rows: number; total_hits: number; fresh_rows: number; stale_rows: number }
+
+/**
+ * The query cache summary (`readQueryCacheStats`; SemanticQueryCache.stats in search/query-cache.ts). One row always: an
+ * empty table answers zeros. A brain without the table rejects, and the caller keeps its fail-soft zeros for that.
+ */
+export async function readQueryCacheStats(exec: LegacyUnscopedRead): Promise<QueryCacheStatsRow> {
+  const rows = await exec.executeRaw<QueryCacheStatsRow>(
+    `SELECT
+           COUNT(*)::int AS total_rows,
+           COALESCE(SUM(hit_count), 0)::int AS total_hits,
+           COUNT(*) FILTER (WHERE created_at + (ttl_seconds || ' seconds')::interval > now())::int AS fresh_rows,
+           COUNT(*) FILTER (WHERE created_at + (ttl_seconds || ' seconds')::interval <= now())::int AS stale_rows
+         FROM query_cache`,
+  );
+  return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
 }
 
 /**

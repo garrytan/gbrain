@@ -2,14 +2,15 @@
  * Telemetry members (BrainEngine recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
  * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage, logChatUsage, readChatUsage). The store
  * keeps the `search_telemetry` rows, the MCP request log and its tally, and the chat usage ledger (rust/docs/store/telemetry.md). The store answers a timestamp as ISO text;
- * these members turn it into a Date, as PGLite's driver reads a `timestamptz`.
+ * these members turn it into a Date, as PGLite's driver reads a `timestamptz`. readQueryCacheStats refuses by name: the store
+ * keeps no query cache.
  */
 import type {
   McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
-  SearchTelemetryRow,
+  QueryCacheStatsRow, SearchTelemetryRow,
 } from '../../engine-sql/telemetry.ts';
 import type { ChatUsageAggregateRow, ChatUsageLogRow, ChatUsageWindow } from '../../engine-sql/chat-usage.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type StoreRow = Record<string, unknown>;
 
@@ -81,3 +82,10 @@ export const readChatUsage: StoreMember<[days: number], ChatUsageWindow> = async
   }));
   return { rows, logged_since: out.logged_since ?? null };
 };
+
+/**
+ * The query cache summary refuses by name, always and before any store call: the store keeps no query_cache table, and
+ * zeros would read as an empty cache.
+ */
+export const readQueryCacheStats: StoreMember<[], QueryCacheStatsRow> = async () =>
+  refuseMember('readQueryCacheStats', 'query_cache_unavailable: the Rust store keeps no query_cache table');

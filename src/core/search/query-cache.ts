@@ -422,20 +422,7 @@ export class SemanticQueryCache {
   /** Summary stats for `gbrain cache stats`. */
   async stats(): Promise<CacheStats> {
     try {
-      const rows = await this.engine.executeRaw<{
-        total_rows: number;
-        total_hits: number;
-        fresh_rows: number;
-        stale_rows: number;
-      }>(
-        `SELECT
-           COUNT(*)::int AS total_rows,
-           COALESCE(SUM(hit_count), 0)::int AS total_hits,
-           COUNT(*) FILTER (WHERE created_at + (ttl_seconds || ' seconds')::interval > now())::int AS fresh_rows,
-           COUNT(*) FILTER (WHERE created_at + (ttl_seconds || ' seconds')::interval <= now())::int AS stale_rows
-         FROM query_cache`,
-      );
-      return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
+      return await this.engine.readQueryCacheStats();
     } catch (err) {
       rethrowCapabilityRefusal(err);
       // Best-effort by design (parity with readSearchStats): a brain without

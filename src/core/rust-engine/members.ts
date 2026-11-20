@@ -33,6 +33,9 @@ export const RUST_ENGINE_MEMBERS = {
   // triggers and no owner-only sources, and every caller reaches it through a migration run or a raw-SQL source write,
   // so it refuses with raw_sql and `schema` stays served.
   ownerOnlyMarkTriggers: 'raw_sql',
+  // The query cache summary (cache_stats). The store keeps no query_cache table, so its member refuses by name
+  // (query_cache_unavailable) rather than answer zeros, and raw_sql stays refused.
+  readQueryCacheStats: 'raw_sql',
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',

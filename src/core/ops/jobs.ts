@@ -289,8 +289,9 @@ async function emitNoWorkerNotice(ctx: OperationContext, queueName: string): Pro
     const { queueWorkerAlive, noWorkerNotice, runWaitingJobsFix } = await import('../minions/no-worker.ts');
     const alive = queueWorkerAlive(queueName);
     if (alive !== false) return;
-    const [row] = await ctx.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE queue = $1 AND status = 'waiting'", [queueName]);
-    const waiting = Number(row?.n ?? 0);
+    // The typed per-queue waiting read, which every engine serves (a raw count here was refused on Rust, and the catch
+    // below hid the notice). It runs only when no worker serves the queue.
+    const waiting = (await ctx.engine.listWaitingByQueue()).find(r => r.queue === queueName)?.depth ?? 0;
     if (waiting === 0) return;
     let fix = runWaitingJobsFix(ctx.engine.kind, queueName);
     if (ctx.config) {

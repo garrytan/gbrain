@@ -249,7 +249,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readOldestVersionAttribution', 'readRowAttribution'],
   // telemetry: search telemetry, MCP usage and the chat usage ledger (engine-sql/telemetry.ts, engine-sql/chat-usage.ts)
   telemetry: [
-    'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',
+    'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'readQueryCacheStats', 'logMcpRequest',
     'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage', 'logChatUsage', 'readChatUsage',
   ],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)

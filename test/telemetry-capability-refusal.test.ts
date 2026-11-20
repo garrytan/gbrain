@@ -42,11 +42,13 @@ type Failure = 'refusal' | 'missing-table';
 /**
  * Typed engine members that read a table under test, with the capability the Rust engine gates them on
  * (src/core/rust-engine/members.ts). readSearchStats left executeRaw for the typed member (engine-sql/telemetry.ts);
- * get_usage left it for readChatUsage (engine-sql/chat-usage.ts).
+ * get_usage left it for readChatUsage (engine-sql/chat-usage.ts); the semantic cache stats left it for
+ * readQueryCacheStats (engine-sql/telemetry.ts).
  */
 const TYPED_READERS: Record<string, Record<string, Capability>> = {
   search_telemetry: { readSearchStats: 'telemetry' },
   chat_usage_log: { readChatUsage: 'telemetry' },
+  query_cache: { readQueryCacheStats: 'raw_sql' },
 };
 
 /**

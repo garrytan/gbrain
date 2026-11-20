@@ -119,7 +119,7 @@ import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuer
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
-import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, QueryCacheStatsRow, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
@@ -1703,6 +1703,8 @@ export interface BrainEngine {
   readSearchStats(cutoffDate: string): Promise<SearchTelemetryRow[]>;
   readClientOpUsage(days: number): Promise<McpOpUsageRow[]>;
   readMcpRollupPrunedBefore(): Promise<McpRollupPrunedBefore>;
+  /** The query cache summary for `gbrain cache stats` and the `cache_stats` tool (SQL in engine-sql/telemetry.ts). */
+  readQueryCacheStats(): Promise<QueryCacheStatsRow>;
   /** The MCP request log insert, its retention prune and the lifetime usage read (SQL and contracts in engine-sql/telemetry.ts). */
   logMcpRequest(row: McpRequestLogRow): Promise<void>;
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;

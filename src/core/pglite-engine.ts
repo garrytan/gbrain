@@ -2324,6 +2324,7 @@ export class PGLiteEngine implements BrainEngine {
   readSearchStats(cutoffDate: string) { return telemetryImpl.readSearchStats(this.telemetryRead, cutoffDate); }
   readClientOpUsage(days: number) { return telemetryImpl.readClientOpUsage(this.telemetryRead, days); }
   readMcpRollupPrunedBefore() { return telemetryImpl.readMcpRollupPrunedBefore(this.telemetryRead); }
+  readQueryCacheStats() { return telemetryImpl.readQueryCacheStats(this.telemetryRead); }
   logMcpRequest(row: McpRequestLogRow) { return telemetryImpl.logMcpRequest(this.engineSql, row); }
   readMcpLogPruneCutoff(days: number) { return telemetryImpl.readMcpLogPruneCutoff(this.engineSql, days); }
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number) { return telemetryImpl.pruneMcpRequestLogBatch(this.engineSql, cutoff, keepOperations, limit); }

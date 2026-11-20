@@ -335,6 +335,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSearchStats': OOS.telemetry,
   'readClientOpUsage': OOS.telemetry,
   'readMcpRollupPrunedBefore': OOS.telemetry,
+  'readQueryCacheStats': OOS.telemetry,
   'logMcpRequest': OOS.telemetry,
   'readMcpLogPruneCutoff': OOS.telemetry,
   'pruneMcpRequestLogBatch': OOS.telemetry,

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 904/904
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -66,7 +66,7 @@
 # wanted_links: 2/2
 # write_misc: 34/34
 # write_attribution: 5/5
-# telemetry: 10/10
+# telemetry: 11/11
 # field_usage: 1/1
 # alias_fanout_reads: 5/5
 # write_guards: 10/10
@@ -562,7 +562,7 @@ listJobAttachments	minion_queue	yes	1	no	yes	yes	serves
 getJobAttachment	minion_queue	yes	1	no	yes	yes	serves
 deleteJobAttachment	minion_queue	yes	1	no	yes	yes	serves
 readQueueHealthSignals	minion_queue	yes	1	no	yes	yes	serves
-listWaitingByQueue	minion_queue	yes	1	no	yes	yes	serves
+listWaitingByQueue	minion_queue	yes	2	no	yes	yes	serves
 readQueueDivergence	minion_queue	yes	1	no	yes	yes	serves
 listQueueWedgeCounts	minion_queue	yes	1	no	yes	yes	serves
 listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
@@ -884,6 +884,7 @@ recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	4	no	yes	yes	serves
 readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
+readQueryCacheStats	telemetry	yes	1	no	yes	yes	serves
 logMcpRequest	telemetry	yes	4	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves

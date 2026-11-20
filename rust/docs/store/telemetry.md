@@ -73,6 +73,9 @@ Differences from PGLite:
 
 - `readMcpLifetimeUsage` sorts by `token_name COLLATE "C"`; no test tells that from the database default, because
   both test databases sort in byte order (PGLite `C`, the local Postgres `C.UTF-8`).
+- The store keeps no `query_cache` table. `readQueryCacheStats` (the `cache_stats` tool, `gbrain cache stats`) refuses
+  in its TypeScript member before any store call, as `engine_capability_missing` with capability `raw_sql` and the
+  reason `query_cache_unavailable`, so a Rust brain never reports an empty cache it does not have.
 
 The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
 log row through `logMcpRequest`, and `lifetimeUsage` (`src/core/mcp-request-log-retention.ts`) reads through
