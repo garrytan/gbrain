@@ -144,6 +144,17 @@
         ],
         "flagOnScopes": []
       },
+      "applyRetrievalRatings#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "applyTransactionSettings#default": {
         "flagOffLanes": [
           "tx"
@@ -2353,6 +2364,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertPinnedQuestion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "insertPublicationEffects#default": {
         "flagOffLanes": [
           "tx"
@@ -2361,6 +2383,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "insertRetrievalEvents#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -3435,6 +3468,39 @@
         "flagOnScopes": []
       },
       "listPendingSegmentedProjections#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPinnedQuestions#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPinnedQuestions#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPinnedQuestions#with-archived": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4838,6 +4904,17 @@
         ],
         "flagOnScopes": []
       },
+      "readFeedbackStatus#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readFenceHoldFiles#default": {
         "flagOffLanes": [
           "pool"
@@ -5322,6 +5399,17 @@
         ],
         "flagOnScopes": []
       },
+      "readOwnerCredentials#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readOwnerOnlySourceConfig#default": {
         "flagOffLanes": [
           "pool"
@@ -5416,6 +5504,17 @@
         ],
         "flagOnScopes": []
       },
+      "readPinnedQuestion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPlainSyncSource#default": {
         "flagOffLanes": [
           "pool"
@@ -5494,6 +5593,17 @@
         "flagOnScopes": []
       },
       "readRetirementHop#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRetrievalEvent#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7200,6 +7310,7 @@
         "applyAccessRuleChanges": "none",
         "applyForwardReferenceBootstrap": "none",
         "applyLinkTemporalRows": "none",
+        "applyRetrievalRatings": "none",
         "applyTransactionSettings": "none",
         "approveAccessPolicyRevision": "none",
         "assertCycleLease": "none",
@@ -7491,7 +7602,9 @@
         "insertOauthClient": "none",
         "insertOauthClientGrant": "none",
         "insertOauthToken": "none",
+        "insertPinnedQuestion": "none",
         "insertPublicationEffects": "none",
+        "insertRetrievalEvents": "none",
         "insertSource": "none",
         "insertSpendLog": "none",
         "insertSpendReservation": "none",
@@ -7631,6 +7744,7 @@
         "listPagesTitledIn": "none",
         "listPendingContradictions": "none",
         "listPendingSegmentedProjections": "none",
+        "listPinnedQuestions": "none",
         "listPoolEntityPairs": "none",
         "listPoolUnbackedKeys": "none",
         "listPrefixSampledPages": "direct",
@@ -7854,6 +7968,7 @@
         "readFactCacheWatermark": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
+        "readFeedbackStatus": "none",
         "readFenceHoldFiles": "none",
         "readFenceOriginGone": "none",
         "readFenceOverlayRows": "none",
@@ -7922,6 +8037,7 @@
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
         "readOpCheckpointValues": "none",
+        "readOwnerCredentials": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAccessRows": "none",
@@ -7939,6 +8055,7 @@
         "readPageVersionEdition": "none",
         "readPendingProposalSummary": "none",
         "readPersistenceBrainId": "none",
+        "readPinnedQuestion": "none",
         "readPlainSyncSource": "none",
         "readPrefixCandidates": "none",
         "readPrefixDirs": "none",
@@ -7963,6 +8080,7 @@
         "readReferrerTypes": "none",
         "readRequestEffects": "none",
         "readRetirementHop": "none",
+        "readRetrievalEvent": "none",
         "readRowAttribution": "none",
         "readRowTrustRows": "none",
         "readScopeSourceConfigs": "none",
