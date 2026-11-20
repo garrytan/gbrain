@@ -175,6 +175,34 @@ describe('engine parity: open loops', () => {
   );
 
   parityTest(
+    'readEntityOpenLoops leaves out a loop of another source whose counterparty email equals the slug',
+    { methods: ['upsertOpenLoop', 'readEntityOpenLoops'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'private');
+      const loopId = loopIds(await engine.upsertOpenLoop(loop({ dedupKey: 'p1', sourceId: 'private', counterpartySlug: 'people/alice-example', counterpartyEmail: 'people/alice-example', summary: 'private summary', lastActivityAt: T3 })));
+      const read = async (sourceId: string) =>
+        (await engine.readEntityOpenLoops('people/alice-example', sourceId, 5)).map(r => observe(loopId, r as unknown as Record<string, unknown>));
+      const card = await read('default');
+      expect(card).toEqual([]);
+      return { card, own: await read('private') };
+    },
+  );
+
+  parityTest(
+    'readEntityOpenLoops finds an older linked loop behind 1,000 newer loops that match only by email',
+    { methods: ['upsertOpenLoop', 'readEntityOpenLoops'] },
+    async (engine) => {
+      const loopId = loopIds(await engine.upsertOpenLoop(loop({ dedupKey: 'linked', counterpartySlug: 'people/alice-example', counterpartyEmail: null, lastActivityAt: T1 })));
+      for (let i = 0; i < 1000; i++) {
+        await engine.upsertOpenLoop(loop({ dedupKey: `email-${i}`, counterpartyEmail: 'people/alice-example', lastActivityAt: T3 }));
+      }
+      const card = (await engine.readEntityOpenLoops('people/alice-example', 'default', 3)).map(r => observe(loopId, r as unknown as Record<string, unknown>)?.id);
+      expect(card).toEqual([1]);
+      return { card };
+    },
+  );
+
+  parityTest(
     'readEntityOpenLoops breaks a tie in last activity by the newest loop id, so tied loops read in one order',
     { methods: ['upsertOpenLoop', 'readEntityOpenLoops'] },
     async (engine) => {

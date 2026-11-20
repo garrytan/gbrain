@@ -81,16 +81,20 @@ export const listOpenLoops: Member<'listOpenLoops'> = async (brain, opts = {}) =
 };
 
 /**
- * `readEntityOpenLoops` over the store's list read: the open loops for the counterparty slug in the source. The list
- * read also matches a counterparty email equal to the slug, so the shim keeps only slug matches before the limit, and
- * it orders ties on activity by id descending where the SQL engines leave them unordered.
+ * `readEntityOpenLoops` over the store's list read: the open loops whose counterparty page is the slug in the source.
+ * The list read also matches a counterparty email equal to the slug, in any source, so the shim keeps only rows whose
+ * counterparty slug and counterparty source (the loop's own source when unset) both match, before the limit. The list
+ * read returns at most 1,000 rows; when it is full and the kept rows do not reach the limit, an older matching loop may
+ * lie past it, so the member refuses rather than return a short card. Ties on activity order by id descending.
  */
 export const readEntityOpenLoops: Member<'readEntityOpenLoops'> = async (brain, slug, sourceId, limit) => {
   const m = 'readEntityOpenLoops';
   if (!Number.isSafeInteger(limit) || limit < 1) refuseMember(m, 'a limit that is not a positive integer');
   const query = { sourceIds: null, status: 'open', loopType: null, counterparty: slug, counterpartySourceId: sourceId, loopId: null, limit: 1000 };
   const rows: Record<string, unknown>[] = await storeCall({ member: m, sourceId }, () => brain.listOpenLoops(query));
-  return rows.filter(r => r.counterparty_slug === slug).slice(0, limit).map(toRow).map(r => ({
+  const kept = rows.filter(r => r.counterparty_slug === slug && (r.counterparty_source_id ?? r.source_id) === sourceId);
+  if (rows.length >= query.limit && kept.length < limit) refuseMember(m, 'more than 1,000 open loops match the slug as a page or an email');
+  return kept.slice(0, limit).map(toRow).map(r => ({
     id: r.id as number, loop_type: r.loop_type as string, summary: r.summary as string,
     due_at: r.due_at as Date | null, last_activity_at: r.last_activity_at as Date, fact_id: r.fact_id as number | null,
   }));
