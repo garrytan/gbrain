@@ -18,6 +18,7 @@ import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './co
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
 import type { ConversationSegment } from './conversation-types.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
+import { keepQuietClaims, keptQuiet } from './keep-quiet.ts';
 import { tagSlots } from './slot-tagging.ts';
 import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
@@ -92,8 +93,9 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   }, unbacked);
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
+  const quiet = keepQuietClaims(text); // GST-3170: a fact restating a claim its speaker asked to keep quiet is stored private
   const rows = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
-    ...fact, visibility,
+    ...fact, visibility: keptQuiet(fact.fact, quiet) ? 'private' as const : visibility,
     row_num: rowNum + i,
     source_markdown_slug: page.slug,
     source: CONVERSATION_FACTS_SOURCE_PREFIX,
