@@ -8,13 +8,14 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PGLITE_LOWER_MAP, PGLITE_UPPER_MAP, pgliteLowerSql, pgliteUpperSql } from '../src/core/pg-fold.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 /** Every code point chr() accepts: no NUL, no surrogate. */
 const CODE_POINTS = 'generate_series(1, 1114111) AS g(c) WHERE (g.c < 55296 OR g.c > 57343)';
 

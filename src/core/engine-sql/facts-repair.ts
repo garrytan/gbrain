@@ -222,7 +222,7 @@ export async function countPurgedPageFacts(raw: EngineRawRead, sourceIds: string
   const { text, params } = renderFragment(sqlFragment`WITH f AS MATERIALIZED (
     SELECT f.id, f.source_id, f.fact, f.context, f.entity_slug, f.visibility, f.superseded_by, f.created_at FROM facts f
      WHERE f.source_id = ANY(${sourceIds}::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source = ANY(${PAGE_EXTRACTION_SOURCE_LIST}::text[])
-       AND ${trustedSql(HEAD)} <> '' AND ${trustedSql(HEAD)} !~ '${trustedSql(FACT_SPACE_CLASS)}' AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${trustedSql(HEAD)}))
+       AND ${trustedSql(HEAD)} <> '' AND ${trustedSql(HEAD)} !~ ${FACT_SPACE_CLASS}::text AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${trustedSql(HEAD)}))
     SELECT ${trustedSql(PURGED_PAGE_SQL)} AS purged FROM f WHERE (strpos(${trustedSql(HEAD)}, '/') > 0 OR ${trustedSql(PURGED_PAGE_SQL)})
       AND NOT (${trustedSql(PURGED_EXCLUDED_SQL.withdrawn)} OR ${trustedSql(PURGED_EXCLUDED_SQL.superseded)} OR ${trustedSql(PURGED_EXCLUDED_SQL.referenced)} OR ${trustedSql(PURGED_EXCLUDED_SQL.open_loop)})
     LIMIT ${cap + 1}`);

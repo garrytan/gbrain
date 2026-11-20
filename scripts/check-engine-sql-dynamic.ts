@@ -76,6 +76,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   // trust-tier-reads.ts builders
   remoteReadFloorSql: 'src/core/search/private-visibility.ts: privatePagesFilterFragment, plus the constant labelledOnlySql conjunct for a labelled-only caller, over a caller page alias; no values',
 
+  // export-reads.ts builders
+  pgliteLowerSql: 'src/core/pg-fold.ts: constant translate() of PGLite\'s case map over a caller column expression; export-reads passes only the constant column name line; no values',
+
   // facts-repair.ts builders
   contextHeadSql: 'src/core/facts/gone-page-facts.ts: constant head-of-context expression over a caller facts alias; no values',
   withdrawalCoversFactSql: 'src/core/access/member-facts.ts: constant withdrawal-covers-fact predicate over caller withdrawal and fact aliases; no values',
