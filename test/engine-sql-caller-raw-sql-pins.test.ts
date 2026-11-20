@@ -1288,6 +1288,93 @@ const PINS: Pin[] = [
     case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
     texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
   },
+  // The chronicle statements chronicle_backfill and the advisor reach (engine-sql/chronicle-reads.ts), from 3ac6224f3b.
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (no scope, no since; the literals 5 and 500 spelled in), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'default', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.id > $4
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (a source list and since), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'sources-since', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceIds: ['default'], since: '2026-01-01', afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = ANY($4::text[]) AND p.updated_at >= $5::date AND p.id > $6
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (one source), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'source', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceId: 'default', afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = $4 AND p.id > $5
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/campaign.ts:54 queueCampaignRow, at 3ac6224f3b',
+    case: { method: 'queueChronicleCampaignRow', variant: 'default', run: e => e.queueChronicleCampaignRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', campaignId: '11111111-1111-4111-8111-111111111111', attemptCapUsd: 0.25, maxAttempts: 5, pricingPolicy: 'enforced', maxUsd: 10, defaultMaxAttempts: 5 }) },
+    texts: [`INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
+       campaign_id, attempt_cap_usd, max_attempts, pricing_policy, campaign_max_usd)
+     VALUES ($1, $2, $3, $4, $5, 'pending', NULL, 'backfill', $6, $7::numeric, $8, $9, $10::numeric)
+     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
+       slug=EXCLUDED.slug, state='pending', reason=NULL, trigger='backfill', principal_kind=NULL, principal_id=NULL,
+       request_id=NULL, no_extract=false, next_attempt_at=NULL, attempts=0, cost_attempts='{}',
+       campaign_id=EXCLUDED.campaign_id, attempt_cap_usd=EXCLUDED.attempt_cap_usd, max_attempts=EXCLUDED.max_attempts,
+       pricing_policy=EXCLUDED.pricing_policy, campaign_max_usd=EXCLUDED.campaign_max_usd, decided_at=now(), updated_at=now()
+     WHERE NOT (c.trigger='backfill' AND c.state IN ('pending','failed') AND c.attempts < COALESCE(c.max_attempts, $11))
+       AND NOT (c.state IN ('pending','failed') AND c.attempts > 0 AND c.next_attempt_at IS NOT NULL AND c.next_attempt_at > now())
+       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
+         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
+           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
+     RETURNING page_id`],
+  },
+  {
+    from: 'src/core/chronicle/campaign.ts:76 campaignSpentUsd, at 3ac6224f3b',
+    case: { method: 'readChronicleCampaignSpentUsd', variant: 'default', run: e => e.readChronicleCampaignSpentUsd('11111111-1111-4111-8111-111111111111') },
+    texts: ['SELECT COALESCE(sum(cost_usd), 0)::float8 AS usd FROM chronicle_page_state WHERE campaign_id=$1'],
+  },
+  {
+    from: 'src/core/advisor/collect-chronicle.ts:133 collectChronicle (the coverage gap), at 3ac6224f3b',
+    case: { method: 'listChronicleCoverageGapPages', variant: 'default', run: e => e.listChronicleCoverageGapPages() },
+    texts: [`SELECT p.type, p.effective_date, p.effective_date_source, p.frontmatter->>'date' AS fm_date, p.frontmatter->>'start' AS fm_start
+           FROM pages p
+          WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
+            AND p.updated_at > now() - interval '30 days'
+            AND NOT EXISTS (
+              SELECT 1 FROM timeline_entries te
+              WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
+            )`],
+  },
+  {
+    from: 'src/core/chronicle/ledger-stats.ts:27 readChronicleLedgerStats (its four statements; the member text is 67d1bc5b3e engine-sql/doctor-acc.ts), at 3ac6224f3b',
+    case: { method: 'readChronicleLedgerStats', variant: 'default', run: e => e.readChronicleLedgerStats() },
+    texts: [`SELECT
+         count(*) FILTER (WHERE state = 'pending')::int AS pending,
+         count(*) FILTER (WHERE state = 'extracted' AND updated_at > now() - interval '7 days')::int AS extracted,
+         count(*) FILTER (WHERE state = 'failed' AND updated_at > now() - interval '7 days')::int AS failed,
+         count(*) FILTER (WHERE state = 'skipped' AND updated_at > now() - interval '7 days')::int AS skipped,
+         sum(cost_usd) FILTER (WHERE NOT unpriced AND updated_at > now() - interval '7 days')::float8 AS known_usd,
+         count(*) FILTER (WHERE unpriced AND state IN ('extracted','failed') AND updated_at > now() - interval '7 days')::int AS unpriced,
+         count(*) FILTER (WHERE NOT unpriced AND cost_usd IS NULL AND state IN ('extracted','failed') AND attempts > 0
+           AND updated_at > now() - interval '7 days')::int AS incomplete
+       FROM chronicle_page_state WHERE trigger = 'auto'`, `SELECT state, reason, count(*)::int AS n FROM chronicle_page_state
+       WHERE trigger = 'auto' AND state IN ('skipped','failed') AND reason IS NOT NULL AND updated_at > now() - interval '7 days'
+       GROUP BY state, reason ORDER BY n DESC, reason`, `SELECT count(*)::int AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'`, `SELECT coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '') AS principal, count(*)::int AS calls
+       FROM chronicle_judge_reservations r
+       LEFT JOIN chronicle_page_state l ON l.source_id = r.source_id AND l.page_id = r.page_id
+         AND l.content_hash = r.content_hash AND l.trigger = 'auto'
+       WHERE r.reserved_at > now() - interval '24 hours'
+       GROUP BY 1 ORDER BY calls DESC, principal LIMIT 5`],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */

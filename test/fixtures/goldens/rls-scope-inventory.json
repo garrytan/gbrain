@@ -2618,6 +2618,17 @@
         ],
         "flagOnScopes": []
       },
+      "listChronicleCoverageGapPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChunklessPagesWithContent#afterPageId+sourceId": {
         "flagOffLanes": [
           "pool"
@@ -4037,6 +4048,17 @@
           "default"
         ]
       },
+      "queueChronicleCampaignRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readAccessCredentials#member": {
         "flagOffLanes": [
           "pool"
@@ -4225,6 +4247,61 @@
         "flagOnScopes": []
       },
       "readCapacityForecastInputs#light": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleBackfillBatch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleBackfillBatch#source": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleBackfillBatch#sources-since": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleCampaignSpentUsd#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleLedgerStats#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7001,6 +7078,7 @@
         "listBlockingEffectRows": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
+        "listChronicleCoverageGapPages": "none",
         "listChunklessPagesWithContent": "direct",
         "listCompactableReceipts": "none",
         "listConfigKeys": "none",
@@ -7277,6 +7355,7 @@
         "putDreamVerdict": "none",
         "putPage": "none",
         "putRawData": "none",
+        "queueChronicleCampaignRow": "none",
         "queueWakeForget": "none",
         "queueWithdrawalReview": "none",
         "rankEntities": "none",
@@ -7303,6 +7382,9 @@
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
         "readChildCompletions": "none",
+        "readChronicleBackfillBatch": "none",
+        "readChronicleCampaignSpentUsd": "none",
+        "readChronicleLedgerStats": "none",
         "readChronicleRow": "none",
         "readChunkVectorColumn": "none",
         "readClientBudgetUsd": "none",

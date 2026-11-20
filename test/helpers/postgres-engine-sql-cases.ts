@@ -843,6 +843,12 @@ export const DOMAIN_OF: Record<string, string> = {
   // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
   'readStoredPageHead': OOS.callerRawSql,
   'readVersionSourcePath': OOS.callerRawSql,
+  // the chronicle backfill and advisor reads (engine-sql/chronicle-reads.ts) and the ledger rollup (engine-sql/doctor-acc.ts)
+  'readChronicleBackfillBatch': OOS.callerRawSql,
+  'queueChronicleCampaignRow': OOS.callerRawSql,
+  'readChronicleCampaignSpentUsd': OOS.callerRawSql,
+  'listChronicleCoverageGapPages': OOS.callerRawSql,
+  'readChronicleLedgerStats': OOS.callerRawSql,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,
   'listAccessTokens': OOS.writeMisc,
@@ -1902,4 +1908,14 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
   ...variants('readStoredPageHead', [['default', (e) => e.readStoredPageHead('default', 'notes/a')]]),
   ...variants('readVersionSourcePath', [['default', (e) => e.readVersionSourcePath(1, 1)]]),
+  // the chronicle backfill and advisor reads (engine-sql/chronicle-reads.ts) and the ledger rollup (engine-sql/doctor-acc.ts)
+  ...variants('readChronicleBackfillBatch', [
+    ['default', (e) => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, afterId: 0 })],
+    ['sources-since', (e) => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceIds: ['default'], since: '2026-01-01', afterId: 0 })],
+    ['source', (e) => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceId: 'default', afterId: 0 })],
+  ]),
+  ...variants('queueChronicleCampaignRow', [['default', (e) => e.queueChronicleCampaignRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', campaignId: '11111111-1111-4111-8111-111111111111', attemptCapUsd: 0.25, maxAttempts: 5, pricingPolicy: 'enforced', maxUsd: 10, defaultMaxAttempts: 5 })]]),
+  ...variants('readChronicleCampaignSpentUsd', [['default', (e) => e.readChronicleCampaignSpentUsd('11111111-1111-4111-8111-111111111111')]]),
+  ...variants('listChronicleCoverageGapPages', [['default', (e) => e.listChronicleCoverageGapPages()]]),
+  ...variants('readChronicleLedgerStats', [['default', (e) => e.readChronicleLedgerStats()]]),
 ];

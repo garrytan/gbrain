@@ -15,5 +15,6 @@ of the chronicle (`src/core/chronicle/ledger.ts`, `ledger-stats.ts`). The SQL fo
 | `brain.readChronicleLedger()` | `{ counts, reasons, calls, principals }` over the automatic rows. `counts` are pending (any age) and extracted, failed and skipped over the last 7 days, with the known spend, the unpriced calls and the incomplete records. `reasons` are `{ state, reason, n }` for skipped and failed rows, by count then byte of reason. `calls` counts the 24-hour reservations. `principals` are the five busiest, by calls then byte of principal (`kind:id`, `unattributed` for a missing kind) |
 
 A row written here keeps the default cost (none), unpriced (false) and attempts (0), and its `next_attempt_at` is kept as
-the text given. Not served: the campaign, retry and result writers of the ledger and `pruneChronicleReservations`
-(`executeRaw` statements, which a Rust brain refuses).
+the text given. The campaign queue is served by `queueChronicleCampaignRow` ([chronicle-reads.md](chronicle-reads.md)).
+Not served: the retry and result writers of the ledger and `pruneChronicleReservations` (`executeRaw` statements, which a
+Rust brain refuses).

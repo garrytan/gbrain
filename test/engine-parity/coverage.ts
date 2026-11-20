@@ -254,7 +254,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // the write-time chronicle decision (engine-sql/chronicle-ledger.ts)
     'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'insertConfigIfAbsent', 'readPageTruthLead',
     // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
-    'readStoredPageHead', 'readVersionSourcePath'],
+    'readStoredPageHead', 'readVersionSourcePath',
+    // the chronicle backfill and advisor reads (engine-sql/chronicle-reads.ts) and the ledger rollup (engine-sql/doctor-acc.ts)
+    'readChronicleBackfillBatch', 'queueChronicleCampaignRow', 'readChronicleCampaignSpentUsd', 'listChronicleCoverageGapPages', 'readChronicleLedgerStats'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],

@@ -9,9 +9,9 @@
 //! - `a 0x0F id BE8 -> ReservationRecord`: one judge reservation, its id the `BIGSERIAL`.
 //! - `a 0x10 -> last id` (JSON integer): the reservation id sequence.
 //!
-//! The campaign, retry and pruning writers of the ledger (`campaign.ts`, `execute.ts`, `pruneChronicleReservations`)
-//! stay raw SQL and refuse on a Rust brain; a row written here therefore keeps the default cost, unpriced and attempts
-//! columns, which the rollup still reads.
+//! The campaign queue is `chronicle_reads.rs`. The retry and pruning writers of the ledger (`execute.ts`,
+//! `pruneChronicleReservations`) stay raw SQL and refuse on a Rust brain; a row written here therefore keeps the
+//! default cost, unpriced and attempts columns, which the rollup still reads.
 
 use crate::error::{Result, StoreError};
 use crate::kv::scan_prefix;

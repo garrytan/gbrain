@@ -46,6 +46,7 @@ pub mod alias_fanout_reads;
 pub mod aliases;
 pub mod chat_usage;
 pub mod chronicle_ledger;
+pub mod chronicle_reads;
 pub mod chronicle_state;
 pub mod chunk_queries;
 pub mod code_edges;

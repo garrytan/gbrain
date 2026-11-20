@@ -27,7 +27,8 @@ Keys: every record starts with the family tag `a` (`keys::TELEMETRY`) and the ta
 - `a 0x0C <id BE8>` holds one volunteered-page event and `a 0x0D` the id counter
   ([volunteer-events.md](volunteer-events.md)).
 - `a 0x0E <source> 0x00 <page id BE8> <hash> 0x00 <version BE4>` holds one chronicle ledger row, `a 0x0F <id BE8>` one judge
-  reservation and `a 0x10` the reservation id counter ([chronicle-ledger.md](chronicle-ledger.md)).
+  reservation and `a 0x10` the reservation id counter ([chronicle-ledger.md](chronicle-ledger.md); the backfill and advisor
+  reads: [chronicle-reads.md](chronicle-reads.md)).
 
 The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet. Only the chronicle ledger rows
 (`0x0E`) carry a source and page: a page or source delete removes them (`chronicle_state.rs`, [chronicle-state.md](chronicle-state.md)).

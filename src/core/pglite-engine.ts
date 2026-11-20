@@ -175,6 +175,8 @@ import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as chronicleLedger from './engine-sql/chronicle-ledger.ts';
 import * as pageMutationReads from './engine-sql/page-mutation-reads.ts';
+import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
+import * as chronicleReads from './engine-sql/chronicle-reads.ts';
 import * as worktreeClaimImpl from './engine-sql/worktree-claim.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import * as writerAdminImpl from './engine-sql/writer-admin.ts';
@@ -2039,6 +2041,11 @@ export class PGLiteEngine implements BrainEngine {
   async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
   async readStoredPageHead(sourceId: string, slug: string) { return pageMutationReads.readStoredPageHead(this, sourceId, slug); }
   async readVersionSourcePath(versionId: number, pageId: number) { return pageMutationReads.readVersionSourcePath(this, versionId, pageId); }
+  readChronicleLedgerStats() { return doctorAccImpl.readChronicleLedgerStats(this.rawRead); }
+  async readChronicleBackfillBatch(q: chronicleReads.ChronicleBackfillBatchQuery) { return chronicleReads.readChronicleBackfillBatch(this, q); }
+  async queueChronicleCampaignRow(w: chronicleReads.ChronicleCampaignRow) { return chronicleReads.queueChronicleCampaignRow(this, w); }
+  async readChronicleCampaignSpentUsd(campaignId: string) { return chronicleReads.readChronicleCampaignSpentUsd(this, campaignId); }
+  async listChronicleCoverageGapPages() { return chronicleReads.listChronicleCoverageGapPages(this); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
   listAccessTokens() { return writeMiscImpl.listAccessTokens(this.writeMiscReads); }
