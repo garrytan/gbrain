@@ -543,7 +543,6 @@ src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
-src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/persistence.ts	execute_raw	3
