@@ -15,3 +15,4 @@
 - On the Rust engine link extraction now reads the page details and attendance links of the pages a sync changed, so the extraction no longer stops with an unsupported-SQL error there. PGLite and Postgres run the same SQL as before.
 - On the Rust engine a sync now writes the timeline entries it extracts from each page, as PGLite and Postgres do. Before, the timeline step stopped with an unsupported-SQL error when it read each page's trust tier. PGLite and Postgres run the same SQL as before.
 - On the Rust engine, `gbrain sources status` and the doctor hold check now read each source's held files, hold counts by code, unsupported-image counts and conversion log, instead of stopping because the engine has no raw SQL.
+- On the Rust engine, `gbrain sources status` now shows each source's shared-skills setting, and shared-skill setup reads the source policy, instead of stopping because the engine has no raw SQL.

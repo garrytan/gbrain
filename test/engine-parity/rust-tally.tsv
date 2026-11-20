@@ -94,4 +94,4 @@ test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/wanted-markers.test.ts	4	0
 test/engine-parity/write-attribution.test.ts	4	2
 test/engine-parity/write-guards.test.ts	7	0
-test/engine-parity/write-misc.test.ts	37	8
+test/engine-parity/write-misc.test.ts	38	8

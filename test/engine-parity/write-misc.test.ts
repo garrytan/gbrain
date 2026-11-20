@@ -38,6 +38,8 @@ import {
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
+import { readSharedSkillsSourceView } from '../../src/core/shared-skills/source-opt-out.ts';
+import { sharedSkillSourcePolicy } from '../../src/core/shared-skills/setup-source-policy.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -105,6 +107,34 @@ describe('engine parity: write misc', () => {
     expect(missing).toBeNull();
     return { alpha: stateView(alpha), beta: stateView(beta), missing };
   });
+
+  parityTest('the shared-skills source view and policy read a live source through readSourceState; an archived or unknown source reads as missing',
+    { methods: ['readSourceState'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/var/tmp/repo-root');
+      await createSource(engine, backend, 'off', { shared_skills: false }, '/var/tmp/off-root');
+      await createSource(engine, backend, 'feed', { kind: 'rss' });
+      await createSource(engine, backend, 'gone', {}, '/var/tmp/gone-root');
+      await archiveSource(engine, backend, 'gone');
+      const code = (error: unknown) => (error as { code?: string }).code ?? String(error);
+      const view = (id: string) => readSharedSkillsSourceView(engine, id).then(v => ({ mode: v.mode, configured: v.configured, reason_code: v.reason_code, parked: v.parked }), code);
+      const policy = (id: string) => sharedSkillSourcePolicy(engine, id).then(p => p.mode, code);
+      const result = {
+        views: { repo: await view('repo'), off: await view('off'), feed: await view('feed'), gone: await view('gone'), missing: await view('missing') },
+        policies: { repo: await policy('repo'), off: await policy('off'), gone: await policy('gone'), missing: await policy('missing') },
+      };
+      expect(result).toEqual({
+        views: {
+          repo: { mode: 'content', configured: null, reason_code: null, parked: null },
+          off: { mode: 'preserve_files', configured: false, reason_code: 'source_shared_skills_disabled', parked: null },
+          feed: { mode: 'preserve_files', configured: null, reason_code: 'source_skill_adoption_required', parked: null },
+          gone: result.views.gone, missing: result.views.missing,
+        },
+        policies: { repo: 'content', off: 'preserve_files', gone: 'source_changed', missing: 'source_changed' },
+      });
+      expect(result.views.gone).toBe(result.views.missing);
+      expect(typeof result.views.missing).toBe('string');
+      return result;
+    });
 
   parityTest('readAdmissionSource reads config kind and role as text; no guest row joins an ordinary source', { methods: ['readAdmissionSource'] }, async (engine, backend) => {
     await createSource(engine, backend, 'alpha', { kind: 'notes', role: 7 }, '/var/tmp/alpha-root');
