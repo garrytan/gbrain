@@ -454,7 +454,7 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // only per source, so a federated listing needs source_id + id behind it to
   // stay a total order (same tiebreakers as `slug` below).
   updated_asc:  'p.updated_at ASC, p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC',
-  created_desc: 'p.created_at DESC',
+  created_desc: 'p.created_at DESC, p.id DESC',
   // Slug uniqueness is per (source_id, slug), so a federated listing can hold
   // the same slug from several sources; source_id + id make slug+offset paging
   // a TOTAL order (same class as the updated_asc tiebreaker above).

@@ -68,7 +68,7 @@ async function runExtractionInputTruncatedCheck(ctx: DoctorContext): Promise<Che
       `SELECT p.source_id || ':' || p.slug AS page, s.input_truncated->'grammars' AS grammars, count(*) OVER ()::int AS total
          FROM page_extraction_state s JOIN pages p ON p.id = s.page_id AND p.deleted_at IS NULL
         WHERE s.pipeline = 'conversation_facts' AND s.input_truncated->>'kind' = '${AMBIGUOUS}'
-        ORDER BY s.updated_at DESC LIMIT 20`);
+        ORDER BY s.updated_at DESC, s.page_id LIMIT 20`);
     const pages = held.map(r => ({ page: r.page, grammars: (typeof r.grammars === 'string' ? JSON.parse(r.grammars) : r.grammars ?? {}) as Record<string, number> }));
     if (!pages.length) {
       checks.push({ name: 'conversation_detection_ambiguous', status: 'ok', message: 'No conversation page is held for an undetected format.', details: { pages: 0, samples: [] } });

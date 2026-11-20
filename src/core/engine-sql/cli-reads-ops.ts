@@ -177,7 +177,7 @@ export async function listExtractionPendingPages(raw: EngineRawRead, opts: { sou
        WHERE ${trustedSql(unverifiedExtractionFragment('p'))}
          ${trustedSql(buildVisibilityClause('p', 's'))}
          ${srcClause}
-       ORDER BY p.created_at DESC
+       ORDER BY p.created_at DESC, p.id DESC
        LIMIT ${opts.limit} OFFSET ${opts.offset}`);
   return raw<ExtractionPendingRow>(text, params);
 }

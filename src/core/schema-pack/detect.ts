@@ -132,7 +132,7 @@ export async function runDetect(
        AND slug LIKE '%/%'
      GROUP BY substring(slug from '^[^/]+/')
      HAVING COUNT(*) >= $2
-     ORDER BY COUNT(*) DESC
+     ORDER BY COUNT(*) DESC, substring(slug from '^[^/]+/') COLLATE "C"
      LIMIT $3`,
     [sourceId, minPagesPerPrefix, maxTypes],
   );
@@ -149,7 +149,7 @@ export async function runDetect(
      FROM pages
      WHERE source_id = $1 AND deleted_at IS NULL AND type IS NOT NULL AND type != ''
      GROUP BY type
-     ORDER BY COUNT(*) DESC
+     ORDER BY COUNT(*) DESC, type COLLATE "C"
      LIMIT 100`,
     [sourceId],
   );

@@ -134,8 +134,8 @@
               "array<string>",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND embedding IS NOT NULL AND embedding_model=$3 AND embedded_text_hash=md5(fact) AND vector_dims(embedding)=$4 AND source != ALL($5::text[]) ORDER BY embedding <=> '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector LIMIT $6",
-            "textSha256": "71fc68c3afb198e4398f9b82ed2fef9ae7aec1d80e22224ff71df9962731ceda"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND embedding IS NOT NULL AND embedding_model=$3 AND embedded_text_hash=md5(fact) AND vector_dims(embedding)=$4 AND source != ALL($5::text[]) ORDER BY embedding <=> '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector, id LIMIT $6",
+            "textSha256": "167566c744665c9b19e0ac5f320cbf8214f293af3381cf1293e5fa7e231a6fc4"
           }
         ]
       },

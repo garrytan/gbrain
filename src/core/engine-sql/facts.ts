@@ -621,7 +621,7 @@ export async function findCandidateDuplicates(
           AND vector_dims(embedding)=${opts.embedding.length}
           AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
           ${speaker}${members}
-        ORDER BY embedding <=> ${trustedSql(vectorLiteralSql(lit, '::vector'))}
+        ORDER BY embedding <=> ${trustedSql(vectorLiteralSql(lit, '::vector'))}, id
         LIMIT ${k}
       `)).rows;
       return rows.map(rowToFact);

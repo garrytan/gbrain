@@ -80,7 +80,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	110	no	yes	yes	serves
+transaction	lifecycle	yes	111	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -88,7 +88,7 @@ getPage	pages	yes	112	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	556	yes	yes	yes	serves
+putPage	pages	yes	558	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -98,7 +98,7 @@ softDeletePage	pages	yes	153	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
-listPages	pages	yes	13	yes	yes	yes	serves
+listPages	pages	yes	14	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
@@ -147,7 +147,7 @@ generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
 inboundLinkCoverage	link_reads	yes	1	no	yes	yes	serves
-listJunkEntityHubs	link_reads	yes	2	no	yes	yes	serves
+listJunkEntityHubs	link_reads	yes	3	no	yes	yes	serves
 countEntityPages	link_reads	yes	1	no	yes	yes	serves
 entityGraphCoverage	link_reads	yes	1	no	yes	yes	serves
 countForeignEdges	link_reads	yes	1	no	yes	yes	serves
@@ -243,7 +243,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	2	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	121	yes	yes	yes	serves
+addLink	links	yes	122	yes	yes	yes	serves
 addLinksBatch	links	yes	28	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	15	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -790,7 +790,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	91	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	92	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

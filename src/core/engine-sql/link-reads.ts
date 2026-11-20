@@ -82,7 +82,7 @@ export async function listJunkEntityHubs(exec: LegacyUnscopedRead, opts: { edgeT
      LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
      WHERE COALESCE(cc.chunks, 0) <= ${opts.maxChunks}
        AND COALESCE(p.frontmatter ->> 'junk_hub_exempt', 'false') <> 'true'
-     ORDER BY ec.edges DESC
+     ORDER BY ec.edges DESC, ec.page_id
      LIMIT ${opts.limit}`);
 }
 

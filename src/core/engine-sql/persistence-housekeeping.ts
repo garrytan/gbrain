@@ -282,7 +282,7 @@ export async function listPendingSegmentedProjections(exec: LegacyUnscopedRead, 
   const { rows } = await exec.run<PendingSegmentedProjection>(sqlFragment`SELECT s.id AS source_id,
       j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
     FROM page_projection_jobs j ${trustedSql(SEGMENTED_JOB_PROBES_SQL)}
-    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C" LIMIT ${Math.max(1, filter.limit)}`);
+    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C", j.source_incarnation LIMIT ${Math.max(1, filter.limit)}`);
   return rows;
 }
 
@@ -323,7 +323,7 @@ export function residentWindowCtesFragment(cursor: Pick<ProjectionScanCursor, 'a
   const slug = cursor.after.slug;
   return sqlFragment`mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
-      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT 100),
+      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC, j.source_incarnation, j.slug COLLATE "C" LIMIT 100),
     fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
       ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT 400),
     wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") <= (${inc}::uuid,${slug} COLLATE "C") AND ${filter}

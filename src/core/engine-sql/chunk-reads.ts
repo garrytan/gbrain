@@ -69,7 +69,7 @@ export async function findCodeDefinitions(exec: LegacyUnscopedRead, symbol: stri
          WHEN 'type' THEN 4 WHEN 'enum' THEN 5 WHEN 'struct' THEN 6
          ELSE 7
        END,
-       p.slug COLLATE "C", cc.start_line, p.source_id COLLATE "C"
+       p.slug COLLATE "C", cc.start_line, p.source_id COLLATE "C", cc.id
      LIMIT ${limit}`,
   );
 }
@@ -103,7 +103,7 @@ export async function findCodeRefChunks(exec: LegacyUnscopedRead, symbol: string
      WHERE p.page_kind = 'code'
        AND cc.chunk_text ILIKE ${`%${symbol}%`}
        ${symbolFilters(opts)}
-     ORDER BY p.slug COLLATE "C", cc.start_line NULLS LAST, p.source_id COLLATE "C"
+     ORDER BY p.slug COLLATE "C", cc.start_line NULLS LAST, p.source_id COLLATE "C", cc.id
      LIMIT ${limit}`,
   );
 }

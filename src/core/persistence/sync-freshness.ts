@@ -115,7 +115,7 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
     const empty: SourceFreshness = { source_id: b.source_id, window_hours: FRESHNESS_WINDOW_HOURS, commit_to_searchable: { samples: 0, p50_seconds: null, p95_seconds: null },
       commit_to_embedded: { samples: 0, p50_seconds: null, p95_seconds: null, pending: 0 }, commits: 0, unresolved_commits: 0, waiting_commits: behind ? behind.commits : null, behind };
     const targets = (await engine.executeRaw<{ target: string }>(`SELECT r.intent->>'target' AS target FROM persistence_requests r WHERE ${SAMPLE_WHERE}
-      GROUP BY 1 ORDER BY max(r.completed_at) DESC LIMIT ${FRESHNESS_MAX_TARGETS}`, [b.worktree_id, b.source_incarnation, FRESHNESS_WINDOW_HOURS]))
+      GROUP BY 1 ORDER BY max(r.completed_at) DESC, (r.intent->>'target') COLLATE "C" LIMIT ${FRESHNESS_MAX_TARGETS}`, [b.worktree_id, b.source_incarnation, FRESHNESS_WINDOW_HOURS]))
       .map(row => row.target).filter(target => typeof target === 'string' && SHA.test(target));
     if (!targets.length) { out.push(empty); continue; }
     const dated = b.root ? await commitTimes(b.root, targets).catch(() => new Map<string, number>()) : new Map<string, number>();

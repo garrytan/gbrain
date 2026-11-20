@@ -673,7 +673,8 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
               ELSE 0
               END) DESC,
               pp.connection_count DESC,
-              pp.slug COLLATE "C" ASC
+              pp.slug COLLATE "C" ASC,
+              pp.source_id COLLATE "C" ASC
           ) AS rn
         FROM prefix_pages pp
       ),

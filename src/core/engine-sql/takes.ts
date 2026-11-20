@@ -361,7 +361,7 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
         ${sourceFilter}${takeEligibility(opts.eligibility)}
-      ORDER BY score DESC, t.weight DESC
+      ORDER BY score DESC, t.weight DESC, t.id
       LIMIT ${limit}
     `)).rows;
     // #2450-class: int8 columns arrive as native BigInt from the pg driver;
@@ -396,7 +396,7 @@ export async function searchTakesVector(
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
         ${sourceFilter}${takeEligibility(opts.eligibility)}
-      ORDER BY t.embedding <=> ${vec}::vector
+      ORDER BY t.embedding <=> ${vec}::vector, t.id
       LIMIT ${limit}
     `)).rows;
     // #2450-class: int8 columns arrive as native BigInt from the pg driver;

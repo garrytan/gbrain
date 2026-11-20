@@ -129,6 +129,18 @@ describe('in-statement samples and lists keep byte order', () => {
     return docs?.sample_types;
   });
 
+  parityTest('schema-pack detect cuts prefixes with tied counts by byte prefix', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => {
+    // `top/` leads on count; the five MIXED_IDS prefixes tie at 2 pages, and the LIMIT keeps only two of them.
+    for (let i = 0; i < 3; i++) await insertPage(engine, 'default', `top/p-${i}`);
+    for (const id of MIXED_IDS) for (let i = 0; i < 2; i++) await insertPage(engine, 'default', `${id}/p-${i}`);
+    const result = await runDetect(engine, { minPagesPerPrefix: 2, maxTypes: 3 });
+    const prefixes = result.prefixes.map(p => p.prefix);
+    expect(prefixes).toEqual(['top/', ...byteOrder(MIXED_IDS).slice(0, 2).map(id => `${id}/`)]);
+    return prefixes;
+  });
+
   parityTest('the write-failure summary lists a source\'s recovery blockers by byte group key', {
     methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
   }, async (engine) => {

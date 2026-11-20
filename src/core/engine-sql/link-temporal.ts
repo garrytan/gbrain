@@ -161,7 +161,7 @@ export async function staleLinkRelationshipKeys(exec: Exec, limit: number): Prom
      WHERE NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE lr.from_page_id = e.from_page_id
          AND lr.to_page_id = e.to_page_id AND lr.link_type = e.link_type AND lr.scope = 'all' AND lr.refreshed_at >= e.newest)
      GROUP BY from_page_id, to_page_id, link_type
-     ORDER BY min(newest) LIMIT $2`,
+     ORDER BY min(newest), from_page_id, to_page_id, link_type COLLATE "C" LIMIT $2`,
     [temporalLinkTypes(), limit]);
   // Relationships whose evidence-owning page was deleted, restored or edited
   // after the last refresh (soft deletes change no evidence row).
@@ -361,7 +361,7 @@ export async function edgeValidityCounts(exec: Exec, opts: { sourceIds?: readonl
         AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id
           AND l.link_type = lr.link_type AND COALESCE(l.origin_page_id, l.from_page_id) = lr.from_page_id
           AND COALESCE(l.assertion_tense, 'present') = 'present')
-      ORDER BY lr.last_end DESC LIMIT ${Math.trunc(opts.staleLimit)}`);
+      ORDER BY lr.last_end DESC, lr.from_page_id, lr.to_page_id, lr.link_type COLLATE "C" LIMIT ${Math.trunc(opts.staleLimit)}`);
   const [p] = await rows<{ proposed: number; undated: number; applied: number }>(exec,
     sqlFragment`SELECT COUNT(*) FILTER (WHERE status = 'proposed')::int AS proposed, COUNT(*) FILTER (WHERE status = 'undated_unresolved')::int AS undated,
             COUNT(*) FILTER (WHERE status = 'applied')::int AS applied

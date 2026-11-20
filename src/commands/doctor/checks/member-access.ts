@@ -87,7 +87,7 @@ async function recentNarrowings(engine: BrainEngine): Promise<Check> {
        JOIN LATERAL (SELECT v.frontmatter FROM page_versions v WHERE v.page_id = p.id ORDER BY v.snapshot_at DESC, v.id DESC LIMIT 1) prev ON true
       WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND prev.frontmatter->'readable_by' IS NULL
         AND p.updated_at > now() - make_interval(days => ${NARROWING_DAYS})
-      ORDER BY p.updated_at DESC LIMIT ${SAMPLE}`);
+      ORDER BY p.updated_at DESC, p.id LIMIT ${SAMPLE}`);
   const total = rows[0]?.total ?? 0;
   const details = { count: total, window_days: NARROWING_DAYS, narrowings: rows.map(r => ({ page: ref(r), readers: r.readers, writer: r.writer ?? 'unrecorded', at: r.updated_at })), truncated: total > rows.length };
   if (!total) return { name, status: 'ok', details, message: `No page gained readers in the last ${NARROWING_DAYS} days.` };

@@ -76,7 +76,7 @@ export function residentWindowCtes(cursor: ProjectionScanCursor, params: unknown
   const cols = 'j.source_incarnation,j.slug,j.revision,j.updated_at,j.reason';
   return `mark AS (SELECT COALESCE($${mark}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
-      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT ${RESIDENT_RECENT_ROWS}),
+      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC, j.source_incarnation, j.slug COLLATE "C" LIMIT ${RESIDENT_RECENT_ROWS}),
     fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > ($${inc}::uuid,$${slug} COLLATE "C") AND ${filter}
       ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT ${WINDOW_ROWS}),
     wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") <= ($${inc}::uuid,$${slug} COLLATE "C") AND ${filter}

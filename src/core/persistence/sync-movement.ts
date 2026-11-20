@@ -131,7 +131,7 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
   // The lease's beacon row (sync-lease.ts) is for older binaries; this build reads the lease holder above.
   const [row] = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
     AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
-      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at LIMIT 1`, [sourceId]).catch(() => []);
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`, [sourceId]).catch(() => []);
   return row ? Number(row.id) : null;
 }
 

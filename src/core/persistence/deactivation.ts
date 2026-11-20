@@ -115,7 +115,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
           : `gbrain sync --source ${r.source_id} --no-pull` });
   }
   const topology = await engine.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean; automatic: boolean }>(
-    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only','false')='true' AS automatic FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
+    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only','false')='true' AS automatic FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at, id LIMIT 20");
   for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
     detail: !t.admission ? `${t.operation} for ${t.source_id} is recovering`
       : `${t.automatic ? 'automatic expired-archive purge' : t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished`,
