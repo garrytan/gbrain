@@ -21,7 +21,7 @@ import net from 'node:net';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { serveOwnerEngine, type OwnerServerOptions } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { connectOwner } from '../src/core/rust-engine/owner-ipc/client.ts';
-import { OWNER_IPC_REFUSED_DRAIN_MS, OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { OWNER_IPC_REFUSED_DRAIN_MS, OWNER_IPC_REFUSED_LIMIT, OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { decodeError, encodeValue, type Wire } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -220,6 +220,72 @@ describe('the owner byte budget of a running call that is timed out or cancelled
   }
 });
 
+describe('the owner queue and byte limits are shared by every connection', () => {
+  // Value: protects=the queue cap counts the waiting calls of all clients together, so two clients that are each under it cannot between them grow the owner's queue past it; fails_when=the cap is kept per connection; why_new=every cap test above uses one connection, where a per-connection count and a shared one agree; seam=the maxQueued option; no_claim=bytes
+  test('two clients that each hold one waiting call fill a queue of 2: the next call is refused queue_full, and is admitted once the other client leaves', async () => {
+    const { server, ran } = await blockingOwner({ permits: 1, maxQueued: 2 });
+    const a = rawSession(server.socketPath);
+    const b = rawSession(server.socketPath);
+    cleanups.push(() => { a.destroy(); b.destroy(); });
+    await a.send(hello);
+    await a.send(call(1, 'getHealth', ['a-running']));
+    await until(() => server.stats().active === 1);
+    await a.send(call(2, 'getHealth', ['a-queued']));
+    await b.send(hello);
+    await b.send(call(3, 'getHealth', ['b-queued']));
+    await until(() => server.stats().queued === 2);
+    // Each client alone holds one waiting call, under the cap of 2; together they hold 2.
+    expect(server.stats()).toMatchObject({ active: 1, queued: 2, connections: 2 });
+    await b.send(call(4, 'getConfig', ['b-over']));
+    const refused = errorOf(await b.next(f => f.t === 'result' && f.id === 4));
+    expect({ code: refused.code, reason: refused.reason, retryable: refused.retryable }).toEqual({ code: 'owner_busy', reason: 'queue_full', retryable: true });
+    expect(refused.detail).toContain('limit=2');
+    expect(ran).not.toContain('getConfig:b-over');
+    expect(server.stats().queued).toBe(2);
+    // The other client leaving gives its running call's permit and its waiting call's slot back; the same call is then admitted.
+    a.destroy();
+    await until(() => server.stats().connections === 1 && server.stats().queued === 0);
+    expect(server.stats()).toMatchObject({ active: 1, queued: 0, connections: 1 });
+    await b.send(call(5, 'getConfig', ['b-retry']));
+    await until(() => server.stats().queued === 1);
+    expect(server.stats().queued).toBe(1);
+    expect(b.frames.find(f => f.id === 5)).toBeUndefined();
+  });
+
+  // Value: protects=the in-flight byte budget counts the call frames of all clients together; fails_when=the budget is kept per connection; why_new=the byte cap test above sends both large frames on one connection; seam=the maxInflightBytes option; no_claim=queue slots
+  test('two clients that each send one large frame go over a budget of 1000 bytes together: the second is refused inflight_bytes, and is admitted once the first client leaves', async () => {
+    const { server, ran } = await blockingOwner({ permits: 4, maxInflightBytes: 1_000 });
+    const a = rawSession(server.socketPath);
+    const b = rawSession(server.socketPath);
+    cleanups.push(() => { a.destroy(); b.destroy(); });
+    const big = 'x'.repeat(600);
+    await a.send(hello);
+    await a.send(call(1, 'getHealth', [big]));
+    await until(() => server.stats().active === 1);
+    const held = server.stats().inflightBytes;
+    // One such frame fits alone; two do not fit together.
+    expect(held).toBeGreaterThan(600);
+    expect(held * 2).toBeGreaterThan(1_000);
+    await b.send(hello);
+    await b.send(call(2, 'getHealth', [big]));
+    const refused = errorOf(await b.next(f => f.t === 'result' && f.id === 2));
+    expect({ code: refused.code, reason: refused.reason, retryable: refused.retryable }).toEqual({ code: 'owner_busy', reason: 'inflight_bytes', retryable: true });
+    expect(refused.detail).toContain('limit=1000');
+    expect(ran.filter(r => r.startsWith('getHealth'))).toHaveLength(1);
+    expect(server.stats().inflightBytes).toBe(held);
+    // A small call of the second client still fits beside the first client's large one.
+    await b.send(call(3, 'getConfig', ['small']));
+    expect((await b.next(f => f.t === 'result' && f.id === 3))?.ok).toBe(true);
+    a.destroy();
+    await until(() => server.stats().inflightBytes === 0);
+    expect(server.stats()).toMatchObject({ active: 0, inflightBytes: 0 });
+    await b.send(call(4, 'getHealth', [big]));
+    await until(() => server.stats().active === 1);
+    expect(server.stats()).toMatchObject({ active: 1, inflightBytes: held });
+    expect(b.frames.find(f => f.id === 4)).toBeUndefined();
+  });
+});
+
 describe('the owner connection cap', () => {
   test('a connection past maxConnections gets owner_busy connections and is closed; the client connect rejects with it', async () => {
     const { server } = await blockingOwner({ maxConnections: 1 });
@@ -264,6 +330,45 @@ describe('the owner connection cap', () => {
     for (const { socket } of peers) socket.write('x\n');
     for (let i = 0; i < 100 && !peers.every(p => p.state.closed); i++) await Bun.sleep(20);
     expect(peers.map(p => p.state.closed)).toEqual([true, true, true]);
+  });
+
+  // Value: protects=an owner under a flood of refused peers that never close holds at most OWNER_IPC_REFUSED_LIMIT of their sockets, and each for at most OWNER_IPC_REFUSED_DRAIN_MS; fails_when=the cap on held refusals is missing or off by one, or a held refusal outlives its drain; why_new=the test above opens three peers, so the limit itself is never reached; seam=none (the exported limit and the 1 s drain are the real constants); no_claim=how many refusals the owner can answer per second
+  test('refused peers that never close are held only up to OWNER_IPC_REFUSED_LIMIT: the next is dropped at once with no frame, and every held one is cut off after the drain period', async () => {
+    const { server } = await blockingOwner({ maxConnections: 1 });
+    const first = rawSession(server.socketPath);
+    cleanups.push(() => { first.destroy(); });
+    await first.send(hello);
+    expect(await first.next(f => f.t === 'hello')).not.toBeNull();
+    const peer = () => {
+      const socket = net.connect({ path: server.socketPath, allowHalfOpen: true });
+      const state = { refused: false, ended: false, closed: false };
+      socket.on('error', () => {});
+      socket.on('data', chunk => { if (String(chunk).includes('"refused"')) state.refused = true; });
+      socket.on('end', () => { state.ended = true; });
+      socket.on('close', () => { state.closed = true; });
+      cleanups.push(() => { socket.destroy(); });
+      return { socket, state };
+    };
+    const held = Array.from({ length: OWNER_IPC_REFUSED_LIMIT }, peer);
+    await until(() => held.every(p => p.state.refused));
+    expect(held.filter(p => p.state.refused)).toHaveLength(OWNER_IPC_REFUSED_LIMIT);
+    // One refusal past the limit: the owner closes its side with no refused frame, instead of holding another descriptor.
+    const over = peer();
+    await until(() => over.state.ended);
+    expect(over.state).toMatchObject({ refused: false, ended: true });
+    // A write to a socket the owner destroyed is answered with a reset; a socket the owner still holds takes it silently.
+    over.socket.write('x\n');
+    await until(() => over.state.closed);
+    expect(over.state.closed).toBe(true);
+    expect(held.some(p => p.state.closed)).toBe(false);
+    // Each held refusal is destroyed after the drain period, and the freed slots hold refusals again.
+    await Bun.sleep(OWNER_IPC_REFUSED_DRAIN_MS + 500);
+    for (const { socket } of held) socket.write('x\n');
+    await until(() => held.every(p => p.state.closed));
+    expect(held.filter(p => p.state.closed)).toHaveLength(OWNER_IPC_REFUSED_LIMIT);
+    const again = peer();
+    await until(() => again.state.refused);
+    expect(again.state.refused).toBe(true);
   });
 });
 

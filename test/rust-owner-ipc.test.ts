@@ -386,6 +386,54 @@ describe('frame caps', () => {
     expect(errors).toEqual([]);
   });
 
+  // Value: protects=a frame whose multibyte character arrives split across two socket reads is decoded whole and sized in bytes, so the frame cap and the owner's in-flight byte budget count what is on the wire; fails_when=the reader decodes each chunk on its own (the split character becomes U+FFFD) or counts characters instead of bytes; why_new=the cap tests above send ASCII only, where bytes and characters agree; seam=none; no_claim=the socket itself
+  describe('a multibyte character split across two reads', () => {
+    // 'é' is 2 bytes, '€' 3, the emoji 4, so the line is 5 bytes longer than its string length.
+    const original = { t: 'call', id: 1, member: 'x', args: ['é€😀'] };
+    const line = Buffer.from(JSON.stringify(original) + '\n');
+    const euro = line.indexOf(Buffer.from('€'));
+    const emoji = line.indexOf(Buffer.from('😀'));
+    // The first cut lands one byte into '€', the second two bytes into the emoji.
+    const parts = [line.subarray(0, euro + 1), line.subarray(euro + 1, emoji + 2), line.subarray(emoji + 2)];
+
+    const read = (maxBytes: number, chunks: Buffer[]) => {
+      const socket = fakeSocket();
+      const frames: Array<{ frame: Record<string, unknown>; bytes: number }> = [];
+      const errors: string[] = [];
+      readFrames(socket as unknown as net.Socket, (frame, bytes) => frames.push({ frame, bytes }), why => errors.push(why), maxBytes);
+      for (const chunk of chunks) socket.emit('data', chunk);
+      return { frames, errors, destroyed: socket.destroyed };
+    };
+
+    test('the frame is decoded whole and its size is the byte length, not the character count', () => {
+      expect(line.length).toBe(line.toString('utf8').length + 5);
+      // The first cut really splits a character: read on its own, that chunk ends in U+FFFD.
+      expect(parts[0]!.toString('utf8').endsWith('\ufffd')).toBe(true);
+      const out = read(line.length, parts);
+      expect(out.errors).toEqual([]);
+      expect(out.frames).toEqual([{ frame: original, bytes: line.length }]);
+    });
+
+    test('a cap exactly at the frame bytes reads it, and one byte lower refuses it though the characters would fit', () => {
+      expect(read(line.length, parts).frames).toHaveLength(1);
+      const refused = read(line.length - 1, parts);
+      expect(refused.frames).toEqual([]);
+      expect(refused.errors).toEqual(['frame_too_large']);
+      expect(refused.destroyed).toBe(true);
+      // The character count of the whole line is far under that cap, so a reader that counted characters would accept it.
+      expect(line.toString('utf8').length).toBeLessThan(line.length - 1);
+    });
+
+    test('a partial frame is refused as soon as its bytes pass the cap, before its newline arrives', () => {
+      // The first chunk is 1 byte short of the cap in characters and over it in bytes, because it holds 'é' and half of '€'.
+      const cap = parts[0]!.length - 1;
+      expect(parts[0]!.toString('utf8').length).toBeLessThanOrEqual(cap);
+      const out = read(cap, [parts[0]!]);
+      expect(out.errors).toEqual(['frame_too_large']);
+      expect(out.destroyed).toBe(true);
+    });
+  });
+
   test('a result over the cap ends the call with response_too_large and does not hang', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-cap-'));
     // A stand-in owner engine: only getConfig is called, and it answers more than the cap.
