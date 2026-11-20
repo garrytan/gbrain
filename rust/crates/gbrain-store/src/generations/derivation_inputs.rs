@@ -162,6 +162,16 @@ fn split_parts(body: &[u8]) -> Result<Vec<String>> {
 }
 
 impl Store {
+    /// `EXISTS (SELECT 1 FROM derivation_inputs d WHERE d.derived_table = table AND d.derived_id =
+    /// id)`: whether any edge explains the derived row. Associated, so a reader outside
+    /// `generations` asks it inside its own read.
+    pub(crate) fn derived_has_inputs(read: &dyn KvRead, table: &str, id: &str) -> Result<bool> {
+        if table.contains('\0') || id.contains('\0') {
+            return Ok(false);
+        }
+        Ok(!collect_prefix(read, &pair_prefix(BY_DERIVED_HEAD, table, id), false, 1)?.is_empty())
+    }
+
     /// `recordDerivationInputs(derived, sourceId, inputs)`: one `derivation_inputs` row per input,
     /// with `source_id` and the transaction's time, keeping a row that exists. A NUL in a table or
     /// id is `invalid_argument`, as a text column refuses it; a `sourceId` that names no source is

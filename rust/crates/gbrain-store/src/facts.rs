@@ -63,6 +63,7 @@ pub mod phantom;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
+pub mod purge_receipt;
 pub mod quoted;
 pub mod recall;
 pub mod reconcile;

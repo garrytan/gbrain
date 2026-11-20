@@ -992,8 +992,9 @@ Twelve store methods serve the fourteen phantom-redirect members; `maxFenceRowNu
 The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
 `facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each
 with the typed `raw_sql` refusal until the store holds what it reads. The ten held-move members are served by
-`facts/held_moves.rs` (see "Held moves" below); the other 24 have no Rust implementation yet, and
-`test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
+`facts/held_moves.rs` (see "Held moves" below), `expireFactsOfGonePages` by `facts/rest_sites.rs`, and ten
+purge receipt reads by `facts/purge_receipt.rs` (see "Purge receipt reads" below). The other 13 have no Rust
+implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
 statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
 | Member | What it does |
@@ -1071,6 +1072,26 @@ fact on one that names another entity.
 The parity cases seed facts, pages, versions, chunks, timeline entries, write requests and effects through the
 typed writers. `belief_events`, `page_segment_derivations` and `takes` have no typed fixture, so their members
 are compared on empty data only.
+
+### Purge receipt reads (`facts/purge_receipt.rs`, family `facts_purge_receipt`)
+
+Served on Rust: `readPurgeSourceLocalPath`, `readPurgeReceiptSourcePath` (both the store's `readSourceLocalPath`),
+`listSegmentedPageBodies`, `listSegmentedVersionBodies`, `listFactContextsForPurgeProbe`,
+`listPageSourcePathsForPurge`, `countLegacyDerivedPages`, `vacuumPurgedTables`, `listPageProseHits` and
+`countPurgeFingerprintResidue`.
+
+- `listSegmentedPageBodies` and `listSegmentedVersionBodies` read a body as segmented when the page or version
+  records segmented storage; a negative or fractional limit refuses before the call.
+- `listPageSourcePathsForPurge` returns its paths in byte order. Postgres returns `DISTINCT` rows in no stated
+  order, so the parity case sorts them.
+- `listPageProseHits` orders slugs in byte order; Postgres orders them by the database collation. A null column
+  holds no needle, and only the `pages` store skips soft-deleted pages, as in the SQL.
+- `countLegacyDerivedPages` counts a live page of type `atom`, or with frontmatter `dream_generated` true (boolean or
+  the text `"true"`), that has no `derivation_inputs` row naming it as the derived page.
+- `countPurgeFingerprintResidue` counts takes on pages of the source whose slug is the subject (or any page for
+  `*`), with no active or expiry filter, as the SQL has none.
+- `vacuumPurgedTables` has nothing to compact and resolves once the store is open; `withQueryCache` changes nothing.
+- `listBeliefEventsForPurgeProbe` is not served: the store keeps no `belief_events`.
 
 ### Claim conflicts, contested proposals, live entity page and gone-page expiry (`facts/rest_sites.rs`, family `facts_rest`)
 
