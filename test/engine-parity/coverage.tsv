@@ -84,7 +84,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	120	no	yes	yes	serves
+transaction	lifecycle	yes	121	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -338,10 +338,10 @@ sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
 listDreamQueueCandidates	dream	yes	1	no	yes	yes	refuses:minion_queue
 listLiveDreamCycleLocks	dream	yes	1	no	yes	yes	refuses:minion_queue
 readDreamJobStatus	dream	yes	1	no	yes	yes	refuses:minion_queue
-ensureDreamMapConfigRow	dream	yes	1	no	yes	yes	refuses:config
-lockDreamMapConfigRow	dream	yes	1	no	yes	yes	refuses:config
-writeDreamMapConfigRow	dream	yes	1	no	yes	yes	refuses:config
-recordDreamBreakerReset	dream	yes	1	no	yes	yes	refuses:config
+ensureDreamMapConfigRow	dream	yes	2	no	yes	yes	serves
+lockDreamMapConfigRow	dream	yes	2	no	yes	yes	serves
+writeDreamMapConfigRow	dream	yes	2	no	yes	yes	serves
+recordDreamBreakerReset	dream	yes	4	no	yes	yes	serves
 stampDreamPageProvenance	dream	yes	1	no	yes	yes	refuses:pages
 listDreamPageIds	dream	yes	1	no	yes	yes	refuses:pages
 countDreamProvenancePages	dream	yes	1	no	yes	yes	refuses:pages
@@ -356,7 +356,7 @@ refreshConsolidatedTakeSource	dream	yes	1	no	yes	yes	refuses:takes
 findConsolidatedTakeIds	dream	yes	1	no	yes	yes	refuses:takes
 listConsolidationClaimShapes	dream	yes	1	no	yes	yes	refuses:facts
 listRetainedDreamOutputSources	dream	yes	1	no	yes	yes	refuses:pages
-readDreamSourceIncarnation	dream	yes	2	no	yes	yes	refuses:sources
+readDreamSourceIncarnation	dream	yes	3	no	yes	yes	serves
 listDreamAtomPages	dream	yes	1	no	yes	yes	refuses:pages
 listSynthesisPageBodies	dream	yes	1	no	yes	yes	refuses:pages
 listLaterPersistenceRequests	dream	yes	2	no	yes	yes	refuses:persistence_journal
@@ -445,8 +445,8 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	15	no	yes	yes	serves
-setConfig	config	yes	27	no	yes	yes	serves
+getConfig	config	yes	19	no	yes	yes	serves
+setConfig	config	yes	30	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves

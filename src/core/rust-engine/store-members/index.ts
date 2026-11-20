@@ -42,6 +42,7 @@ import * as openLoops from './open-loops.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
 import * as filesSources from './files-sources.ts';
+import * as dreamConfig from './dream-config.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
@@ -105,7 +106,7 @@ export const STORE_MEMBERS = {
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources, ...filesSources,
+  ...cliSources, ...filesSources, ...dreamConfig,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,

@@ -27,13 +27,15 @@ need before it can answer.
 | Members | Needs from the store |
 | --- | --- |
 | `listDreamQueueCandidates`, `listLiveDreamCycleLocks`, `readDreamJobStatus`, `listDreamJobCreatedAt`, `listCompletedSynthJobs`, `countCoalescibleSynthJobs`, `listWaitingChildJobIds`, `listDreamChildJobTimings`, `countRecentDreamSynthSubmissions` | the minion job queue and the cycle lock table (`minion_jobs`, `gbrain_cycle_locks`), including the database clock and the jsonb `data` of a job |
-| `ensureDreamMapConfigRow`, `lockDreamMapConfigRow`, `writeDreamMapConfigRow`, `recordDreamBreakerReset` | config rows holding a JSON map, read under a row lock with the database clock; the reset write merges one entry and drops entries older than 24 hours |
 | `stampDreamPageProvenance`, `listDreamPageIds`, `countDreamProvenancePages`, `listRetainedDreamOutputSources`, `listDreamAtomPages`, `listSynthesisPageBodies`, `readDreamVerifyEpoch` | pages: frontmatter merge that keeps the first cycle date, live page ids, counts by cycle date, atom and synthesis page reads (segmented pages are excluded in SQL), and the database clock |
 | `readDreamDeferralReceipt`, `listLaterPersistenceRequests`, `listCommittedOutputRequests` | the persistence journal (`persistence_requests`): rows by request id, source and incarnation, ordered by sequence |
 | `listConsolidationClaimValues`, `setConsolidatedFactValidUntil`, `listReadersSourcedFactIds`, `listConsolidationClaimShapes` | facts: typed claim columns, `valid_until` writes and the readers-sourced predicate |
 | `findConsolidationPageIds`, `readConsolidationTakesMaxRowNum`, `findConsolidatedTakes`, `refreshConsolidatedTakeSource`, `findConsolidatedTakeIds` | takes: row numbers, the earliest take of a claim and the source-aggregation write |
-| `readDreamSourceIncarnation` | the source row's incarnation |
 | `readDreamPreRunRevision` | the first page version snapshot at or after a time |
+
+Served by the Rust engine: `ensureDreamMapConfigRow`, `lockDreamMapConfigRow`, `writeDreamMapConfigRow` and `recordDreamBreakerReset`
+(`gbrain-store` `dream_config`, see [config.md](config.md)) and `readDreamSourceIncarnation` (the source record's
+incarnation). The lock takes no row lock: the store admits one write transaction at a time.
 
 Return shapes are the raw row shapes the callers read; timestamps come back as the driver returns them
 (a `Date` or text), and the callers normalise them. The SQL text and bound parameters are byte-identical to
