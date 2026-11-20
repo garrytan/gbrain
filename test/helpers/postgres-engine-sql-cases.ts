@@ -108,7 +108,7 @@ const OOS = {
   identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
   calibrationProfiles: 'out-of-scope:calibration-profiles (decide family group B, born in engine-sql/calibration-profiles.ts; pinned by test/engine-parity/calibration-profiles.test.ts)',
-  repairBookkeeping: 'out-of-scope:repair-bookkeeping (statements the repair kinds and doctor checks ran unscoped through executeRaw, born in engine-sql/repair-bookkeeping.ts, managed-sync-orphans.ts, owned-content.ts, op-checkpoint.ts, write-misc.ts, repair-page-reads.ts, alias-orphans.ts and repair-page-scans.ts; pinned by test/engine-parity/repair-bookkeeping.test.ts, repair-runner.test.ts, repair-source-reads.test.ts, repair-page-reads.test.ts, repair-aliases.test.ts and repair-page-scans.test.ts)',
+  repairBookkeeping: 'out-of-scope:repair-bookkeeping (statements the repair kinds and doctor checks ran unscoped through executeRaw, born in engine-sql/repair-bookkeeping.ts, managed-sync-orphans.ts, owned-content.ts, op-checkpoint.ts, write-misc.ts, repair-page-reads.ts, alias-orphans.ts, repair-page-scans.ts and repair-plan-scans.ts; pinned by test/engine-parity/repair-bookkeeping.test.ts, repair-runner.test.ts, repair-source-reads.test.ts, repair-page-reads.test.ts, repair-aliases.test.ts, repair-page-scans.test.ts and repair-plan-scans.test.ts)',
   engineMigration: 'out-of-scope:engine-migration (the reads gbrain migrate --engine copies a brain with, born in engine-sql/engine-migration.ts; pinned by test/engine-parity/migrate-engine-source.test.ts)',
 } as const;
 
@@ -702,6 +702,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLegacyOriginPairs': OOS.repairBookkeeping,
   'listLiveOriginPages': OOS.repairBookkeeping,
   'countLiveFileBackedPages': OOS.repairBookkeeping,
+  'listPagesByOriginPath': OOS.repairBookkeeping,
+  'countSegmentedOriginPages': OOS.repairBookkeeping,
+  'listUntiledSegmentedPages': OOS.repairBookkeeping,
+  'listSourceHoldRecords': OOS.repairBookkeeping,
   'readMigrationRows': OOS.engineMigration, 'readMigrationPageColumns': OOS.engineMigration, 'readEngineMigrationHistory': OOS.engineMigration,
   'countLiveTimelineEntries': OOS.engineMigration, 'listManualLinkTransitions': OOS.engineMigration,
   // sources

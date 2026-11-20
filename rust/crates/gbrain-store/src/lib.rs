@@ -69,6 +69,7 @@ pub mod page_visibility;
 pub mod persistence;
 pub mod raw_files;
 pub mod relations;
+pub mod repair_plan_scans;
 pub mod repair_scans;
 pub mod salience;
 pub mod stats;

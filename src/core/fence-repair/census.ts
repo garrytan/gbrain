@@ -45,7 +45,7 @@ import {
 import type { FenceCtx, FencePage, FenceReason, FenceTier } from './types.ts';
 import { gitChildEnv } from '../git-env.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listSourceHoldRecords'>;
 
 export const FENCE_TIERS: readonly FenceTier[] = ['deterministic', 'resolver', 'llm', 'manual'];
 /** The fence rules a stored finding was judged with; a change restarts the scans. */

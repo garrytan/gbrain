@@ -567,7 +567,6 @@ src/core/ops/trust.ts	execute_raw	1
 src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
-src/core/page-body/body-tiling.ts	execute_raw	1
 src/core/page-body/ingest.ts	execute_raw	1
 src/core/page-body/projection.ts	execute_raw	3
 src/core/page-body/rechunk.ts	execute_raw	7
@@ -759,7 +758,7 @@ src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
 src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	31
+src/core/persistence/sync-holds.ts	execute_raw	30
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-lease.ts	execute_raw	5
@@ -842,7 +841,6 @@ src/core/repair/failed-writes.ts	execute_raw	17
 src/core/repair/fences.ts	execute_raw	2
 src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
 src/core/repair/file-drift.ts	execute_raw	4
-src/core/repair/frontmatter.ts	execute_raw	2
 src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
 src/core/repair/legacy-twins.ts	execute_raw	7
@@ -856,7 +854,7 @@ src/core/repair/origin-twins-heal.ts	execute_raw	4
 src/core/repair/origin-twins.ts	execute_raw	3
 src/core/repair/overwritten-edits.ts	execute_raw	2
 src/core/repair/private-labels.ts	execute_raw	5
-src/core/repair/provenance.ts	execute_raw	2
+src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/purged-change-reasons.ts	execute_raw	3
 src/core/repair/purged-page-facts.ts	execute_raw	3
 src/core/repair/readers.ts	execute_raw	3

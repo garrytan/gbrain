@@ -67,6 +67,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { commitPushCommand } from '../git/commit-push.ts';
 import { bindOrigin, originConflictMessage, pickCanonicalOrigin } from '../persistence/origin-guard.ts';
 import { readSourceStates } from '../source-rows.ts';
+import type { OriginPathPageRow } from '../engine-sql/repair-plan-scans.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
@@ -227,14 +228,12 @@ function markdownFiles(root: string): string[] {
   return [...new Set(paths)].filter(path => /\.mdx?$/i.test(path) && !path.split('/').some(part => part.startsWith('.')) && !isReservedSkillBundlePath(path)).sort();
 }
 
-interface PageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string }
+type PageRow = OriginPathPageRow;
 
 /** Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous). */
 async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow | { ambiguous: string[] }>> {
-  const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title, left(compiled_truth, 400) AS head
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
   const grouped = new Map<string, PageRow[]>();
-  for (const row of rows) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
+  for (const row of await engine.listPagesByOriginPath(sourceId)) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], row]);
   return new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!]));
 }
 
@@ -244,9 +243,7 @@ async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map
  * it. The preview and the apply report how many (`skipped_segmented`).
  */
 async function reportSkippedSegmented(engine: BrainEngine, sourceIds: string[], residuals: Record<string, number>, warnings: string[]): Promise<void> {
-  const [row] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages
-    WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL AND body_storage='segmented'`, [sourceIds]);
-  const n = Number(row?.n ?? 0);
+  const n = await engine.countSegmentedOriginPages(sourceIds);
   if (!n) return;
   residuals.skipped_segmented = n;
   warnings.push(`skipped (segmented): ${n} page(s) store their body in segments, so the database-side check for a stored body that begins with its own frontmatter block `
@@ -265,7 +262,7 @@ function slugTitle(slug: string): string {
 /** Database-side damage worth a re-import from the canonical file. */
 function pageDamage(page: PageRow | undefined, content: string): string | null {
   if (!page) return null;
-  if (EMBEDDED_BLOCK.test(page.head)) return 'its stored body begins with an embedded frontmatter block';
+  if (EMBEDDED_BLOCK.test(page.head ?? '')) return 'its stored body begins with an embedded frontmatter block';
   const titleLine = /^---[^\n]*\n[\s\S]*?^title:[ \t]*\S/m.test(content.replace(/^\uFEFF/, ''));
   if (titleLine && page.title === slugTitle(page.slug)) return 'its stored title was derived from the slug although the file names a title';
   return null;

@@ -772,7 +772,7 @@ fn meta_type(meta: &SegmentedPageMeta) -> Result<String> {
 
 /// `liveTilingSql` and `untiledSql`: the generation's published rows, by seq, start each at the
 /// sum of the lengths before it, and their lengths sum to `body_bytes`.
-fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
+pub(crate) fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
     let mut sorted: Vec<&&ManifestRow> = rows.iter().collect();
     sorted.sort_by_key(|r| r.seq);
     let mut prior = 0i64;

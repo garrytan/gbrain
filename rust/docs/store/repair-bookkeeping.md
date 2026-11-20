@@ -174,6 +174,27 @@ The safe-chunks apply re-seals chunks, a B6 writer. Pinned by
 `test/engine-parity/repair-page-scans.test.ts` and the store test
 `scans_answer_what_the_sql_filters`.
 
+## Repair plan scans
+
+The plans of `gbrain repair frontmatter` and `gbrain repair segmented-tiling`, and every sync hold
+reader, read through four members (`src/core/engine-sql/repair-plan-scans.ts`). The store scans its
+page, manifest and checkpoint records and filters them as the SQL's `WHERE` does
+(`repair_plan_scans.rs`).
+
+| Member | Store answer |
+| --- | --- |
+| `listPagesByOriginPath(sourceId)` | live pages recording a `source_path`, with the first 400 characters of compiled truth (null when the page stores none inline), by slug in byte order |
+| `countSegmentedOriginPages(sourceIds)` | live pages recording a `source_path` whose `body_storage` is `segmented` |
+| `listUntiledSegmentedPages({ sourceIds, slugs, limit })` | live segmented pages of unarchived sources whose live generation's published rows, by seq, leave a gap or do not sum to `body_bytes` (a NULL `body_bytes` counts only a gap), by source then slug, at most `limit` (default 1000) |
+| `listSourceHoldRecords(op, { sourceIds, runId })` | the first record of each `op` checkpoint whose `source_id` and `incarnation` name an existing source's current incarnation, narrowed by source and `run_id`, by source then fingerprint in byte order; `mirror_read_only` is the source's `config.mirror_read_only` |
+
+`readGitSourceHolds` marks a read-only mirror's records `read_only_checkout` over the listing, and
+the provenance plan filters the listing to its pages' slugs and ids. The listing now sorts in byte
+order on every engine (it used the database collation). No Rust write publishes a body whose rows
+do not tile it, so on Rust the untiled list is empty and the segmented-tiling plan never reaches its
+per-page file and stored-field reads. Pinned by `test/engine-parity/repair-plan-scans.test.ts` and
+the store test `repair_plan_scans`, which builds the damage directly.
+
 ## Repair kinds by batch
 
 The plan of record for moving the 67 `gbrain repair` kinds onto the engine contract. Flags are the

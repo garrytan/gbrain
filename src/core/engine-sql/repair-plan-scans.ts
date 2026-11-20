@@ -1,0 +1,82 @@
+/**
+ * The plan reads of the `frontmatter` and `segmented-tiling` repairs and the source hold listing, moved here from
+ * repair/frontmatter.ts, page-body/body-tiling.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
+ * members. PGLite and Postgres read unscoped through executeRaw, as before. The Rust engine scans its records
+ * (rust/crates/gbrain-store/src/repair_plan_scans.rs; rust/docs/store/repair-bookkeeping.md, "Repair plan scans").
+ */
+import type { LegacyUnscopedRead } from './brands.ts';
+import { liveTilingSql, untiledSql } from '../page-body/schema.ts';
+
+/** A live page of a source that records an origin, with the first 400 characters of its compiled truth (null when segmented). */
+export interface OriginPathPageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string | null }
+
+/** A segmented page's tiling row as the SQL returns it, before `untiledPageOf` names its fields. */
+export interface UntiledPageRow {
+  id: number | string; source_id: string; slug: string; revision: string; body_generation: unknown; body_bytes: unknown;
+  segment_count: unknown; source_path: string | null; n: unknown; covered: unknown; gapless: boolean;
+}
+
+/** GST-1209: a live page stored in segments whose live generation's rows do not tile its body (`untiledSegmentedPages`). */
+export interface UntiledPage {
+  source_id: string; slug: string; page_id: number; revision: string; body_generation: number; body_bytes: number;
+  segment_count: number | null; source_path: string | null;
+  /** The live generation's rows, and the bytes they cover gapless from 0 (null: they leave a gap). */
+  rows: number; covered_bytes: number | null;
+}
+
+/** The filters of listUntiledSegmentedPages; a missing list does not narrow, and `limit` defaults to 1000. */
+export interface UntiledPageQuery { sourceIds?: readonly string[]; slugs?: readonly string[]; limit?: number }
+
+/** One hold record (`completed_keys->0` of an op_checkpoints row) naming a source and its current incarnation. */
+export interface SourceHoldRecordRow { record: Record<string, unknown>; mirror_read_only: boolean }
+
+/** The filters of listSourceHoldRecords; a missing filter does not narrow. */
+export interface SourceHoldQuery { sourceIds?: readonly string[] | null; runId?: string | null }
+
+/** Names a tiling row's fields as UntiledPage does; every engine maps its rows through it. */
+export function untiledPageOf(row: UntiledPageRow): UntiledPage {
+  return { source_id: row.source_id, slug: row.slug, page_id: Number(row.id), revision: row.revision, body_generation: Number(row.body_generation),
+    body_bytes: Number(row.body_bytes), segment_count: row.segment_count === null ? null : Number(row.segment_count), source_path: row.source_path,
+    rows: Number(row.n), covered_bytes: row.gapless ? Number(row.covered) : null };
+}
+
+/** The live pages of the source that record an origin, by slug in byte order. */
+export async function listPagesByOriginPath(exec: LegacyUnscopedRead, sourceId: string): Promise<OriginPathPageRow[]> {
+  const rows = await exec.executeRaw<OriginPathPageRow>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title, left(compiled_truth, 400) AS head
+    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL ORDER BY slug COLLATE "C"`, [sourceId]);
+  return rows.map(row => ({ id: Number(row.id), slug: row.slug, source_path: row.source_path, revision: row.revision, title: row.title, head: row.head ?? null }));
+}
+
+/** How many live file-backed pages of `sourceIds` store their body in segments. */
+export async function countSegmentedOriginPages(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages
+    WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL AND body_storage='segmented'`, [[...sourceIds]]);
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * GST-1209: the live (not deleted) pages of unarchived sources stored in segments whose live generation's rows do not cover body_bytes gapless
+ * from 0, so every read of them refuses page_body_rows_unreadable. One aggregate per page over its live rows, read-only;
+ * `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).
+ */
+export async function listUntiledSegmentedPages(exec: LegacyUnscopedRead, opts: UntiledPageQuery = {}): Promise<UntiledPage[]> {
+  const rows = await exec.executeRaw<UntiledPageRow>(
+    `SELECT p.id, p.source_id, p.slug, p.knowledge_revision::text AS revision, p.body_generation, p.body_bytes, p.segment_count, p.source_path, t.n, t.covered, t.gapless
+       FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${liveTilingSql('p')}) t
+      WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
+        AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND ${untiledSql('p', 't')}
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT $3`, [opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, opts.limit ?? 1000]);
+  return rows.map(untiledPageOf);
+}
+
+/**
+ * The first record of each `op` checkpoint naming a source and its current incarnation, narrowed to `sourceIds` and to records whose
+ * `run_id` is `runId`, by source id then fingerprint in byte order. `mirror_read_only` is the source's `config.mirror_read_only` flag.
+ */
+export async function listSourceHoldRecords(exec: LegacyUnscopedRead, op: string, opts: SourceHoldQuery = {}): Promise<SourceHoldRecordRow[]> {
+  const rows = await exec.executeRaw<SourceHoldRecordRow>(`SELECT h.completed_keys->0 AS record, COALESCE(s.config->>'mirror_read_only','false')='true' AS mirror_read_only
+    FROM op_checkpoints h JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
+    ORDER BY s.id COLLATE "C", h.fingerprint COLLATE "C"`, [op, opts.sourceIds ? [...opts.sourceIds] : null, opts.runId ?? null]);
+  return rows.map(row => ({ record: row.record, mirror_read_only: row.mirror_read_only === true }));
+}

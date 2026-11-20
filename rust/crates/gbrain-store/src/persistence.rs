@@ -73,7 +73,7 @@ pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
-pub(crate) use op_checkpoint::op_checkpoint_completed_keys;
+pub(crate) use op_checkpoint::{list_op_checkpoint_records_in, op_checkpoint_completed_keys};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

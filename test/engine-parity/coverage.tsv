@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 961/961
+# covered: 965/965
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
-# repair_bookkeeping: 35/35
+# repair_bookkeeping: 39/39
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -89,7 +89,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	120	no	yes	yes	serves
+transaction	lifecycle	yes	121	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -97,13 +97,13 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	549	yes	yes	yes	serves
+putPage	pages	yes	550	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	156	yes	yes	yes	serves
+softDeletePage	pages	yes	157	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -132,7 +132,7 @@ readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 setSourceContextualRetrievalMode	pages	yes	1	no	yes	yes	serves
 countSourcePages	pages	yes	2	no	yes	yes	serves
-insertSource	pages	yes	1	no	yes	yes	serves
+insertSource	pages	yes	2	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
@@ -355,18 +355,18 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	4	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	14	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	14	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	15	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	15	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	16	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	17	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	23	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	26	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	24	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	27	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	17	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	16	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	18	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	17	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -394,7 +394,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	15	no	yes	yes	serves
-setConfig	config	yes	32	no	yes	yes	serves
+setConfig	config	yes	33	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -848,7 +848,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	9	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	10	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
@@ -878,7 +878,7 @@ appendOpCheckpointPaths	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	8	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	8	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	9	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
@@ -932,6 +932,10 @@ listOriginTwinGroups	repair_bookkeeping	yes	1	no	yes	yes	serves
 listLegacyOriginPairs	repair_bookkeeping	yes	1	no	yes	yes	serves
 listLiveOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 countLiveFileBackedPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listPagesByOriginPath	repair_bookkeeping	yes	1	no	yes	yes	serves
+countSegmentedOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listUntiledSegmentedPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listSourceHoldRecords	repair_bookkeeping	yes	1	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

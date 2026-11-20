@@ -79,6 +79,7 @@ import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, SafeChunksPendingRow } from './engine-sql/repair-page-scans.ts';
+import type { OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1582,6 +1583,14 @@ export interface BrainEngine {
   listLiveOriginPages(sourceId: string, paths: readonly string[]): Promise<LiveOriginPage[]>;
   /** How many live pages of the source record an origin. */
   countLiveFileBackedPages(sourceId: string): Promise<number>;
+  /** Live pages of the source that record an origin, by slug in byte order (engine-sql/repair-plan-scans.ts). */
+  listPagesByOriginPath(sourceId: string): Promise<OriginPathPageRow[]>;
+  /** How many live file-backed pages of `sourceIds` store their body in segments. */
+  countSegmentedOriginPages(sourceIds: readonly string[]): Promise<number>;
+  /** GST-1209: live segmented pages of unarchived sources whose live rows do not tile the body, by source and slug. */
+  listUntiledSegmentedPages(opts?: UntiledPageQuery): Promise<UntiledPage[]>;
+  /** The first record of each `op` checkpoint naming a source and its current incarnation, by source then fingerprint. */
+  listSourceHoldRecords(op: string, opts?: SourceHoldQuery): Promise<SourceHoldRecordRow[]>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

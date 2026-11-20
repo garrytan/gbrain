@@ -201,4 +201,60 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.count_live_file_backed_pages(&source_id))
     }
+
+    /// `listPagesByOriginPath(sourceId)`: resolves `[{ id, slug, source_path, revision, title, head }]`
+    /// by slug, the live pages of the source that record an origin.
+    #[napi]
+    pub fn list_pages_by_origin_path<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_pages_by_origin_path(&source_id))
+    }
+
+    /// `countSegmentedOriginPages(sourceIds)`: resolves how many live file-backed pages of the
+    /// sources store their body in segments.
+    #[napi]
+    pub fn count_segmented_origin_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_segmented_origin_pages(&source_ids))
+    }
+
+    /// `listUntiledSegmentedPages(sourceIds, slugs, limit)`: resolves `[{ id, source_id, slug,
+    /// revision, body_generation, body_bytes, segment_count, source_path, n, covered, gapless }]`.
+    #[napi]
+    pub fn list_untiled_segmented_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+        slugs: Option<Vec<String>>,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_untiled_segmented_pages(
+                source_ids.as_deref(),
+                slugs.as_deref(),
+                u64::from(limit),
+            )
+        })
+    }
+
+    /// `listSourceHoldRecords(op, sourceIds, runId)`: resolves `[{ record, mirror_read_only }]`
+    /// by source id then fingerprint.
+    #[napi]
+    pub fn list_source_hold_records<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        source_ids: Option<Vec<String>>,
+        run_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_source_hold_records(&op, source_ids.as_deref(), run_id.as_deref())
+        })
+    }
 }

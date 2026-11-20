@@ -571,11 +571,10 @@ export async function countGitHolds(engine: Exec, sourceId: string, incarnation:
  * omitted). Connector holds are read by `readAllSourceHolds`; only `sources
  * status` and `sources retry-held` merge the two.
  */
-export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
+export async function readGitSourceHolds(engine: Pick<BrainEngine, 'listSourceHoldRecords'>, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
+  // GBRA-542: a read-only mirror's holds read as such (READ_HOLD_RECORD_SQL's mark, applied over the engine's listing).
+  const rows = (await engine.listSourceHoldRecords(GIT_HOLD_OP, { sourceIds: opts.sourceIds ?? null, runId: opts.runId ?? null }))
+    .map(({ record, mirror_read_only }) => ({ record: (mirror_read_only ? { ...record, read_only_checkout: true } : record) as unknown as GitHoldRecord }));
   const out = new Map<string, GitSourceHolds>();
   for (const { record } of rows) {
     const entry = out.get(record.source_id) ?? { sourceId: record.source_id, incarnation: record.incarnation, count: 0, holds: [] };
@@ -1442,7 +1441,7 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
  * source's outstanding total, escalation, and the exact inspect and repair
  * commands. Remote callers get the counts and a relay instruction only.
  */
-export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
+export async function buildHoldReport(engine: Exec & Pick<BrainEngine, 'listSourceHoldRecords'>, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
   policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean; needsHuman?: (record: GitHoldRecord, auto: FenceAutoRepair | undefined) => boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'held_needs_human' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
   // #6712 PR 4b: the summary, this run's holds and the policy (a caller may pass its read in flight) in one round trip.

@@ -64,10 +64,11 @@ function writerDetail(item: DriftItem): string {
 /** #8009: the sync holds of the source's live incarnation on these pages (by page id or slug), keyed by page id. */
 async function pageHolds(engine: BrainEngine, sourceId: string, pages: ReadonlyArray<{ id: number; slug: string }>): Promise<Map<number, GitHoldRecord>> {
   if (!pages.length) return new Map();
-  const holds = (await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND s.id=$2 AND (h.completed_keys->0->>'slug'=ANY($3::text[]) OR h.completed_keys->0->>'page_id'=ANY($4::text[]))`,
-  [GIT_HOLD_OP, sourceId, pages.map(page => page.slug), pages.map(page => String(page.id))])).map(row => row.record);
+  const slugs = new Set(pages.map(page => page.slug));
+  const ids = new Set(pages.map(page => String(page.id)));
+  const holds = (await engine.listSourceHoldRecords(GIT_HOLD_OP, { sourceIds: [sourceId] }))
+    .map(row => row.record as unknown as GitHoldRecord)
+    .filter(record => (record.slug != null && slugs.has(record.slug)) || (record.page_id != null && ids.has(String(record.page_id))));
   return new Map(pages.flatMap(page => {
     const hold = holds.find(record => Number(record.page_id) === page.id || record.slug === page.slug);
     return hold ? [[page.id, hold] as const] : [];

@@ -218,6 +218,11 @@ export const RUST_ENGINE_MEMBERS = {
   listLegacyOriginPairs: 'pages',
   listLiveOriginPages: 'pages',
   countLiveFileBackedPages: 'pages',
+  // The plan reads of repair frontmatter and segmented-tiling and the source hold listing (engine-sql/repair-plan-scans.ts).
+  listPagesByOriginPath: 'pages',
+  countSegmentedOriginPages: 'pages',
+  listUntiledSegmentedPages: 'pages',
+  listSourceHoldRecords: 'pages',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',
