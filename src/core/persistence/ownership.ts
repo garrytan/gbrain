@@ -14,6 +14,7 @@ import { detectManifestScope, storedManifestScope, worktreeManifest, type Stored
 import { hostIdFor } from './identity.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
+import type { WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -260,14 +261,14 @@ export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: Bra
   await lock.release();
   return true;
 }
-export async function guardOwnership(tx: SqlEngine, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
+export async function guardOwnership(tx: SqlEngine & Pick<BrainEngine, 'publicationJournalStore'>, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;
+  const journal = await tx.publicationJournalStore();
   // The worktree lock and the binding read are sent together; the server takes the lock first.
-  const [[owner], binding] = await pipelined(tx, [
-    () => tx.executeRaw<{ owner_host_id: string; owner_epoch: string | number; state: string }>(
-      'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row.worktree_id]),
+  const [owner, binding] = await pipelined(tx, [
+    () => journal.shareWorktreeOwner(row.worktree_id!),
     () => getWorktreeBinding(tx, row.source_id, hostId),
-  ]) as [Array<{ owner_host_id: string; owner_epoch: string | number; state: string }>, WorktreeBinding | null];
+  ]) as [WorktreeOwnerRow | null, WorktreeBinding | null];
   if (!owner || !binding || binding.worktree_id !== row.worktree_id || binding.source_incarnation !== row.source_incarnation ||
     owner.owner_host_id !== hostId || owner.state !== 'active' || String(binding.topology_generation) !== String(row.topology_generation)) {
     throw opError('owner_unavailable', 'The accepted worktree ownership or source topology changed.',

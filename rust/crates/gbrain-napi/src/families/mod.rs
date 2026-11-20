@@ -23,6 +23,7 @@ mod notifier;
 mod op_checkpoint;
 mod page_visibility;
 mod pages;
+mod publication_journal;
 mod search;
 mod sources;
 mod tags;

@@ -71,6 +71,7 @@ mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod publication;
 mod receipt_list;
 mod topology;
 mod worktrees;
@@ -89,6 +90,7 @@ pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub use publication::{PublicationRead, PublicationWrite, RecoveryTable};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 pub use worktrees::{

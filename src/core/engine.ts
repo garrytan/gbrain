@@ -89,6 +89,7 @@ import type {
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
+import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 import type {
@@ -1621,6 +1622,11 @@ export interface BrainEngine {
    * Called on a transaction engine, every store call runs in that transaction.
    */
   writerReleaseStore(): Promise<WriterReleaseStore>;
+  /**
+   * The request-row reads and writes of a bound (worktree) publication around its files (engine-sql/publication-journal.ts).
+   * Called on a transaction engine, every store call runs in that transaction.
+   */
+  publicationJournalStore(): Promise<PublicationJournalStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
