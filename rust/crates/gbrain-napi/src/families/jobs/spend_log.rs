@@ -117,6 +117,16 @@ impl Brain {
         self.run(env, move |s| s.read_oauth_client(&client_id))
     }
 
+    /// `readOauthClientNames(ids)`: `[{ id, name }]` of the clients with those ids, by id.
+    #[napi]
+    pub fn read_oauth_client_names<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_oauth_client_names(&ids))
+    }
+
     /// `listOauthClients()`: every client's whole row, by name then id in byte order.
     #[napi]
     pub fn list_oauth_clients<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

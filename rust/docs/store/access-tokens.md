@@ -3,7 +3,7 @@
 Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](oauth-clients.md)); the rules in
 [rust/README.md](../../README.md) ("The brain store") apply.
 
-The store keeps only the `access_tokens` columns the legacy-token mint and the read-floor command touch. The SQL for the
+The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command and the write-attribution name read touch. The SQL for the
 PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`; the store serves the same members. Every other
 reader and writer of the table (verify, list, revoke, rescope, rotate, the grant reads) is still raw SQL and stops on a Rust
 brain.
@@ -12,6 +12,7 @@ brain.
 | --- | --- |
 | `brain.insertAccessToken(row)` | `{ id }`, the generated UUID. `row` has `name`, `token_hash`, `scopes` (null is a full-access token), `permissions` (an object), the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`, `takes_holders`, each null for NULL) and, optionally, `min_trust`, `revoked_at` and `read_shared` (true is born with the read-shared switch on: `read_shared_revision` 1, the birth revision; absent or false leaves it off). The row is born at `grant_revision` 1 |
 | `brain.findActiveAccessTokens(target)` | `[{ id, name, min_trust }]`: the tokens with no `revoked_at` whose id (as text) or name is `target`, by id. Names are not unique, so there may be several |
+| `brain.readAccessTokenNames(ids)` | `[{ id, name }]` of the tokens with those ids, revoked ones included, by id; an unknown id is left out. The names `readWriteAttributionNames` shows ([write_attribution.md](write_attribution.md)) |
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
 
 ## Callers
