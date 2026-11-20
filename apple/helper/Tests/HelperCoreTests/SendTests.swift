@@ -1025,10 +1025,10 @@ final class Harness {
 
 @Suite struct SendFixTextTests {
     @Test func everyFixNamesACommandThatExists() {
-        let commands = ["send-setup", "send-key", "send-limits", "send-audit", "init", "token", "validate-config", "check", "serve"]
+        let commands = ["send-setup", "contacts-setup", "send-key", "send-limits", "send-audit", "init", "token", "validate-config", "check", "serve"]
         let problems: [Problem] = [.automationDenied, .messagesSignedOut, .messagesUnavailable, .sendDisabled, .signatureInvalid, .timestampSkew(serverTime: 0),
                                    .unknownSendKey, .sendKeysUnreadable, .sendKeysTampered, .ownerPresenceUnavailable, .auditUnavailable,
-                                   .sourceDisabled("imessage"), .noAccess, .unauthorized, .forbiddenHost]
+                                   .sourceDisabled("imessage"), .noAccess, .unauthorized, .forbiddenHost, .contactsNotAllowed, .cursorExpired]
         for problem in problems {
             let fix = problem.fix ?? ""
             #expect(!fix.contains("gbrain apple "), "\(problem.code) names a gbrain command that doesn't exist")
