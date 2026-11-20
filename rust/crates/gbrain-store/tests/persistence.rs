@@ -1418,3 +1418,94 @@ fn release_requeues_only_under_the_claim_token() {
     assert_eq!(charged["preparation_attempts"], 1);
     assert_eq!(charged["claim_phase"], json!({"phase": "preparing"}));
 }
+
+/// A committed request with `operation` and `outcome`, as the consumer leaves one.
+fn committed_with(store: &Store, request: &str, operation: &str, outcome: Value) {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let mut input = insert_input(store, request, "notes/a", json!({}));
+    input.operation = operation.into();
+    let id = store.insert_write_request(&input).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let mut done = completion(&id, "committed", 0);
+    done.outcome = outcome;
+    store.complete_write_row(&done).unwrap().unwrap();
+}
+
+#[test]
+fn attribution_backfill_targets_the_rows_exactly_one_committed_request_proves() {
+    let dir = TempDir::new("persist-attribution-backfill");
+    let store = open(&dir);
+    let input: PageInput = serde_json::from_value(
+        json!({ "type": "note", "title": "A", "compiled_truth": "a", "timeline": "" }),
+    )
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({})).unwrap();
+    store.put_page("notes/a", &input, &options).unwrap();
+    let scope = gbrain_store::pages::ReadScope {
+        source_id: Some("default".into()),
+        ..Default::default()
+    };
+    let snapshot = store
+        .read_page_snapshot("notes/a", &scope)
+        .unwrap()
+        .unwrap();
+    let revision = snapshot["page"]["knowledge_revision"].clone();
+    let page_id = snapshot["page"]["id"].as_u64().unwrap();
+    let facts: gbrain_store::facts::InsertFactsArgs = serde_json::from_value(json!({
+        "rows": [
+            { "fact": "fenced", "source": "parity", "source_markdown_slug": "notes/a", "row_num": 1 },
+            { "fact": "twice", "source": "parity" },
+        ],
+        "sourceId": "default",
+    }))
+    .unwrap();
+    let ids = store.insert_facts(&facts).unwrap()["ids"].clone();
+    let (fenced, twice) = (ids[0].as_u64().unwrap(), ids[1].as_u64().unwrap());
+    // A fenced remember proves the page revision it reports and the fact it inserted.
+    committed_with(
+        &store,
+        REQ_1,
+        "remember",
+        json!({ "status": "inserted", "id": fenced.to_string(), "revision": revision }),
+    );
+    // Two requests name the second fact, so neither proves it; a 19-digit id names no fact.
+    for request in [REQ_2, "b0000000-0000-4000-8000-0000000000b3"] {
+        committed_with(
+            &store,
+            request,
+            "remember",
+            json!({ "status": "superseded", "id": twice }),
+        );
+    }
+    committed_with(
+        &store,
+        "b0000000-0000-4000-8000-0000000000b4",
+        "remember",
+        json!({ "status": "inserted", "id": "1234567890123456789" }),
+    );
+    let scope = vec!["default".to_string()];
+    let list = |table: &str| {
+        store
+            .list_proven_attribution_targets(table, &scope)
+            .unwrap()
+    };
+    let count = |table: &str| store.count_unfilled_attribution(table, &scope).unwrap();
+    assert_eq!(list("pages"), json!([page_id]));
+    assert_eq!(list("facts"), json!([fenced]));
+    assert_eq!(list("page_versions"), json!([]));
+    assert_eq!(count("pages"), json!(1));
+    assert_eq!(count("facts"), json!(2));
+    assert_eq!(
+        store
+            .list_proven_attribution_targets("pages", &["other".to_string()])
+            .unwrap(),
+        json!([])
+    );
+    let err = store
+        .list_proven_attribution_targets("takes", &scope)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}

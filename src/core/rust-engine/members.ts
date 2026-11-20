@@ -253,6 +253,8 @@ export const RUST_ENGINE_MEMBERS = {
   // The plan reads of repair frontmatter and segmented-tiling and the source hold listing (engine-sql/repair-plan-scans.ts).
   listPagesByOriginPath: 'pages',
   countSegmentedOriginPages: 'pages',
+  listProvenAttributionTargets: 'pages',
+  countUnfilledAttribution: 'pages',
   listUntiledSegmentedPages: 'pages',
   listSourceHoldRecords: 'pages',
   // The Git sync hold writes and reads (engine-sql/git-holds.ts): hold rows are op checkpoints.

@@ -1,6 +1,6 @@
 /**
- * The plan reads of the `frontmatter` and `segmented-tiling` repairs and the source hold listing, moved here from
- * repair/frontmatter.ts, page-body/body-tiling.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
+ * The plan reads of the `frontmatter`, `segmented-tiling` and `attribution-backfill` repairs and the source hold listing, moved here from
+ * repair/frontmatter.ts, page-body/body-tiling.ts, repair/attribution-backfill.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
  * members. PGLite and Postgres read unscoped through executeRaw, as before. The Rust engine scans its records
  * (rust/crates/gbrain-store/src/repair_plan_scans.rs; rust/docs/store/repair-bookkeeping.md, "Repair plan scans").
  */
@@ -79,4 +79,78 @@ export async function listSourceHoldRecords(exec: LegacyUnscopedRead, op: string
     WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
     ORDER BY s.id COLLATE "C", h.fingerprint COLLATE "C"`, [op, opts.sourceIds ? [...opts.sourceIds] : null, opts.runId ?? null]);
   return rows.map(row => ({ record: row.record, mirror_read_only: row.mirror_read_only === true }));
+}
+
+/** The tables `attribution-backfill` fills, in phase order. */
+export type AttributionTable = 'pages' | 'page_versions' | 'facts';
+
+const FACT_ID = "CASE WHEN r.outcome->>'id' ~ '^[0-9]{1,18}$' THEN (r.outcome->>'id')::bigint END";
+
+/** A committed request that changed the page to the revision it reports. */
+const MUTATED_PAGE = `(r.operation IN ('put_page','capture','edit_page','append_page','delete_page','restore_page','revert_version')
+    AND r.outcome->>'status' IN ('created_or_updated','restored','reverted','soft_deleted')
+    AND COALESCE(r.outcome->>'noop', 'false') <> 'true'
+  OR r.operation = 'remember' AND r.outcome->>'status' IN ('inserted','superseded') AND EXISTS (
+    SELECT 1 FROM facts f WHERE f.id = ${FACT_ID} AND f.source_id = r.source_id
+       AND f.row_num IS NOT NULL AND f.source_markdown_slug = r.slug))`;
+
+/** One attribution-backfill phase: the table, its three attribution columns, the proof join and the unfilled count. */
+export interface AttributionPhase { table: AttributionTable; columns: [string, string, string]; proof: string; unfilled: string }
+
+export const ATTRIBUTION_PHASES: AttributionPhase[] = [
+  {
+    table: 'pages', columns: ['revision_write_request_id', 'revision_principal_kind', 'revision_principal_id'],
+    proof: `SELECT t.id AS target_id, t.source_id, t.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
+      FROM pages t JOIN persistence_requests r ON r.state = 'committed' AND r.source_id = t.source_id
+       AND r.outcome->>'revision' = t.knowledge_revision::text
+     WHERE t.source_id = ANY($1::text[]) AND t.revision_write_request_id IS NULL AND t.revision_principal_kind IS NULL AND ${MUTATED_PAGE}`,
+    unfilled: `SELECT count(*)::int AS n FROM pages t
+     WHERE t.source_id = ANY($1::text[]) AND t.revision_write_request_id IS NULL AND t.revision_principal_kind IS NULL`,
+  },
+  {
+    table: 'page_versions', columns: ['write_request_id', 'write_principal_kind', 'write_principal_id'],
+    proof: `SELECT t.id AS target_id, p.source_id, p.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
+      FROM page_versions t JOIN pages p ON p.id = t.page_id
+      JOIN persistence_requests r ON r.state = 'committed' AND r.source_id = p.source_id
+       AND r.outcome->>'revision' = t.knowledge_revision::text
+     WHERE p.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL AND ${MUTATED_PAGE}`,
+    unfilled: `SELECT count(*)::int AS n FROM page_versions t JOIN pages p ON p.id = t.page_id
+     WHERE p.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
+  },
+  {
+    table: 'facts', columns: ['write_request_id', 'write_principal_kind', 'write_principal_id'],
+    proof: `SELECT t.id AS target_id, r.source_id, r.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
+      FROM persistence_requests r JOIN facts t ON t.id = ${FACT_ID} AND t.source_id = r.source_id
+     WHERE r.state = 'committed' AND r.operation = 'remember' AND r.outcome->>'status' IN ('inserted','superseded')
+       AND t.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
+    unfilled: `SELECT count(*)::int AS n FROM facts t
+     WHERE t.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
+  },
+];
+
+/** Rows exactly one committed request proves, optionally within an id range ($2..$3). */
+export function attributionProvenSql(phase: AttributionPhase, ranged: boolean): string {
+  return `SELECT target_id, (array_agg(source_id))[1] AS source_id, (array_agg(slug))[1] AS slug,
+      (array_agg(request_id))[1] AS request_id, (array_agg(principal_kind))[1] AS principal_kind,
+      (array_agg(principal_id))[1] AS principal_id
+    FROM (${phase.proof}${ranged ? ' AND t.id BETWEEN $2 AND $3' : ''}) proof
+   GROUP BY target_id HAVING count(*) = 1`;
+}
+
+function attributionPhase(table: AttributionTable): AttributionPhase {
+  const phase = ATTRIBUTION_PHASES.find(p => p.table === table);
+  if (!phase) throw new Error(`attribution-backfill: unknown table ${String(table)}`);
+  return phase;
+}
+
+/** The ids of the `table` rows of `sourceIds` whose attribution is unset and that exactly one committed request proves, ascending. */
+export async function listProvenAttributionTargets(exec: LegacyUnscopedRead, table: AttributionTable, sourceIds: readonly string[]): Promise<number[]> {
+  const rows = await exec.executeRaw<{ target_id: number | string }>(`${attributionProvenSql(attributionPhase(table), false)} ORDER BY target_id`, [[...sourceIds]]);
+  return rows.map(row => Number(row.target_id));
+}
+
+/** How many `table` rows of `sourceIds` have no attribution. */
+export async function countUnfilledAttribution(exec: LegacyUnscopedRead, table: AttributionTable, sourceIds: readonly string[]): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: number }>(attributionPhase(table).unfilled, [[...sourceIds]]);
+  return Number(row?.n ?? 0);
 }

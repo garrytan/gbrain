@@ -327,6 +327,34 @@ impl Brain {
         self.run(env, move |s| s.count_segmented_origin_pages(&source_ids))
     }
 
+    /// `listProvenAttributionTargets(table, sourceIds)`: resolves the ids of the `table` rows of
+    /// the sources with no attribution that exactly one committed request proves, ascending.
+    #[napi]
+    pub fn list_proven_attribution_targets<'env>(
+        &self,
+        env: &'env Env,
+        table: String,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_proven_attribution_targets(&table, &source_ids)
+        })
+    }
+
+    /// `countUnfilledAttribution(table, sourceIds)`: resolves how many `table` rows of the sources
+    /// have no attribution.
+    #[napi]
+    pub fn count_unfilled_attribution<'env>(
+        &self,
+        env: &'env Env,
+        table: String,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_unfilled_attribution(&table, &source_ids)
+        })
+    }
+
     /// `listUntiledSegmentedPages(sourceIds, slugs, limit)`: resolves `[{ id, source_id, slug,
     /// revision, body_generation, body_bytes, segment_count, source_path, n, covered, gapless }]`.
     #[napi]

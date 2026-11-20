@@ -219,6 +219,25 @@ do not tile it, so on Rust the untiled list is empty and the segmented-tiling pl
 per-page file and stored-field reads. Pinned by `test/engine-parity/repair-plan-scans.test.ts` and
 the store test `repair_plan_scans`, which builds the damage directly.
 
+### Attribution backfill
+
+The plan of `gbrain repair attribution-backfill` reads through two members
+(`src/core/engine-sql/repair-plan-scans.ts`); the store answers from `repair_attribution.rs`.
+For each table (`pages`, `page_versions`, `facts`) a row is unfilled when its attribution columns
+are null; a committed request proves a row as the SQL phase does (a page operation that is not a
+noop proves a page revision or a version's written receipt; a `remember` whose `inserted` or
+`superseded` outcome names a fact id of 1 to 18 digits proves a fenced fact on the same page).
+
+| Member | Store answer |
+| --- | --- |
+| `listProvenAttributionTargets(table, sourceIds)` | the unfilled rows of the scope's sources that exactly one committed request proves, by id |
+| `countUnfilledAttribution(table, sourceIds)` | every unfilled row of the scope's sources |
+
+The store has no query planner, so the repair does not set `enable_nestloop` on Rust. The apply
+(`fillBatch`) stays raw SQL, so an apply with a proven row stops on `raw_sql`. An unknown table is
+`invalid_argument`. Pinned by `test/engine-parity/persistence.test.ts` and the store test
+`persistence` (`attribution_backfill_targets_the_rows_exactly_one_committed_request_proves`).
+
 ## Git holds
 
 The Git sync hold rows and their summary counters belong to the hold store

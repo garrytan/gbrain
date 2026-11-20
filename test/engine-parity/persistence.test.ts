@@ -727,6 +727,43 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the attribution-backfill reads list the rows exactly one committed request proves and count every unfilled row', {
+    methods: ['listProvenAttributionTargets', 'countUnfilledAttribution', 'putPage', 'getPage', 'createVersion', 'readSourceMembership',
+      'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const targets = (table: 'pages' | 'page_versions' | 'facts', sources = ['default']) => engine.listProvenAttributionTargets(table, sources);
+    const unfilled = async (sources = ['default']) => ({ pages: await engine.countUnfilledAttribution('pages', sources),
+      page_versions: await engine.countUnfilledAttribution('page_versions', sources), facts: await engine.countUnfilledAttribution('facts', sources) });
+    const empty = { pages: await targets('pages'), unfilled: await unfilled() };
+    await engine.putPage('notes/attrib-one', { type: 'note', title: 'One', compiled_truth: 'one', timeline: '' });
+    await engine.putPage('notes/attrib-two', { type: 'note', title: 'Two', compiled_truth: 'two', timeline: '' });
+    await engine.createVersion('notes/attrib-one');
+    const one = (await engine.getPage('notes/attrib-one'))!;
+    const two = (await engine.getPage('notes/attrib-two'))!;
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const commit = async (requestId: string, operation: string, outcome: Record<string, unknown>) => {
+      await engine.lockPersistenceCounters(KEYS);
+      const { id } = await engine.insertWriteRequest({ ...insertRow(incarnation, requestId), operation });
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state: 'committed', outcome, errorCode: null, errorMessage: null, consumerVersion: 'parity', consumerHostId: null, errorDetail: null,
+        resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 0, terminalReservation: 4096, probePurges: false,
+      });
+    };
+    const changed = (revision: unknown, extra: Record<string, unknown> = {}) => ({ status: 'created_or_updated', revision, ...extra });
+    await commit('b0000000-0000-4000-8000-0000000000ba', 'put_page', changed(one.knowledge_revision));
+    await commit('b0000000-0000-4000-8000-0000000000bb', 'edit_page', changed(two.knowledge_revision));
+    await commit('b0000000-0000-4000-8000-0000000000bc', 'capture', changed(two.knowledge_revision));
+    await commit('b0000000-0000-4000-8000-0000000000bd', 'put_page', changed(one.knowledge_revision, { noop: true }));
+    await commit('b0000000-0000-4000-8000-0000000000be', 'put_page', { status: 'skipped', revision: one.knowledge_revision });
+    const slugOf = (id: number) => id === one.id ? 'one' : id === two.id ? 'two' : String(id);
+    const answers = { empty, pages: (await targets('pages')).map(slugOf), versions: (await targets('page_versions')).length, facts: await targets('facts'),
+      unfilled: await unfilled(), other: await targets('pages', ['other']), otherUnfilled: await unfilled(['other']) };
+    expect(answers).toEqual({ empty: { pages: [], unfilled: { pages: 0, page_versions: 0, facts: 0 } }, pages: ['one'], versions: 1, facts: [],
+      unfilled: { pages: 2, page_versions: 1, facts: 0 }, other: [], otherUnfilled: { pages: 0, page_versions: 0, facts: 0 } });
+    return answers;
+  });
+
   parityTest('the effect worker claims the due effect and settles each claim under its token, a stale token changing nothing', {
     methods: ['selectClaimableEffect', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow',
       'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'readRequestEffects', 'insertPublicationEffects', 'transactionDirect',
