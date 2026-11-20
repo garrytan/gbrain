@@ -11,12 +11,13 @@ import { observationDateFrom, resolveObservationDate, type ObservationDate } fro
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { deriveDateContext } from '../conversation-parser/parse.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
-import { resolveExtractedEntitiesForSave, unbackedEntityKeysEnabled, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
+import { emptySaveTimeResolutionCounts, mergeSaveTimeResolutionCounts, resolveExtractedEntitiesForSave, unbackedEntityKeysEnabled, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
 import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { CONVERSATION_ENTITY_HINTS_CAP } from './conversation-entity-hints.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './conversation-publication.ts';
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
 import type { ConversationSegment } from './conversation-types.ts';
+import { renderSegmentForExtraction, segmentOf } from './conversation-windows.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
 import { tagSlots } from './slot-tagging.ts';
 import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
@@ -116,6 +117,44 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
       + 'the facts are kept without slots, and --force tags them again\n');
   }
   return { extracted: extracted.length, rows: tagged.rows, resolution };
+}
+
+/** A window the extraction model declined to read: its span and the extract.ts reason. */
+export interface DeclinedWindow { start: string; end: string; reason: 'refusal' | 'content_filter' }
+
+/** The extract.ts reason of a window the model declined (a refusal or a content filter stop), or null for any other failure. */
+function declinedReason(error: unknown): DeclinedWindow['reason'] | null {
+  const reason = (error as { extractionReason?: unknown } | null)?.extractionReason;
+  return reason === 'refusal' || reason === 'content_filter' ? reason : null;
+}
+
+/**
+ * GST-3251: one whole-page window, where a window the model declines does not fail the page. A declined window of two or
+ * more messages is retried once as its two halves (at most two more calls, over the same text once more); what still
+ * declines is returned in `declined` with the facts of everything that read. Every other failure, BudgetExhausted
+ * included, is thrown as before.
+ */
+export async function extractConversationWindowOrHalves(run: ConversationWindowRun, page: Page, seg: ConversationSegment, rowNum: number,
+  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts; declined: DeclinedWindow[] }> {
+  const title = page.title || page.slug;
+  const attempt = async (part: ConversationSegment, at: number) => {
+    try {
+      return { ...(await extractConversationWindow(run, page, part, renderSegmentForExtraction(title, part), at, entityHints)), declined: [] as DeclinedWindow[] };
+    } catch (error) {
+      const reason = run.signal?.aborted ? null : declinedReason(error);
+      if (!reason) throw error;
+      return { extracted: 0, rows: [] as ConversationFactRow[], resolution: emptySaveTimeResolutionCounts(), declined: [{ start: part.startIso, end: part.endIso, reason }] };
+    }
+  };
+  const whole = await attempt(seg, rowNum);
+  if (whole.declined.length === 0 || seg.messages.length < 2) return whole;
+  const mid = Math.ceil(seg.messages.length / 2);
+  const first = await attempt(segmentOf(seg.messages.slice(0, mid)), rowNum);
+  const second = await attempt(segmentOf(seg.messages.slice(mid)), rowNum + first.extracted);
+  const resolution = emptySaveTimeResolutionCounts();
+  mergeSaveTimeResolutionCounts(resolution, first.resolution);
+  mergeSaveTimeResolutionCounts(resolution, second.resolution);
+  return { extracted: first.extracted + second.extracted, rows: [...first.rows, ...second.rows], resolution, declined: [...first.declined, ...second.declined] };
 }
 
 /**
