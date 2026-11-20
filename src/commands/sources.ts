@@ -803,8 +803,10 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 
   // v0.26.5: Impact preview + destructive guard
   const impact = await assessDestructiveImpact(engine, id);
+  const appleContacts = parseConfig(src.config).kind === 'apple-contacts';
   if (impact) {
     console.log(formatImpact(impact));
+    if (appleContacts) console.log(`  ${await (await import('../core/apple-contacts/person-facts.ts')).countPersonFacts(engine, id)} company, job title and group row(s) on person pages are retired first.`);
     const ownedFiles = await (await import('../core/owned-folder/remove.ts')).previewOwnedRemoval(engine, id);
     if (ownedFiles) console.log(`  ${ownedFiles} chat-day file(s) in .gbrain-owned/${id}/ ${keepStorage ? 'stay (--keep-storage)' : 'are removed in one commit; the remote history still holds what was pushed'}.`);
 

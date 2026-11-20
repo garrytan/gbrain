@@ -759,3 +759,30 @@ test('on a brain with a Git checkout the person file changes only inside its Fac
   expect(git(repo, 'log', '-p', '--all').stdout).not.toContain('alice.home@example.invalid');
   expect(id.startsWith('apple-contacts-')).toBe(true);
 });
+
+describe('removing the source (repo-less brain)', () => {
+  test('removing the source retires its person-page rows first; a refused remove or a row it cannot retire keeps them', async () => {
+    await deletePeople();
+    await personPage('people/alice-example', { email: 'alice@example.invalid' });
+    const s = freshStub();
+    s.upsert('c-alice', ALICE);
+    for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    expect(await ourFacts(id)).toEqual(['Company: Acme Example', 'Contacts group: Harbor Club', 'Job title: Engineer']);
+    const { runSources } = await import('../src/commands/sources.ts');
+    const registered = async () => (await engine.executeRaw('SELECT 1 FROM sources WHERE id=$1', [id])).length;
+    const [row] = await engine.executeRaw<{ id: number }>("SELECT id FROM facts WHERE source=$1 AND fact LIKE 'Company:%' AND expired_at IS NULL", ['apple-contacts:' + id]);
+    await engine.executeRaw('UPDATE facts SET source_markdown_slug=NULL WHERE id=$1', [row!.id]);
+    await expect(runSources(engine, ['remove', id, '--confirm-destructive'])).rejects.toThrow(/cannot be retired/);
+    expect(await registered()).toBe(1);
+    expect(await ourFacts(id)).toHaveLength(3);
+    await engine.executeRaw('UPDATE facts SET source_markdown_slug=$2 WHERE id=$1', [row!.id, 'people/alice-example']);
+    const { removeSource } = await import('../src/core/sources-ops.ts');
+    await expect(removeSource(engine, { id })).rejects.toThrow();
+    expect(await ourFacts(id)).toHaveLength(3);
+    await removeSource(engine, { id, confirmDestructive: true });
+    expect(await ourFacts(id)).toEqual([]);
+    expect(await registered()).toBe(0);
+  });
+});

@@ -106,6 +106,51 @@ export async function syncPersonFacts(engine: BrainEngine, contactsSourceId: str
   return 'written';
 }
 
+/** Active rows this apple-contacts source wrote on person pages, and how many of them no page write can retire. */
+async function personFactCounts(engine: Pick<BrainEngine, 'executeRaw'>, contactsSourceId: string): Promise<{ active: number; stuck: number }> {
+  const [row] = await engine.executeRaw<{ active: number; stuck: number }>(
+    'SELECT count(*)::int AS active, (count(*) FILTER (WHERE f.source_markdown_slug IS NULL OR s.id IS NULL OR s.archived))::int AS stuck FROM facts f LEFT JOIN sources s ON s.id=f.source_id WHERE f.source=$1 AND f.expired_at IS NULL',
+    [personFactSource(contactsSourceId)]);
+  return { active: Number(row?.active ?? 0), stuck: Number(row?.stuck ?? 0) };
+}
+
+export const countPersonFacts = async (engine: Pick<BrainEngine, 'executeRaw'>, contactsSourceId: string) => (await personFactCounts(engine, contactsSourceId)).active;
+
+/**
+ * Before an apple-contacts source is removed or purged: retire every person-page row it wrote. Those rows live in the
+ * people pages' own sources, so deleting the source alone would leave them behind. Clears the source's holder list.
+ * Throws before retiring anything when a row has no page slug or its page's source is archived or gone, and throws when
+ * a row is still active afterwards, so the caller stops before the source is deleted.
+ */
+export async function retireAllPersonFacts(engine: BrainEngine, contactsSourceId: string): Promise<number> {
+  const tag = personFactSource(contactsSourceId);
+  const { stuck } = await personFactCounts(engine, contactsSourceId);
+  if (stuck > 0) {
+    throw new Error('Source "' + contactsSourceId + '" has ' + stuck + ' active fact row(s) on person pages that cannot be retired (no page slug, or the page\'s source is archived or gone), so nothing was retired and the source was not removed. Restore an archived people source first; otherwise report it with the output of gbrain doctor --json.');
+  }
+  const pages = await engine.executeRaw<{ source_id: string; slug: string; ids: number[] }>(
+    'SELECT source_id, source_markdown_slug AS slug, array_agg(id ORDER BY id) AS ids FROM facts WHERE source=$1 AND expired_at IS NULL AND source_markdown_slug IS NOT NULL GROUP BY source_id, source_markdown_slug ORDER BY source_id, source_markdown_slug',
+    [tag]);
+  let retired = 0;
+  for (const page of pages) {
+    const ids = page.ids.map(Number);
+    await retireConnectorFacts(engine, page.source_id, page.slug, { factSource: tag, factIds: ids, note: 'Apple Contacts source removed' });
+    retired += ids.length;
+  }
+  const left = await countPersonFacts(engine, contactsSourceId);
+  if (left > 0) {
+    throw new Error('Source "' + contactsSourceId + '" still has ' + left + ' active fact row(s) on person pages that changed during the remove and could not be retired, so it was not removed. Run the remove again.');
+  }
+  await writePersonFactHolders(engine, contactsSourceId, {});
+  return retired;
+}
+
+/** The step every source removal runs before the row delete: an apple-contacts source retires its person-page rows first. */
+export async function retirePersonFactsBeforeRemove(engine: BrainEngine, sourceId: string): Promise<void> {
+  const [src] = await engine.executeRaw<{ kind: string | null }>("SELECT config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  if (src?.kind === 'apple-contacts') await retireAllPersonFacts(engine, sourceId);
+}
+
 export type PersonFactHolders = Record<string, string>;
 export const holderKey = (p: { source_id: string; slug: string }) => p.source_id + '\t' + p.slug;
 
