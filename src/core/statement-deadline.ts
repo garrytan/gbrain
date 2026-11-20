@@ -89,8 +89,8 @@ function refuse(scope: StatementDeadline): never {
 /** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
-/** Those reads and the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), which also replaced a bounded statement. */
-const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, 'getWorktreeBinding']);
+/** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the liveness round trip (engine-sql/health.ts `pingStore`), which also replaced bounded statements. */
+const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

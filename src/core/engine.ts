@@ -102,7 +102,7 @@ import type {
   PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
 } from './engine-sql/jobs-health.ts';
 import type {
-  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
+  BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
   WaitingScopeState,
 } from './engine-sql/jobs-status.ts';
 import type {
@@ -1479,8 +1479,15 @@ export interface BrainEngine {
   removeAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<void>;
   /** Deletes the group and its memberships. */
   deleteAccessGroup(id: string): Promise<void>;
+  /** Member links (v286, engine-sql/access-members.ts): read one exactly, add one, remove one, list all or one member's. */
+  readAccessMemberLink(system: string, externalId: string): Promise<AccessMembersSql.AccessMemberLinkRow | null>;
+  insertAccessMemberLink(system: string, externalId: string, memberId: string): Promise<void>;
+  deleteAccessMemberLink(system: string, externalId: string): Promise<void>;
+  listAccessMemberLinks(memberId: string | null): Promise<AccessMembersSql.AccessMemberLinkRow[]>;
   /** A credential's binding columns locked FOR UPDATE (inside the binding's transaction), or undefined. */
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
+  /** The member a credential is bound to (a revoked or deleted one too, nothing locked), or null. */
+  readCredentialMemberId(target: AccessMembersSql.CredentialTarget): Promise<string | null>;
   /** Writes a credential's member, may_act_for and attest columns. */
   writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding): Promise<void>;
   /** Sets a credential's reads_unscoped to now() (true) or clears it (false). */
@@ -3037,6 +3044,8 @@ export interface BrainEngine {
    */
   getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats>;
   getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth>;
+  /** The liveness round trip (`/health`, doctor's ops-tier connection check): resolves when the store answers. */
+  pingStore(opts?: { signal?: AbortSignal }): Promise<void>;
 
   // Ingest log
   logIngest(entry: IngestLogInput): Promise<void>;
@@ -3872,6 +3881,10 @@ export interface BrainEngine {
   readLiveOauthClients(): Promise<OauthClientRow[]>;
   /** Every access token not revoked, whole rows (a store that keeps no attest or private columns reads their defaults). */
   readLiveAccessTokenRows(): Promise<Record<string, unknown>[]>;
+  /** Every access token, revoked ones too, whole rows newest first, a tie by id (the admin key list). */
+  listAccessTokenRows(): Promise<Record<string, unknown>[]>;
+  /** The transaction-scoped lock on a client name key, so same-name registrations serialize (a single-writer store takes none). */
+  lockOauthClientName(lockKey: string): Promise<void>;
   /** Whether the client holds an OAuth token or an authorization code (a store that keeps neither answers false). */
   oauthClientHoldsAuthorization(clientId: string): Promise<boolean>;
   /** Whether the source is archived, read FOR SHARE inside the caller's transaction; null for no such source. */
@@ -4118,6 +4131,8 @@ export interface BrainEngine {
 
   /** One job row by id, or null. */
   getJob(id: number): Promise<JobRow | null>;
+  /** `{ data }` of the job holding an idempotency key, whatever its status, or null. */
+  readJobDataByIdempotencyKey(key: string): Promise<{ data: unknown } | null>;
 
   /** Job rows matching every given filter, newest first (default 50 from offset 0). */
   listJobs(filter?: ListJobsFilter): Promise<JobRow[]>;
@@ -4276,6 +4291,8 @@ export interface BrainEngine {
   countRecentCompletedJobs(name: string, withinSeconds: number): Promise<number>;
   /** The id and failure text of dead or failed jobs updated within the last `withinSeconds`, by id. */
   listRecentFailedJobErrors(withinSeconds: number): Promise<FailedJobError[]>;
+  /** The newest five unfinished jobs that own a budget, with remaining and reserved cents, newest id first. */
+  listBudgetOwners(): Promise<BudgetOwnerRow[]>;
   /** The average page text length (capped at `maxChars`) of the pages queued jobs of a name and queue point at, or null. */
   readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }): Promise<number | null>;
   /** Per-source failure, queue and embed-backfill counts over the `sync` and `embed-backfill` jobs. */

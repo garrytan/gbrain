@@ -16,7 +16,7 @@
  * same write, and readLiveMember finds the member a client not deleted or a token not revoked is bound to.
  */
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
-import type { AccessMemberInsert, AccessMemberKind, CredentialBinding, CredentialBindingRow, CredentialTarget } from '../../engine-sql/access-members.ts';
+import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget } from '../../engine-sql/access-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -74,6 +74,25 @@ export const removeAccessGroupMembers: StoreMember<[groupId: string, memberIds: 
 export const deleteAccessGroup: StoreMember<[id: string], void> = async (brain, id) => {
   await write('deleteAccessGroup', () => brain.deleteAccessGroup(id));
 };
+
+const asLink = (r: Record<string, unknown>): AccessMemberLinkRow => ({ system: String(r.system), external_id: String(r.external_id),
+  member_id: String(r.member_id), created_at: new Date(String(r.created_at)) });
+
+export const readAccessMemberLink: StoreMember<[system: string, externalId: string], AccessMemberLinkRow | null> = async (brain, system, externalId) => {
+  const row = await storeCall({ member: 'readAccessMemberLink' }, () => brain.readAccessMemberLink(system, externalId)) as Record<string, unknown> | null;
+  return row ? asLink(row) : null;
+};
+
+export const insertAccessMemberLink: StoreMember<[system: string, externalId: string, memberId: string], void> = async (brain, system, externalId, memberId) => {
+  await write('insertAccessMemberLink', () => brain.insertAccessMemberLink(system, externalId, memberId));
+};
+
+export const deleteAccessMemberLink: StoreMember<[system: string, externalId: string], void> = async (brain, system, externalId) => {
+  await write('deleteAccessMemberLink', () => brain.deleteAccessMemberLink(system, externalId));
+};
+
+export const listAccessMemberLinks: StoreMember<[memberId: string | null], AccessMemberLinkRow[]> = async (brain, memberId) =>
+  (await storeCall({ member: 'listAccessMemberLinks' }, () => brain.listAccessMemberLinks(memberId)) as Record<string, unknown>[]).map(asLink);
 
 /** The ids of the members neither disabled nor removed, by id. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async (brain) =>
@@ -164,6 +183,15 @@ export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarg
       ...(opts.readsUnscoped ? { reads_unscoped: row.reads_unscoped } : {}),
     };
   };
+
+/** The binding reads readCredentialBindingForUpdate uses (a revoked token and a deleted client are read too). */
+export const readCredentialMemberId: StoreMember<[target: CredentialTarget], string | null> = async (brain, target) => {
+  if (target.kind === 'token') {
+    const token = await storeCall({ member: 'readCredentialMemberId' }, () => brain.readAccessTokenBinding(target.id)) as { member_id?: string | null } | null;
+    return token?.member_id ?? null;
+  }
+  return (await readOauthClient(brain, target.id))?.member_id ?? null;
+};
 
 export const writeCredentialBinding: StoreMember<[target: CredentialTarget, binding: CredentialBinding], void> = async (brain, target, binding) => {
   const wire = {

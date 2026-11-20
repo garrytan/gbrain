@@ -288,6 +288,12 @@ export async function getJob(tx: Raw, id: number): Promise<JobRow | null> {
   return row ?? null;
 }
 
+/** `{ data }` of the job holding `key` (any status), or null; serve-http-webhooks.ts legacyIngestJob reads it. */
+export async function readJobDataByIdempotencyKey(tx: Raw, key: string): Promise<{ data: unknown } | null> {
+  const [row] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM minion_jobs WHERE idempotency_key = $1', [key]);
+  return row ?? null;
+}
+
 export interface ListJobsFilter {
   status?: string;
   queue?: string;

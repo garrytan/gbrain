@@ -299,3 +299,8 @@ export async function countOnboardSignal(
   const rows = await exec.executeRaw<{ count: string | number }>(text, params, { signal: opts.signal });
   return rows.length > 0 ? Number(rows[0].count) : 0;
 }
+
+/** The liveness round trip (`SELECT 1`): resolves when the store answers, rejects as executeRaw does (an aborted `signal` included). */
+export async function pingStore(exec: { executeRaw(sql: string, params?: unknown[], opts?: { signal?: AbortSignal }): Promise<unknown[]> }, opts: { signal?: AbortSignal } = {}): Promise<void> {
+  await exec.executeRaw('SELECT 1', undefined, { signal: opts.signal });
+}

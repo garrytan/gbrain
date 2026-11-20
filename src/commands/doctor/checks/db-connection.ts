@@ -314,7 +314,7 @@ async function runConnection(ctx: DoctorContext): Promise<Check[]> {
   try {
     // #6696 B1: the ops tier proves the round trip only; the page count is a full count the deadline does not afford.
     if (cheapTier(ctx.tier)) {
-      await engine.executeRaw('SELECT 1 AS ok');
+      await engine.pingStore();
       checks.push({ name: 'connection', status: 'ok', message: `Connected (${ctx.tier} tier: page count not read).` });
     } else {
       const stats = await engine.getStats();

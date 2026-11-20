@@ -90,9 +90,11 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
       { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'host_admin', why: 'Lists the source ids this brain serves.', requires_exclusive: false, docs: DOCS });
   }
   if (sourcesParam) {
-    const rows = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [sourcesParam]);
-    const active = new Set(rows.map(r => r.id));
-    const missing = sourcesParam.filter(id => !active.has(id));
+    const missing: string[] = [];
+    for (const id of sourcesParam) {
+      const state = await engine.readSourceAttestState(id);
+      if (!state || state.archived === true) missing.push(id);
+    }
     if (missing.length) {
       throw invalid(`Unknown or archived source: ${missing.join(', ')}.`, 'Resubmit with active source ids from gbrain sources list.',
         'A key can only be granted sources this brain serves.',
@@ -128,7 +130,7 @@ const sendError = (res: Response, status: number, e: unknown) =>
 export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
   app.get('/admin/api/api-keys', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens ORDER BY created_at DESC, id');
+      const rows = await engine.listAccessTokenRows();
       res.json(rows.map(row => ({
         id: String(row.id), name: row.name, created_at: row.created_at, last_used_at: row.last_used_at,
         status: row.revoked_at != null ? 'revoked' : 'active', ...grantView(row),

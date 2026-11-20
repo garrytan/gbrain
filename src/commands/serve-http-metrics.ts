@@ -247,7 +247,7 @@ export async function probeHealth(
 }
 
 /**
- * Races an abortable `SELECT 1` against `probeHealth`'s timeout; Postgres
+ * Races an abortable store round trip (`engine.pingStore`, `SELECT 1` on SQL) against `probeHealth`'s timeout; Postgres
  * cancels the losing query while PGLite only discards its eventual result.
  */
 export async function probeLiveness(
@@ -260,7 +260,7 @@ export async function probeLiveness(
   const controller = new AbortController();
   try {
     await Promise.race([
-      engine.executeRaw('SELECT 1', undefined, { signal: controller.signal }),
+      engine.pingStore({ signal: controller.signal }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           controller.abort();

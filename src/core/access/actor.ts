@@ -311,9 +311,9 @@ function assertExternalId(raw: unknown): string {
 const iso = (v: unknown) => v == null ? null : v instanceof Date ? v.toISOString() : String(v);
 const toLink = (r: Record<string, unknown>): MemberLink => ({ system: String(r.system), external_id: String(r.external_id), member_id: String(r.member_id), created_at: iso(r.created_at) });
 
-async function linkRow(engine: Pick<BrainEngine, 'executeRaw'>, system: string, externalId: string): Promise<MemberLink | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT system, external_id, member_id, created_at FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
-  return row ? toLink(row) : null;
+async function linkRow(engine: Pick<BrainEngine, 'readAccessMemberLink'>, system: string, externalId: string): Promise<MemberLink | null> {
+  const row = await engine.readAccessMemberLink(system, externalId);
+  return row ? toLink({ ...row }) : null;
 }
 
 /** Links a canonical id to an enabled member; refuses an invalid id, a member that is not enabled and an id already linked. */
@@ -326,7 +326,7 @@ export async function linkMember(engine: BrainEngine, rawMember: unknown, system
       existing.member_id === member ? 'Nothing to do: the link exists.' : `Unlink it first (gbrain access member unlink --${system} <id>), then link it to ${member}.`);
   }
   if (opts.dryRun) return { link: { system, external_id: externalId, member_id: member, created_at: null }, applied: false };
-  await engine.executeRaw('INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)', [system, externalId, member]);
+  await engine.insertAccessMemberLink(system, externalId, member);
   return { link: (await linkRow(engine, system, externalId))!, applied: true };
 }
 
@@ -340,13 +340,10 @@ export async function unlinkMember(engine: BrainEngine, system: string, rawId: u
   const externalId = assertExternalId(rawId);
   const existing = await linkRow(engine, system, externalId);
   if (!existing) throw linkInvalid(`That ${system} id is not linked to any member.`, 'unknown_link', 'List the links with gbrain access member links.');
-  if (!opts.dryRun) await engine.executeRaw('DELETE FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
+  if (!opts.dryRun) await engine.deleteAccessMemberLink(system, externalId);
   return { link: existing, applied: !opts.dryRun };
 }
 
 export async function listMemberLinks(engine: BrainEngine, opts: { member?: string } = {}): Promise<MemberLink[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT system, external_id, member_id, created_at FROM access_member_links${opts.member ? ' WHERE member_id = $1' : ''} ORDER BY member_id, system, external_id`,
-    opts.member ? [opts.member] : []);
-  return rows.map(toLink);
+  return (await engine.listAccessMemberLinks(opts.member || null)).map(row => toLink({ ...row }));
 }
