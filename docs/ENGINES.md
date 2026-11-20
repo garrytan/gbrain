@@ -1148,6 +1148,13 @@ holding the single-writer data-dir lock reports `locked_by_serve`
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
 
+On a Rust brain the report names `rust` as the engine and the probe is typed. It checks the addon first and reports
+`rust_engine_addon_missing`, `rust_engine_addon_mismatch` or `engine_capability_missing` as a `refusal` (code, reason,
+message), not as a database diagnosis. A `database_path` with no `records.redb` (a missing path or an empty directory)
+probes as `data_dir_missing`, and an empty `records.redb` (a first open that stopped early) as `store_incomplete`;
+the probe creates nothing in either case. Otherwise it opens the store and reads one config key, since the Rust
+engine serves no `SELECT 1`.
+
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
 Engine-free Postgres-access repair, the sibling of `gbrain pglite-repair`
@@ -1692,9 +1699,11 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
 The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
 as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
-(`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
-addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
-when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
+(`src/core/rust-engine.ts`) is the one seam: the `rust` case of `constructEngine` (`src/core/engine-construct.ts`)
+calls it after the addon loader has loaded and verified the native addon, and gets back the engine: every
+`BrainEngine` member, with `kind` `'rust'`. A `~/.gbrain/config.json` with `"engine": "rust"` and an absolute
+`database_path` (the store directory) selects it; that is a hand edit, because no command writes the value. A missing
+or relative `database_path` refuses `config_error` before the addon loads. Finding, checking and loading the
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
@@ -1712,6 +1721,14 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+- **On the CLI.** Commands that need raw SQL (`import`, `sources add` and others) refuse `engine_capability_missing`.
+  When the source lookup is refused on a Rust brain and a source was selected (`GBRAIN_SOURCE`, a `.gbrain-source`
+  file, `sources.default`) or the brain holds a source besides `default`, the command stops with that refusal instead
+  of reading every source (`refusedSourceTarget`, `src/core/source-resolver.ts`). `gbrain init` with no engine flag
+  keeps an existing `rust` config: it reports the brain, leaves `config.json` unchanged and never opens the store;
+  `--pglite`, `--supabase`, `--url` and `--prefer-postgres` still choose the engine
+  (`src/commands/init-existing-engine.ts`). The owner makes the store directory mode 0700 when it opens the brain.
+  Pinned by `test/rust-cli-parity.serial.test.ts` (`docs/TESTING.md`, "Rust parity arm").
 - **The addon loader.** `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) returns the loaded addon,
   or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
   <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
@@ -1788,7 +1805,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
   `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
   a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
-  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`).
+  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
+  plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
 way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
