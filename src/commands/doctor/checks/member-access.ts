@@ -98,13 +98,10 @@ async function recentNarrowings(engine: BrainEngine): Promise<Check> {
     fix: { ...showPage(rows[0]!, name, 'Shows the most recently narrowed page and its readers, read-only; ask the user whether the narrowing was intended before reverting anything.'), actor: 'user', ask_user: true } };
 }
 
-async function backfill(engine: BrainEngine): Promise<Check> {
+/** `access_page_readers_backfill`: pages whose stored readers lag the readers their frontmatter names. */
+export async function backfill(engine: BrainEngine): Promise<Check> {
   const name = 'access_page_readers_backfill';
-  const [row] = await engine.executeRaw<{ total: number }>(
-    `SELECT count(*)::int AS total FROM pages
-      WHERE (frontmatter->'readable_by' IS NOT NULL OR page_readers IS NOT NULL)
-        AND page_readers IS DISTINCT FROM gbrain_access_readers(frontmatter)`);
-  const total = row?.total ?? 0;
+  const total = await engine.countAccessReaderDrift();
   if (!total) return { name, status: 'ok', details: { count: 0 }, message: 'Every page that names readers has its derived readers.' };
   return { name, status: 'warn', details: { count: total, repair: 'access' },
     message: `${total} page(s) name readers in frontmatter but have no derived readers yet (written before member access), so they read as nobody for every remote caller, listed members included. `

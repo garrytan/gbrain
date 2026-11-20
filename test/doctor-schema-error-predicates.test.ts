@@ -49,6 +49,7 @@ const TYPED_SQL_READS = new Set<PropertyKey>([
   'countZeroWeightWithTakes', // the salience count
   'listTrustScanRows', 'countUnscannedTrustRows', // trust_scan (src/core/eligibility/scan.ts)
   'listOwnedContentRows', // canonical_content_writes and sync_freshness (src/core/shared-skills/content-freshness.ts)
+  'countPageChildOrphans', 'countAccessReaderDrift', 'readOriginIndexState', 'listOriginTwinCounts', // child_table_orphans, member access, origin_twins
 ]);
 
 /** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the typed reads above) throws `error`. */

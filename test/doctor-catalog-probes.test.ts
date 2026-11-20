@@ -27,6 +27,7 @@ import { describe, expect } from 'bun:test';
 import { parityArms } from './engine-parity/harness.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { reportsCapability } from '../src/core/rust-engine/store-members/catalog.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../src/commands/doctor/context.ts';
 import { functionSearchPathEntry } from '../src/commands/doctor/checks/function-search-path.ts';
@@ -163,8 +164,9 @@ describe('engine parity: catalog probes', () => {
     if (!result.answered) return result;
     const [check] = result.checks;
     if (backend === 'rust') {
-      // The Rust store does not report vector_search yet: skipped, naming the capability.
-      expect({ skipped: skipped(check), capability: (check?.details as { capability?: unknown })?.capability }).toEqual({ skipped: true, capability: 'vector_search' });
+      // The Rust store reports vector_search, so the check answers from it instead of skipping. A store that stopped
+      // reporting it would skip, naming the capability (catalogSkipCheck).
+      expect({ reports: reportsCapability(engine, 'vector_search'), skipped: skipped(check) }).toEqual({ reports: true, skipped: false });
     } else {
       expect(skipped(check)).toBe(false);
     }

@@ -476,7 +476,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
-      untypedWarnings: ['backup_coverage', 'child_table_orphans',
+      // child_table_orphans is gone from this list: the page child counts are typed members on Rust
+      // (engine-sql/repair-page-reads.ts), so the check passes with PGLite's message.
+      untypedWarnings: ['backup_coverage',
         'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack

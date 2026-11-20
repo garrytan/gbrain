@@ -16,10 +16,11 @@ import { describe, test, expect } from 'bun:test';
 import { childTableOrphansCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { countOrphanChunks } from '../src/core/engine-sql/chunk-reads.ts';
+import { countPageChildOrphans } from '../src/core/engine-sql/repair-page-reads.ts';
 
 /**
- * Build a structurally-typed BrainEngine whose executeRaw returns per-SQL results. The content_chunks target
- * reads through the engine member `countOrphanChunks`; the mock runs the SQL engines' statement for it through
+ * Build a structurally-typed BrainEngine whose executeRaw returns per-SQL results. The targets read through the engine
+ * members `countOrphanChunks` and `countPageChildOrphans`; the mock runs the SQL engines' statements for them through
  * the same handler, so every target's SQL is still seen here.
  */
 function makeMockEngine(handler: (sql: string) => Promise<unknown[]>): BrainEngine {
@@ -27,6 +28,7 @@ function makeMockEngine(handler: (sql: string) => Promise<unknown[]>): BrainEngi
   return {
     executeRaw,
     countOrphanChunks: () => countOrphanChunks({ executeRaw } as never),
+    countPageChildOrphans: (target: { table: string; col: string }) => countPageChildOrphans({ executeRaw } as never, target),
   } as unknown as BrainEngine;
 }
 

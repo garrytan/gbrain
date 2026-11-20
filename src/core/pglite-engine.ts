@@ -177,6 +177,7 @@ import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
 import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
 import * as ownedContentImpl from './engine-sql/owned-content.ts';
+import * as repairPageReadsImpl from './engine-sql/repair-page-reads.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import type { RowAttributionTarget, VersionRef, WriteAttributionNameIds } from './engine-sql/write-attribution.ts';
@@ -1879,6 +1880,15 @@ export class PGLiteEngine implements BrainEngine {
   listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean) { return ownedContentImpl.listOwnedContentRows(this.repairBookkeepingReads, sourceIds, inheritsPersistence); }
   readContentReceiptBinding(sourceId: string) { return ownedContentImpl.readContentReceiptBinding(this.repairBookkeepingReads, sourceId); }
   readConfigForUpdate(key: string) { return ownedContentImpl.readConfigForUpdate(this.engineSql, key); }
+  /** Page repair reads (engine-sql/repair-page-reads.ts): reads unscoped as before; writes on the engine's own executor. */
+  countPageChildOrphans(target: { table: string; col: string }) { return repairPageReadsImpl.countPageChildOrphans(this.repairBookkeepingReads, target); }
+  clearPageChildOrphans(target: { table: string; col: string }) { return repairPageReadsImpl.clearPageChildOrphans(this.engineSql, target); }
+  probeTornPages() { return repairPageReadsImpl.probeTornPages(this.repairBookkeepingReads); }
+  listAccessReaderDrift(sourceIds: readonly string[], afterId: number) { return repairPageReadsImpl.listAccessReaderDrift(this.repairBookkeepingReads, sourceIds, afterId); }
+  countAccessReaderDrift() { return repairPageReadsImpl.countAccessReaderDrift(this.repairBookkeepingReads); }
+  deriveAccessReaders(pageId: number) { return repairPageReadsImpl.deriveAccessReaders(this.engineSql, pageId); }
+  readOriginIndexState() { return repairPageReadsImpl.readOriginIndexState(this.repairBookkeepingReads); }
+  listOriginTwinCounts(limit: number) { return repairPageReadsImpl.listOriginTwinCounts(this.repairBookkeepingReads, limit); }
   /** Write attribution reads (engine-sql/write-attribution.ts). */
   private get attributionReads() { return unscopedExecutor(this.engineSql, 'write attribution: get_write_attribution ran these unscoped through executeRaw'); }
   readWriteAttributionNames(ids: WriteAttributionNameIds) { return writeAttributionImpl.readWriteAttributionNames(this.attributionReads, ids); }

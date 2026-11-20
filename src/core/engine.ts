@@ -76,6 +76,7 @@ import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, Source
 import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow } from './engine-sql/repair-bookkeeping.ts';
 import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget } from './engine-sql/managed-sync-orphans.ts';
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
+import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1549,6 +1550,22 @@ export interface BrainEngine {
   readContentReceiptBinding(sourceId: string): Promise<ContentReceiptBinding | null>;
   /** The config value under `key`, its row locked in the caller's transaction; null when no row. */
   readConfigForUpdate(key: string): Promise<string | null>;
+  /** Rows of a listed page child column whose page no longer exists (engine-sql/repair-page-reads.ts); an unlisted column throws. */
+  countPageChildOrphans(target: { table: string; col: string }): Promise<number>;
+  /** Deletes those orphans, or clears the reference of an ON DELETE SET NULL column; how many rows changed. */
+  clearPageChildOrphans(target: { table: string; col: string }): Promise<number>;
+  /** Pages whose stored body, timeline or frontmatter cannot be read back (torn TOAST): the count and the first 20 by id. */
+  probeTornPages(): Promise<TornPages>;
+  /** Pages of `sourceIds` after `afterId` whose stored readers differ from the readers their frontmatter names, by id. */
+  listAccessReaderDrift(sourceIds: readonly string[], afterId: number): Promise<PageRef[]>;
+  /** How many pages brain-wide name readers whose stored readers differ from them. */
+  countAccessReaderDrift(): Promise<number>;
+  /** Stores the readers the page's frontmatter names when they differ; false when nothing changed. */
+  deriveAccessReaders(pageId: number): Promise<boolean>;
+  /** The state of `pages_live_origin_key`, the one-live-page-per-origin invariant (#6948). */
+  readOriginIndexState(): Promise<OriginIndexState>;
+  /** Live duplicate-origin groups per source, by source id, at most `limit` sources. */
+  listOriginTwinCounts(limit: number): Promise<OriginTwinCount[]>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

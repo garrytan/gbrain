@@ -200,6 +200,15 @@ export const RUST_ENGINE_MEMBERS = {
   listOwnedContentRows: 'persistence_journal',
   readContentReceiptBinding: 'persistence_journal',
   readConfigForUpdate: 'config',
+  // The page repair reads (engine-sql/repair-page-reads.ts): answered from the store's page invariants.
+  countPageChildOrphans: 'pages',
+  clearPageChildOrphans: 'pages',
+  probeTornPages: 'pages',
+  listAccessReaderDrift: 'pages',
+  countAccessReaderDrift: 'pages',
+  deriveAccessReaders: 'pages',
+  readOriginIndexState: 'pages',
+  listOriginTwinCounts: 'pages',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',

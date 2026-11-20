@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 946/946
+# covered: 954/954
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
-# repair_bookkeeping: 20/20
+# repair_bookkeeping: 28/28
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -97,10 +97,10 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	544	yes	yes	yes	serves
+putPage	pages	yes	547	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	21	yes	yes	yes	serves
+deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	154	yes	yes	yes	serves
@@ -198,7 +198,7 @@ findCodeDefinitions	chunks	yes	3	no	yes	yes	serves
 listSymbolTypesForName	chunks	yes	3	no	yes	yes	serves
 findCodeRefChunks	chunks	yes	3	no	yes	yes	serves
 countOversizedEmbedSkips	chunks	yes	1	no	yes	yes	serves
-countOrphanChunks	chunks	yes	1	no	yes	yes	serves
+countOrphanChunks	chunks	yes	2	no	yes	yes	serves
 countCodeChunkPages	chunks	yes	1	no	yes	yes	serves
 codeChunksExist	chunks	yes	3	no	yes	yes	serves
 hasUnsealedPages	chunks	yes	1	no	yes	yes	serves
@@ -917,6 +917,14 @@ deleteManagedSyncManifest	repair_bookkeeping	yes	2	no	yes	yes	serves
 listOwnedContentRows	repair_bookkeeping	yes	2	no	yes	yes	serves
 readContentReceiptBinding	repair_bookkeeping	yes	1	no	yes	yes	serves
 readConfigForUpdate	repair_bookkeeping	yes	1	no	yes	yes	serves
+countPageChildOrphans	repair_bookkeeping	yes	1	no	yes	yes	serves
+clearPageChildOrphans	repair_bookkeeping	yes	1	no	yes	yes	serves
+probeTornPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listAccessReaderDrift	repair_bookkeeping	yes	1	no	yes	yes	serves
+countAccessReaderDrift	repair_bookkeeping	yes	1	no	yes	yes	serves
+deriveAccessReaders	repair_bookkeeping	yes	1	no	yes	yes	serves
+readOriginIndexState	repair_bookkeeping	yes	1	no	yes	yes	serves
+listOriginTwinCounts	repair_bookkeeping	yes	1	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

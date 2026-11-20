@@ -117,6 +117,27 @@ SQL), `fence-repair/census.ts`, `doctor/checks/orphan-bindings.ts` (a union with
 bindings) and the statements that join `sources` into a wider query. Pinned by
 `test/engine-parity/repair-source-reads.test.ts`.
 
+## Page repair reads
+
+The `access` and `orphan-children` kinds, doctor's `access_page_readers_backfill`,
+`child_table_orphans` and `origin_twins` checks and `persistence/origin-index.ts` read pages through
+these members (`engine-sql/repair-page-reads.ts` on PGLite and Postgres,
+`rust-engine/store-members/repair-page-reads.ts` on Rust). The Rust answers follow from what the
+store keeps:
+
+| Member | Rust answer | Why |
+| --- | --- | --- |
+| `countPageChildOrphans(target)` | `countOrphanChunks()` for `content_chunks.page_id`, else 0 | `cascade::remove_page_rows` removes a page's tags, links, timeline and other child rows in the same write as the page |
+| `clearPageChildOrphans(target)` | 0; a typed refusal when chunk orphans exist | the store has no writer for chunk rows whose page is gone |
+| `probeTornPages()` | `{ count: 0, named: [] }` | a page body is one record; no page row can lose its body |
+| `listAccessReaderDrift`, `countAccessReaderDrift` | `[]`, 0 | the store keeps no stored-readers column; `facts/privacy.rs` derives the readers from the frontmatter at every read |
+| `deriveAccessReaders(pageId)` | `false` | as above: nothing to derive |
+| `readOriginIndexState()` | `present` | `pages::assert_origin_unclaimed` enforces one live page per origin (`keys::page_origin`) on every write path |
+| `listOriginTwinCounts(limit)` | `[]` | as above: no two live pages share an origin |
+
+Both targets lists are checked on every arm: a target outside `PAGE_CHILD_FK_TARGETS` throws
+`not a page child column`. Pinned by `test/engine-parity/repair-page-reads.test.ts`.
+
 ## Repair kinds by batch
 
 The plan of record for moving the 67 `gbrain repair` kinds onto the engine contract. Flags are the
@@ -194,3 +215,14 @@ the batch whose seeded runRepair case proves it on all three arms.
 | `missing-tables` | EP | FIX | B9 |
 | `planner-stats` | A | RUN | B9 |
 | `slug-conflicts` | PL | RUN | B9 |
+
+### Applies moved to a later batch
+
+These B3 kinds preview on Rust in B3, with the same output as PGLite and Postgres; their apply stays
+a typed refusal until the batch that owns the writer serves it. No batch adds a second writer.
+
+- `segmented-tiling` (segmented-body publish) -> B6
+- `safe-chunks` (chunk reseal) -> B6
+- `rows-behind` (git-gap history) -> B6
+- `provenance` (trust restore and drift reads) -> B4
+- `origin-twins` (the private-label carry before an origin row goes, `repair/origin-carry.ts`) -> B4
