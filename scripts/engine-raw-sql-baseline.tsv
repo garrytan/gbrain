@@ -566,7 +566,6 @@ src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	1
 src/core/ops/storage-manifest.ts	execute_raw	1
-src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
 src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1

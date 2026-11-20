@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 904/904
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -49,7 +49,7 @@
 # facts_purge: 18/18
 # facts_repair: 10/10
 # facts_trust: 10/10
-# trust_tier_reads: 14/14
+# trust_tier_reads: 15/15
 # memory_mutation_reads: 12/12
 # withdrawal_discovery: 1/1
 # withdrawal_pages: 2/2
@@ -85,7 +85,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	116	no	yes	yes	serves
+transaction	lifecycle	yes	117	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -93,13 +93,13 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	541	yes	yes	yes	serves
+putPage	pages	yes	542	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	152	yes	yes	yes	serves
+softDeletePage	pages	yes	153	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -264,11 +264,11 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	10	no	yes	yes	serves
 getSalienceScores	links	yes	12	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
-addTag	tags	yes	18	yes	yes	yes	serves
+addTag	tags	yes	19	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	6	yes	yes	yes	serves
+getTags	tags	yes	7	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
@@ -388,7 +388,7 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	15	no	yes	yes	serves
+getConfig	config	yes	16	no	yes	yes	serves
 setConfig	config	yes	28	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -400,7 +400,7 @@ readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	68	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	69	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -738,6 +738,7 @@ listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	serves
+listPageQuoteTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
 pickValidTimeEdition	trust_tier_reads	yes	9	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves

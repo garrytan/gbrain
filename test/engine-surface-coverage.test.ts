@@ -153,7 +153,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listOwnerTierFacts', 'listRestatedPrivateCopies', 'countDerivedFactTaint',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
-  'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',
+  'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listPageQuoteTiers', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',
   'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive',
   // Memory mutation reads (engine-sql/memory-mutation-reads.ts; covered by test/engine-parity/memory-mutation-reads.test.ts)
   'readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget',

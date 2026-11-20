@@ -92,7 +92,7 @@ import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/acces
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
-  ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
+  ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef, PageQuoteTier, PageQuoteTierSpec,
 } from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -4417,6 +4417,8 @@ export interface BrainEngine {
   listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
   /** The source, slug and stored type of each listed page, deleted or not, by id (the GST-687 quoting reads); unknown ids answer nothing. */
   listPageRefsByIds(ids: readonly number[]): Promise<PageIdRef[]>;
+  /** The stored type and tier of the listed pages by id (deleted or not), or of the live pages with a slug in the listed sources, by id (#8384 quoting). */
+  listPageQuoteTiers(spec: PageQuoteTierSpec): Promise<PageQuoteTier[]>;
   /** The live pages with a slug a valid-time read may follow, by source (at most six). */
   listValidTimeIdentities(spec: ValidTimeIdentitySpec): Promise<ValidTimeIdentityRow[]>;
   /** The valid-time pick over one page and its retained versions; null when the page is gone. */

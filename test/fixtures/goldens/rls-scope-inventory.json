@@ -6112,6 +6112,7 @@
         "listOwnerProposalRows": "none",
         "listOwnerRecoveryHeads": "none",
         "listOwnerTierFacts": "none",
+        "listPageQuoteTiers": "none",
         "listPageRefsByIds": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",

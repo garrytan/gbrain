@@ -196,7 +196,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
   trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
-    'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition',
+    'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listPageQuoteTiers', 'listValidTimeIdentities', 'pickValidTimeEdition',
     'listAmendmentsNotApplied', 'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive'],
 
   // memory_mutation_reads: the reads remember and forget make before admission

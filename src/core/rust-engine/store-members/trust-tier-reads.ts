@@ -1,8 +1,8 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
- * `listPageRefsByIds`; and the
+ * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters`,
+ * `listPageRefsByIds` and `listPageQuoteTiers`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
@@ -106,6 +106,22 @@ export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids)
   const rows: Array<{ id: number; source_id: string; slug: string; type: string | null }> =
     await storeCall({ member }, () => brain.listPageRefsByIds({ ids: [...ids] }));
   return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+};
+
+export const listPageQuoteTiers: Member<'listPageQuoteTiers'> = async (brain, spec) => {
+  const member = 'listPageQuoteTiers';
+  let args: { ids: number[] } | { slug: string; sourceIds: string[] };
+  if ('ids' in spec) {
+    if (spec.ids.length === 0) return [];
+    for (const id of spec.ids) requireInteger(member, 'page id', id);
+    args = { ids: [...spec.ids] };
+  } else {
+    if (spec.sourceIds.length === 0) return [];
+    args = { slug: spec.slug, sourceIds: [...spec.sourceIds] };
+  }
+  const rows: Array<{ id: number; type: string | null; trust_tier: string | null }> =
+    await storeCall({ member }, () => brain.listPageQuoteTiers(args));
+  return rows.map(r => ({ id: Number(r.id), type: r.type ?? null, trust_tier: r.trust_tier ?? null }));
 };
 
 /** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */

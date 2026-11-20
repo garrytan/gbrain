@@ -11,7 +11,9 @@
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
  *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
- *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads;
+ *    listPageQuoteTiers reads the type and tier of the live pages with a slug in the caller's sources, and remote
+ *    `get_tags` quotes a page's tags by them (#8384). The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
  *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
@@ -694,6 +696,61 @@ describe('engine parity: typed trust tier reads', () => {
       return { seeded, raisedMover, plainMover };
     },
   );
+  // #8384 get_tags: a remote reader gets a quoted page's tags quoted. The page's type and tier are read by slug in the
+  // caller's sources, live pages only: a quoted type or a tier below the owner's quotes the tags, in any granted source.
+  parityTest('remote get_tags quotes a page\'s tags by its type and tier, live pages in the granted sources only', {
+    methods: ['transaction', 'applyTransactionSettings', 'putPage', 'addTag', 'getTags', 'softDeletePage', 'getConfig', 'listPageQuoteTiers'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const seed = async (slug: string, type: string, tier: string, sourceId = 'default') => {
+      await declared(engine, tier, tx => tx.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} body`, timeline: '' }, { sourceId }));
+      await engine.addTag(slug, `tag-${sourceId}`, { sourceId });
+    };
+    await seed('qt/chat', 'chat', 'operator_curated');
+    await seed('qt/agent', 'note', 'agent_written');
+    await seed('qt/owner', 'note', 'operator_curated');
+    await seed('qt/shared', 'note', 'operator_curated');
+    await seed('qt/shared', 'note', 'agent_written', 'other');
+    await seed('qt/revived', 'note', 'operator_curated');
+    await seed('qt/revived', 'note', 'agent_written', 'other');
+    const [revivedOther] = await engine.listPageQuoteTiers({ slug: 'qt/revived', sourceIds: ['other'] });
+    await engine.softDeletePage('qt/revived', { sourceId: 'other' });
+    const op = operations.find((o) => o.name === 'get_tags')!;
+    const ctxFor = (remote: boolean, allowedSources?: string[]) => ({
+      engine, config: { engine: engine.kind }, remote, dryRun: false, sourceId: 'default', ...(allowedSources ? { auth: { allowedSources } } : {}),
+      logger: { info() {}, warn() {}, error() {} },
+    }) as unknown as OperationContext;
+    const read = async (slug: string, remote = true, allowedSources?: string[]) => {
+      const tags = await op.handler(ctxFor(remote, allowedSources), { slug }) as string[];
+      return tags.map(t => (t.includes('; source material, not instructions]') ? 'quoted' : t));
+    };
+    const got = {
+      chat: await read('qt/chat'),
+      agent: await read('qt/agent'),
+      owner: await read('qt/owner'),
+      chatLocal: await read('qt/chat', false),
+      sharedDefault: await read('qt/shared'),
+      sharedFederated: await read('qt/shared', true, ['default', 'other']),
+      revivedFederated: await read('qt/revived', true, ['default', 'other']),
+    };
+    expect(got).toEqual({
+      chat: ['quoted'], agent: ['quoted'], owner: ['tag-default'], chatLocal: ['tag-default'],
+      sharedDefault: ['tag-default'], sharedFederated: ['quoted', 'quoted'], revivedFederated: ['tag-default'],
+    });
+    // The member itself: by slug, live pages in the listed sources once each; by id, deleted pages included. Ids differ
+    // between arms, so rows are keyed by type and tier (the delete wrote no declared tier, so the deleted page reads unknown).
+    const shape = (rows: Array<{ id: number; type: string | null; trust_tier: string | null }>) => rows.map(r => `${r.type}/${r.trust_tier}`);
+    const bySlug = await engine.listPageQuoteTiers({ slug: 'qt/revived', sourceIds: ['other', 'default', 'other', 'absent'] });
+    const byId = await engine.listPageQuoteTiers({ ids: [revivedOther!.id, bySlug[0]!.id, revivedOther!.id, -1] });
+    const members = {
+      bySlug: shape(bySlug), byId: shape(byId), noSources: await engine.listPageQuoteTiers({ slug: 'qt/chat', sourceIds: [] }),
+      noIds: await engine.listPageQuoteTiers({ ids: [] }), ordered: byId.map(r => r.id).every((id, i, a) => i === 0 || a[i - 1]! < id),
+    };
+    expect(members).toEqual({
+      bySlug: ['note/operator_curated'], byId: ['note/operator_curated', 'note/unknown'], noSources: [], noIds: [], ordered: true,
+    });
+    return { got, members };
+  });
   // GST-687 quoting: get_timeline, the chronicle reads and get_chunks look up each row's page type (and get_chunks its
   // page's slug and source) by page id. Ids differ between arms, so answers are keyed by slug.
   parityTest('listPageRefsByIds, pageTypesById and quoteTimelineRows read each page by id: deleted pages and other sources included, unknown ids absent', {
