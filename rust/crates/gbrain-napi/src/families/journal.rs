@@ -735,6 +735,37 @@ impl Brain {
         self.run(env, move |s| s.list_compactable_receipts(retention_days))
     }
 
+    #[napi]
+    pub fn read_receipt_compaction_window<'env>(
+        &self,
+        env: &'env Env,
+        hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_receipt_compaction_window(hours))
+    }
+
+    #[napi]
+    pub fn list_receipt_compaction_candidates<'env>(
+        &self,
+        env: &'env Env,
+        states: Vec<String>,
+        cutoff: String,
+        max_sequence: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_receipt_compaction_candidates(&states, &cutoff, &max_sequence)
+        })
+    }
+
+    #[napi]
+    pub fn count_kept_failed_receipts<'env>(
+        &self,
+        env: &'env Env,
+        cutoff: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_kept_failed_receipts(&cutoff))
+    }
+
     /// `readWriterVersionCutoff()`: the brain's creation time as ISO text, or `null`.
     #[napi]
     pub fn read_writer_version_cutoff<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

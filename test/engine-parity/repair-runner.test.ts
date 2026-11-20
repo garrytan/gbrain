@@ -146,6 +146,14 @@ describe('engine parity: the repair runner', () => {
   parityTest('gbrain repair request-indexes finds every request index built and applies nothing', {
     methods: ['readOpCheckpointRecord', 'writeOpCheckpointRecord', 'readPersistenceBrainId', 'readCounterRows'], timeout: 60_000,
   }, previewThenApply('request-indexes'));
+  // The cutoff is now minus the retention, so each arm's clock shows in it; the case keeps only its shape (batch 8).
+  parityTest('gbrain repair receipt-compaction previews an empty journal and applies nothing', {
+    methods: ['readOpCheckpointRecord', 'writeOpCheckpointRecord', 'readPersistenceBrainId', 'readCounterRows', 'readReceiptCompactionWindow',
+      'listReceiptCompactionCandidates', 'countKeptFailedReceipts'], timeout: 60_000,
+  }, async (engine) => {
+    const result = await previewThenApply('receipt-compaction')(engine);
+    return JSON.parse(JSON.stringify(result).replace(/\b\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z\b/g, '<cutoff>'));
+  });
   for (const kind of B1_KINDS) {
     if (REFUSED_APPLY.has(kind)) {
       parityTest(`gbrain repair ${kind} previews, and its apply refuses with the same code`, {

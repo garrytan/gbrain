@@ -3,6 +3,7 @@
  *
  * The statements the consumer's housekeeping sent through `executeRaw` after a write: the host's housekeeping turn
  * (`housekeeping-turn.ts`), the receipt budget and compaction listing (`compaction-pass.ts`, `journal.ts`), the
+ * `repair receipt-compaction` window, candidates and kept-failure count (`repair/receipt-compaction.ts`), the
  * true-up reads (`receipt-true-up.ts`), the capacity forecast reads (`capacity-forecast.ts`) and the projection queue
  * reads (`page-body/projection.ts`, `page-state/projections.ts`). As in `persistence-journal.ts`, the text is written out
  * in full so this module imports no persistence code; `test/persistence-journal-statements.test.ts` checks each copy
@@ -105,6 +106,55 @@ export const COMPACTABLE_RECEIPTS_SQL = `SELECT * FROM persistence_requests r
 
 export function listCompactableReceipts<R = Record<string, unknown>>(exec: LegacyUnscopedRead, retentionDays: number): Promise<R[]> {
   return exec.executeRaw<R>(COMPACTABLE_RECEIPTS_SQL, [retentionDays]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// `gbrain repair receipt-compaction`'s reads (repair/receipt-compaction.ts).
+
+/** The window `--older-than` names: $1 hours. The cutoff is a UTC ISO time with microseconds; max_sequence is null on an empty journal. */
+export const RECEIPT_COMPACTION_WINDOW_SQL = `SELECT to_char((now()-($1::double precision*interval '1 hour')) AT TIME ZONE 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,(SELECT max(sequence)::text FROM persistence_requests) AS max_sequence`;
+
+export interface ReceiptCompactionWindow { cutoff: string; max_sequence: string | null }
+
+export async function readReceiptCompactionWindow(exec: LegacyUnscopedRead, hours: number): Promise<ReceiptCompactionWindow> {
+  const [row] = await exec.executeRaw<ReceiptCompactionWindow>(RECEIPT_COMPACTION_WINDOW_SQL, [hours]);
+  return row!;
+}
+
+/**
+ * The receipts a compaction would take (`OPEN_SYNC_CURSOR_EXCLUSION('r')` written out): $1 states, $2 the cutoff, $3
+ * the newest sequence the preview saw. The newest committed managed-sync receipt of each worktree is kept. Oldest first.
+ */
+export const RECEIPT_COMPACTION_CANDIDATES_SQL = `SELECT r.id,r.request_id,r.sequence::text,r.source_id,r.principal_kind,r.principal_id,r.state,r.terminal_reservation::text
+    FROM persistence_requests r
+    WHERE r.state=ANY($1::text[]) AND r.recovery IS NULL AND NOT r.compacted AND r.completed_at < $2::timestamptz AND r.sequence <= $3::bigint
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
+      AND NOT (r.intent ? 'runId' AND EXISTS (SELECT 1 FROM op_checkpoints c
+      WHERE c.op='managed-sync' AND c.completed_keys->0->>'runId'=r.intent->>'runId' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'))
+    AND NOT (r.intent ? 'passId' AND EXISTS (SELECT 1 FROM op_checkpoints p
+      WHERE p.op='managed-sync-pass' AND p.completed_keys->0->'telemetry'->>'pass_id'=r.intent->>'passId' AND p.completed_keys->0->'telemetry'->>'outcome'='open'))
+      AND r.id NOT IN (SELECT DISTINCT ON (worktree_id) id FROM persistence_requests WHERE state='committed' AND worktree_id IS NOT NULL
+        AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%' ORDER BY worktree_id,completed_at DESC,sequence DESC)
+    ORDER BY r.sequence`;
+
+export interface ReceiptCompactionCandidate {
+  id: string; request_id: string; sequence: string; source_id: string | null; principal_kind: string; principal_id: string;
+  state: string; terminal_reservation: string;
+}
+
+export function listReceiptCompactionCandidates(exec: LegacyUnscopedRead, states: readonly string[], cutoff: string,
+  maxSequence: string): Promise<ReceiptCompactionCandidate[]> {
+  return exec.executeRaw<ReceiptCompactionCandidate>(RECEIPT_COMPACTION_CANDIDATES_SQL, [[...states], cutoff, maxSequence]);
+}
+
+/** The failed, conflicted and cancelled receipts a committed-only compaction leaves: $1 the cutoff. */
+export const KEPT_FAILED_RECEIPTS_SQL = `SELECT count(*)::text AS n FROM persistence_requests
+      WHERE state IN ('conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted AND completed_at < $1::timestamptz`;
+
+export async function countKeptFailedReceipts(exec: LegacyUnscopedRead, cutoff: string): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: string }>(KEPT_FAILED_RECEIPTS_SQL, [cutoff]);
+  return Number(row?.n ?? 0);
 }
 
 /**

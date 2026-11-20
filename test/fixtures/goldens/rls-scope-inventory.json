@@ -401,6 +401,17 @@
         ],
         "flagOnScopes": []
       },
+      "countKeptFailedReceipts#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -3317,6 +3328,17 @@
         ],
         "flagOnScopes": []
       },
+      "listReceiptCompactionCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listReservationsAfter#default": {
         "flagOffLanes": [
           "pool"
@@ -4922,6 +4944,17 @@
         "flagOnScopes": []
       },
       "readReceiptBudget#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readReceiptCompactionWindow#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6699,6 +6732,7 @@
         "countGitHolds": "none",
         "countInboundLinks": "none",
         "countJobsByStatus": "none",
+        "countKeptFailedReceipts": "none",
         "countKeywordPages": "direct",
         "countLabelFacts": "none",
         "countLeasePressure": "none",
@@ -7127,6 +7161,7 @@
         "listQualifiedSymbolNames": "none",
         "listQuarantinedSlugs": "none",
         "listQueueWedgeCounts": "none",
+        "listReceiptCompactionCandidates": "none",
         "listRecentFailedJobErrors": "none",
         "listRecentLeasePressure": "none",
         "listRecentSynthesisCompletions": "none",
@@ -7481,6 +7516,7 @@
         "readRankCoverage": "none",
         "readReasonPurgeTombstones": "none",
         "readReceiptBudget": "none",
+        "readReceiptCompactionWindow": "none",
         "readRemoteForgetTier": "none",
         "readRenameIdentityRows": "none",
         "readRepairBusyRows": "none",

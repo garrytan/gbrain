@@ -826,6 +826,99 @@ fn compactable_receipts_are_terminal_receipts_past_the_retention() {
     assert_eq!(rows[0]["state"], "committed");
 }
 
+/// Admits, claims and settles `request` with `intent` as `state`.
+fn settled(store: &Store, request: &str, slug: &str, intent: Value, state: &str) -> Value {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(store, request, slug, intent))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(&id, state, 512))
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn a_receipt_compaction_lists_settled_receipts_before_its_cutoff_outside_an_open_sync_run() {
+    let dir = TempDir::new("persist-receipt-compaction");
+    let store = open(&dir);
+    let empty = store.read_receipt_compaction_window(0.0).unwrap();
+    assert_eq!(empty["max_sequence"], Value::Null);
+    let done = settled(
+        &store,
+        REQ_1,
+        "notes/a",
+        json!({ "runId": "run-1" }),
+        "committed",
+    );
+    let failed = settled(&store, REQ_2, "notes/b", json!({}), "failed");
+    // A cutoff an hour ahead takes both receipts; one an hour back takes neither.
+    let ahead = store.read_receipt_compaction_window(-1.0).unwrap();
+    let cutoff = ahead["cutoff"].as_str().unwrap().to_string();
+    assert_eq!(cutoff.len(), "2026-01-01T00:00:00.000000Z".len());
+    assert_eq!(ahead["max_sequence"], "2");
+    let behind = store.read_receipt_compaction_window(1.0).unwrap();
+    let behind = behind["cutoff"].as_str().unwrap();
+    let list = |states: &[&str], cutoff: &str, max: &str| -> Vec<String> {
+        let states: Vec<String> = states.iter().map(|s| s.to_string()).collect();
+        store
+            .list_receipt_compaction_candidates(&states, cutoff, max)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let both = vec![
+        done["id"].as_str().unwrap().to_string(),
+        failed["id"].as_str().unwrap().to_string(),
+    ];
+    assert_eq!(list(&["committed", "failed"], &cutoff, "2"), both);
+    assert_eq!(list(&["committed"], &cutoff, "2"), both[..1].to_vec());
+    assert!(list(&["committed", "failed"], behind, "2").is_empty());
+    // The sequence the preview saw bounds the set.
+    assert_eq!(
+        list(&["committed", "failed"], &cutoff, "1"),
+        both[..1].to_vec()
+    );
+    let row = &store
+        .list_receipt_compaction_candidates(&["committed".to_string()], &cutoff, "2")
+        .unwrap()[0];
+    assert_eq!(row["sequence"], "1");
+    assert_eq!(row["request_id"], REQ_1);
+    assert_eq!(row["source_id"], "default");
+    assert!(row["terminal_reservation"].is_string());
+    // A managed-sync cursor of the run that is not done keeps its receipt.
+    let open = json!([{ "runId": "run-1", "done": false }]);
+    store
+        .write_op_checkpoint_record("managed-sync", "fp-1", Some(&open))
+        .unwrap();
+    assert_eq!(
+        list(&["committed", "failed"], &cutoff, "2"),
+        both[1..].to_vec()
+    );
+    let closed = json!([{ "runId": "run-1", "done": true }]);
+    store
+        .write_op_checkpoint_record("managed-sync", "fp-1", Some(&closed))
+        .unwrap();
+    assert_eq!(list(&["committed", "failed"], &cutoff, "2"), both);
+    assert_eq!(store.count_kept_failed_receipts(&cutoff).unwrap(), json!(1));
+    assert_eq!(store.count_kept_failed_receipts(behind).unwrap(), json!(0));
+    assert!(
+        store
+            .list_receipt_compaction_candidates(&[], "yesterday", "2")
+            .is_err()
+    );
+    assert!(
+        store
+            .list_receipt_compaction_candidates(&[], &cutoff, "two")
+            .is_err()
+    );
+}
+
 #[test]
 fn the_capacity_inputs_bucket_the_window_by_principal_and_day() {
     let dir = TempDir::new("persist-capacity");

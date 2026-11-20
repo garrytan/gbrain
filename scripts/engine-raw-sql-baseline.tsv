@@ -835,7 +835,6 @@ src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/purged-change-reasons.ts	execute_raw	2
 src/core/repair/purged-page-facts.ts	execute_raw	3
 src/core/repair/readers.ts	execute_raw	3
-src/core/repair/receipt-compaction.ts	execute_raw	3
 src/core/repair/redacted-facts.ts	execute_raw	4
 src/core/repair/rename-identity.ts	execute_raw	6
 src/core/repair/rotation.ts	execute_raw	2

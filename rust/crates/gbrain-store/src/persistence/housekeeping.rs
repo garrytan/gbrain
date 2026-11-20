@@ -51,7 +51,7 @@ fn compactable(r: &RequestRecord) -> bool {
 }
 
 /// `jsonb ? key`: an object's key, an array's string element, or the string itself.
-fn jsonb_has(v: &Value, key: &str) -> bool {
+pub(super) fn jsonb_has(v: &Value, key: &str) -> bool {
     match v {
         Value::Object(o) => o.contains_key(key),
         Value::Array(a) => a.iter().any(|e| e.as_str() == Some(key)),

@@ -691,6 +691,42 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the receipt-compaction reads list settled receipts before the cutoff and keep a receipt of an open managed-sync run', {
+    methods: ['readReceiptCompactionWindow', 'listReceiptCompactionCandidates', 'countKeptFailedReceipts', 'writeOpCheckpointRecord', 'readSourceMembership',
+      'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const empty = await engine.readReceiptCompactionWindow(-1);
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const settle = async (requestId: string, intent: Record<string, unknown>, state: 'committed' | 'failed') => {
+      await engine.lockPersistenceCounters(KEYS);
+      const { id } = await engine.insertWriteRequest({ ...insertRow(incarnation, requestId), intent });
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state, outcome: {}, errorCode: state === 'failed' ? 'storage_error' : null, errorMessage: null, consumerVersion: 'parity', consumerHostId: null,
+        errorDetail: null, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 512, terminalReservation: 4096, probePurges: false,
+      });
+    };
+    await settle('b0000000-0000-4000-8000-0000000000b8', { kind: 'put_page', slug: 'notes/parity-example', runId: 'run-parity' }, 'committed');
+    await settle('b0000000-0000-4000-8000-0000000000b9', { kind: 'put_page', slug: 'notes/parity-example' }, 'failed');
+    const ahead = await engine.readReceiptCompactionWindow(-1);
+    const behind = await engine.readReceiptCompactionWindow(1);
+    const view = async (states: string[], cutoff: string) => (await engine.listReceiptCompactionCandidates(states, cutoff, ahead.max_sequence!))
+      .map(r => ({ request_id: r.request_id, state: r.state, source_id: r.source_id, terminal_reservation: r.terminal_reservation, sequence: typeof r.sequence as string }));
+    const both = await view(['committed', 'failed'], ahead.cutoff);
+    const committedOnly = await view(['committed'], ahead.cutoff);
+    const tooOld = await view(['committed', 'failed'], behind.cutoff);
+    await engine.writeOpCheckpointRecord('managed-sync', 'parity-run', [{ runId: 'run-parity', done: false }]);
+    const openRun = await view(['committed', 'failed'], ahead.cutoff);
+    const answers = { emptyMax: empty.max_sequence, cutoffShape: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(ahead.cutoff), maxSequence: typeof ahead.max_sequence,
+      both, committedOnly, tooOld, openRun, keptAhead: await engine.countKeptFailedReceipts(ahead.cutoff), keptBehind: await engine.countKeptFailedReceipts(behind.cutoff) };
+    const row = (request_id: string, state: string) => ({ request_id, state, source_id: 'default', terminal_reservation: '512', sequence: 'string' as string });
+    const committed = row('b0000000-0000-4000-8000-0000000000b8', 'committed');
+    const failed = row('b0000000-0000-4000-8000-0000000000b9', 'failed');
+    expect(answers).toEqual({ emptyMax: null, cutoffShape: true, maxSequence: 'string', both: [committed, failed], committedOnly: [committed], tooOld: [],
+      openRun: [failed], keptAhead: 1, keptBehind: 0 });
+    return answers;
+  });
+
   parityTest('the effect worker claims the due effect and settles each claim under its token, a stale token changing nothing', {
     methods: ['selectClaimableEffect', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow',
       'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'readRequestEffects', 'insertPublicationEffects', 'transactionDirect',

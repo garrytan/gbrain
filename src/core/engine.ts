@@ -60,7 +60,7 @@ import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-
 import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from './engine-sql/persistence-embedding-noop-settle.ts';
 import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget,
-  SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
+  ReceiptCompactionCandidate, ReceiptCompactionWindow, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
@@ -4023,6 +4023,12 @@ export interface BrainEngine {
   readReceiptBudget(retentionKey: string, floorDays: number): Promise<ReceiptBudget>;
   /** Up to 100 compactable receipts completed over `retentionDays` ago, oldest first, without unresolved caller refusals or open-sync rows. */
   listCompactableReceipts<R = Record<string, unknown>>(retentionDays: number): Promise<R[]>;
+  /** `repair receipt-compaction`'s window: now minus `hours` as a UTC ISO time with microseconds, and the newest request sequence (null when none). */
+  readReceiptCompactionWindow(hours: number): Promise<ReceiptCompactionWindow>;
+  /** The settled, unrecovered, uncompacted receipts in `states` completed before `cutoff` up to `maxSequence`, oldest first, without open-sync rows or each worktree's newest sync receipt. */
+  listReceiptCompactionCandidates(states: readonly string[], cutoff: string, maxSequence: string): Promise<ReceiptCompactionCandidate[]>;
+  /** How many failed, conflicted or cancelled receipts completed before `cutoff` are still uncompacted and unrecovered. */
+  countKeptFailedReceipts(cutoff: string): Promise<number>;
   /** `{ id, sequence, compacted }` of up to `limit` requests after sequence `after`, in sequence order. */
   listReservationsAfter(after: string, limit: number): Promise<Array<{ id: string; sequence: string; compacted: boolean }>>;
   /** The terminal requests among `ids` with their effect bytes and whether an effect is unfinished, in sequence order. */

@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { OLDER_THAN_RE } from '../../cli/strict-args.ts';
-import { COMPACTABLE_STATES, compactReceipt, OPEN_SYNC_CURSOR_EXCLUSION } from '../persistence/journal.ts';
+import { COMPACTABLE_STATES, compactReceipt } from '../persistence/journal.ts';
 import { readReceiptRetentionDays, RECEIPT_RETENTION_KEY } from '../persistence/limits.ts';
 import { clearApprovedSet, loadApprovedSet, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import type { WriteRequest } from '../persistence/model.ts';
@@ -52,21 +52,12 @@ async function selection(engine: BrainEngine, opts: RepairPlanOptions): Promise<
       fix: { argv: ['gbrain', 'repair', 'receipt-compaction', '--older-than', `${retentionDays}d`, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Previews compaction at the configured retention; it writes nothing.' } });
   }
-  const [row] = await engine.executeRaw<{ cutoff: string; max_sequence: string | null }>(`SELECT to_char((now()-($1::double precision*interval '1 hour')) AT TIME ZONE 'UTC',
-      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,(SELECT max(sequence)::text FROM persistence_requests) AS max_sequence`, [hours]);
-  return { cutoff: row!.cutoff, max_sequence: row!.max_sequence ?? '0', states: opts.includeFailures ? [...COMPACTABLE_STATES] : ['committed'] };
+  const row = await engine.readReceiptCompactionWindow(hours);
+  return { cutoff: row.cutoff, max_sequence: row.max_sequence ?? '0', states: opts.includeFailures ? [...COMPACTABLE_STATES] : ['committed'] };
 }
 
-async function candidates(engine: BrainEngine, sel: Selection) {
-  return engine.executeRaw<{ id: string; request_id: string; sequence: string; source_id: string | null; principal_kind: string; principal_id: string;
-    state: string; terminal_reservation: string }>(`SELECT r.id,r.request_id,r.sequence::text,r.source_id,r.principal_kind,r.principal_id,r.state,r.terminal_reservation::text
-    FROM persistence_requests r
-    WHERE r.state=ANY($1::text[]) AND r.recovery IS NULL AND NOT r.compacted AND r.completed_at < $2::timestamptz AND r.sequence <= $3::bigint
-      AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
-      ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
-      AND r.id NOT IN (SELECT DISTINCT ON (worktree_id) id FROM persistence_requests WHERE state='committed' AND worktree_id IS NOT NULL
-        AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%' ORDER BY worktree_id,completed_at DESC,sequence DESC)
-    ORDER BY r.sequence`, [sel.states, sel.cutoff, sel.max_sequence]);
+function candidates(engine: BrainEngine, sel: Selection) {
+  return engine.listReceiptCompactionCandidates(sel.states, sel.cutoff, sel.max_sequence);
 }
 
 const toItem = (sel: Selection) => (row: Awaited<ReturnType<typeof candidates>>[number]): RepairItem => ({ cursor: { phase: 0, id: Number(row.sequence) },
@@ -94,9 +85,8 @@ export const receiptCompactionRepair: RepairHandler = {
     const rows = await candidates(engine, sel);
     const hash = hashOf(scope, sel);
     await saveApprovedSet<Selection>(engine, { command: 'receipt-compaction', hash }, [sel]);
-    const [failures] = opts.includeFailures ? [] : await engine.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM persistence_requests
-      WHERE state IN ('conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted AND completed_at < $1::timestamptz`, [sel.cutoff]);
-    return { items: rows.map(toItem(sel)), preview_hash: hash, residuals: Number(failures?.n ?? 0) ? { failures_kept: Number(failures!.n) } : {},
+    const failures = opts.includeFailures ? 0 : await engine.countKeptFailedReceipts(sel.cutoff);
+    return { items: rows.map(toItem(sel)), preview_hash: hash, residuals: failures ? { failures_kept: failures } : {},
       details: { cutoff: sel.cutoff, states: sel.states, reserved_bytes: rows.reduce((n, row) => n + Number(row.terminal_reservation), 0) } };
   },
   async apply(ctx, item) {

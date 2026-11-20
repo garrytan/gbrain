@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1090/1096
+# covered: 1093/1099
 # lifecycle: 9/9
 # pages: 62/62
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 134/134
+# persistence_journal: 137/137
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -419,7 +419,7 @@ getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	16	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	17	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
@@ -494,17 +494,17 @@ ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
-readCounterRows	persistence_journal	yes	6	no	yes	yes	serves
+readCounterRows	persistence_journal	yes	7	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	40	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	46	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	22	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	41	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	47	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	23	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	17	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	18	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	51	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	52	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	3	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	5	no	yes	yes	serves
@@ -522,6 +522,9 @@ claimHousekeepingTurn	persistence_journal	yes	1	no	yes	yes	serves
 completeHousekeepingTurn	persistence_journal	yes	1	no	yes	yes	serves
 readReceiptBudget	persistence_journal	yes	1	no	yes	yes	serves
 listCompactableReceipts	persistence_journal	yes	1	no	yes	yes	serves
+readReceiptCompactionWindow	persistence_journal	yes	2	no	yes	yes	serves
+listReceiptCompactionCandidates	persistence_journal	yes	2	no	yes	yes	serves
+countKeptFailedReceipts	persistence_journal	yes	2	no	yes	yes	serves
 listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	2	no	yes	yes	serves
 trueUpReservations	persistence_journal	yes	1	no	yes	yes	serves
@@ -958,8 +961,8 @@ writeOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	4	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	12	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	13	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	13	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	15	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
