@@ -83,7 +83,7 @@ const ROWS: readonly Row[] = [
   ['dream_verdicts', 'out_of_scope', 'probed_reported', 'file_path content_hash reasons content_type segments entities model', 'segments entities reasons'],
   ['drift_decisions', 'out_of_scope', 'probed_reported', 'reasoning applied_by', 'reasoning'],
   ['entity_identities', 'out_of_scope', 'no_memory_text', 'entity_id source_id established_by'],
-  ['entity_identity_reviews', 'out_of_scope', 'no_memory_text', 'decision_id verdict members group_id entity_id canonical_source_id canonical_slug decided_by origin home_source_id git_blob'],
+  ['entity_identity_reviews', 'out_of_scope', 'no_memory_text', 'decision_id verdict members group_id entity_id canonical_source_id canonical_slug decided_by origin home_source_id git_blob evidence'],
   ['eval_candidates', 'out_of_scope', 'probed_reported', 'tool_name query retrieved_slugs source_ids detail detail_resolved salience_param recency_param salience_resolved recency_resolved salience_source recency_source embedding_column schema_pack_per_source', 'query'],
   ['eval_capture_failures', 'out_of_scope', 'no_memory_text', 'reason'],
   ['eval_contradictions_cache', 'out_of_scope', 'probed_reported', 'chunk_a_hash chunk_b_hash model_id prompt_version truncation_policy verdict', 'verdict'],

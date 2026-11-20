@@ -79,7 +79,7 @@ struct DBState: Encodable {
 let usage = """
 usage: \(name) serve | init --port <n> [--enable <source>] [--db <path>] | validate-config | check [--db <path>]
        | token add --name <name> --verifier <sha256> [--scope <scope>]... | token remove --name <name>
-       | send-setup [--off] | send-key add --name <name> --public-key-file <path or -> | send-key remove --name <name>
+       | send-setup [--off] | contacts-setup [--off] | send-key add --name <name> --public-key-file <path or -> | send-key remove --name <name>
        | send-limits set <limit>=<n>... | send-audit show --redacted [--since <n>d] | register | --version
 """
 
@@ -131,6 +131,31 @@ case "send-setup":
     if let err = result.err { FileHandle.standardError.write(Data("\(name): \(err)\n".utf8)) }
     exit(result.code)
 
+case "contacts-setup":
+    if arguments.contains("--off") {
+        var config = lockedConfig()
+        config.sources["contacts"] = SourceSetting(enabled: false)
+        save(config)
+        print("Contacts reading is off in \(configPath). The helper refuses /v1/contacts/changes from its next request on.")
+        print("macOS keeps \(HelperIdentity.appName) under System Settings > Privacy & Security > Contacts, and this command can't take that back. To remove it, switch it off there, or run: tccutil reset AddressBook \(HelperIdentity.bundleId)")
+        exit(0)
+    }
+    let port = loadConfig().1.port
+    guard case .answered(let status, let body) = AdminClient.post(port: port, route: ContactsSource.adminRoute, fields: ["action": "setup"],
+                                                                  timeout: ContactsSource.accessWait + 30) else {
+        fail("GBrain Helper isn't answering on 127.0.0.1:\(port). Start it, then run contacts-setup again.", code: 69)
+    }
+    print(String(decoding: body, as: UTF8.self))
+    guard status == 200 else { exit(1) }
+    var config = lockedConfig()
+    config.sources["contacts"] = SourceSetting(enabled: true)
+    save(config)
+    let access = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["contacts"] as? String
+    guard access == ContactsAccess.allowed.rawValue else {
+        fail("Contacts reading is switched on in \(configPath), but macOS hasn't given \(HelperIdentity.appName) access to Contacts (\(access ?? "unknown")), so reads answer contacts_not_allowed. Turn it on in System Settings > Privacy & Security > Contacts; the helper reads contacts from the next request after that.", code: 1)
+    }
+    print("Contacts reading is on in \(configPath). It reads names, emails, phones, company, job title and groups, and never changes your contacts.")
+
 case "send-key":
     guard let keyName = value("--name") else { fail(usage, code: 64) }
     switch arguments.dropFirst().first {
@@ -177,6 +202,13 @@ case "send-audit":
 
 case "register":
     let agent = SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist")
+    if agent.status == .enabled {
+        do {
+            try agent.unregister()
+        } catch {
+            FileHandle.standardError.write(Data("\(name): macOS didn't unregister the background agent, so it stays registered from the earlier install: \(error.localizedDescription)\n".utf8))
+        }
+    }
     if agent.status != .enabled, agent.status != .requiresApproval {
         do {
             try agent.register()
@@ -194,6 +226,14 @@ case "register":
     default:
         fail("background agent not registered", code: 1)
     }
+
+case "unregister":
+    do {
+        try SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist").unregister()
+    } catch {
+        fail("macOS didn't unregister the background agent: \(error.localizedDescription)", code: 1)
+    }
+    print("background agent unregistered")
 
 case "check":
     let path = value("--db") ?? (try? Config.load(path: configPath))?.dbPath ?? Config.defaultDBPath
@@ -234,8 +274,11 @@ case "serve":
                            messages: MessagesApp(), ledger: ChatDeliveryLedger(dbPath: config.dbPath), banner: NotificationBanner(),
                            presence: LocalOwnerPresence())
     send.start()
-    let sources: [SourceModule] = [IMessageSource(dbPath: config.dbPath)]
-    let loopback = RouterSettings(listener: .loopback, liveGrants: grants.current, sources: sources, enabled: config.enabled, version: version, send: send)
+    let contacts = ContactsSource(store: SystemContactsStore(),
+                                  indexPath: ((configPath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(ContactsSource.indexFile))
+    let sources: [SourceModule] = [IMessageSource(dbPath: config.dbPath), contacts]
+    let loopback = RouterSettings(listener: .loopback, liveGrants: grants.current, liveEnabled: grants.enabledSources, sources: sources, version: version,
+                                  send: send)
     let server = Server(host: IPv4.parse("127.0.0.1")!, port: config.port, router: Router(settings: loopback))
     do {
         try server.start()
@@ -246,7 +289,8 @@ case "serve":
     Log.line("serving \(name) \(version) on 127.0.0.1:\(server.boundPort)")
     Thread.detachNewThread { server.serveForever() }
     if let tailnet = config.tailnet {
-        let settings = RouterSettings(listener: .tailnet(allowed: tailnet.peers), grants: [], sources: [], enabled: [], version: version, send: send)
+        let settings = RouterSettings(listener: .tailnet(allowed: tailnet.peers), liveGrants: grants.current, liveEnabled: grants.enabledSources,
+                                      sources: [contacts], version: version, send: send)
         Thread.detachNewThread {
             var delay: TimeInterval = 1
             while true {
@@ -255,7 +299,7 @@ case "serve":
                     let listener = Server(host: host, port: config.port, router: Router(settings: settings))
                     do {
                         try listener.start()
-                        Log.line("serving send on \(IPv4.string(host)):\(listener.boundPort)")
+                        Log.line("serving send and contacts on \(IPv4.string(host)):\(listener.boundPort)")
                         delay = 1
                         listener.serveForever()
                     } catch {
