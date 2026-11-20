@@ -127,15 +127,11 @@ the batch whose seeded runRepair case proves it on all three arms.
 
 | Kind | Flags | Doctor | Batch |
 | --- | --- | --- | --- |
-| `connector-checkpoints` | - | RUN | B1 |
 | `contextual-mode` | - | RUN | B1 |
-| `embedding-effects` | - | RUN | B1 |
-| `facts-home` | EP | FIX | B1 |
 | `frontmatter-keys` | EP | FIX | B1 |
 | `google-file-modes` | E | FIX | B1 |
-| `missing-tables` | EP | FIX | B1 |
-| `planner-stats` | A | RUN | B1 |
 | `stuck-recovery` | EPD | LIST | B1 |
+| `connector-checkpoints` | - | RUN | B2 |
 | `content-receipt-root` | EP | FIX | B2 |
 | `loop-facts` | E | FIX | B2 |
 | `managed-sync-orphans` | EP | FIX | B2 |
@@ -156,6 +152,7 @@ the batch whose seeded runRepair case proves it on all three arms.
 | `duplicate-facts` | EPD | FIX | B4 |
 | `extractor-facts` | E | FIX | B4 |
 | `fact-claim-dates` | EPD | FIX | B4 |
+| `facts-home` | EP | FIX | B4 |
 | `facts-rehome` | EP | LIST | B4 |
 | `ontology-facts` | E | FIX | B4 |
 | `open-facts` | EPU | - | B4 |
@@ -185,6 +182,7 @@ the batch whose seeded runRepair case proves it on all three arms.
 | `atom-fence-rows` | EP | FIX | B8 |
 | `attribution-backfill` | - | RUN | B8 |
 | `contact-rows` | EPD | LIST | B8 |
+| `embedding-effects` | - | RUN | B8 |
 | `failed-writes` | E | FIX | B8 |
 | `file-drift` | EPD | FIX | B8 |
 | `receipt-compaction` | EPD | FIX | B8 |
@@ -193,4 +191,6 @@ the batch whose seeded runRepair case proves it on all three arms.
 | `split-facts` | E | LIST | B8 |
 | `uncommitted-deletions` | EPD | FIX | B8 |
 | `fences` | PL | RUN | B9 |
+| `missing-tables` | EP | FIX | B9 |
+| `planner-stats` | A | RUN | B9 |
 | `slug-conflicts` | PL | RUN | B9 |
