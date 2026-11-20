@@ -6,8 +6,8 @@ engine does not have. The table names the first place the case reaches it (the t
 call) and the later slice that moves it to a typed member. Line numbers are as of the commit that adds this file; each
 later slice that flips a case lowers the pin in `rust-tally.tsv` and removes its row here.
 
-Slice ids are the ones of the re-cut table (C01..C22 reads, S01..S13 strict). "none" means no slice in the re-cut table
-moves this site: the case stays pinned until some later change adds a typed member for it.
+Slice ids are the ones of the re-cut table (C01..C22 reads, S01..S13 strict). A lane name means another
+line of work moves the site; "by design" means the case tests a raw SQL path and stays a stop. Every stop has an owner.
 
 ## collate-store-listings.test.ts (3 equal, 16 stopped)
 
@@ -24,10 +24,10 @@ moves this site: the case stays pinned until some later change adds a typed memb
 | readChronicleLedgerStats lists principals by byte | test `seedLedger` `executeRaw`, test:192 | C14 (typed chronicle-ledger members) |
 | readChronicleLedgerStats lists reasons by byte | test `seedLedger` `executeRaw`, test:192 | C14 |
 | derivationNeedles lists claim needles by byte | `src/core/page-body/segment-derive.ts:357` `derivationNeedles` | C16 (`normalizeDerivationClaims`) |
-| readMissingTables lists missing tables by byte | test `executeRaw`, test:219 | none |
-| readBudgetLimited lists held reasons by byte of source and reason | test `heldPage` seed `executeRaw`, test:75 | none |
-| readBudgetLimited lists the held reasons of one source by byte | test `heldPage` seed `executeRaw`, test:75 | none |
-| readBudgetLimited lists sources with equal pending chunks by byte of source id | test seed `executeRaw`, test:251 | none |
+| readMissingTables lists missing tables by byte | test `executeRaw`, test:219 | by design: the case tests the SQL catalog path, so it stays a raw_sql stop |
+| readBudgetLimited lists held reasons by byte of source and reason | test `heldPage` seed `executeRaw`, test:75 | lane 14 (doctor-checks 0c4a1a0ae7: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
+| readBudgetLimited lists the held reasons of one source by byte | test `heldPage` seed `executeRaw`, test:75 | lane 14 (doctor-checks 0c4a1a0ae7: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
+| readBudgetLimited lists sources with equal pending chunks by byte of source id | test seed `executeRaw`, test:251 | lane 14 (doctor-checks 0c4a1a0ae7: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
 | inspectSharedMemberMigration lists installations by byte of adapter | test seed `executeRaw`, test:260 | S09 (shared-skill members; the case itself is rewritten in C16, which then needs S09 first) |
 
 ## collate-command-listings.test.ts (2 equal, 4 stopped)
@@ -35,8 +35,8 @@ moves this site: the case stays pinned until some later change adds a typed memb
 | Case | Stops at | Owner |
 |---|---|---|
 | runReconcileLinks walks a source's markdown pages by byte slug | `src/commands/reconcile-links.ts:120` `runReconcileLinks` | C06 (`listMarkdownPageSlugs`) |
-| proposeVisibility lists its unmatched pages by source id, then slug | `src/core/access/open-pages.ts:159`, the open-scope read `withOpenScope` runs for `proposeVisibility` (the query in `src/commands/repair-propose.ts:123` comes next) | none in the re-cut table: the main-branch lane that moves the open-pages reads |
-| the git-gap census counts links, holds and parked effects in byte key order | test seed `executeRaw`, test:109 (then `src/commands/sources-git-gap.ts` runs raw SQL) | none |
+| proposeVisibility lists its unmatched pages by source id, then slug | `src/core/access/open-pages.ts:159`, the open-scope read `withOpenScope` runs for `proposeVisibility` (the query in `src/commands/repair-propose.ts:123` comes next) | lane 10 (repair-rust cb7c502c0b) makes `proposeVisibility` refuse by name before any read; the typed open-pages read has no owner yet, so this stays a named stop |
+| the git-gap census counts links, holds and parked effects in byte key order | test seed `executeRaw`, test:109 (then `src/commands/sources-git-gap.ts` runs raw SQL) | lane 14 (doctor-checks 0c4a1a0ae7, named refusal; flips through main) |
 | files verify reports its rows by byte storage path | test seed `executeRaw`, test:139 | C05 (the case is rewritten to seed through `upsertFile`) |
 
 ## collate-slug-sources.test.ts (1 equal, 5 stopped)
@@ -53,7 +53,7 @@ moves this site: the case stays pinned until some later change adds a typed memb
 
 | File | Case | Stops at | Owner |
 |---|---|---|---|
-| collate-ontology-config | the keyed config read for a handle without getConfigValues returns keys by byte | `src/core/config-values.ts:38` `readConfigRows` | none |
+| collate-ontology-config | the keyed config read for a handle without getConfigValues returns keys by byte | `src/core/config-values.ts:38` `readConfigRows` | by design: the case tests the keyed-config fallback for a handle without getConfigValues, so it stays a raw_sql stop |
 | collate-aggregated-lists | readExportPages lists tags by byte | test seed `executeRaw`, test:54 | C07 (the case is rewritten to read through `readExportPageRows`) |
 | collate-repair-scans | orphaned-alias counts and the aliases plan list sources, then slugs, by byte | test seed `executeRaw`, test:51 | C08 (`countOrphanedAliasRows` and the other repair reads) |
 | collate-repair-scans | findDuplicateFacts lists its groups by source id by byte | test `fact` helper `executeRaw`, test:44 | C08 (`listDuplicateFactRows`) |
