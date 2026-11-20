@@ -208,7 +208,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listWantedPages': OOS.cliReadsOps,
   // the export reads: the page walk, withdrawals, and the segmented body reads an export and the segmented writers share
   'readSegmentedPageHead': OOS.cliReadsExport, 'readBodyManifestMeta': OOS.cliReadsExport, 'readBodyManifestOutline': OOS.cliReadsExport, 'readBodyManifestRows': OOS.cliReadsExport, 'readManifestSeqAt': OOS.cliReadsExport,
-  'readSegmentedVersionBodyBytes': OOS.cliReadsExport, 'listForcedCutSeqs': OOS.cliReadsExport, 'listAccessPolicySourceIds': OOS.cliReadsExport, 'listExportPageKeys': OOS.cliReadsExport, 'listExportWithdrawals': OOS.cliReadsExport,
+  'readSegmentedVersionBodyBytes': OOS.cliReadsExport, 'listUntiledSegmentedPages': OOS.cliReadsExport, 'listForcedCutSeqs': OOS.cliReadsExport, 'listAccessPolicySourceIds': OOS.cliReadsExport, 'listExportPageKeys': OOS.cliReadsExport, 'listExportWithdrawals': OOS.cliReadsExport,
   'normalizeFenceLines': OOS.cliReadsExport, 'readExportPageRows': OOS.cliReadsExport, 'readExportWithdrawalLedgerBytes': OOS.cliReadsExport, 'setLocalStatementTimeout': OOS.cliReadsExport,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,

@@ -271,7 +271,7 @@ export async function fileSnapshotDifference(engine: BrainEngine, slug: string, 
     const type = importedFileType(parsed, snapshot.page, inferred);
     // Withdrawal overlays intentionally precede physical mirroring. The ledger
     // is applied by the import preparation and cannot be undone by this check.
-    const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
+    const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodies(engine,
       parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals, { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges }) }, parsed.tags);
     return canonicalDifference(actual, expected);
   };
@@ -295,7 +295,7 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
   snapshot = (await materializedSnapshot(engine, snapshot))!;
   const file = parseMarkdown(fileText, slug, { activePack });
   const type = importedFileType(file, snapshot.page, false);
-  const bodies = await overlayCanonicalBodies(engine.executeRaw.bind(engine), file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
+  const bodies = await overlayCanonicalBodies(engine, file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
     { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges });
   const bare = (page: Parameters<typeof canonical>[0], tags: string[]) => digest(canonical({ ...page, frontmatter: {} }, tags));
   if (bare({ ...file, type, ...bodies }, file.tags) !== bare(snapshot.page, snapshot.tags)) return null;
@@ -407,7 +407,7 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
     // A facts fence under a ledger that applies is compared overlaid, one complete fence block at a time; a fence longer
     // than FENCE_MAX_BYTES refuses, as the stored side's trusted read does.
     const fileDigests = file.factsFence && ledgerApplies(ledger)
-      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
+      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine, text, '',
         ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
       fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between)
       : file.digests;

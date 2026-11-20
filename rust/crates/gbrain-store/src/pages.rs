@@ -1275,7 +1275,7 @@ impl Store {
             "tags": tags,
             "revision": page.knowledge_revision,
             "sourceIncarnation": incarnation,
-            "withdrawals": [],
+            "withdrawals": crate::trust::withdrawals::page_withdrawals(&*read, &page.source_id, &page.slug)?,
         })))
     }
 

@@ -105,7 +105,7 @@ export async function materializedSnapshot(engine: BrainEngine, snapshot: PageSn
     throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
   });
   if (page === snapshot.page) return snapshot;
-  Object.assign(page, await overlayCanonicalBodies(engine.executeRaw.bind(engine), page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
+  Object.assign(page, await overlayCanonicalBodies(engine, page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
     { sourceId: page.source_id, marker: snapshot.globalPurges }));
   return { ...snapshot, page };
 }

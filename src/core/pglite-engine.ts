@@ -1581,6 +1581,7 @@ export class PGLiteEngine implements BrainEngine {
   listForcedCutSeqs(pageId: number, generation: number) { return exportReadsImpl.listForcedCutSeqs(this, pageId, generation); }
   readManifestSeqAt(pageId: number, generation: number, byteOffset: number) { return exportReadsImpl.readManifestSeqAt(this, pageId, generation, byteOffset); }
   readSegmentedVersionBodyBytes(pageId: number, generation: number) { return exportReadsImpl.readSegmentedVersionBodyBytes(this, pageId, generation); }
+  listUntiledSegmentedPages(q?: exportReadsImpl.UntiledPagesQuery) { return exportReadsImpl.listUntiledSegmentedPages(this, q); }
   listAccessPolicySourceIds() { return exportReadsImpl.listAccessPolicySourceIds(this); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }

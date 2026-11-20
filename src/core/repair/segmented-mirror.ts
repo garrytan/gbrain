@@ -83,7 +83,7 @@ async function fileHoldsWithdrawnRows(engine: BrainEngine, snapshot: PageSnapsho
   const file = fileBodyDigests(bytes, reading, snapshot.page.slug, {});
   if (file.kind !== 'ok' || !file.factsFence) return false;
   const ledger = ledgerOf(snapshot);
-  const overlaid = await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
+  const overlaid = await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine, text, '',
     ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
   fence => fenceTooLargeError(snapshot.page.slug, snapshot.page.source_id, fence));
   return overlaid.truth !== file.digests.truth || overlaid.timeline !== file.digests.timeline;

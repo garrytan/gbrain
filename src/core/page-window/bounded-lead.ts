@@ -63,7 +63,7 @@ export function prefixNeedsOverlay(prefix: string | null | undefined): boolean {
  * Returns new row objects; the input rows are not mutated.
  */
 export async function overlaidBoundedRows<T extends { slug: string; source_id: string; compiled_truth: string | null }>(
-  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'capabilities'>,
   rows: readonly T[],
 ): Promise<T[]> {
   const bounded = rows.map(row => ({ ...row, compiled_truth: row.compiled_truth == null ? null : boundedRawPrefix(row.compiled_truth) }));
@@ -72,13 +72,12 @@ export async function overlaidBoundedRows<T extends { slug: string; source_id: s
     .map(row => [pageSnapshotKey(row.source_id, row.slug), { slug: row.slug, sourceId: row.source_id }])).values()];
   if (pending.length === 0) return bounded;
   const overlaid = new Map<string, string>();
-  const query = <R>(sql: string, params?: unknown[]) => engine.executeRaw<R>(sql, params);
   try {
     for (let rest = pending; rest.length > 0;) {
       const batch = await engine.readPageSnapshotsBatch(rest);
       for (const [key, snapshot] of batch.snapshots) {
         if (!isSegmentedPage(snapshot.page)) overlaid.set(key, boundedRawPrefix(snapshot.page.compiled_truth));
-        else overlaid.set(key, boundedRawPrefix((await overlayCanonicalBodies(query, leads.get(key)!, '', snapshot.withdrawals,
+        else overlaid.set(key, boundedRawPrefix((await overlayCanonicalBodies(engine, leads.get(key)!, '', snapshot.withdrawals,
           { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges })).compiled_truth));
       }
       rest = rest.slice(Math.max(1, batch.covered));
@@ -93,7 +92,7 @@ export async function overlaidBoundedRows<T extends { slug: string; source_id: s
 
 /** One page's overlaid raw prefix: the snapshot body when the raw prefix holds a facts fence, else the raw prefix. */
 export async function overlaidBoundedPrefix(
-  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'capabilities'>,
   page: { slug: string; source_id: string; compiled_truth: string | null },
 ): Promise<string> {
   const [row] = await overlaidBoundedRows(engine, [page]);
@@ -102,7 +101,7 @@ export async function overlaidBoundedPrefix(
 
 /** One page's sanitized, credential-projected lead text: the bounded overlaid prefix through boundedProjectedPrefix. */
 export async function projectedLead(
-  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'capabilities'>,
   page: { slug: string; source_id: string; compiled_truth: string | null },
 ): Promise<string> {
   return boundedProjectedPrefix(await overlaidBoundedPrefix(engine, page));

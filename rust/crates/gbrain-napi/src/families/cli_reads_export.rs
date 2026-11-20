@@ -3,7 +3,7 @@
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
-use gbrain_store::cli_reads::export::ExportPageKeyQuery;
+use gbrain_store::cli_reads::export::{ExportPageKeyQuery, UntiledPagesQuery};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -137,6 +137,22 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_manifest_seq_at(page_id, generation, byte_offset)
+        })
+    }
+
+    /// `listUntiledSegmentedPages(q)`: the live segmented pages of unarchived sources whose live
+    /// rows do not tile the body, by source then slug in byte order, at most `q.limit` (1,000).
+    #[napi]
+    pub fn list_untiled_segmented_pages<'env>(
+        &self,
+        env: &'env Env,
+        q: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_untiled_segmented_pages(&required::<UntiledPagesQuery>(
+                q,
+                "listUntiledSegmentedPages q",
+            )?)
         })
     }
 

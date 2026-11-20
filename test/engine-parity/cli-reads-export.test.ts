@@ -20,6 +20,7 @@ import { flipInput, manifestRow, pageMeta, segmentText, stagingInput } from '../
 import { stageGeneration } from '../helpers/page-body-fixtures.ts';
 import type { BodyFlipInput, ManifestRowInput } from '../../src/core/page-body/types.ts';
 import { confirmBodyPin, openSegmentedBody, projectedOutline } from '../../src/core/page-body/read-range.ts';
+import { untiledSegmentedPages } from '../../src/core/page-body/body-tiling.ts';
 import { REVISION_BACKFILL_PENDING } from '../../src/core/page-state/types.ts';
 import { readExportPages, readExportWithdrawals } from '../../src/core/export-snapshot.ts';
 import { parseFactsFenceFor, renderFactsTable } from '../../src/core/facts-fence.ts';
@@ -382,5 +383,29 @@ describe('engine parity: export reads', () => {
       forced, seqAt, unversioned, versioned, otherGeneration,
       missing: [await engine.listForcedCutSeqs(999999, 1), await engine.readManifestSeqAt(999999, 1, 0), await engine.readSegmentedVersionBodyBytes(999999, 1)],
     };
+  });
+
+  // GST-1209's doctor and repair read: the live segmented pages whose live rows do not tile the body. A publish refuses
+  // rows that do not tile (generation_incomplete), so no typed write can damage a page: here every segmented page tiles
+  // and none is listed, whatever the source, slug and limit narrowing. The damaged pages are pinned on the SQL arms by
+  // test/large-pages/segmented-tiling-repair.test.ts and on the store by its cargo test
+  // (untiled_pages_list_a_short_or_gapped_live_generation).
+  parityTest('listUntiledSegmentedPages lists no page whose live rows tile the body', {
+    methods: ['listUntiledSegmentedPages', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts',
+      'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'softDeletePage'],
+  }, async (engine) => {
+    await publishSegmented(engine, 'notes/tiled');
+    await publishSegmented(engine, 'notes/deleted');
+    await engine.softDeletePage('notes/deleted');
+    const lists = {
+      all: await untiledSegmentedPages(engine),
+      bySlug: await untiledSegmentedPages(engine, { slugs: ['notes/tiled', 'notes/deleted'] }),
+      bySource: await engine.listUntiledSegmentedPages({ sourceIds: ['default'] }),
+      none: await untiledSegmentedPages(engine, { limit: 0 }),
+    };
+    const negative = await untiledSegmentedPages(engine, { limit: -1 }).then(() => 'listed', () => 'refused');
+    expect(lists).toEqual({ all: [], bySlug: [], bySource: [], none: [] });
+    expect(negative).toBe('refused');
+    return { lists, negative };
   });
 });

@@ -27,6 +27,10 @@ import { storeErrorCode } from '../store-errors.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { normalizeFenceLines } from './cli-reads-export.ts';
+import { overlayCanonicalBodies, type OverlayEngine } from '../../page-state/snapshot.ts';
+import type { PageSnapshot } from '../../page-state/types.ts';
+import type { SegmentedPageHead } from '../../engine-sql/export-reads.ts';
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
 const unhex = (text: string): Uint8Array => new Uint8Array(Buffer.from(text, 'hex'));
@@ -186,21 +190,35 @@ export const flipBodyGeneration = async function flipBodyGeneration(this: RustEn
 
 /**
  * The store reads the page's stored timeline lead and revision (`readSegmentedSealLead`, not a member), this side
- * sanitizes the lead (`timelineLead` when given) with `sanitizeRemoteBody` as engine-sql/page-body.ts does, and the
- * store seals the page at that revision and records the text (`pages::record_search_timeline`). A page that moved in
- * between refuses `revision_conflict`; a missing page is a no-op. PGLite overlays the page's withdrawals and global
- * purges on the lead first; here that overlay is the identity, because the store keeps no withdrawal ledger or purge
- * markers (its readPageSnapshot reports no withdrawals), so the stored lead is the overlaid lead.
+ * overlays the lead (`timelineLead` when given) with the page's withdrawals and sanitizes it with `sanitizeRemoteBody` as
+ * engine-sql/page-body.ts does, and the store seals the page at that revision and records the text
+ * (`pages::record_search_timeline`). A page that moved in between refuses `revision_conflict`; a missing page is a no-op.
+ * The store keeps a withdrawal ledger but no fact purge ledger, so the overlay has no global purges to resolve.
  */
 export const sealSegmentedPage: StoreMember<[pageId: number, opts?: { timelineLead?: string }], void> = async (brain, pageId, opts) => {
   const o = takeOptions('sealSegmentedPage', opts, ['timelineLead']);
   const stored: { lead: string; revision: string } | null =
     await storeCall({ member: 'sealSegmentedPage' }, () => brain.readSegmentedSealLead(pageId));
   if (!stored) return;
-  const lead = typeof o.timelineLead === 'string' ? o.timelineLead : stored.lead;
+  const lead = await overlaidSealLead(brain, pageId, typeof o.timelineLead === 'string' ? o.timelineLead : stored.lead);
   await storeCall({ member: 'sealSegmentedPage', expectedRevision: stored.revision },
     () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(lead), stored.revision));
 };
+
+/** The lead with the page's withdrawn fence rows struck, as the SQL seal's overlayCanonicalBodies gives it. */
+async function overlaidSealLead(brain: StoreBrain, pageId: number, lead: string): Promise<string> {
+  if (!lead.includes('gbrain:facts:begin')) return lead;
+  const head: SegmentedPageHead | null = await storeCall({ member: 'sealSegmentedPage' }, () => brain.readSegmentedPageHead(pageId));
+  if (!head) return lead;
+  const snapshot: PageSnapshot | null = await storeCall({ member: 'sealSegmentedPage', slug: head.slug, sourceId: head.source_id },
+    () => brain.readPageSnapshot(head.slug, { sourceId: head.source_id, includeDeleted: true }));
+  const source: OverlayEngine = {
+    normalizeFenceLines: (bodies, timelines) => normalizeFenceLines(brain, bodies, timelines),
+    executeRaw: () => { throw new Error('sealSegmentedPage: the store has no SQL surface'); },
+    capabilities: new Set(),
+  };
+  return (await overlayCanonicalBodies(source, '', lead, snapshot?.withdrawals ?? [])).timeline;
+}
 
 export const openBodyStaging: StoreMember<[input: BodyStagingInput], void> = async (brain, input) => {
   const sent = { ...input, declaredSha256: input.declaredSha256 ? hex(input.declaredSha256) : null,

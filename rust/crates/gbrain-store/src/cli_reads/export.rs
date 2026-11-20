@@ -16,13 +16,16 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::links::no_nul;
 use crate::page_body::{
-    ManifestRow, in_generation, manifest_rows, page_u64, read_body_state, segmented_reference,
+    ManifestRow, in_generation, manifest_rows, page_u64, read_body_state, segmented_body_states,
+    segmented_reference, tiling,
 };
 use crate::pages::read_page_by_id;
 use crate::raw_files::page_raw_rows;
+use crate::sources::read_source;
 use crate::trust::withdrawals::source_withdrawals;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// Rows per export batch (`LIMIT 256`).
 const EXPORT_BATCH: usize = 256;
@@ -104,6 +107,35 @@ pub struct SegmentedPageHead {
     pub body_flags: Option<Value>,
     pub segmenter_version: Option<i64>,
     pub revision: Option<String>,
+}
+
+/// `listUntiledSegmentedPages(q)`: the source and slug lists narrow the scan (absent: any), `limit`
+/// bounds the list (absent: 1,000).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UntiledPagesQuery {
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub slugs: Option<Vec<String>>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// One row of `listUntiledSegmentedPages`: a live segmented page whose live generation's rows do
+/// not tile its body. `covered_bytes` is null when the rows leave a gap; a NULL `body_bytes` reads 0.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct UntiledPage {
+    pub source_id: String,
+    pub slug: String,
+    pub page_id: i64,
+    pub revision: String,
+    pub body_generation: i64,
+    pub body_bytes: i64,
+    pub segment_count: Option<i64>,
+    pub source_path: Option<String>,
+    pub rows: i64,
+    pub covered_bytes: Option<i64>,
 }
 
 /// One row of `readBodyManifestRows`: a published manifest row and the generation it was read at.
@@ -399,6 +431,79 @@ impl Store {
             segmenter_version: state.and_then(|s| s.segmenter_version),
             revision: Some(page.knowledge_revision.clone()),
         }))
+    }
+
+    /// `listUntiledSegmentedPages(q)`: the live (not deleted) segmented pages of unarchived sources
+    /// whose live generation's published rows do not cover `body_bytes` gapless from 0
+    /// (`liveTilingSql` + `untiledSql`; a NULL `body_bytes` counts only a gap), by source id then
+    /// slug in byte order, at most `limit`.
+    pub fn list_untiled_segmented_pages(&self, q: &UntiledPagesQuery) -> Result<Vec<UntiledPage>> {
+        let limit = match q.limit {
+            Some(n) if n < 0 => {
+                return Err(StoreError::invalid(
+                    "listUntiledSegmentedPages limit: LIMIT must not be negative",
+                ));
+            }
+            Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
+            None => 1000,
+        };
+        let read = self.read()?;
+        let mut archived: BTreeMap<String, bool> = BTreeMap::new();
+        let mut out = Vec::new();
+        for (id, state) in segmented_body_states(&*read)? {
+            let Some(page) = read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            if page.deleted_at_us.is_some()
+                || q.source_ids
+                    .as_ref()
+                    .is_some_and(|ids| !ids.contains(&page.source_id))
+                || q.slugs
+                    .as_ref()
+                    .is_some_and(|slugs| !slugs.contains(&page.slug))
+            {
+                continue;
+            }
+            let gone = match archived.get(&page.source_id) {
+                Some(gone) => *gone,
+                None => {
+                    let gone = read_source(&*read, &page.source_id)?.is_none_or(|s| s.archived);
+                    archived.insert(page.source_id.clone(), gone);
+                    gone
+                }
+            };
+            if gone {
+                continue;
+            }
+            let live: Vec<ManifestRow> = manifest_rows(&*read, id)?
+                .into_iter()
+                .map(|(_, row)| row)
+                .filter(|row| in_generation(row, state.body_generation))
+                .collect();
+            let refs: Vec<&ManifestRow> = live.iter().collect();
+            let (n, covered, gapless) = tiling(&refs);
+            if gapless && state.body_bytes.is_none_or(|bytes| bytes == covered) {
+                continue;
+            }
+            out.push(UntiledPage {
+                source_id: page.source_id.clone(),
+                slug: page.slug.clone(),
+                page_id: i64::try_from(id).unwrap_or(i64::MAX),
+                revision: page.knowledge_revision.clone(),
+                body_generation: state.body_generation,
+                body_bytes: state.body_bytes.unwrap_or(0),
+                segment_count: state.segment_count,
+                source_path: page.source_path.clone(),
+                rows: n,
+                covered_bytes: gapless.then_some(covered),
+            });
+        }
+        out.sort_by(|a, b| {
+            (a.source_id.as_bytes(), a.slug.as_bytes())
+                .cmp(&(b.source_id.as_bytes(), b.slug.as_bytes()))
+        });
+        out.truncate(limit);
+        Ok(out)
     }
 
     /// `readBodyManifestRows(pageId, generation)`: the rows of generation

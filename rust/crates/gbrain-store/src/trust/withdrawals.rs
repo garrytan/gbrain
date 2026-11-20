@@ -15,8 +15,10 @@ use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::sources::require_source;
+use crate::timeline_queries::timestamptz_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 /// The byte after `keys::TRUST` that marks a withdrawal.
@@ -153,6 +155,64 @@ pub(crate) fn withdrawn_claim(
         }
     }
     Ok(false)
+}
+
+/// `snapshot_withdrawals` of `readPageSnapshot` (src/core/page-state/snapshot.ts): the withdrawals
+/// of `source_id` whose subject is `*` or `slug`, one per visibility and fingerprint with the
+/// earliest time, ordered by visibility and fingerprint, `withdrawn_at` as `jsonb_build_object`
+/// writes a timestamptz. The store keeps no fact purge ledger, so no row is `purged`.
+pub(crate) fn page_withdrawals(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<Vec<Value>> {
+    let mut rows = Vec::new();
+    for visibility in VISIBILITIES {
+        let mut earliest: BTreeMap<String, i64> = BTreeMap::new();
+        for subject in ["*", slug] {
+            let mut prefix = key(&[source_id, visibility, subject]);
+            prefix.push(0);
+            let mut failed = None;
+            scan_prefix(read, &prefix, false, &mut |k, v| {
+                let Some(hash) = k
+                    .get(prefix.len()..)
+                    .and_then(|h| std::str::from_utf8(h).ok())
+                else {
+                    return true;
+                };
+                match serde_json::from_slice::<WithdrawalRecord>(v) {
+                    Ok(r) => {
+                        let at = earliest
+                            .entry(hash.to_string())
+                            .or_insert(r.withdrawn_at_us);
+                        *at = (*at).min(r.withdrawn_at_us);
+                        true
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        false
+                    }
+                }
+            })?;
+            if let Some(e) = failed {
+                return Err(StoreError::invalid(format!(
+                    "fact withdrawals: corrupt record: {e}"
+                )));
+            }
+            if slug == "*" {
+                break;
+            }
+        }
+        rows.extend(earliest.into_iter().map(|(fact_hash, us)| {
+            json!({ "fact_hash": fact_hash, "visibility": visibility, "withdrawn_at": jsonb_time(us) })
+        }));
+    }
+    Ok(rows)
+}
+
+/// A timestamptz as `jsonb_build_object` writes it: `2026-03-05T10:00:00.25+00:00`.
+fn jsonb_time(micros: i64) -> String {
+    format!("{}:00", timestamptz_text(micros).replacen(' ', "T", 1))
 }
 
 /// Removes every withdrawal of a source, for the source delete.
@@ -464,6 +524,44 @@ mod tests {
         assert_eq!(
             fact_fingerprint_v1("x"),
             "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        );
+    }
+
+    #[test]
+    fn page_withdrawals_keep_the_earliest_per_visibility_and_fingerprint() {
+        let s = store();
+        let w = |vis: &str, claim: &str, subject: &str, at: &str| {
+            s.insert_fact_withdrawal("default", vis, claim, subject, Some(at))
+                .unwrap();
+        };
+        w(
+            "private",
+            "Walks to work",
+            "notes/a",
+            "2026-03-05T10:00:00.250Z",
+        );
+        w("private", "walks  to WORK.", "*", "2026-03-01T10:00:00Z");
+        w("world", "Tea", "notes/a", "2026-03-01T10:00:00.000120Z");
+        // Another subject, one that starts with the slug, and another source never reach the page.
+        w("private", "Other", "notes/ab", AT);
+        w("private", "Other", "notes/a/b", AT);
+        source(&s, "src2");
+        s.insert_fact_withdrawal("src2", "private", "Other", "notes/a", Some(AT))
+            .unwrap();
+        let read = s.read().unwrap();
+        let rows = page_withdrawals(&*read, "default", "notes/a").unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                json!({"fact_hash": fact_fingerprint("walks to work"), "visibility": "private", "withdrawn_at": "2026-03-01T10:00:00+00:00"}),
+                json!({"fact_hash": fact_fingerprint("tea"), "visibility": "world", "withdrawn_at": "2026-03-01T10:00:00.00012+00:00"}),
+            ]
+        );
+        assert_eq!(page_withdrawals(&*read, "default", "*").unwrap().len(), 1);
+        assert!(
+            page_withdrawals(&*read, "none", "notes/a")
+                .unwrap()
+                .is_empty()
         );
     }
 

@@ -673,6 +673,21 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Every page whose body record says `segmented`, by page id, with that record.
+pub(crate) fn segmented_body_states(read: &dyn KvRead) -> Result<Vec<(u64, BodyState)>> {
+    let prefix = kind_key(BODY);
+    let mut out = Vec::new();
+    for (key, state) in collect::<BodyState>(read, &prefix)? {
+        let id: [u8; 8] = key[prefix.len()..]
+            .try_into()
+            .map_err(|_| StoreError::invalid("page body: corrupt body key"))?;
+        if state.body_storage == "segmented" {
+            out.push((u64::from_be_bytes(id), state));
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
@@ -772,7 +787,7 @@ fn meta_type(meta: &SegmentedPageMeta) -> Result<String> {
 
 /// `liveTilingSql` and `untiledSql`: the generation's published rows, by seq, start each at the
 /// sum of the lengths before it, and their lengths sum to `body_bytes`.
-fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
+pub(crate) fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
     let mut sorted: Vec<&&ManifestRow> = rows.iter().collect();
     sorted.sort_by_key(|r| r.seq);
     let mut prior = 0i64;
@@ -2298,6 +2313,116 @@ mod tests {
             .clone();
         assert!(inline.get("body_storage").is_none());
         assert!(inline.get("body_bytes").is_none());
+    }
+
+    #[test]
+    fn untiled_pages_list_a_short_or_gapped_live_generation() {
+        use crate::cli_reads::export::UntiledPagesQuery;
+        let store = crate::test_support::store();
+        let shell = |slug: &str| {
+            store
+                .create_segmented_page_shell(
+                    slug,
+                    &meta("Seg"),
+                    &ShellOptions {
+                        source_id: Some("default".into()),
+                    },
+                )
+                .unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        };
+        let (short, gapped, whole) = (
+            shell("notes/short"),
+            shell("notes/gapped"),
+            shell("notes/whole"),
+        );
+        let all = UntiledPagesQuery::default();
+        assert!(store.list_untiled_segmented_pages(&all).unwrap().is_empty());
+        let row = |page: u64, start: i64| ManifestRow {
+            page_id: page as i64,
+            occurrence_id: 1,
+            gen_from: 0,
+            gen_to: None,
+            seq: 0,
+            region: "truth".into(),
+            source_id: "default".into(),
+            sha256: "00".repeat(32),
+            byte_start: start,
+            byte_len: 4,
+            line_start: 0,
+            line_count: 1,
+            cut_kind: "eof".into(),
+            entry_state: json!({}),
+            protected_regions: json!([]),
+            facts_slots: json!([]),
+            static_proj_bytes: 4,
+            static_proj_lines: 1,
+            outline: json!([]),
+            date_min: None,
+            date_max: None,
+            hash_state: "".into(),
+            staging_id: None,
+        };
+        store
+            .write(|tx| {
+                for (page, bytes) in [(short, Some(9)), (gapped, Some(7)), (whole, None)] {
+                    let mut state = read_body_state(tx, page)?.unwrap();
+                    state.body_bytes = bytes;
+                    put_json(tx, &body_key(page), &state)?;
+                }
+                put_json(tx, &manifest_key(short, 1, 0, &[0; 16]), &row(short, 0))?;
+                put_json(tx, &manifest_key(gapped, 1, 0, &[0; 16]), &row(gapped, 3))?;
+                put_json(tx, &manifest_key(whole, 1, 0, &[0; 16]), &row(whole, 3))?;
+                Ok(())
+            })
+            .unwrap();
+        let listed = store.list_untiled_segmented_pages(&all).unwrap();
+        let got: Vec<(&str, i64, i64, Option<i64>)> = listed
+            .iter()
+            .map(|p| (p.slug.as_str(), p.body_bytes, p.rows, p.covered_bytes))
+            .collect();
+        // notes/short covers 4 of 9 bytes; the gapped rows start at 3; a NULL size counts only the gap.
+        assert_eq!(
+            got,
+            vec![
+                ("notes/gapped", 7, 1, None),
+                ("notes/short", 9, 1, Some(4)),
+                ("notes/whole", 0, 1, None)
+            ]
+        );
+        let narrowed = UntiledPagesQuery {
+            slugs: Some(vec!["notes/short".into()]),
+            limit: Some(5),
+            ..UntiledPagesQuery::default()
+        };
+        assert_eq!(
+            store.list_untiled_segmented_pages(&narrowed).unwrap().len(),
+            1
+        );
+        let limited = UntiledPagesQuery {
+            limit: Some(1),
+            ..UntiledPagesQuery::default()
+        };
+        assert_eq!(
+            store.list_untiled_segmented_pages(&limited).unwrap()[0].slug,
+            "notes/gapped"
+        );
+        let elsewhere = UntiledPagesQuery {
+            source_ids: Some(vec!["other".into()]),
+            ..UntiledPagesQuery::default()
+        };
+        assert!(
+            store
+                .list_untiled_segmented_pages(&elsewhere)
+                .unwrap()
+                .is_empty()
+        );
+        let negative = UntiledPagesQuery {
+            limit: Some(-1),
+            ..UntiledPagesQuery::default()
+        };
+        assert!(store.list_untiled_segmented_pages(&negative).is_err());
     }
 
     #[test]

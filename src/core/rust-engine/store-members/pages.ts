@@ -6,6 +6,8 @@ import { toGetPage, toListPage, toPutPage, withIsoDates } from '../store-codec.t
 import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
+import { overlayInlineSnapshots } from '../../page-state/snapshot.ts';
+import { normalizeFenceLines } from './cli-reads-export.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted'] as const;
@@ -13,13 +15,20 @@ const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted'] as const;
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
   const scope = takeOptions('readPageSnapshot', opts, READ_SCOPE);
   const snapshot: PageSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
+  return snapshot === null ? null : overlaid(brain, { ...snapshot, page: toGetPage(snapshot.page) });
 };
+
+/** The snapshot with its inline fence rows overlaid by its withdrawals, as PGLite's snapshot statement gives it. */
+async function overlaid(brain: StoreBrain, snapshot: PageSnapshot): Promise<PageSnapshot> {
+  await overlayInlineSnapshots((bodies, timelines) => normalizeFenceLines(brain, bodies, timelines), [snapshot]);
+  return snapshot;
+}
 
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
   const scope = takeOptions('getPage', opts, READ_SCOPE);
   const snapshot: PageSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : toGetPage(snapshot.page);
+  // PGLite's getPage is readPageSnapshot's page, withdrawn fence rows struck.
+  return snapshot === null ? null : (await overlaid(brain, { ...snapshot, page: toGetPage(snapshot.page) })).page;
 };
 
 /** The revision the page has now, for the error a rejected revision check throws. `null` when there is no page. */

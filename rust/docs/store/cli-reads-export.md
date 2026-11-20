@@ -23,6 +23,7 @@ of `src/core/access/policy-transfer.ts`). PGLite and Postgres run the same SQL a
 | `brain.listForcedCutSeqs(pageId, generation)` | the `seq` of each published row of the generation with `cut_kind = 'forced'`, in `seq` order; none for a missing page | `listForcedCutSeqs` |
 | `brain.readManifestSeqAt(pageId, generation, byteOffset)` | the `seq` of the published row of the generation that starts last at or before `byteOffset` (ties: the higher `seq`), or `null` | `readManifestSeqAt` |
 | `brain.readSegmentedVersionBodyBytes(pageId, generation)` | `body_bytes` of the newest (highest id) segmented version of the page with `body_generation = generation` and a recorded size, or `null` | `readSegmentedVersionBodyBytes` |
+| `brain.listUntiledSegmentedPages({ sourceIds?, slugs?, limit? })` | the live (not deleted) segmented pages of existing, unarchived sources whose live generation's published rows, by `seq`, do not start each where the one before ends (the first at 0) or do not sum to `body_bytes` (a missing size counts only a gap), by source id then slug in byte order, at most `limit` (1,000; a negative limit refuses): `{ source_id, slug, page_id, revision, body_generation, body_bytes (0 when missing), segment_count, source_path, rows, covered_bytes (null with a gap) }` | `listUntiledSegmentedPages` |
 | `brain.listAccessPolicySourceIds()` | `[]`: the store keeps no folder rules, so no source has an access policy and an export of every source carries no rulebook | `listAccessPolicySourceIds` |
 
 ## What the store does not keep
