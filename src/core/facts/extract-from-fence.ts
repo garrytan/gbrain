@@ -219,6 +219,20 @@ export function normalizeMetricLabel(raw: string | undefined | null): string | u
   return trimmed.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
+const NOT_A_RAISE = /valuation|price|cap|share|equity|stake|ownership|dilution|acquisition|revenue|pct|percent|count|number|date|multiple|investor|runway|month|interest|loan|target|need|trip|rate|burn/;
+const RAISE_STEM = /^(?:(?:pre_)?seed|series_[a-z]|bridge|fundraise|fundraising|funding|raise|round|deal)(?:_|$)|_(?:round|raise|fundraise|funding)(?:_|$)/;
+
+/**
+ * GST-3170: the extractor model's metric label (normalizeMetricLabel), with its round and deal-amount variants
+ * (fundraise_seed, seed_round, series_a, round_size, deal_amount_usd) folded into `fundraise` so one deal's amounts
+ * share one tag. A valuation, price, cap, share, count, runway, loan, interest or target label never folds. A fence row's label is kept as written.
+ */
+export function normalizeExtractedMetricLabel(raw: string | undefined | null): string | undefined {
+  const label = normalizeMetricLabel(raw);
+  if (!label || label === 'fundraise' || NOT_A_RAISE.test(label)) return label;
+  return RAISE_STEM.test(label) ? 'fundraise' : label;
+}
+
 /**
  * Map an array of parsed fence rows into engine-ready batch insert rows.
  *
