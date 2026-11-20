@@ -58,8 +58,11 @@ if (!target) {
 // Name the output directory and the target, so a CARGO_TARGET_DIR, build.target-dir,
 // CARGO_BUILD_TARGET or build.target setting cannot send the build elsewhere while the copy below
 // picks up an older library. With --target, cargo always writes to target/<host>/release.
+// GBRAIN_RUST_TEST_SEEDS=1 builds the parity suite's Rust-arm addon: it adds the test-only seed methods
+// (crates/gbrain-store/src/test_seeds.rs). A build without it, the shipped one, has none.
+const features = process.env.GBRAIN_RUST_TEST_SEEDS === '1' ? ['--features', 'test-seeds'] : [];
 const build = Bun.spawnSync(
-  ['cargo', 'build', '--release', '-p', 'gbrain-napi', '--target', host, '--target-dir', join(rustDir, 'target')],
+  ['cargo', 'build', '--release', '-p', 'gbrain-napi', ...features, '--target', host, '--target-dir', join(rustDir, 'target')],
   {
     cwd: rustDir,
     stdout: 'inherit',

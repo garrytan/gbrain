@@ -216,6 +216,8 @@ import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as collateCommandReadsImpl from './engine-sql/collate-command-reads.ts';
+import * as collateCycleWindowImpl from './engine-sql/collate-cycle-window.ts';
+import * as collateIdentityDowngradesImpl from './engine-sql/collate-identity-downgrades.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
@@ -1533,6 +1535,14 @@ export class PostgresEngine implements BrainEngine {
   listLivePagesNamingReader(principal: string) { return collateCommandReadsImpl.listLivePagesNamingReader(this.executeRaw.bind(this), principal); }
   readPageAccessRows(slug: string, sourceId?: string) { return collateCommandReadsImpl.readPageAccessRows(this.executeRaw.bind(this), slug, sourceId); }
   listMarkdownPageSlugs(sourceId: string) { return collateCommandReadsImpl.listMarkdownPageSlugs(this.executeRaw.bind(this), sourceId); }
+  // Identity-downgrade reads and checkpoint row (engine-sql/collate-identity-downgrades.ts), through this engine's executeRaw.
+  readSoftDeletedPageAtOrigin(sourceId: string, path: string, slug: string) { return collateIdentityDowngradesImpl.readSoftDeletedPageAtOrigin(this.executeRaw.bind(this), sourceId, path, slug); }
+  listLivePagesAtOrigin(sourceId: string, sourcePath: string) { return collateIdentityDowngradesImpl.listLivePagesAtOrigin(this.executeRaw.bind(this), sourceId, sourcePath); }
+  countPageCarryRows(sourceId: string, slug: string, pageId: number) { return collateIdentityDowngradesImpl.countPageCarryRows(this.executeRaw.bind(this), sourceId, slug, pageId); }
+  writeOpCheckpointValues(op: string, fingerprint: string, values: readonly unknown[]) { return collateIdentityDowngradesImpl.writeOpCheckpointValues(this.executeRaw.bind(this), op, fingerprint, values); }
+  readOpCheckpointValues(op: string, fingerprint: string) { return collateIdentityDowngradesImpl.readOpCheckpointValues(this.executeRaw.bind(this), op, fingerprint); }
+  readCycleListingInstant() { return collateCycleWindowImpl.readCycleListingInstant(this.executeRaw.bind(this)); }
+  listSourceChangedPagesAfter(sourceId: string, since: string | null, slug: string, limit: number) { return collateCycleWindowImpl.listSourceChangedPagesAfter(this.executeRaw.bind(this), sourceId, since, slug, limit); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }
   readMentionIndexStatus(sourceIds: readonly string[]) { return this.preparationRead(exec => entityReadsImpl.readMentionIndexStatus(unscopedExecutor(exec, 'entities: mention-index status ran unscoped through executeRaw'), sourceIds)); }

@@ -10,6 +10,10 @@ description = "Node-API binding for the gbrain Rust engine; the only crate that 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Exposes the test-only seed methods of gbrain-store (parity Rust arm). Not a default feature; the shipped addon is built without it.
+test-seeds = ["gbrain-store/test-seeds"]
+
 [dependencies]
 napi = { version = "3", features = ["napi8", "serde-json"] }
 gbrain-store = { path = "../gbrain-store" }

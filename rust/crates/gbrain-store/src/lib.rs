@@ -18,13 +18,16 @@ pub mod chunks;
 pub mod cli_reads;
 pub mod collate_command_reads;
 pub mod config;
+pub mod cycle_window;
 pub mod env;
 pub mod error;
 pub mod format;
+pub mod identity_downgrades;
 pub mod journal;
 pub mod keys;
 pub mod kv;
 pub mod links;
+pub mod op_checkpoint_values;
 mod owner_only;
 mod page_columns;
 mod page_index;
@@ -33,6 +36,8 @@ pub mod pages;
 pub mod redb_kv;
 pub mod search;
 pub mod sources;
+#[cfg(feature = "test-seeds")]
+pub mod test_seeds;
 #[cfg(test)]
 mod test_support;
 pub mod timeline;

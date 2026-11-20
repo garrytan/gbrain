@@ -13,9 +13,11 @@
  *  - Why existing coverage misses it: the tests of these readers use slugs that sort the same in every locale, and CI's
  *    Postgres runs in C.UTF-8. Every case here uses slugs that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
- *  - Seam: pages are written through the engine. Harness-only SQL sets one shared updated_at (so slug breaks the
- *    tie), changes a title behind the ledger (drift), deletes a page row (an orphan lifetime), inserts failure
- *    tombstones and stamps the window cursor. Every reader here runs raw SQL, so the Rust arm stops on raw_sql.
+ *  - Seam: pages are written through the engine. The shared updated_at that slug breaks (listSourceChangedPages) is set by
+ *    the harness: SQL on PGLite and Postgres, the test-only seed seedPageUpdatedAt on the Rust arm (an addon built with
+ *    GBRAIN_RUST_TEST_SEEDS=1). The window cursor is stamped through updateSourceConfig. Harness-only SQL changes a title
+ *    behind the ledger (drift), deletes a page row (an orphan lifetime) and inserts failure tombstones. The window answers
+ *    from typed members, so the Rust arm answers it; the other readers here run raw SQL, so the Rust arm stops on raw_sql.
  */
 import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -28,7 +30,7 @@ import { failureTombstoneText, listFailedProposals } from '../../src/core/cycle/
 import { listSourceChangedPages, sourceWindow } from '../../src/core/cycle/source-window.ts';
 import { PHANTOM_REDIRECT_CURSOR_OP, runPhantomRedirectPass } from '../../src/core/cycle/phantom-redirect.ts';
 import { rotationAfter } from '../../src/core/repair/rotation.ts';
-import { parityArms } from './harness.ts';
+import { parityArms, stampUpdatedAtExact } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { BYTE_SLUGS, byteOrder, MIXED_SLUGS } from '../helpers/byte-order.ts';
@@ -41,11 +43,6 @@ const STAMP = '2026-01-01T00:00:00Z';
 
 async function put(engine: BrainEngine, slugs: readonly string[]): Promise<void> {
   for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
-}
-
-/** One shared updated_at, so only the slug orders the pages. */
-async function tie(engine: BrainEngine): Promise<void> {
-  await engine.executeRaw(`UPDATE pages SET updated_at = $1::timestamptz WHERE source_id = 'default'`, [STAMP]);
 }
 
 describe('belief walks and cycle listings take pages by byte', () => {
@@ -82,9 +79,9 @@ describe('belief walks and cycle listings take pages by byte', () => {
     expect((await listFailedProposals(engine, 'default')).map(r => r.slug)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', { methods: ['putPage', 'readSourceState', 'updateSourceConfig', 'readCycleListingInstant', 'listSourceChangedPagesAfter'] }, async (engine, backend) => {
     await put(engine, MIXED_SLUGS);
-    await tie(engine);
+    for (const slug of MIXED_SLUGS) await stampUpdatedAtExact(engine, backend, 'default', slug, STAMP);
     const limit = sourceWindow.pageLimit;
     sourceWindow.pageLimit = 1;
     try {
@@ -94,8 +91,7 @@ describe('belief walks and cycle listings take pages by byte', () => {
         const window = await listSourceChangedPages(engine, 'default', since);
         seen.push(...window.slugs);
         if (!window.next?.slug) break;
-        await engine.executeRaw(`UPDATE sources SET config = config || jsonb_build_object('last_source_cycle_window_at', $2::text, 'last_source_cycle_window_slug', $3::text)
-          WHERE id = $1`, ['default', window.next.at, window.next.slug]);
+        await engine.updateSourceConfig('default', { last_source_cycle_window_at: window.next.at, last_source_cycle_window_slug: window.next.slug });
         since = window.next.at;
       }
       expect(seen).toEqual([...BYTE_SLUGS]);

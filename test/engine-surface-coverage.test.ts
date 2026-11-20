@@ -142,6 +142,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listLivePagesNamingReader', 'readPageAccessRows', 'listMarkdownPageSlugs',
   // Slug reads that order by byte (engine-sql/collate-slug-reads.ts; covered by the collate-*.test.ts parity files)
   'resolveLiveSlugByPath', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies',
+  // Identity-downgrade record reads, checkpoint value rows and the cycle window (engine-sql/collate-identity-downgrades.ts, collate-cycle-window.ts; covered by test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts and collate-belief-cycle-walks.test.ts)
+  'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues', 'readOpCheckpointValues', 'readCycleListingInstant', 'listSourceChangedPagesAfter',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',

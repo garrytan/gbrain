@@ -94,6 +94,32 @@ export function rustAccessBrain(engine: unknown) {
   return (engine as RustEngine).openStore('accessRules').brain;
 }
 
+/** `2026-01-01T00:00:00.000200Z` as whole microseconds since the epoch (a Date keeps milliseconds only). */
+export function isoToMicros(iso: string): number {
+  const fraction = /\.(\d+)/.exec(iso)?.[1] ?? '';
+  const millis = Date.parse(iso.replace(/\.\d+/, ''));
+  if (Number.isNaN(millis)) throw new Error(`not a timestamp: ${iso}`);
+  return millis * 1000 + Number(fraction.padEnd(6, '0').slice(0, 6));
+}
+
+/**
+ * TEST-ONLY seed members of the Rust arm: two raw page-column updates no BrainEngine member makes (a shared `updated_at`,
+ * and a soft-deleted page that carries a file path). They exist only on an addon built with the `test-seeds` cargo
+ * feature (`GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`); the shipped addon has neither (rust/docs/store/test-seeds.md).
+ */
+export async function seedRustPageUpdatedAt(engine: unknown, sourceId: string, slug: string, iso: string): Promise<void> {
+  const brain = (engine as RustEngine).openStore('seedPageUpdatedAt').brain as unknown as Record<string, unknown>;
+  if (typeof brain.seedPageUpdatedAt !== 'function') throw new Error('this Rust addon has no test seeds; build the arm addon with GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build');
+  await (brain.seedPageUpdatedAt as (s: string, l: string, us: number) => Promise<void>).call(brain, sourceId, slug, isoToMicros(iso));
+}
+
+export async function seedRustPageOrigin(engine: unknown, sourceId: string, slug: string, sourcePath: string | null, deletedAtIso: string | null): Promise<void> {
+  const brain = (engine as RustEngine).openStore('seedPageOrigin').brain as unknown as Record<string, unknown>;
+  if (typeof brain.seedPageOrigin !== 'function') throw new Error('this Rust addon has no test seeds; build the arm addon with GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build');
+  await (brain.seedPageOrigin as (s: string, l: string, p: string | null, d: number | null) => Promise<void>)
+    .call(brain, sourceId, slug, sourcePath, deletedAtIso === null ? null : isoToMicros(deletedAtIso));
+}
+
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
 
 /**

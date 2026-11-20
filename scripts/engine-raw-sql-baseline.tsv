@@ -330,7 +330,6 @@ src/core/cycle/phantom-redirect.ts	execute_raw	8
 src/core/cycle/phases/consolidate.ts	execute_raw	9
 src/core/cycle/propose-takes-failures.ts	execute_raw	5
 src/core/cycle/propose-takes.ts	execute_raw	5
-src/core/cycle/source-window.ts	execute_raw	4
 src/core/cycle/synthesize-completion.ts	execute_raw	2
 src/core/cycle/synthesize-concepts.ts	execute_raw	1
 src/core/cycle/synthesize-generations.ts	execute_raw	1
@@ -965,7 +964,7 @@ src/core/sync-anchor.ts	execute_raw	5
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	2
-src/core/sync-identity-downgrades.ts	execute_raw	8
+src/core/sync-identity-downgrades.ts	execute_raw	5
 src/core/sync-pending.ts	execute_raw	3
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	4

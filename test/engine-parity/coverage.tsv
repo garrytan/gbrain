@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 962/969
+# covered: 968/976
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -61,6 +61,8 @@
 # cli_reads_import: 13/13
 # wanted_links: 2/2
 # collate_command_reads: 3/3
+# collate_identity_downgrades: 4/5
+# collate_cycle_window: 2/2
 # write_misc: 65/71
 # write_attribution: 5/5
 # telemetry: 10/10
@@ -88,7 +90,7 @@ transaction	lifecycle	yes	100	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	112	yes	yes	yes	serves
+getPage	pages	yes	113	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
@@ -109,7 +111,7 @@ resolveSlugs	pages	yes	6	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	8	no	yes	yes	serves
-updateSourceConfig	pages	yes	1	no	yes	yes	serves
+updateSourceConfig	pages	yes	2	no	yes	yes	serves
 getSource	pages	yes	6	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
@@ -796,7 +798,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	67	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	65	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -866,8 +868,15 @@ replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 listLivePagesNamingReader	collate_command_reads	yes	1	no	yes	yes	serves
 readPageAccessRows	collate_command_reads	yes	2	no	yes	yes	serves
 listMarkdownPageSlugs	collate_command_reads	yes	1	no	yes	yes	serves
+readSoftDeletedPageAtOrigin	collate_identity_downgrades	yes	1	no	yes	yes	serves
+listLivePagesAtOrigin	collate_identity_downgrades	yes	1	no	yes	yes	serves
+countPageCarryRows	collate_identity_downgrades	yes	1	no	yes	yes	serves
+writeOpCheckpointValues	collate_identity_downgrades	yes	1	no	yes	yes	serves
+readOpCheckpointValues	collate_identity_downgrades	no	0	no	-	-	-
+readCycleListingInstant	collate_cycle_window	yes	1	no	yes	yes	serves
+listSourceChangedPagesAfter	collate_cycle_window	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
-readSourceState	write_misc	yes	2	no	yes	yes	serves
+readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves

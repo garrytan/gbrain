@@ -4100,6 +4100,22 @@ export interface BrainEngine {
   /** A source's markdown page slugs (soft-deleted ones too) by byte: the reconcile-links walk. */
   listMarkdownPageSlugs(sourceId: string): Promise<string[]>;
 
+  // Identity-downgrade record reads and its checkpoint row (engine-sql/collate-identity-downgrades.ts).
+  /** The soft-deleted page of a source whose origin is `path` (or, with no origin, whose slug is `slug`): the latest deletion, then the lowest page id. */
+  readSoftDeletedPageAtOrigin(sourceId: string, path: string, slug: string): Promise<import('./engine-sql/collate-identity-downgrades.ts').SoftDeletedPageRow | null>;
+  /** The live pages of a source whose origin is `sourcePath`, by slug bytes. */
+  listLivePagesAtOrigin(sourceId: string, sourcePath: string): Promise<import('./engine-sql/collate-identity-downgrades.ts').LivePageAtOriginRow[]>;
+  /** The facts about a slug, the links of a page and the aliases of a slug: what a rename carry would move. */
+  countPageCarryRows(sourceId: string, slug: string, pageId: number): Promise<import('./engine-sql/collate-identity-downgrades.ts').PageCarryCounts>;
+  /** A checkpoint's `completed_keys` replaced by the JSON array `values` (the row is created when missing; the stamp is now). */
+  writeOpCheckpointValues(op: string, fingerprint: string, values: readonly unknown[]): Promise<void>;
+  /** A checkpoint's `completed_keys` as stored (an array), or null when there is no row. */
+  readOpCheckpointValues(op: string, fingerprint: string): Promise<unknown[] | null>;
+  /** The cycle's listing instant (UTC ISO, microseconds), or null when the engine has none; see engine-sql/collate-cycle-window.ts. */
+  readCycleListingInstant(): Promise<string | null>;
+  /** Up to `limit` live pages of a source after the cursor `(since, slug)` by `(updated_at, slug bytes)`; every page when `since` is null. */
+  listSourceChangedPagesAfter(sourceId: string, since: string | null, slug: string, limit: number): Promise<import('./engine-sql/collate-cycle-window.ts').SourceChangedPageRow[]>;
+
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;

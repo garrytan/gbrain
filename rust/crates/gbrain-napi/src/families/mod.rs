@@ -11,6 +11,8 @@ mod cli_reads_ops;
 mod cli_reads_search_pages;
 mod cli_sources;
 mod collate_command_reads;
+mod collate_cycle_window;
+mod collate_identity_downgrades;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;
@@ -31,6 +33,8 @@ mod session_state;
 mod slug_reads;
 mod sources;
 mod tags;
+#[cfg(feature = "test-seeds")]
+mod test_seeds;
 mod timeline;
 mod trust;
 mod trust_fence;

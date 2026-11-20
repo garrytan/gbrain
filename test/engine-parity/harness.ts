@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, seedRustPageOrigin, seedRustPageUpdatedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -246,6 +246,34 @@ export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend
     case 'pglite':
     case 'postgres':
       await engine.executeRaw('UPDATE pages SET updated_at = $3::text::timestamptz WHERE source_id = $1 AND slug = $2', [sourceId, slug, iso]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: `stampUpdatedAt` that the Rust arm performs too, through the test-only seed member `seedPageUpdatedAt` (an addon
+ * built with GBRAIN_RUST_TEST_SEEDS=1). For a case whose answer depends on the pages sharing one `updated_at`.
+ */
+export async function stampUpdatedAtExact(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, iso: string): Promise<void> {
+  if (backend === 'rust') await seedRustPageUpdatedAt(engine, sourceId, slug, iso);
+  else await stampUpdatedAt(engine, backend, sourceId, slug, iso);
+}
+
+/**
+ * Fixture: give a page a file path and a deletion time (`UPDATE pages SET source_path, deleted_at`), as a sync that soft-deletes
+ * a renamed file leaves it. No BrainEngine member writes either column, so the SQL arms use harness-only SQL and the Rust arm
+ * the test-only seed member `seedPageOrigin` (an addon built with GBRAIN_RUST_TEST_SEEDS=1).
+ */
+export async function seedPageOrigin(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, sourcePath: string | null, deletedAt: string | null): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await seedRustPageOrigin(engine, sourceId, slug, sourcePath, deletedAt);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('UPDATE pages SET source_path = $3, deleted_at = $4::text::timestamptz WHERE source_id = $1 AND slug = $2', [sourceId, slug, sourcePath, deletedAt]);
       return;
     default:
       return assertNever(backend);

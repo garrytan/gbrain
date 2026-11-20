@@ -72,6 +72,8 @@ import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as collateCommandReads from './collate-command-reads.ts';
+import * as collateCycleWindow from './collate-cycle-window.ts';
+import * as collateIdentityDowngrades from './collate-identity-downgrades.ts';
 import * as accessPolicy from './access-policy.ts';
 import * as accessSetup from './access-setup.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
@@ -142,6 +144,10 @@ export const STORE_MEMBERS = {
   ...writeMisc,
   // The page reads of the member-disable check, who-can-read and reconcile-links (rust/docs/store/collate-command-reads.md).
   ...collateCommandReads,
+  // The cycle window's listing instant and page window (rust/docs/store/collate-cycle-window.md).
+  ...collateCycleWindow,
+  // The identity-downgrade record reads and the checkpoint value rows (rust/docs/store/collate-identity-downgrades.md).
+  ...collateIdentityDowngrades,
   // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
   ...accessPolicy,
   // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).

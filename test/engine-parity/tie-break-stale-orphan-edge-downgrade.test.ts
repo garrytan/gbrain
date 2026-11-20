@@ -3,7 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1,
- *    where each reader runs raw SQL and stops on raw_sql) a tie is broken by a unique key after the existing sort keys:
+ *    where the identity-downgrade record answers from typed members and the other three readers run raw SQL and stop on
+ *    raw_sql) a tie is broken by a unique key after the existing sort keys:
  *    the orphan lifetime sample (orphanLifetimes) by the lifetime id, the stale-mention scan (scanStaleMentions) by the
  *    lowest page id, the edge-contradiction subject cut (runPhaseEdgeContradictions, max_subjects) by the lowest subject
  *    page id, and the identity-downgrade record of a renamed file (recordIdentityDowngrades) by the lowest page id.
@@ -13,7 +14,9 @@
  *  - Why existing coverage misses it: the cases give every row its own slug, timestamp or path, so no limit ever cut a tie.
  *  - Seam: pages and mention links go through the engine writers. Harness-only SQL inserts belief events that name a
  *    missing lifetime, inserts the relationship rows with one refreshed_at (the put_page operation cannot run on the Rust
- *    arm), and gives soft-deleted pages one source_path and one deleted_at (no typed write sets them). Every reader runs raw SQL, so the Rust arm stops on raw_sql.
+ *    arm), and gives soft-deleted pages one source_path and one deleted_at (no typed write sets them; the Rust arm uses the
+ *    test-only seed seedPageOrigin, which needs an addon built with GBRAIN_RUST_TEST_SEEDS=1). The identity-downgrade record
+ *    reads through typed members, so the Rust arm answers it; the other three readers run raw SQL, so the Rust arm stops on raw_sql.
  */
 import { describe, expect } from 'bun:test';
 import { orphanLifetimes } from '../../src/core/belief/coverage-report.ts';
@@ -21,7 +24,7 @@ import { scanStaleMentions } from '../../src/core/by-mention.ts';
 import { runPhaseEdgeContradictions, type EdgeJudgeFn } from '../../src/core/cycle/edge-contradictions.ts';
 import { recordIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, seedPageOrigin } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -108,17 +111,18 @@ describe('edge contradiction subjects', () => {
 });
 
 describe('identity downgrade record', () => {
-  parityTest('recordIdentityDowngrades names the lowest page id when soft-deleted pages share one source_path and deleted_at', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('recordIdentityDowngrades names the lowest page id when soft-deleted pages share one source_path and deleted_at', { methods: ['putPage', 'getPage', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues'] }, async (engine, backend) => {
     // The pages table allows one live-or-deleted page per (source_id, slug) but not one per source_path: six pages that an
     // old file once backed are soft-deleted in one sync, so they carry one path and one deleted_at.
     const slugs = KEYS.map(key => `notes/${key}`);
-    for (const slug of slugs) await engine.putPage(slug, note(slug));
-    for (const slug of [...slugs].reverse()) {
-      await engine.executeRaw(`UPDATE pages SET source_path = 'notes/old.md', deleted_at = '2026-01-01T00:00:00Z'::timestamptz WHERE source_id = 'default' AND slug = $1`, [slug]);
+    const ids: number[] = [];
+    for (const slug of slugs) {
+      await engine.putPage(slug, note(slug));
+      ids.push((await engine.getPage(slug))!.id);
     }
-    const ids = await engine.executeRaw<{ id: number | string; slug: string }>(`SELECT id, slug FROM pages WHERE source_id = 'default' AND slug = ANY($1::text[]) ORDER BY id`, [slugs]);
+    for (const slug of [...slugs].reverse()) await seedPageOrigin(engine, backend, 'default', slug, 'notes/old.md', '2026-01-01T00:00:00Z');
     const [record] = await recordIdentityDowngrades(engine, 'default', [{ from: 'notes/old.md', to: 'notes/new.md', similarity: 0.4, reason: 'no_identity_signal' }]);
-    expect(record.old_page_id).toBe(Number(ids[0].id));
+    expect(record.old_page_id).toBe(ids[0]);
     expect(record.old_slug).toBe(slugs[0]);
     return { old_slug: record.old_slug };
   });

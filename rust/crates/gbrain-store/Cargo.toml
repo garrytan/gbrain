@@ -7,6 +7,11 @@ publish.workspace = true
 rust-version.workspace = true
 description = "Record store for the gbrain Rust engine: redb behind a narrow key-value trait, pages, chunks, keyword search and the write journal. No JavaScript types."
 
+[features]
+# Test-only seed writes for the Rust arm of the parity suite (src/test_seeds.rs). Off by default and never
+# enabled by the shipped addon build (rust/scripts/build.ts passes no features unless GBRAIN_RUST_TEST_SEEDS=1).
+test-seeds = []
+
 [dependencies]
 redb = "4.6"
 serde = { version = "1", features = ["derive"] }

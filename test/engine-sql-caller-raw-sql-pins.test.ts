@@ -1008,6 +1008,51 @@ const PINS: Pin[] = [
     texts: [`SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`],
   },
   {
+    from: 'src/core/sync-identity-downgrades.ts:86 recordIdentityDowngrades, at 8b5a650ef6',
+    case: { method: 'readSoftDeletedPageAtOrigin', variant: 'default', run: e => e.readSoftDeletedPageAtOrigin('default', 'notes/old.md', 'notes/old') },
+    texts: [`SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
+        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`],
+  },
+  {
+    // The statement canonicalOriginPage (persistence/origin-guard.ts:167) ran, now ordered by byte: `ORDER BY slug COLLATE "C"`.
+    from: 'src/core/persistence/origin-guard.ts:167 canonicalOriginPage, called from recordIdentityDowngrades, at 8b5a650ef6 (ORDER BY slug gains COLLATE "C")',
+    case: { method: 'listLivePagesAtOrigin', variant: 'default', run: e => e.listLivePagesAtOrigin('default', 'notes/new.md') },
+    texts: [`SELECT id, slug FROM pages WHERE source_id = $1 AND source_path = $2 AND deleted_at IS NULL ORDER BY slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/sync-identity-downgrades.ts:93 recordIdentityDowngrades, at 8b5a650ef6',
+    case: { method: 'countPageCarryRows', variant: 'default', run: e => e.countPageCarryRows('default', 'notes/old', 7) },
+    texts: [`SELECT
+        (SELECT count(*) FROM facts WHERE source_id = $1 AND entity_slug = $2) AS facts,
+        (SELECT count(*) FROM links WHERE from_page_id = $3 OR to_page_id = $3) AS links,
+        (SELECT count(*) FROM page_aliases WHERE source_id = $1 AND slug = $2) AS aliases`],
+  },
+  {
+    from: 'src/core/sync-identity-downgrades.ts:99 recordIdentityDowngrades, at 8b5a650ef6',
+    case: { method: 'writeOpCheckpointValues', variant: 'default', run: e => e.writeOpCheckpointValues('sync-identity-downgrade', '7', [{ old_page_id: 7 }]) },
+    texts: [`INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, now())
+      ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`],
+  },
+  {
+    from: 'src/core/repair/rotation.ts rotationAfter (new member readOpCheckpointValues; the statement reads one checkpoint row), at 8b5a650ef6',
+    case: { method: 'readOpCheckpointValues', variant: 'default', run: e => e.readOpCheckpointValues('phantom-redirect-cursor', 'default') },
+    texts: [`SELECT completed_keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2`],
+  },
+  {
+    from: 'src/core/cycle/source-window.ts:53 listSourceChangedPages, at 8b5a650ef6',
+    case: { method: 'readCycleListingInstant', variant: 'default', run: e => e.readCycleListingInstant() },
+    texts: [`SELECT to_char(GREATEST(LEAST(clock_timestamp(),
+  (SELECT min(xact_start) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type <> 'autovacuum worker') - interval '1 millisecond'),
+  clock_timestamp() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`],
+  },
+  {
+    from: 'src/core/cycle/source-window.ts:58 listSourceChangedPages, at 8b5a650ef6',
+    case: { method: 'listSourceChangedPagesAfter', variant: 'default', run: e => e.listSourceChangedPagesAfter('default', null, '', 3) },
+    texts: [`SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at FROM pages
+      WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug COLLATE "C") > ($2::text::timestamptz, $3::text))
+      ORDER BY updated_at, slug COLLATE "C" LIMIT $4`],
+  },
+  {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
     case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
     texts: [
