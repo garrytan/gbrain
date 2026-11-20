@@ -9,6 +9,10 @@
  * Synthetic names only.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { buildEntityCard } from '../src/core/verbs/entity-card.ts';
@@ -187,5 +191,59 @@ describe('what does not change', () => {
     await expect(card(entityLookupFault(engine, { aliases: () => refusal }), 'Alice Example')).rejects.toBe(refusal);
     await engine.setPageAliases('people/alice-example', 'default', ['ally']);
     await expect(card(entityLookupFault(engine, { hydrate: () => refusal }), 'ally')).rejects.toBe(refusal);
+  });
+});
+
+// A lookup that SUCCEEDS and finds nothing is a real miss: it must stay a plain `found:false`, never a degraded result,
+// and it still exits 12 under GBRAIN_FAIL_ON_EMPTY=1 (#7177). Only a failed read earns `entity_lookup_failed`.
+describe('a lookup that succeeds and finds nothing stays a real miss', () => {
+  let home: string;
+  beforeAll(() => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-entity-miss-'));
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite') }));
+  });
+  afterAll(() => { rmSync(home, { recursive: true, force: true }); });
+
+  const cli = (env: Record<string, string>) => {
+    const r = spawnSync('bun', ['run', 'src/cli.ts', 'entity', 'Nobody Example', '--json'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, GBRAIN_HOME: home, DATABASE_URL: '', GBRAIN_DATABASE_URL: '', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_FAIL_ON_EMPTY: '', ...env },
+      timeout: 120_000,
+    });
+    return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', status: r.status ?? -1 };
+  };
+
+  test('CLI --json: found:false with no degraded key, exit 0', () => {
+    const r = cli({});
+    expect(r.status).toBe(0);
+    const body = JSON.parse(r.stdout);
+    expect(body.found).toBe(false);
+    expect('degraded' in body).toBe(false);
+    expect(r.stdout).not.toContain('entity_lookup_failed');
+    expect(r.stderr).not.toContain('entity_lookup_failed');
+  }, 180_000);
+
+  test('CLI --json with GBRAIN_FAIL_ON_EMPTY=1: still exits 12, still no degraded key', () => {
+    const r = cli({ GBRAIN_FAIL_ON_EMPTY: '1' });
+    expect(r.status).toBe(12);
+    const body = JSON.parse(r.stdout);
+    expect(body.found).toBe(false);
+    expect('degraded' in body).toBe(false);
+    expect(r.stderr).toContain('[entity] exit 12 (no_results)');
+    expect(r.stderr).not.toContain('entity_lookup_failed');
+  }, 180_000);
+
+  test('MCP: found:false with no _meta.degraded and no entity_lookup_failed anywhere in the answer', async () => {
+    // An empty brain, like the CLI cases: with pages present the mention index reports its own pending coverage, which is
+    // a different, older notice and not what this case pins.
+    await resetPgliteState(engine);
+    const out = await mcp(engine, { name: 'Nobody Example' });
+    expect(JSON.parse(out.content[0]!.text).found).toBe(false);
+    expect(out._meta?.degraded).toBeUndefined();
+    expect(out._meta?.retrieval).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('entity_lookup_failed');
+    expect(out.content.some(c => c.text.startsWith(DEGRADED_STAMP_PREFIX))).toBe(false);
   });
 });
