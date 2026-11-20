@@ -178,8 +178,6 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
 - `lockPageKeys` is not needed: the store's write transaction is serial.
 - `PageSourceMissingError` and the `REVISION_BACKFILL_PENDING` path do not occur: every store page has a source and a
   revision.
-- Chronicle-style dates in the SQL engines read the host time zone; the store reads UTC (follow-up
-  `chronicle-reads-host-time-zone`).
 - The derived-link insert repeats the core `add_links_batch` checks locally (`check_link`, `insert_row`).
 
 ## Follow-ups

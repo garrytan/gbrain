@@ -129,9 +129,20 @@ export async function getTimeline(exec: LegacyUnscopedRead, slug: string, opts?:
   // ── v0.42.x Life Chronicle (#2390) timeline reads ───────────────────────
   // Shared shape: timeline_entries JOIN depth page (deleted_at IS NULL) LEFT
   // JOIN event page; hide soft-deleted event projections (read-time, not just
-  // doctor); order by COALESCE(event effective_date, date) for intra-day
-  // sequence. Source scope: federated sourceIds[] > scalar sourceId > unscoped.
+  // doctor); order by COALESCE(event effective_date, UTC midnight of date)
+  // for intra-day sequence. Source scope: federated sourceIds[] > scalar sourceId > unscoped.
   // ep=true: the ep LEFT JOIN carries the same scope so out-of-scope event fields null out (#2200 origin-join shape).
+  // UTC pin: these four reads never follow the session TimeZone. An event's
+  // effective_date prints as its UTC instant ('YYYY-MM-DD HH:MM:SS[.ffffff]+00'),
+  // a plain row orders at UTC midnight of its day, and the no-date default of
+  // getOnThisDay / getLastSeen is the UTC day (finalizeLastSeen counts days_ago
+  // from the UTC day too). PGLite opens in the host zone; Postgres and the Rust
+  // store open in theirs, so a session-zone read printed different text per engine.
+const UTC_EFFECTIVE_DATE = sqlFragment`CASE WHEN isfinite(ep.effective_date)
+               THEN regexp_replace((ep.effective_date AT TIME ZONE 'UTC')::text, '( BC)?$', '+00\\1')
+               ELSE ep.effective_date::text END`;
+const UTC_DAY_START = sqlFragment`(te.date::timestamp AT TIME ZONE 'UTC')`;
+const UTC_TODAY = sqlFragment`(now() AT TIME ZONE 'UTC')::date`;
 function chronicleSourceCond(opts?: PageReadScope, ep = false) {
     const privacy = opts?.excludePrivate && !ep
       ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${privateTimelineEventFilterForCaller('te')}`)
@@ -152,7 +163,7 @@ export async function getTimelineForDate(exec: LegacyUnscopedRead, date: string,
       SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
-             ep.effective_date::text AS effective_date,
+             ${UTC_EFFECTIVE_DATE} AS effective_date,
              ep.frontmatter->'event'->>'kind' AS kind
       FROM timeline_entries te
       JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
@@ -160,7 +171,7 @@ export async function getTimelineForDate(exec: LegacyUnscopedRead, date: string,
       WHERE te.date >= ${lower} AND te.date <= ${upper}
         AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL)
         ${chronicleSourceCond(opts)}
-      ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
+      ORDER BY COALESCE(ep.effective_date, ${UTC_DAY_START}) ASC, te.id ASC
       LIMIT ${limit}`)).rows;
     return rows as unknown as ChronicleTimelineRow[];
   }
@@ -173,7 +184,7 @@ export async function getSince(exec: LegacyUnscopedRead, date: string, opts?: Ch
       SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
-             ep.effective_date::text AS effective_date,
+             ${UTC_EFFECTIVE_DATE} AS effective_date,
              ep.frontmatter->'event'->>'kind' AS kind
       FROM timeline_entries te
       JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
@@ -182,7 +193,7 @@ export async function getSince(exec: LegacyUnscopedRead, date: string, opts?: Ch
         AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL)
         ${kindCond}
         ${chronicleSourceCond(opts)}
-      ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
+      ORDER BY COALESCE(ep.effective_date, ${UTC_DAY_START}) ASC, te.id ASC
       LIMIT ${limit}`)).rows;
     return rows as unknown as ChronicleTimelineRow[];
   }
@@ -190,12 +201,12 @@ export async function getSince(exec: LegacyUnscopedRead, date: string, opts?: Ch
 
 export async function getOnThisDay(exec: LegacyUnscopedRead, opts?: PageReadScope & { date?: string; limit?: number }): Promise<ChronicleTimelineRow[]> {
     const limit = opts?.limit ?? 50;
-    const target = opts?.date ? sqlFragment`${opts.date}::date` : sqlFragment`current_date`;
+    const target = opts?.date ? sqlFragment`${opts.date}::date` : UTC_TODAY;
     const rows = (await exec.run(sqlFragment`
       SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
-             ep.effective_date::text AS effective_date,
+             ${UTC_EFFECTIVE_DATE} AS effective_date,
              ep.frontmatter->'event'->>'kind' AS kind
       FROM timeline_entries te
       JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
@@ -224,7 +235,7 @@ export async function getLastSeen(exec: LegacyUnscopedRead, entitySlug: string, 
     // The newest sighting is the newest projected day (te.date is already the
     // chronicle.tz local day); the event instant only orders within a day, so
     // a late-evening event never outranks a plain row dated the next day.
-    const seenThrough = opts?.asof ? sqlFragment`${opts.asof}::date` : sqlFragment`current_date`;
+    const seenThrough = opts?.asof ? sqlFragment`${opts.asof}::date` : UTC_TODAY;
     const likeSlug = entitySlug.replace(/[\\%_]/g, (c) => '\\' + c);
     const rows = (await exec.run(sqlFragment`
       SELECT te.date::text AS last_date, ep.slug AS last_event_slug
@@ -246,7 +257,7 @@ export async function getLastSeen(exec: LegacyUnscopedRead, entitySlug: string, 
           ))
         )
         ${chronicleSourceCond(opts)}
-      ORDER BY te.date DESC, COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC
+      ORDER BY te.date DESC, COALESCE(ep.effective_date, ${UTC_DAY_START}) DESC, te.id DESC
       LIMIT 1`)).rows;
     const row = rows[0] as { last_date?: string; last_event_slug?: string } | undefined;
     return finalizeLastSeen(entitySlug, row?.last_date ?? null, row?.last_event_slug ?? null, opts?.asof);
