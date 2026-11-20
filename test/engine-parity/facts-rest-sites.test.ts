@@ -449,6 +449,52 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  parityTest('readMemberPageWithdrawal for the brain owner counts a row of any visibility and judges a derived page by whether its origins name the owner', {
+    methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
+  }, async (engine) => {
+    const PAGE = 'memory/members/alice-example';
+    await engine.putPage(PAGE, note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/origin-alice', note('Origin for Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/origin-bob', note('Origin for Bob', { readable_by: ['bob-example'] }));
+    await engine.putPage('atoms/from-alice', note('From Alice', { source_slug: 'notes/origin-alice', visibility: 'world' }, 'atom'));
+    await engine.putPage('atoms/from-bob', note('From Bob', { source_slug: 'notes/origin-bob', visibility: 'world' }, 'atom'));
+    await engine.putPage('notes/derived-alice', note('Derived from Alice', { derived_from: ['notes/origin-alice.md'] }));
+    const ids = await fenced(engine, [
+      { fact: 'claim on alice atom', entity_slug: 'people/a', source_markdown_slug: 'atoms/from-alice' },
+      { fact: 'claim on bob atom', entity_slug: 'people/a', source_markdown_slug: 'atoms/from-bob' },
+      { fact: 'claim on alice lineage', entity_slug: 'people/a', source_markdown_slug: 'notes/derived-alice' },
+      { fact: 'private claim on open page', entity_slug: 'people/a', source_markdown_slug: 'notes/open', visibility: 'private' },
+    ]);
+    for (const id of ids.values()) await engine.expireFact(id);
+    const T = '2026-06-01T00:00:00Z';
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim on alice atom', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim on bob atom', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim on alice lineage', '*', T);
+    await engine.insertFactWithdrawal(SRC, 'private', 'private claim on open page', 'people/a', T);
+    const ask = async (fact: string, visibility: string, owner: boolean) => {
+      const row = await engine.readMemberPageWithdrawal({
+        sourceId: SRC, visibility, fact, entitySlug: 'people/a', page: PAGE, owner, identity: ['member:alice-example'], satisfied: [],
+      });
+      if (row === null) return null;
+      expect(row.withdrawn_at).toMatch(PG_TEXT);
+      return { subject: row.subject, visibility: row.visibility };
+    };
+    const out: Record<string, unknown> = {};
+    for (const owner of [false, true]) {
+      const who = owner ? 'owner' : 'member';
+      out[`${who}AliceAtom`] = await ask('claim on alice atom', 'world', owner);
+      out[`${who}BobAtom`] = await ask('claim on bob atom', 'world', owner);
+      out[`${who}AliceLineage`] = await ask('claim on alice lineage', 'world', owner);
+      out[`${who}PrivateOpen`] = await ask('private claim on open page', 'private', owner);
+    }
+    expect(out).toEqual({
+      memberAliceAtom: null, memberBobAtom: null, memberAliceLineage: null, memberPrivateOpen: null,
+      ownerAliceAtom: { subject: 'people/a', visibility: 'world' }, ownerBobAtom: null,
+      ownerAliceLineage: { subject: '*', visibility: 'world' }, ownerPrivateOpen: { subject: 'people/a', visibility: 'private' },
+    });
+    return out;
+  });
+
   parityTest('expireSupersededFact and restoreSupersededFact move the old fact of a pair and back, once; readPairFactRow reads it', {
     methods: ['readPairFactRow', 'expireSupersededFact', 'restoreSupersededFact', 'insertFact', 'transaction'],
   }, async (engine) => {

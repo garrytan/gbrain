@@ -48,6 +48,7 @@ import {
   privateFactFilterForCaller,
   remoteProvenanceFloorSql,
   readPolicyFragment,
+  ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { ANY_OWNER_ONLY_SQL, ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
@@ -69,6 +70,8 @@ export interface StorePrivacyPolicy {
   ownerOnly: StoreOwnerOnlyForm;
   /** The caller renders the short member-access form (`CallerAccess.restricted` false); the store's flag decides. */
   open?: boolean;
+  /** The owner read rule (`ownerReadPolicyFragment`): a derived page's origins are judged by `identity`. */
+  ownerRead?: boolean;
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -179,15 +182,15 @@ export function storeFloorPolicy(member: string): StorePrivacyPolicy {
 /**
  * The store policy for the page policy of a page's member, `readPolicyFragment('pp', identity, true, satisfied)`: what
  * `readMemberPageWithdrawal` judges the provenance and entity pages by, for the member whose page a save lands on (not
- * the caller's own record). The store serves it for a member that is not the brain owner and meets no folder rule: the
- * owner read (`lineageAccessSql`, `ownerReadPolicyFragment`) and a satisfied folder rule are not modelled, so both refuse.
+ * the caller's own record). The store serves it for a member that meets no folder rule: a satisfied folder rule is not
+ * modelled, so it refuses. For the brain owner it is the owner read rule ({@link storeOwnerReadPolicy}).
  * The text is compared with the same fragment for a fresh record of the caller's remote policy (the one that picks the
  * owner-only and concept-input forms), under the short member-access form when the caller renders it (`open`). An
  * identity the fragment drops as invalid (`validIdentity`) refuses, as the store would apply it as written.
  */
 export function storeMemberReadPolicy(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
-  if (q.owner) refuseMember(member, 'the owner read of a member page (lineage access is not modelled)');
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
+  if (q.owner) return storeOwnerReadPolicy(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
   const open = currentCallerAccess().restricted === false;
   const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
@@ -196,6 +199,24 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
     return { ...pagePolicyFlags(reference), identity: [...q.identity], ...(open ? { open: true } : {}) };
   }
   refuseMember(member, 'a member page read whose policy is not the one the store models');
+}
+
+/**
+ * The owner read rule, `ownerReadPolicyFragment('pp', identity, [])` (GST-2346, GST-2490 with the opt-in off): the
+ * owner's readers and the privacy part, with a derived page's origins judged by the owner's identity
+ * (`gbrain_access_origin_hidden_for`, the store's `ownerRead`) and no owner-only test. The text is compared with the
+ * same fragment for a fresh record of the caller's remote policy. An identity with no valid member principal renders
+ * `FALSE` (the owner reads no page but its own) and refuses, and so does an identity the fragment drops as invalid.
+ */
+function storeOwnerReadPolicy(member: string, identity: readonly string[]): StorePrivacyPolicy {
+  const text = normalizeConceptInputs(ownerReadPolicyFragment('p', identity, []));
+  const reference = normalizeConceptInputs(renderForStoreCaller({}, () => ownerReadPolicyFragment('p', identity, [])));
+  const named = identity.every(id => text.includes(`'${id}'`));
+  if (text !== 'FALSE' && text === reference && named) {
+    const flags = pagePolicyFlags(reference);
+    if (flags.ownerOnly === 'off') return { ...flags, identity: [...identity], ownerRead: true };
+  }
+  refuseMember(member, 'an owner read of a member page whose policy is not the one the store models');
 }
 
 /** The process-setting flags of a rendered fact policy, and its owner-only form. */

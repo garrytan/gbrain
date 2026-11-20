@@ -151,7 +151,8 @@ pub struct ReplacementTargetArgs {
 }
 
 /// `readMemberPageWithdrawal({ sourceId, visibility, fact, entitySlug, page, ... })`: `policy` is the page policy of the
-/// page's member (`readPolicyFragment('pp', identity, true, [])`), read off the caller by the TypeScript member.
+/// page's member (`readPolicyFragment('pp', identity, true, [])`, or `ownerReadPolicyFragment('pp', identity, [])` for the
+/// owner), read off the caller by the TypeScript member.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MemberWithdrawalArgs {
@@ -161,6 +162,10 @@ pub struct MemberWithdrawalArgs {
     #[serde(default)]
     pub entity_slug: Option<String>,
     pub page: String,
+    /// The page's member is the enabled brain owner: a backing row of any visibility counts
+    /// (`MEMBER_READABLE_OWNER`), and `policy` is the owner read rule (`owner_read`).
+    #[serde(default)]
+    pub owner: bool,
     pub policy: PrivacyPolicy,
 }
 
@@ -488,8 +493,9 @@ impl Store {
     /// `readMemberPageWithdrawal` (GST-2346): the withdrawal a save onto member page `page` meets, or `None`. A ledger row
     /// of the source and visibility under the claim's current or v1 fingerprint counts when its subject is the page, or
     /// when it is `*` or the claim's entity and withdrew a row the page's member reads: an expired row of the same
-    /// visibility and fingerprint that the withdrawal reaches, on the page itself or (world rows only) on pages the
-    /// policy lets the member read. The most specific subject comes first, then the newest.
+    /// visibility and fingerprint that the withdrawal reaches, on the page itself or (world rows only, or any
+    /// row for the enabled brain owner, `owner`) on pages the policy lets the member read. The most specific subject comes
+    /// first, then the newest.
     pub fn read_member_page_withdrawal(
         &self,
         args: &MemberWithdrawalArgs,
@@ -519,7 +525,7 @@ impl Store {
             if f.source_markdown_slug.as_deref() == Some(args.page.as_str()) {
                 return Ok(true);
             }
-            if f.visibility != "world" {
+            if !args.owner && f.visibility != "world" {
                 return Ok(false);
             }
             for slug in [f.source_markdown_slug.as_deref(), f.entity_slug.as_deref()]

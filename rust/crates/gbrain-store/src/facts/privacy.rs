@@ -84,6 +84,12 @@ pub struct PrivacyPolicy {
     /// stale), the full form's origin walk applies too. See [`readers_allowed`].
     #[serde(default)]
     pub open: bool,
+    /// The owner read rule (`ownerReadPolicyFragment`, the opt-in off): a derived page's origins are judged by
+    /// `identity` (`gbrain_access_origin_hidden_for`: an origin that names readers closes the page only when none
+    /// of them is a principal of `identity`) instead of by any reader list (`gbrain_access_origin_restricted`).
+    /// The store keeps no folder rule, pending coverage or audience member, so those parts of the rule pass.
+    #[serde(default)]
+    pub owner_read: bool,
 }
 
 impl PrivacyPolicy {
@@ -222,8 +228,10 @@ fn member_access_allows(
     identity: &[String],
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    Ok(readers_allowed(read, page, identity, policy.open)?
-        && !policy.page_owner_only(read, page)?)
+    Ok(
+        readers_allowed(read, page, identity, policy.open, policy.owner_read)?
+            && !policy.page_owner_only(read, page)?,
+    )
 }
 
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
@@ -433,27 +441,42 @@ pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<Str
 /// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
 /// that name one of its principals (`readersAllowedSql`), and no origin that names readers. With
 /// `open` (the short form) a page that names readers fails for any identity, and the origin walk
-/// runs only when the store's flag is set: unset, no stored page names readers.
+/// runs only when the store's flag is set: unset, no stored page names readers. With `owner_read`
+/// (the owner read rule) an origin closes the page only when its readers leave `identity` out.
 fn readers_allowed(
     read: &dyn KvRead,
     page: &PageRecord,
     identity: &[String],
     open: bool,
+    owner_read: bool,
 ) -> Result<bool> {
     if open && (names_readers(page) || !restrictions_present(read)?) {
         return Ok(!names_readers(page));
     }
-    if names_readers(page)
-        && !access_readers(&page.frontmatter)
-            .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
-    {
+    if names_readers(page) && !readers_name(page, identity) {
         return Ok(false);
     }
     let plain = !matches!(
         page.page_type.as_str(),
         "atom" | "question" | "concept" | "event"
     ) && !page.frontmatter.contains_key("derived_from");
-    Ok(plain || !origin_restricted(read, page)?)
+    if plain {
+        return Ok(true);
+    }
+    let closed = if owner_read {
+        origin_closed(read, page, &|o| {
+            names_readers(o) && !readers_name(o, identity)
+        })?
+    } else {
+        origin_closed(read, page, &names_readers)?
+    };
+    Ok(!closed)
+}
+
+/// `page_readers && identity`: the page's readers name one of the principals.
+fn readers_name(page: &PageRecord, identity: &[String]) -> bool {
+    access_readers(&page.frontmatter)
+        .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
 }
 
 /// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
@@ -462,38 +485,32 @@ fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
     Ok(read.get(&key)?.as_deref() == Some(b"1".as_slice()))
 }
 
-/// `gbrain_access_origin_restricted(id, source_id, type, frontmatter)`.
-fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+/// The origin walk of `gbrain_access_origin_restricted(id, source_id, type, frontmatter)` (every caller,
+/// `closes` = [`names_readers`]) and of `gbrain_access_origin_hidden_for(...)` (an owner read, `closes` = the
+/// origin names readers none of which is the reader): whether an origin of the page closes it.
+fn origin_closed(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    closes: &dyn Fn(&PageRecord) -> bool,
+) -> Result<bool> {
     let fm = &page.frontmatter;
     let source = page.source_id.as_str();
     let restricted = if page.page_type == "atom" {
-        origin_where(
-            read,
-            source,
-            text(fm, "source_slug").as_deref(),
-            names_readers,
-        )?
+        origin_where(read, source, text(fm, "source_slug").as_deref(), closes)?
     } else if page.page_type == "question"
         || (page.page_type == "concept" && text(fm, "synthesized_by").is_some())
     {
         let mut any = false;
         for input in concept_inputs(read, page)? {
             let origin = text(&input.frontmatter, "source_slug");
-            if names_readers(&input)
-                || origin_where(read, &input.source_id, origin.as_deref(), names_readers)?
-            {
+            if closes(&input) || origin_where(read, &input.source_id, origin.as_deref(), closes)? {
                 any = true;
                 break;
             }
         }
         any
     } else if page.page_type == "event" && life_chronicle(page) {
-        origin_where(
-            read,
-            source,
-            chronicle_depth(page).as_deref(),
-            names_readers,
-        )?
+        origin_where(read, source, chronicle_depth(page).as_deref(), closes)?
     } else {
         false
     };
@@ -501,7 +518,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         return Ok(true);
     }
     for slug in declared_slugs(fm).unwrap_or_default() {
-        if origin_where(read, source, Some(&slug), names_readers)? {
+        if origin_where(read, source, Some(&slug), closes)? {
             return Ok(true);
         }
     }
