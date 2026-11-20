@@ -181,7 +181,6 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
-| `engine_capability_missing` | The store does not keep a table the call must read, so it refuses instead of answering empty. The message starts with the capability and a colon (`managed_persistence: ...`). Nothing was written. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |

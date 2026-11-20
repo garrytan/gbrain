@@ -144,7 +144,7 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
-  withAddon('a write naming a worktree refuses by the managed_persistence capability, not as a missing row', async () => {
+  withAddon('a write naming a worktree with no persistence_worktrees row refuses as the foreign key does and writes nothing', async () => {
     const { engine } = await open();
     const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
     const row = {
@@ -154,11 +154,11 @@ describe('Rust engine on the store', () => {
       targetKind: 'page', protocolVersion: 1, admitterVersion: 'store-test', admitterHostId: null, counterKeys: [], clientRequestId: null,
       state: 'queued' as const, deferredRefreshId: null,
     };
-    // The store cannot read a worktree row until the worktree binding lands, so it refuses by capability and writes nothing.
+    // The store reads the worktree row the binding wrote; with none, the insert refuses like Postgres's foreign key.
     const refusal = await engine.insertWriteRequest(row as never).then(() => null, (error: unknown) => error);
-    expect(refusal).toBeInstanceOf(OperationError);
-    expect(refusal).toMatchObject({ code: 'engine_capability_missing', reason: 'managed_persistence' });
-    expect((refusal as OperationError).message).toContain('insertWriteRequest');
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as OperationError).code).toBe('constraint_violation');
+    expect((refusal as Error).message).toContain('worktree_id f0000000-0000-4000-8000-0000000000a1 names no persistence_worktrees row');
     expect(await engine.readWriteRequest('local_cli', 'store-writer', 'b0000000-0000-4000-8000-0000000000b1')).toBeNull();
   });
 

@@ -1,167 +1,227 @@
-//! The worktree-row seam: the one place this engine reads a `persistence_worktrees` row
+//! Worktree rows: the one place the write claim, the effect claim, the idle probe and the
+//! admission read a `persistence_worktrees` or `persistence_source_bindings` row
 //! (rust/docs/store/persistence.md, "Worktree rows").
 //!
-//! The worktree binding (`claimWorktree` and the `persistence_worktrees`,
-//! `persistence_source_bindings` and `persistence_host_bindings` tables) belongs to another lane
-//! and has not landed on this engine. Until it does, this store cannot say which host owns a
-//! worktree or whether it is active. So every caller that meets a worktree id asks here, and the
-//! seam refuses with `engine_capability_missing` (`managed_persistence: ...`). It never answers
-//! "no row": a claim, admission or scan that depends on a worktree must not report "nothing to
-//! do" when the truth is unknown.
-//!
-//! When the binding lands, `read_worktree_row` reads its row and the callers keep their shape.
+//! The rows belong to the worktree binding (`worktrees.rs`, keys under `d 0x09`): a worktree
+//! at `d 0x09 0x01 <worktree id>` and a source binding at `d 0x09 0x03 <source id>`, each one
+//! JSON record. This module reads only the columns its callers join on, with the binding's
+//! column defaults for a field a record leaves out, so a claim term asks the row the binding
+//! wrote and never answers "no row" for one it cannot parse: a record that is not valid JSON
+//! refuses `store_corrupt`.
 
-use crate::error::{CAPABILITY_MISSING, Result, StoreError};
+use crate::error::{Result, STORE_CORRUPT, StoreError};
+use crate::keys;
 use crate::kv::KvRead;
+use serde::Deserialize;
 
-/// The columns of a `persistence_worktrees` row that the claim and the scans read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `d 0x09`: the worktree binding's key table (`worktrees.rs`).
+const WORKTREES: u8 = 0x09;
+/// `d 0x09 0x01`: one `persistence_worktrees` row.
+const WORKTREE: u8 = 0x01;
+/// `d 0x09 0x03`: one `persistence_source_bindings` row.
+const SOURCE_BINDING: u8 = 0x03;
+
+/// The columns of a `persistence_worktrees` row that the claims, scans and admission read.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct WorktreeRow {
-    /// `owner_host_id`: the host whose consumers publish the worktree's writes.
-    pub owner_host_id: String,
-    /// `state`: only an `active` worktree's writes are claimed.
+    /// `owner_host_id`: the host whose consumers publish the worktree's writes; null when no
+    /// host owns it, which no `owner_host_id=$host` term matches.
+    #[serde(default)]
+    pub owner_host_id: Option<String>,
+    /// `owner_epoch` (bigint, default 0).
+    #[serde(default)]
+    pub owner_epoch: i64,
+    /// `state` (default `active`): only an `active` worktree's writes are claimed.
+    #[serde(default = "active")]
     pub state: String,
 }
 
-/// The refusal every worktree read gives until the worktree binding lands. Nothing was written.
-pub(crate) fn worktree_capability_missing(id: &str) -> StoreError {
-    StoreError::new(
-        CAPABILITY_MISSING,
-        format!(
-            "managed_persistence: worktree {id} cannot be read: this store keeps no \
-             persistence_worktrees row until the worktree binding lands"
-        ),
-    )
+impl WorktreeRow {
+    /// `w.owner_host_id=$host::uuid`: false when no host owns the row. Both sides are uuids, so
+    /// the comparison ignores case.
+    pub(crate) fn owned_by(&self, host: Option<&str>) -> bool {
+        match (&self.owner_host_id, host) {
+            (Some(owner), Some(host)) => owner.eq_ignore_ascii_case(host),
+            _ => false,
+        }
+    }
 }
 
-/// The `persistence_worktrees` row with id `id`, or `None` when no row has that id. On this engine
-/// the read refuses (see the module doc).
-pub(crate) fn read_worktree_row(_read: &dyn KvRead, id: &str) -> Result<Option<WorktreeRow>> {
-    Err(worktree_capability_missing(id))
+/// The columns of a `persistence_source_bindings` row that admission compares.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct SourceBindingRow {
+    pub source_incarnation: String,
+    pub worktree_id: String,
+    /// `topology_generation` (default 1).
+    #[serde(default = "one")]
+    pub topology_generation: i64,
+}
+
+fn active() -> String {
+    "active".into()
+}
+
+fn one() -> i64 {
+    1
+}
+
+fn key(tag: u8, id: &str) -> Vec<u8> {
+    let mut key = vec![keys::PERSISTENCE, WORKTREES, tag];
+    key.extend_from_slice(id.to_lowercase().as_bytes());
+    key
+}
+
+fn read_row<T: for<'de> Deserialize<'de>>(
+    read: &dyn KvRead,
+    key: &[u8],
+    table: &str,
+) -> Result<Option<T>> {
+    match read.get(key)? {
+        None => Ok(None),
+        Some(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|_| {
+            StoreError::new(STORE_CORRUPT, format!("a {table} record is not valid JSON"))
+        }),
+    }
+}
+
+/// The `persistence_worktrees` row with id `id`, or `None` when no row has that id (the
+/// `LEFT JOIN persistence_worktrees w ON w.id=...` that finds none). Ids are uuids: the key is
+/// the lower-case text the binding stores.
+pub(crate) fn read_worktree_row(read: &dyn KvRead, id: &str) -> Result<Option<WorktreeRow>> {
+    read_row(read, &key(WORKTREE, id), "persistence_worktrees")
+}
+
+/// The `persistence_source_bindings` row of source `source_id`, or `None`.
+pub(crate) fn read_source_binding(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Option<SourceBindingRow>> {
+    let mut k = vec![keys::PERSISTENCE, WORKTREES, SOURCE_BINDING];
+    k.extend_from_slice(source_id.as_bytes());
+    read_row(read, &k, "persistence_source_bindings")
+}
+
+/// Test rows at the binding's keys, as `worktrees.rs` writes them.
+#[cfg(test)]
+pub(crate) mod rows {
+    use super::*;
+    use crate::kv::KvWrite;
+    use serde_json::{Value, json};
+
+    pub(crate) fn put_worktree(
+        tx: &mut dyn KvWrite,
+        id: &str,
+        owner: Option<&str>,
+        state: &str,
+    ) -> Result<()> {
+        put(
+            tx,
+            &key(WORKTREE, id),
+            json!({ "id": id, "owner_host_id": owner, "owner_epoch": 3, "state": state, "created_at_us": 0 }),
+        )
+    }
+
+    pub(crate) fn put_source_binding(
+        tx: &mut dyn KvWrite,
+        source_id: &str,
+        incarnation: &str,
+        worktree: &str,
+        generation: i64,
+    ) -> Result<()> {
+        let mut k = vec![keys::PERSISTENCE, WORKTREES, SOURCE_BINDING];
+        k.extend_from_slice(source_id.as_bytes());
+        put(
+            tx,
+            &k,
+            json!({ "source_id": source_id, "source_incarnation": incarnation, "worktree_id": worktree, "relative_path": "", "topology_generation": generation }),
+        )
+    }
+
+    fn put(tx: &mut dyn KvWrite, key: &[u8], v: Value) -> Result<()> {
+        crate::put_json(tx, key, &v)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::rows::{put_source_binding, put_worktree};
     use super::*;
-    use crate::journal::{RequestRecord, write_request};
-    use crate::persistence::effects::{all_effects, write_effect};
-    use crate::persistence::{ClaimableSpec, PublicationEffectsSpec, WriteRequestInsert};
     use crate::test_support::store;
-    use crate::{Store, get_json, keys};
-    use serde_json::{Value, json};
 
     const WORKTREE: &str = "f0000000-0000-4000-8000-0000000000a1";
     const HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
 
-    fn insert_spec(s: &Store, worktree: Option<&str>) -> WriteRequestInsert {
-        let inc = s.read_source_membership("default").unwrap().unwrap()["incarnation"].clone();
-        serde_json::from_value(json!({
-            "principalKind": "local_cli", "principalId": "p1", "requestId": "b0000000-0000-4000-8000-0000000000e1",
-            "operation": "put_page", "sourceId": "default", "sourceIncarnation": inc, "slug": "notes/a", "digest": "d",
-            "intent": {}, "authority": {}, "intentBytes": 1, "terminalReservation": 4096, "targetKind": "page",
-            "protocolVersion": 1, "admitterVersion": "v", "counterKeys": [], "state": "queued", "worktreeId": worktree,
-        }))
-        .unwrap()
+    #[test]
+    fn a_missing_row_reads_none() {
+        let s = store();
+        let read = s.read().unwrap();
+        assert_eq!(read_worktree_row(&*read, WORKTREE).unwrap(), None);
+        assert_eq!(read_source_binding(&*read, "default").unwrap(), None);
     }
 
-    fn effects_spec(s: &Store, request: &str, worktree: Option<&str>) -> PublicationEffectsSpec {
-        let inc = s.read_source_membership("default").unwrap().unwrap()["incarnation"].clone();
-        serde_json::from_value(json!({
-            "requestId": request, "revision": null, "sourceId": "default", "sourceIncarnation": inc, "worktreeId": worktree,
-            "effects": [{ "kind": "withdrawal-mirror", "data": { "slugs": ["notes/a"] } }],
-        }))
-        .unwrap()
-    }
-
-    fn refused(err: StoreError) {
-        assert_eq!(err.code, CAPABILITY_MISSING, "{}", err.message);
-        assert!(
-            err.message.starts_with("managed_persistence: "),
-            "{}",
-            err.message
-        );
-    }
-
-    /// A queued request and one queued withdrawal mirror, both without a worktree.
-    fn queued_request_with_effect(s: &Store) -> String {
-        let id = s.insert_write_request(&insert_spec(s, None)).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        s.insert_publication_effects(&effects_spec(s, &id, None))
-            .unwrap();
-        id
-    }
-
-    /// Rows that name a worktree, as the binding will let them be stored.
-    fn bind_to_worktree(s: &Store, request: &str, effect_state: &str, effect_error: Option<&str>) {
+    #[test]
+    fn a_stored_row_reads_its_owner_epoch_and_state_by_any_case_of_its_id() {
+        let s = store();
         s.write(|tx| {
-            let mut r: RequestRecord = get_json(&*tx, &keys::request(request))?.unwrap();
-            r.extra.insert("worktree_id".into(), json!(WORKTREE));
-            write_request(tx, &r)?;
-            for mut e in all_effects(&*tx)? {
-                e.worktree_id = Some(WORKTREE.into());
-                e.state = effect_state.into();
-                e.error_code = effect_error.map(str::to_owned);
-                write_effect(tx, &e)?;
-            }
-            Ok(())
+            put_worktree(tx, WORKTREE, Some(HOST), "active")?;
+            put_source_binding(tx, "default", "7", WORKTREE, 2)
         })
         .unwrap();
-    }
-
-    #[test]
-    fn the_seam_refuses_by_capability_instead_of_answering_no_row() {
-        let s = store();
-        refused(read_worktree_row(&*s.read().unwrap(), WORKTREE).unwrap_err());
-    }
-
-    #[test]
-    fn a_write_or_effect_naming_a_worktree_refuses_by_capability() {
-        let s = store();
-        refused(
-            s.insert_write_request(&insert_spec(&s, Some(WORKTREE)))
-                .unwrap_err(),
-        );
-        let id = s.insert_write_request(&insert_spec(&s, None)).unwrap()["id"]
-            .as_str()
+        let read = s.read().unwrap();
+        let row = read_worktree_row(&*read, &WORKTREE.to_uppercase())
             .unwrap()
-            .to_owned();
-        refused(
-            s.insert_publication_effects(&effects_spec(&s, &id, Some(WORKTREE)))
-                .unwrap_err(),
-        );
-        assert!(
-            all_effects(&*s.read().unwrap()).unwrap().is_empty(),
-            "nothing was written"
-        );
-    }
-
-    #[test]
-    fn a_claim_that_meets_a_worktree_row_refuses_instead_of_answering_none() {
-        let s = store();
-        let id = queued_request_with_effect(&s);
-        let spec = ClaimableSpec::default();
-        assert!(
-            s.has_claimable_write(&spec).unwrap(),
-            "without a worktree the row is claimable"
-        );
-        assert!(!s.select_claimable_effect(HOST, &[]).unwrap().is_null());
-        bind_to_worktree(&s, &id, "queued", None);
-        refused(s.has_claimable_write(&spec).unwrap_err());
-        refused(s.select_claimable_write(&spec).unwrap_err());
-        refused(s.select_claimable_effect(HOST, &[]).unwrap_err());
-    }
-
-    #[test]
-    fn a_parked_mirror_on_a_worktree_makes_the_gated_scan_refuse() {
-        let s = store();
-        let id = queued_request_with_effect(&s);
+            .unwrap();
+        assert_eq!(row.owner_epoch, 3);
+        assert_eq!(row.state, "active");
+        assert!(row.owned_by(Some(&HOST.to_uppercase())));
+        assert!(!row.owned_by(Some("b0000000-0000-4000-8000-0000000000a1")));
+        assert!(!row.owned_by(None));
+        let binding = read_source_binding(&*read, "default").unwrap().unwrap();
         assert_eq!(
-            s.list_gated_mirror_requests(HOST).unwrap(),
-            Vec::<Value>::new()
+            binding,
+            SourceBindingRow {
+                source_incarnation: "7".into(),
+                worktree_id: WORKTREE.into(),
+                topology_generation: 2
+            }
         );
-        bind_to_worktree(&s, &id, "failed", Some("targets_parked"));
-        refused(s.list_gated_mirror_requests(HOST).unwrap_err());
+    }
+
+    #[test]
+    fn an_unowned_row_takes_the_column_defaults_and_matches_no_host() {
+        let s = store();
+        s.write(|tx| {
+            crate::put_json(
+                tx,
+                &key(super::WORKTREE, WORKTREE),
+                &serde_json::json!({ "id": WORKTREE }),
+            )
+        })
+        .unwrap();
+        let row = read_worktree_row(&*s.read().unwrap(), WORKTREE)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row,
+            WorktreeRow {
+                owner_host_id: None,
+                owner_epoch: 0,
+                state: "active".into()
+            }
+        );
+        assert!(!row.owned_by(Some(HOST)));
+    }
+
+    #[test]
+    fn a_record_that_is_not_json_refuses_store_corrupt() {
+        let s = store();
+        s.write(|tx| tx.put(&key(super::WORKTREE, WORKTREE), b"{"))
+            .unwrap();
+        let err = read_worktree_row(&*s.read().unwrap(), WORKTREE).unwrap_err();
+        assert_eq!(err.code, STORE_CORRUPT);
+        assert_eq!(
+            err.message,
+            "a persistence_worktrees record is not valid JSON"
+        );
     }
 }

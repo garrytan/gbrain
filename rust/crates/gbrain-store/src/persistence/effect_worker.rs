@@ -3,14 +3,15 @@
 //! "Effect worker").
 //!
 //! Every statement here names its effect by id and, once claimed, by the claim's execution token,
-//! as the Postgres statements do (`WHERE id=$1 AND execution_token=$2::uuid`). Every worktree on
-//! this engine is null (no worktree binding exists here), so the claim's worktree terms are
-//! answered as Postgres answers them for a null worktree: an effect on a worktree is never
-//! claimable, and no recovery on a worktree blocks an effect without one.
+//! as the Postgres statements do (`WHERE id=$1 AND execution_token=$2::uuid`). An effect on a
+//! worktree is claimed only by the worktree's owner host, while no refresh fences the worktree and
+//! no effect or request there carries a recovery (`write_claim_terms.rs`); a recovery on a
+//! worktree never blocks an effect without one.
 
 use super::effects::{EffectRecord, all_effects, effect_by_id, write_effect};
-use super::worktree_rows::read_worktree_row;
-use super::{is_uuid, json_text};
+use super::worktree_admission::all_refreshes;
+use super::write_claim_terms::effect_claimable_on_worktree;
+use super::{all_requests, is_uuid, json_text};
 use crate::Store;
 use crate::env::Env;
 use crate::error::{Result, StoreError};
@@ -138,7 +139,7 @@ pub(crate) fn select_claimable_effect_in(
     host_id: &str,
     dead_owners: &[String],
 ) -> Result<Option<EffectRecord>> {
-    pg_uuid(host_id)?;
+    let host = pg_uuid(host_id)?;
     let effects = all_effects(read)?;
     let mirror_pending = |e: &EffectRecord| {
         effects.iter().any(|m| {
@@ -159,16 +160,24 @@ pub(crate) fn select_claimable_effect_in(
                 && (e.kind == "withdrawal-mirror" || !mirror_pending(e))
         })
         .collect();
-    // A due effect on a worktree is claimable only by the worktree's owner host; the seam refuses
-    // until this store can read that row, so the claim never answers "none" in its place.
-    for e in &due {
-        if let Some(id) = &e.worktree_id {
-            read_worktree_row(read, id)?;
+    // A due effect on a worktree is claimable only by its owner host, while no refresh fences the
+    // worktree and nothing there is in recovery (`write_claim_terms.rs`).
+    let requests = all_requests(read)?;
+    let refreshes = all_refreshes(read)?;
+    let mut claimable = Vec::new();
+    for e in due {
+        let ok = match &e.worktree_id {
+            None => true,
+            Some(w) => {
+                effect_claimable_on_worktree(read, w, &host, &effects, &requests, &refreshes)?
+            }
+        };
+        if ok {
+            claimable.push(e);
         }
     }
-    Ok(due
+    Ok(claimable
         .into_iter()
-        .filter(|e| e.worktree_id.is_none())
         .min_by_key(|e| (e.next_attempt_at_us, e.id))
         .cloned())
 }

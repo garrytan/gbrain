@@ -6,16 +6,16 @@
 //! No caller on this engine writes a refresh yet (`gbrain sources refresh` stays a named refusal), so on a
 //! served brain the keyspace is empty and every member answers as Postgres answers with no refresh row.
 //!
+//! `readWorktreeAdmission` reads the worktree row and the source binding through `worktree_rows.rs`.
+//!
 //! What this engine does not keep, and how each member answers for it:
-//! - `persistence_worktrees` and `persistence_source_bindings`: no row exists until the worktree binding lands
-//!   here, so `readWorktreeAdmission` reads no worktree and no binding (`bound: false`), and admission refuses
-//!   the write `source_changed`, as Postgres does for an unbound source.
 //! - `persistence_consumers`: no consumer row exists (the owner runs no resident consumer), so
 //!   `hasDeferralRoom` finds no incapable live consumer and answers true, as the Postgres EXISTS does on an
 //!   empty join.
 //! - `sources.last_commit`: not stored (`sources.rs`), so every source reads it as null. A refresh's target head
 //!   is never null, so `completeSyncedRefresh` completes a refresh only when none of its sources exists.
 
+use super::worktree_rows::{read_source_binding, read_worktree_row};
 use super::{all_requests, uuid_param};
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
@@ -64,7 +64,7 @@ fn refresh_key(id: &str) -> Vec<u8> {
     key
 }
 
-fn read_refresh(read: &dyn KvRead, id: &str) -> Result<Option<RefreshRecord>> {
+pub(super) fn read_refresh(read: &dyn KvRead, id: &str) -> Result<Option<RefreshRecord>> {
     get_json(read, &refresh_key(id))
 }
 
@@ -74,7 +74,7 @@ pub(crate) fn put_refresh(tx: &mut dyn KvWrite, record: &RefreshRecord) -> Resul
 }
 
 /// Every refresh row, in key order.
-fn all_refreshes(read: &dyn KvRead) -> Result<Vec<RefreshRecord>> {
+pub(super) fn all_refreshes(read: &dyn KvRead) -> Result<Vec<RefreshRecord>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &[keys::PERSISTENCE, REFRESH], false, &mut |_, v| {
@@ -93,22 +93,64 @@ fn all_refreshes(read: &dyn KvRead) -> Result<Vec<RefreshRecord>> {
     Ok(out)
 }
 
-/// `readWorktreeAdmission`: `{ worktree, refresh, bound }`. The worktree's active refresh is the one row of the
-/// partial unique index; the row locks are no-ops here (persistence.rs, decision C).
+/// `WorktreeAdmissionKey`: the source binding a write was resolved against. The generation is the
+/// text of the caller's value, or `None` when it has none.
+#[derive(Debug, Clone)]
+pub struct WorktreeAdmissionKey {
+    pub worktree_id: String,
+    pub source_id: String,
+    pub source_incarnation: String,
+    pub topology_generation: Option<String>,
+}
+
+/// `topology_generation=$4` with the parameter typed integer: the text Postgres accepts, or the
+/// refusal of its integer input.
+fn generation_param(text: &str) -> Result<i64> {
+    let digits = text.trim();
+    let body = digits.strip_prefix(['+', '-']).unwrap_or(digits);
+    if body.is_empty() || !body.bytes().all(|c| c.is_ascii_digit()) {
+        return Err(StoreError::invalid(format!(
+            "invalid input syntax for type integer: \"{text}\""
+        )));
+    }
+    digits.parse::<i32>().map(i64::from).map_err(|_| {
+        StoreError::invalid(format!("value \"{text}\" is out of range for type integer"))
+    })
+}
+
+/// `readWorktreeAdmission`: `{ worktree, refresh, bound }` (`WORKTREE_SHARE_SQL`,
+/// `WORKTREE_FENCE_SQL`). `worktree` is the row's state and owner epoch (text), null when no row
+/// has the id; `refresh` is the worktree's active refresh, the one row of the partial unique index;
+/// `bound` is whether the source's binding names this incarnation, worktree and generation. The row
+/// locks are no-ops here (persistence.rs, decision C).
 pub(crate) fn read_worktree_admission_in(
     read: &dyn KvRead,
-    worktree_id: &str,
-    source_incarnation: &str,
+    key: &WorktreeAdmissionKey,
 ) -> Result<Value> {
-    let worktree_id = uuid_param(worktree_id, "worktreeId")?;
-    uuid_param(source_incarnation, "sourceIncarnation")?;
+    let worktree_id = uuid_param(&key.worktree_id, "worktreeId")?;
+    let incarnation = uuid_param(&key.source_incarnation, "sourceIncarnation")?;
+    let generation = key
+        .topology_generation
+        .as_deref()
+        .map(generation_param)
+        .transpose()?;
+    let worktree = read_worktree_row(read, &worktree_id)?;
     let refresh = all_refreshes(read)?.into_iter().find(|r| {
-        r.worktree_id == worktree_id && ACTIVE_REFRESH_STATES.contains(&r.state.as_str())
+        r.worktree_id.eq_ignore_ascii_case(&worktree_id)
+            && ACTIVE_REFRESH_STATES.contains(&r.state.as_str())
     });
+    let bound = match (read_source_binding(read, &key.source_id)?, generation) {
+        (Some(b), Some(generation)) => {
+            b.source_incarnation.eq_ignore_ascii_case(&incarnation)
+                && b.worktree_id.eq_ignore_ascii_case(&worktree_id)
+                && b.topology_generation == generation
+        }
+        _ => false,
+    };
     Ok(json!({
-        "worktree": Value::Null,
+        "worktree": worktree.map(|w| json!({ "state": w.state, "owner_epoch": w.owner_epoch.to_string() })),
         "refresh": refresh.map(|r| json!({ "id": r.id, "state": r.state, "source_ids": r.source_ids })),
-        "bound": false,
+        "bound": bound,
     }))
 }
 
@@ -304,14 +346,9 @@ pub(crate) fn count_held_behind_import_in(
 }
 
 impl Store {
-    /// `readWorktreeAdmission(key, { lockRefresh })`: `{ worktree, refresh, bound }`. No worktree or binding row
-    /// exists on this engine, so `worktree` is null and `bound` false; `refresh` is the worktree's active refresh.
-    pub fn read_worktree_admission(
-        &self,
-        worktree_id: &str,
-        source_incarnation: &str,
-    ) -> Result<Value> {
-        read_worktree_admission_in(&*self.read()?, worktree_id, source_incarnation)
+    /// `readWorktreeAdmission(key, { lockRefresh })`: `{ worktree, refresh, bound }`.
+    pub fn read_worktree_admission(&self, key: &WorktreeAdmissionKey) -> Result<Value> {
+        read_worktree_admission_in(&*self.read()?, key)
     }
 
     /// `completeSyncedRefresh(refreshId)`: true when a `syncing` refresh was completed.
@@ -352,6 +389,15 @@ mod tests {
     const INC: &str = "e0000000-0000-4000-8000-0000000000e1";
     const F1: &str = "f0000000-0000-4000-8000-0000000000f1";
     const F2: &str = "f0000000-0000-4000-8000-0000000000f2";
+
+    fn key(worktree: &str, generation: Option<&str>) -> WorktreeAdmissionKey {
+        WorktreeAdmissionKey {
+            worktree_id: worktree.into(),
+            source_id: "default".into(),
+            source_incarnation: INC.into(),
+            topology_generation: generation.map(str::to_owned),
+        }
+    }
 
     fn refresh(
         id: &str,
@@ -409,10 +455,10 @@ mod tests {
     fn an_empty_keyspace_reads_no_worktree_no_refresh_and_no_binding() {
         let s = store();
         assert_eq!(
-            s.read_worktree_admission(WT, INC).unwrap(),
+            s.read_worktree_admission(&key(WT, Some("1"))).unwrap(),
             json!({ "worktree": null, "refresh": null, "bound": false })
         );
-        assert!(s.read_worktree_admission("nope", INC).is_err());
+        assert!(s.read_worktree_admission(&key("nope", Some("1"))).is_err());
         assert!(!s.complete_synced_refresh(F1).unwrap());
         assert!(s.has_deferral_room(WT, 30_000).unwrap());
         assert_eq!(s.read_refresh_timing(F1).unwrap(), None);
@@ -423,18 +469,70 @@ mod tests {
     }
 
     #[test]
+    fn admission_reads_the_worktree_row_and_whether_the_source_is_bound_to_it() {
+        use crate::persistence::worktree_rows::rows::{put_source_binding, put_worktree};
+        let s = store();
+        s.write(|tx| {
+            put_worktree(tx, WT, None, "draining")?;
+            put_source_binding(tx, "default", INC, WT, 2)
+        })
+        .unwrap();
+        let read = |generation: Option<&str>| s.read_worktree_admission(&key(WT, generation));
+        assert_eq!(
+            read(Some("2")).unwrap(),
+            json!({ "worktree": { "state": "draining", "owner_epoch": "3" }, "refresh": null, "bound": true })
+        );
+        assert_eq!(
+            read(Some(" +2 ")).unwrap()["bound"],
+            json!(true),
+            "the integer cast trims and takes a sign"
+        );
+        assert_eq!(
+            read(Some("1")).unwrap()["bound"],
+            json!(false),
+            "another generation"
+        );
+        assert_eq!(
+            read(None).unwrap()["bound"],
+            json!(false),
+            "no generation matches no row"
+        );
+        let other = s
+            .read_worktree_admission(&key(OTHER_WT, Some("2")))
+            .unwrap();
+        assert_eq!(
+            other,
+            json!({ "worktree": null, "refresh": null, "bound": false })
+        );
+        let mut other_inc = key(WT, Some("2"));
+        other_inc.source_incarnation = "e0000000-0000-4000-8000-0000000000e2".into();
+        assert_eq!(
+            s.read_worktree_admission(&other_inc).unwrap()["bound"],
+            json!(false)
+        );
+        assert_eq!(
+            read(Some("x")).unwrap_err().message,
+            "invalid input syntax for type integer: \"x\""
+        );
+        assert_eq!(
+            read(Some("2147483648")).unwrap_err().message,
+            "value \"2147483648\" is out of range for type integer"
+        );
+    }
+
+    #[test]
     fn admission_reads_only_the_worktrees_active_refresh() {
         let s = store();
         put(&s, &refresh(F1, WT, "completed", &["default"], 0));
         put(&s, &refresh(F2, OTHER_WT, "fenced", &["other"], 0));
         assert_eq!(
-            s.read_worktree_admission(WT, INC).unwrap()["refresh"],
+            s.read_worktree_admission(&key(WT, Some("1"))).unwrap()["refresh"],
             Value::Null
         );
         let active = "f0000000-0000-4000-8000-0000000000f3";
         put(&s, &refresh(active, WT, "syncing", &["default"], 0));
         assert_eq!(
-            s.read_worktree_admission(WT, INC).unwrap()["refresh"],
+            s.read_worktree_admission(&key(WT, Some("1"))).unwrap()["refresh"],
             json!({ "id": active, "state": "syncing", "source_ids": ["default"] })
         );
     }
@@ -611,11 +709,11 @@ mod tests {
             s.count_held_behind_import("default", None).unwrap(),
             json!({ "count": 1, "bytes": 1 })
         );
-        assert!(s.lock_overdue_hold("refresh", Some(F1)).unwrap());
-        assert!(!s.lock_overdue_hold("import", Some(&id)).unwrap());
+        assert!(s.lock_overdue_hold("refresh", Some(F1), None, 0.0).unwrap());
+        assert!(!s.lock_overdue_hold("import", Some(&id), None, 0.0).unwrap());
         f.released_at_us = Some(1);
         put(&s, &f);
-        assert!(!s.lock_overdue_hold("refresh", Some(F1)).unwrap());
+        assert!(!s.lock_overdue_hold("refresh", Some(F1), None, 0.0).unwrap());
         assert_eq!(
             s.select_claimable_write(&no_roots()).unwrap().unwrap()["id"],
             json!(id)

@@ -211,6 +211,29 @@ pub(crate) fn find_topology_changes_in(
         .unwrap_or_default())
 }
 
+/// The `(id, recovery)` of every topology change with a recovery, for the idle probe's topology
+/// recovery term.
+pub(crate) fn topology_recoveries(read: &dyn KvRead) -> Result<Vec<(String, Value)>> {
+    let mut rows = Vec::new();
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            rows.push(serde_json::from_slice::<TopologyChangeRecord>(v));
+            true
+        },
+    )?;
+    let mut out = Vec::new();
+    for row in rows {
+        let r = row.map_err(|e| StoreError::invalid(format!("a topology change record: {e}")))?;
+        if let Some(recovery) = r.recovery {
+            out.push((r.id, recovery));
+        }
+    }
+    Ok(out)
+}
+
 /// The capacity forecast's topology rows (`CAPACITY_TOPOLOGY_SQL`): one row per (local-writer
 /// scope, UTC day) of the changes created after `window_start`. Gross and net are both the
 /// summed `terminal_bytes`; the recent sums count changes created after `recent_start`.

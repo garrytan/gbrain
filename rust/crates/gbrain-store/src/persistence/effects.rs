@@ -15,7 +15,7 @@
 //! Every kind is stored. Which kinds a worker may claim is the claim statement's choice, not the
 //! insert's.
 
-use super::worktree_rows::read_worktree_row;
+use super::worktree_rows::{read_source_binding, read_worktree_row};
 use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
@@ -274,7 +274,7 @@ pub(crate) fn insert_publication_effects_in(
     uuid_cast(&spec.source_incarnation)?;
     if let Some(worktree) = &spec.worktree_id {
         uuid_cast(worktree)?;
-        // `worktree_id` references `persistence_worktrees`; the seam refuses until it can be read.
+        // `worktree_id` references `persistence_worktrees`: a worktree with no row refuses as the foreign key does.
         if read_worktree_row(&*tx, worktree)?.is_none() {
             return Err(violation(format!(
                 "worktree_id {worktree} names no persistence_worktrees row"
@@ -374,8 +374,9 @@ pub struct WithdrawalEffectsSpec {
 }
 
 /// `insertWithdrawalEffects(spec)`: one `withdrawal-mirror`, `git` and `embedding` row for the
-/// request, each stamped with the source's incarnation and a null worktree (no worktree binds a
-/// source on this engine). An unknown source inserts nothing; a kind already queued is kept.
+/// request, each stamped with the source's incarnation and the worktree of the source's binding
+/// when that binding names the same incarnation (`LEFT JOIN persistence_source_bindings`), else a
+/// null worktree. An unknown source inserts nothing; a kind already queued is kept.
 /// Returns the kinds inserted, in insert order.
 pub(crate) fn insert_withdrawal_effects_in(
     tx: &mut dyn KvWrite,
@@ -403,6 +404,12 @@ pub(crate) fn insert_withdrawal_effects_in(
             spec.request_id
         )));
     }
+    let worktree_id = read_source_binding(&*tx, &source.id)?
+        .filter(|b| {
+            b.source_incarnation
+                .eq_ignore_ascii_case(&source.incarnation)
+        })
+        .map(|b| b.worktree_id);
     let now = env.now_micros();
     let mut next_id = max_effect_id(&*tx)?;
     for kind in &missing {
@@ -418,7 +425,7 @@ pub(crate) fn insert_withdrawal_effects_in(
             updated_at_us: now,
             source_id: Some(source.id.clone()),
             source_incarnation: Some(source.incarnation.clone()),
-            worktree_id: None,
+            worktree_id: worktree_id.clone(),
             claim_expires_at_us: None,
             next_attempt_at_us: now,
             attempts: 0,

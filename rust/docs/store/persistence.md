@@ -45,11 +45,11 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.lockPersistenceCounters(keys)` | the counter rows `{ key, outstanding_count, intent_bytes, lifetime_ids, terminal_bytes }`, sorted by key; a missing row is created at zero | `lockPersistenceCounters` |
-| `brain.insertWriteRequest(row)` | the stored `WriteRequest`. It charges each counter (one outstanding request, its intent bytes, one lifetime id, its terminal reservation) in the same write. `constraint_violation` for a principal kind, state, target kind or protocol version the table refuses, a null slug, a refresh id that names no `d 0x10` refresh row, or a request id the principal already used. A worktree id that is not a uuid refuses with the uuid syntax message; any other worktree id refuses `engine_capability_missing` from the worktree-row seam (see "Worktree rows") | `insertWriteRequest` |
+| `brain.insertWriteRequest(row)` | the stored `WriteRequest`. It charges each counter (one outstanding request, its intent bytes, one lifetime id, its terminal reservation) in the same write. `constraint_violation` for a principal kind, state, target kind or protocol version the table refuses, a null slug, a refresh id that names no `d 0x10` refresh row, or a request id the principal already used. A worktree id that is not a uuid refuses with the uuid syntax message, and one with no `persistence_worktrees` row refuses `constraint_violation` (`worktree_id <id> names no persistence_worktrees row`, the foreign key; see "Worktree rows") | `insertWriteRequest` |
 | `brain.readWriteRequest({ kind, id }, requestId)` | the `WriteRequest` or `null` | `readWriteRequest` |
 | `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById`, `lockWriteRequest`, `readWriteRequestProgress` (the TS member picks the nine progress columns from this row) |
 | `brain.countOutstandingBySource(principalKind, principalId)` | `[{ source_id, n }]`: one row per source that holds requests of the principal in state `queued`, `deferred`, `running` or `recovering`. The most requests come first; a tie is in byte order of the source id, as Postgres sorts `COLLATE "C"` | `countOutstandingBySource` |
-| `brain.readWorktreeAdmission(worktreeId, sourceIncarnation)` | `{ worktree: null, refresh, bound: false }`: no worktree row or source binding is stored, so admission refuses the write as Postgres does for an unbound source; `refresh` is the worktree's refresh in an active state (`draining`, `fenced`, `merged`, `syncing`, `recovery_required`) or null. Both ids must be uuids | `readWorktreeAdmission` |
+| `brain.readWorktreeAdmission({ worktreeId, sourceId, sourceIncarnation, topologyGeneration })` | `{ worktree, refresh, bound }`. `worktree` is `{ state, owner_epoch }` (the epoch as text) from the worktree row, or null when no row has the id; `refresh` is the worktree's refresh in an active state (`draining`, `fenced`, `merged`, `syncing`, `recovery_required`) or null; `bound` is whether the source's binding names this incarnation, worktree and topology generation (a null generation binds nothing). The ids must be uuids; a generation that is not a Postgres integer refuses with the integer syntax or range message | `readWorktreeAdmission` |
 | `brain.completeSyncedRefresh(refreshId)` | `true` when the refresh was `syncing` and none of its member sources still differs from its target head, and is now `completed`. The store keeps no `last_commit`, so a stored member source always differs | `completeSyncedRefresh` |
 | `brain.hasDeferralRoom(worktreeId, liveMs)` | `true`: no consumer rows are stored, so no live consumer lacks the capability. `liveMs` must fit a Postgres integer | `hasDeferralRoom` |
 | `brain.readRefreshTiming(refreshId)` | `{ elapsed_ms, typical_ms }` or null: the refresh's running time and the median duration of its worktree's last 10 completed refreshes without a refusal | `readRefreshTiming` |
@@ -66,20 +66,28 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.selectClaimableWrite({ hostId, excludeRoots, fifoRoots, laneRoots, nonce, syncSeen, priority, leaseHolder })` | the request row a FIFO claim takes next, or `null`. A row is a candidate when it is `queued` or a `deferred` row whose refresh is released. With `leaseHolder` (`{ lockPrefix, pid, host }`, a non-resident consumer), a managed-sync row whose lock `lockPrefix + source_id` is live and held by another process ranks last; then a foreground row before the sync rows it passes, then sequence order. A root in `fifoRoots` claims plain FIFO; with any lane root only a foreground row is claimed. `nonce` and `syncSeen` feed the sync-wait term, which matches worktree rows only. A host id that is not a uuid, or a fractional or out-of-range `pid`, refuses as the Postgres casts do | `selectClaimableWrite` |
 | `brain.readSourceMembership(sourceId)` | `{ incarnation, archived }` or `null` | `readSourceMembership`, `readLedgerSource` |
 
-A candidate row that names a worktree needs its worktree row for the claim terms, so both claim reads
-refuse `engine_capability_missing` when they meet one (see "Worktree rows"). Rows with a null
-`worktree_id` are answered as Postgres answers them for a null worktree.
+A candidate row that names a worktree is claimed only by a consumer of the host that owns the worktree
+while the worktree is `active`, with no fence (`fenced`, `merged`, `recovery_required`) refresh, no
+recovery on a request or effect there, and no unsettled withdrawal mirror covering its slug; an earlier
+write on the same worktree holds it as the Postgres statement does (see "Worktree rows"). Rows with a null
+`worktree_id` are ordered by their source incarnation. `hasClaimableWrite` is the claimable test alone:
+the lane, FIFO and sync-wait terms belong to `selectClaimableWrite`.
 
 ## Worktree rows
 
 The worktree binding (`claimWorktree` and the `persistence_worktrees`, `persistence_source_bindings` and
-`persistence_host_bindings` tables) has not landed on this engine. Every member that meets a worktree id
-reads its row through one seam (`persistence/worktree_rows.rs`), and until the binding lands the seam
-refuses with `engine_capability_missing` and the message `managed_persistence: worktree <id> cannot be
-read: ...`. The TypeScript members map it to the `managed_persistence` capability refusal. A member never
-answers "no row" or "no work" in place of a worktree row it cannot read: the write and effect inserts,
-both write claims, the effect claim, the idle probe's write and effect terms, and the gated-mirror scan
-refuse instead. Nothing is written on a refusal.
+`persistence_host_bindings` tables) writes its rows under `d 0x09`. Every member that meets a worktree id
+reads the row through one place (`persistence/worktree_rows.rs`): the worktree's owner host, owner epoch
+and state, and a source binding's incarnation, worktree and topology generation, with the column
+defaults for a field the record leaves out. Ids are uuids, so a lookup ignores case. A record that is
+not valid JSON refuses `store_corrupt`; a member never answers "no row" for a row it cannot parse.
+
+The claim terms that join a worktree row live in `persistence/write_claim_terms.rs`: the owner and
+`active` check, the fence refresh, the recovery on the worktree, and the withdrawal-mirror cover. The
+write claim, the effect claim, the idle probe, the no-op embedding settle, the gated-mirror scan, the
+owner scans and admission all use them. The write and effect inserts refuse a worktree id with no row
+as the foreign key does. Expiry (`expireStaleWriteClaims`) releases only the claims on worktrees the
+host owns, and claims with a null worktree.
 
 ## Receipt list
 
@@ -208,8 +216,8 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.listGatedMirrorRequests(hostId)` | `[]` when no withdrawal mirror is parked (`failed`, `targets_parked`) on a worktree; a parked mirror on a worktree refuses `engine_capability_missing` (see "Worktree rows"). The gate and allowed codes only narrow the rows, so they are not sent | `listGatedMirrorRequests` |
-| `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
+| `brain.listGatedMirrorRequests(hostId, gateCode, allowedCodes)` | the distinct requests (`id`, `source_id`, `request_id`; at most 100) of each withdrawal mirror parked (`failed`, `targets_parked`) on a worktree the host owns, with a target parked under `gateCode`, when every unsettled effect of the request is parked only with codes in `allowedCodes`. Parked targets that are not an array refuse as `jsonb_array_elements` does | `listGatedMirrorRequests` |
+| `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: the effect recovery writer has not landed here, so no effect carries a recovery | `listEffectRecoveries` |
 | `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
 ## Publication effects
@@ -222,8 +230,9 @@ order. A `gated` kind is left out while config `auto_link` or `mcp.remote_auto_l
 `0`, `no` or `off`, any case, trimmed), and a kind already stored for the request is kept as it is, as
 `ON CONFLICT DO NOTHING` keeps it. A request id, revision or incarnation that is not a uuid refuses
 with the uuid syntax message; a journal id with no request row refuses `constraint_violation` (the
-foreign key), and so does an effect with no kind or no data. Any other worktree id refuses
-`engine_capability_missing` (see "Worktree rows"). Nothing is stored on a refusal.
+foreign key), and so does an effect with no kind or no data. A worktree id with no
+`persistence_worktrees` row refuses `constraint_violation` the same way (see "Worktree rows"). Nothing is
+stored on a refusal.
 
 `brain.readRequestEffects(requestId, kind)` resolves `{ kind, state, error_code, outcome, recovering }` for
 each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
@@ -237,7 +246,8 @@ exists, and the write's reservation stays charged until the effect ends.
 `brain.insertWithdrawalEffects({ requestId, sourceId, data })` queues the effects a forget under a write
 request leaves (`insertWithdrawalEffects`, the statement `recordFactWithdrawal` sent through `executeRaw`):
 one `withdrawal-mirror`, `git` and `embedding` row, in that order, each `queued` with `data`, a null
-revision, the source's incarnation and a null worktree (no worktree binds a source here). It resolves the
+revision, the source's incarnation and the worktree of the source's binding when the binding names that
+incarnation, else a null worktree. It resolves the
 kinds it inserted. An unknown source inserts nothing, as the statement's `FROM sources` yields no row; a
 kind already stored for the request is kept. A request id that is not a uuid refuses with the uuid syntax
 message, and a request with no row refuses `constraint_violation` (the foreign key). Inside `transaction`
@@ -252,9 +262,10 @@ takes no row lock.
 `brain.selectClaimableEffect(hostId, deadOwners)` resolves the effect row with the lowest
 (`next_attempt_at`, id) that is `queued`, `running` with an expired claim, or `running` under a dead
 owner (`deadOwners` holds `pid:nonce:start` keys; the claim's `host_id` must be `hostId`), that is due
-now, on no worktree and not recovering, and that is a withdrawal mirror or belongs to a request with no
-`queued` or `running` withdrawal mirror. It resolves `null` when no effect is claimable. An effect that
-meets every other term but names a worktree refuses `engine_capability_missing` (see "Worktree rows").
+now and not recovering, and that is a withdrawal mirror or belongs to a request with no `queued` or
+`running` withdrawal mirror. An effect on a worktree is claimed only when the host owns the active
+worktree and the worktree has no fence refresh and no recovery (see "Worktree rows"). It resolves `null`
+when no effect is claimable.
 
 `brain.stampEffectClaim({ id, token, ownerJson })` marks the effect `running` under `token` for two
 minutes, adds one attempt and stores the claim owner; it resolves the claimed row, or `null` when no
@@ -289,17 +300,20 @@ syntax message.
 - a write the claim may take (`queued`, or `deferred` with its refresh released) is claimable (the
   claim rules above, with `excludedRoots` and `laneRoots`) and is not blocked for writer pool capacity,
   unless `publishing` is set. A running or recovering write is not claimable work;
-- a running write that has not published, with no recovery, has an expired claim;
-- an effect is due as the probe states it: `queued`, or `running` with an expired claim, due now, on no
-  worktree, not recovering, and a withdrawal mirror or of a request whose withdrawal mirror is committed;
+- a running write that has not published, with no recovery, has an expired claim, on no worktree or on
+  one the host owns;
+- an effect is due as the probe states it: `queued`, or `running` with an expired claim, due now, not
+  recovering, on no worktree or on a worktree the effect claim may take, and a withdrawal mirror or of a
+  request whose withdrawal mirror is committed;
 - the projection window (`selectProjectionWindowJobs` with the retry cooldown) holds a job of a source
   that is not archived whose page is live markdown or code (`projection_work`);
 - a segmented page has a projection job past its retry cooldown;
 - with `abandonedBefore`, a running write or effect with no recovery was last written before it.
 
-A write or due effect that names a worktree makes the probe refuse `engine_capability_missing` (see
-"Worktree rows"). The worktree recovery, effect recovery on a worktree, topology recovery and overdue
-deferred terms join a worktree row; the inserts refuse every worktree id, so they find no row. `projection_last` is the last key window row
+The probe also has work when, on a worktree the host owns: a write carries a recovery record (unless its
+worktree is in `excludedRoots`); an effect carries a recovery and is due; a topology change is
+recovering (unless it is in `retryingTopologies`); or a deferred write's refresh or import hold is overdue (see
+"Owner scans"). A worktree row is read as described in "Worktree rows". `projection_last` is the last key window row
 (`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
 is not a uuid refuses with the uuid cast message.
 
@@ -315,7 +329,8 @@ embedding effects whose chunks already carry current vectors. Its four members:
   `::int` does: a value that is not an integer, or one out of the integer range, refuses with the
   Postgres message. The store is single-writer, so the lock has nothing to skip.
 - `brain.readNoopEmbeddingCandidates(spec)`: the window effects whose page id is in `spec.pageIds`, due
-  now, with none of the data keys `targets`, `source_scan`, `retry_slugs` or `parked`, on no worktree,
+  now, with none of the data keys `targets`, `source_scan`, `retry_slugs` or `parked`, on no worktree or
+  on a worktree the effect claim may take for the host (`spec.hostId`),
   with no withdrawal mirror of the request left to commit, whose page is in the effect's source, live,
   at the effect's revision with its text projection sealed there and stamped with `spec.signature`, and
   whose every chunk has a vector, `embedded_at`, an embedded text hash equal to the md5 of its text and
@@ -328,17 +343,21 @@ embedding effects whose chunks already carry current vectors. Its four members:
 ## Owner scans
 
 The write owner's housekeeping reads on each scan tick (`persistence-owner-scans.ts`). Each one joins a
-write request to a worktree the host owns. This engine keeps no worktree (a request here always has a
-null `worktree_id`), so each list answers no row. Only a refresh hold can stand: `lockOverdueHold` reads the
-refresh row (`d 0x10`) and answers true while it is not released. An id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`; a hold
-kind other than `refresh` or `import` refuses.
+write request to a worktree the host owns (see "Worktree rows"). An id that is not a uuid refuses with
+`invalid input syntax for type uuid: "<id>"`; a hold kind other than `refresh` or `import` refuses.
+
+A held write is overdue when it has waited longer than the wait limit since its last update, or longer
+than four times the limit (at least four hours) since it was created. A refresh hold stands while its
+refresh row (`d 0x10`) is not released and was created before the wait limit. An import hold stands while
+the source exists and its `last_commit` still equals the hold's `deferred_import_from`; this engine keeps
+no `last_commit`, so only an empty `deferred_import_from` stands.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.listOverdueHeldWrites(hostId, hold)` | `[]`: no write here waits behind a refresh or a worktree import. The wait limit only narrows the rows, so it is not sent | `listOverdueHeldWrites` |
-| `brain.lockOverdueHold(hold, id)` | for `refresh`, `true` while the refresh row `id` exists and is not released (a null id is `false`); for `import`, `false`: no write here holds for an import. `id` is the refresh id (may be null) or the request id | `lockOverdueHold` |
-| `brain.listOwnerRecoveryHeads(hostId)` | `[]`: no write here carries a recovery record (those live only on worktree-owned writes). The excluded worktree ids only narrow the rows, so they are not sent | `listOwnerRecoveryHeads` |
-| `brain.listResumableRefreshes(hostId)` | `[]`: no refresh row exists here (refreshes live only on managed worktrees). The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
+| `brain.listOverdueHeldWrites(hostId, maxWaitMs, hold)` | the overdue `deferred` writes on owned worktrees held by a refresh or an import, in sequence order, at most 100 | `listOverdueHeldWrites` |
+| `brain.lockOverdueHold(hold, id, importFrom, maxWaitMs)` | for `refresh`, `true` while the refresh row `id` exists and is not released (a null id is `false`); for `import`, `true` while request `id` is `deferred` behind `importFrom`, its import hold stands and it is overdue (a null id or `importFrom` is `false`) | `lockOverdueHold` |
+| `brain.listOwnerRecoveryHeads(hostId, excluded)` | the oldest `recovering` write of each owned worktree not in `excluded`, oldest update first, at most 16 | `listOwnerRecoveryHeads` |
+| `brain.listResumableRefreshes(hostId)` | `[]`: refresh resumption has not landed here. The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
 | `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
 
 ## Projection queue

@@ -394,16 +394,24 @@ impl Brain {
         })
     }
 
-    /// `readWorktreeAdmission(worktreeId, sourceIncarnation)`: `{ worktree, refresh, bound }`.
+    /// `readWorktreeAdmission(worktreeId, sourceId, sourceIncarnation, topologyGeneration)`:
+    /// `{ worktree, refresh, bound }`. The generation arrives as text (null for none).
     #[napi]
     pub fn read_worktree_admission<'env>(
         &self,
         env: &'env Env,
         worktree_id: String,
+        source_id: String,
         source_incarnation: String,
+        topology_generation: Option<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.read_worktree_admission(&worktree_id, &source_incarnation)
+            s.read_worktree_admission(&gbrain_store::persistence::WorktreeAdmissionKey {
+                worktree_id,
+                source_id,
+                source_incarnation,
+                topology_generation,
+            })
         })
     }
 
@@ -534,14 +542,18 @@ impl Brain {
         })
     }
 
-    /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).
+    /// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`: the requests to requeue.
     #[napi]
     pub fn list_gated_mirror_requests<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        gate_code: String,
+        allowed_codes: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_gated_mirror_requests(&host_id))
+        self.run(env, move |s| {
+            s.list_gated_mirror_requests(&host_id, &gate_code, &allowed_codes)
+        })
     }
 
     /// `listEffectRecoveries(hostId, after, limit)`: the effects with a recovery due; `[]` (no
@@ -704,39 +716,50 @@ impl Brain {
         })
     }
 
-    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes past their hold; `[]`
-    /// (no worktree here). The wait limit only narrows the rows, so it is not sent.
+    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes on owned worktrees
+    /// past their hold.
     #[napi]
     pub fn list_overdue_held_writes<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        max_wait_ms: f64,
         hold: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_overdue_held_writes(&host_id, &hold))
+        self.run(env, move |s| {
+            s.list_overdue_held_writes(&host_id, max_wait_ms, &hold)
+        })
     }
 
-    /// `lockOverdueHold(hold)`: whether the hold still stands; `false` (no refresh row or
-    /// worktree import hold here).
+    /// `lockOverdueHold(hold)`: whether the hold still stands (a refresh unreleased, or an
+    /// import still pending and overdue).
     #[napi]
     pub fn lock_overdue_hold<'env>(
         &self,
         env: &'env Env,
         hold: String,
         id: Option<String>,
+        import_from: Option<String>,
+        max_wait_ms: Option<f64>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.lock_overdue_hold(&hold, id.as_deref()))
+        self.run(env, move |s| {
+            let wait = max_wait_ms.unwrap_or(0.0);
+            s.lock_overdue_hold(&hold, id.as_deref(), import_from.as_deref(), wait)
+        })
     }
 
-    /// `listOwnerRecoveryHeads(hostId, excluded)`: the recovering write heads; `[]` (no worktree
-    /// here). The excluded worktree ids only narrow the rows, so they are not sent.
+    /// `listOwnerRecoveryHeads(hostId, excluded)`: the oldest recovering write of each owned
+    /// worktree not in `excluded`.
     #[napi]
     pub fn list_owner_recovery_heads<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        excluded: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_owner_recovery_heads(&host_id))
+        self.run(env, move |s| {
+            s.list_owner_recovery_heads(&host_id, &excluded)
+        })
     }
 
     /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
