@@ -6,7 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
-import { capabilityMissing } from '../core/rust-engine/errors.ts';
+import { remoteAccessRefusal } from './engine-access-refusal.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -1022,11 +1022,9 @@ export async function dispatchToolCall(
   // context_pack and delta stay world-only for every caller unless a trusted local one passes include_private, so no grant widens them.
   // GBRA-498: a room declaration only marks the answer; its argument is taken out here, before any validation,
   // handler, cache, retry call or stored write intent sees it, and a trusted local caller's is ignored.
-  // An engine that does not enforce visibility, owner and folder policy itself (no `access_control`: the Rust engine)
-  // answers only the trusted local caller; any other call is refused here, before the engine or the arguments are read.
-  if (opts.remote !== false && (typeof engine.capabilities?.has === 'function' ? !engine.capabilities.has('access_control') : engine.kind === 'rust')) {
-    return errorResult(capabilityMissing('access_control', `${name} for a remote caller`), opts, { op: name });
-  }
+  // An engine without `access_control` (the Rust engine) answers only the trusted local caller (mcp/engine-access-refusal.ts).
+  const accessRefusal = remoteAccessRefusal(engine, name, opts.remote);
+  if (accessRefusal) return errorResult(accessRefusal, opts, { op: name });
   const roomRead = readRoomDeclaration(opts.remote === false ? undefined : opts.room, params);
   params = roomRead.args;
   const roomDeclaration = opts.remote === false ? undefined : roomRead.declaration ?? undefined;
