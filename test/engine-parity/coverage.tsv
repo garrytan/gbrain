@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1083/1089
+# covered: 1088/1094
 # lifecycle: 9/9
 # pages: 62/62
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 132/132
+# persistence_journal: 133/133
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -67,7 +67,7 @@
 # cli_reads_import: 15/15
 # wanted_links: 2/2
 # write_misc: 63/69
-# repair_bookkeeping: 43/43
+# repair_bookkeeping: 47/47
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -95,10 +95,10 @@ transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	136	yes	yes	yes	serves
-readPageSnapshot	pages	yes	34	no	yes	yes	serves
+readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	583	yes	yes	yes	serves
+putPage	pages	yes	586	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -486,6 +486,7 @@ readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	10	no	yes	yes	serves
+listWriteRequestsByRequestIds	persistence_journal	yes	1	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
@@ -1046,6 +1047,10 @@ listLiveOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 countLiveFileBackedPages	repair_bookkeeping	yes	2	no	yes	yes	serves
 listRepairScanPages	repair_bookkeeping	yes	5	no	yes	yes	serves
 listTwinMergeLosers	repair_bookkeeping	yes	3	no	yes	yes	serves
+listContactRowPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listSplitFactsPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listAtomFenceCandidates	repair_bookkeeping	yes	1	no	yes	yes	serves
+listPageTruths	repair_bookkeeping	yes	1	no	yes	yes	serves
 listPagesByOriginPath	repair_bookkeeping	yes	1	no	yes	yes	serves
 countSegmentedOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listUntiledSegmentedPages	repair_bookkeeping	yes	1	no	yes	yes	serves

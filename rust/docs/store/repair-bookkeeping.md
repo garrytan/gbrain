@@ -171,6 +171,22 @@ empty `source_path` that SQL's `IS NOT NULL` keeps.
 | `listRepairScanPages(sourceId, q)` | the page rows the ghost-pages and legacy-twins scans read, by id: `{ afterId, limit }` live pages after an id, `legacy: true` only those with a blank origin and no `database_only_reason`; `{ slugs }` live pages at the slugs with a non-blank origin; `{ ids }` pages in any state, with `deleted` set. Each row carries the revision, content hash, origin, the revision's write request id and `updated_ms` |
 | `listTwinMergeLosers(survivorId, twinId)` | what merging the twin into the survivor would land on: each moving link and link transition (an endpoint or origin on the twin, not an edge between the two) whose key, with the twin mapped to the survivor, another row already holds (a moving row only when its id is lower), with whether every such row says the same thing; each twin timeline entry whose date, summary and source the survivor holds with another detail; each twin raw-data source the survivor holds with other data. Ids ascend; raw sources sort in byte order |
 
+### Repair fence scans
+
+The contact-rows, split-facts and atom-fence-rows plans read their pages through four members
+(`src/core/engine-sql/repair-fence-scans.ts`). The store scans its page records and body manifests
+as the SQL filters its rows (`repair_fence_scans.rs`).
+
+| Member | Store answer |
+| --- | --- |
+| `listContactRowPages(sourceIds, q)` | live inline pages after `q.afterId` whose frontmatter `contacts` array holds two or more rows, among `q.slugs` when not empty; by id, at most `q.limit` (at least one) |
+| `listSplitFactsPages(sourceIds)` | `inline`: live pages whose compiled truth and timeline each hold a facts fence opener; `segmented`: live segmented pages whose current manifest rows (no `gen_to`, no staging id) for the truth and the timeline each protect a `facts` region. Both by id |
+| `listAtomFenceCandidates(sourceIds, q)` | live world atoms (frontmatter `visibility` `world`) after `q.afterId`, or only atom `q.atomId`, whose `source_slug` names a live page of the same source with a facts or takes fence opener or no compiled truth; by id, at most `q.limit`. `text` joins the title, the compiled truth and the frontmatter `source_quote` with a newline, as the SQL's `concat_ws(E'\\n', …)`; `revision` is the knowledge revision in lower case. `timeoutMs` changes nothing |
+| `listPageTruths(ids)` | `[{ id, body }]` for each page with one of the ids, in any state; `body` is the compiled truth, null for a segmented page |
+
+A segmented page has no compiled truth on any engine, so an atom whose source page is segmented
+counts as `origin_unread` everywhere.
+
 On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
 served yet, and its apply finds `pages_live_origin_key` present. So the kind previews and applies.
 The safe-chunks apply re-seals chunks, a B6 writer. Pinned by

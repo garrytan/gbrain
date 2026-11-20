@@ -806,13 +806,11 @@ src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4
 src/core/repair/agent-session-facts.ts	execute_raw	7
-src/core/repair/atom-fence-rows.ts	execute_raw	2
 src/core/repair/atoms-restore.ts	execute_raw	3
 src/core/repair/attribution-backfill.ts	execute_raw	7
 src/core/repair/captured-facts.ts	execute_raw	3
 src/core/repair/connector-fences.ts	execute_raw	2
 src/core/repair/consolidate-ties.ts	execute_raw	2
-src/core/repair/contact-rows.ts	execute_raw	3
 src/core/repair/conversation-labels.ts	execute_raw	10
 src/core/repair/duplicate-facts.ts	execute_raw	5
 src/core/repair/extractor-facts.ts	execute_raw	6
@@ -844,10 +842,8 @@ src/core/repair/rotation.ts	execute_raw	2
 src/core/repair/secret-spans.ts	execute_raw	24	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
 src/core/repair/segmented-mirror.ts	execute_raw	4
 src/core/repair/segmented-tiling.ts	execute_raw	6
-src/core/repair/settle.ts	execute_raw	1
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	2
-src/core/repair/split-facts.ts	execute_raw	2
 src/core/repair/stale-atoms.ts	execute_raw	1
 src/core/repair/take-supersession.ts	execute_raw	3
 src/core/repair/timeline-comments.ts	execute_raw	5

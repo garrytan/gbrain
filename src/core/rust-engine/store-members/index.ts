@@ -110,6 +110,7 @@ import * as managedSyncOrphans from './managed-sync-orphans.ts';
 import * as repairPageReads from './repair-page-reads.ts';
 import * as aliasOrphans from './alias-orphans.ts';
 import * as repairPageScans from './repair-page-scans.ts';
+import * as repairFenceScans from './repair-fence-scans.ts';
 import * as repairPlanScans from './repair-plan-scans.ts';
 import * as gitHolds from './git-holds.ts';
 
@@ -177,7 +178,7 @@ export const STORE_MEMBERS = {
   ...managedSyncOrphans,
   ...repairPageReads,
   ...aliasOrphans,
-  ...repairPageScans,
+  ...repairPageScans, ...repairFenceScans,
   ...repairPlanScans,
   ...gitHolds,
   // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).

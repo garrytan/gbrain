@@ -85,6 +85,7 @@ import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
+import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef, SplitFactsPages } from './engine-sql/repair-fence-scans.ts';
 import type { OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
@@ -1708,6 +1709,14 @@ export interface BrainEngine {
   listRepairScanPages(sourceId: string, q: RepairScanQuery): Promise<RepairScanPage[]>;
   /** What moving twin `twinId` into `survivorId` would land on (engine-sql/repair-page-scans.ts `TwinMergeLosers`). Read-only. */
   listTwinMergeLosers(survivorId: number, twinId: number): Promise<TwinMergeLosers>;
+  /** Live inline pages of `sourceIds` with two or more contact rows, by id (contact-rows; engine-sql/repair-fence-scans.ts). */
+  listContactRowPages(sourceIds: readonly string[], q: ContactRowQuery): Promise<RepairPageRef[]>;
+  /** Live pages of `sourceIds` whose two sections each hold a facts fence, inline and segmented, by id (split-facts). */
+  listSplitFactsPages(sourceIds: readonly string[]): Promise<SplitFactsPages>;
+  /** World atoms of `sourceIds` whose live source page names a facts or takes fence or is segmented, by id (atom-fence-rows). */
+  listAtomFenceCandidates(sourceIds: readonly string[], q: AtomFenceQuery): Promise<AtomFenceCandidate[]>;
+  /** The compiled truth of the pages `ids` (null for a segmented page), any state (engine-sql/repair-fence-scans.ts). */
+  listPageTruths(ids: readonly number[], opts?: { timeoutMs?: number }): Promise<Array<{ id: number; body: string | null }>>;
   /** Live pages of the source that record an origin, by slug in byte order (engine-sql/repair-plan-scans.ts). */
   listPagesByOriginPath(sourceId: string): Promise<OriginPathPageRow[]>;
   /** How many live file-backed pages of `sourceIds` store their body in segments. */
@@ -3942,6 +3951,8 @@ export interface BrainEngine {
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
+  /** The requests admitted under any of the client request ids `requestIds` (uuids), any principal. */
+  listWriteRequestsByRequestIds(requestIds: readonly string[]): Promise<WriteRequest[]>;
   /** A principal's requests in one live source, newest sequence first, through the cursor and fences (list_write_requests). */
   listWriteRequestRows(principalKind: string, principalId: string, sourceId: string, filter: WriteRequestListFilter): Promise<WriteRequest[]>;
   /** The progress columns of request `id` (state, error, outcome, deferral), or null; `signal` cancels the read. */

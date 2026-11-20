@@ -245,6 +245,10 @@ export const RUST_ENGINE_MEMBERS = {
   countLiveFileBackedPages: 'pages',
   listRepairScanPages: 'pages',
   listTwinMergeLosers: 'pages',
+  listContactRowPages: 'pages',
+  listSplitFactsPages: 'pages',
+  listAtomFenceCandidates: 'pages',
+  listPageTruths: 'pages',
   // The plan reads of repair frontmatter and segmented-tiling and the source hold listing (engine-sql/repair-plan-scans.ts).
   listPagesByOriginPath: 'pages',
   countSegmentedOriginPages: 'pages',
@@ -769,6 +773,7 @@ export const RUST_ENGINE_MEMBERS = {
   listRetiredDeactivations: 'persistence_journal',
   readWriteRequest: 'persistence_journal',
   readWriteRequestById: 'persistence_journal',
+  listWriteRequestsByRequestIds: 'persistence_journal',
   listWriteRequestRows: 'persistence_journal',
   readWriteRequestProgress: 'persistence_journal',
   countOutstandingBySource: 'persistence_journal',

@@ -234,6 +234,52 @@ impl Brain {
         })
     }
 
+    /// `listContactRowPages(sourceIds, { after_id, limit, slugs })`: resolves `RepairPageRef[]`
+    /// by id, the live inline pages with two or more contact rows.
+    #[napi]
+    pub fn list_contact_row_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_contact_row_pages(&source_ids, &required(query, "listContactRowPages query")?)
+        })
+    }
+
+    /// `listSplitFactsPages(sourceIds)`: resolves `{ inline, segmented }`, the pages whose two
+    /// sections each hold a facts fence.
+    #[napi]
+    pub fn list_split_facts_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_split_facts_pages(&source_ids))
+    }
+
+    /// `listAtomFenceCandidates(sourceIds, { atom_id, after_id, limit })`: resolves
+    /// `AtomFenceCandidate[]` by id.
+    #[napi]
+    pub fn list_atom_fence_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_atom_fence_candidates(&source_ids, &required(query, "listAtomFenceCandidates query")?)
+        })
+    }
+
+    /// `listPageTruths(ids)`: resolves `[{ id, body }]` by id, each page's compiled truth.
+    #[napi]
+    pub fn list_page_truths<'env>(&self, env: &'env Env, ids: Vec<i64>) -> napi::Result<Object<'env>> {
+        let ids: Vec<u64> = ids.into_iter().filter(|id| *id > 0).map(|id| id as u64).collect();
+        self.run(env, move |s| s.list_page_truths(&ids))
+    }
+
     /// `listPagesByOriginPath(sourceId)`: resolves `[{ id, slug, source_path, revision, title, head }]`
     /// by slug, the live pages of the source that record an origin.
     #[napi]

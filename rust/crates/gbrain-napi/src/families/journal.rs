@@ -222,6 +222,16 @@ impl Brain {
         self.run(env, move |s| s.read_write_request_by_id(&id))
     }
 
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows by sequence.
+    #[napi]
+    pub fn list_write_requests_by_request_ids<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_write_requests_by_request_ids(&request_ids))
+    }
+
     /// `insertWriteRequest(row)`: the stored row (`WriteRequestInsert`).
     #[napi]
     pub fn insert_write_request<'env>(

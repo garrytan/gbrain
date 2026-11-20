@@ -1317,6 +1317,21 @@ impl Store {
         Ok(request_by_id(&*self.read()?, id)?.map(|r| r.to_row()))
     }
 
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows whose client request id is
+    /// one of `request_ids`, by sequence. A malformed id refuses, as the SQL's `::uuid[]` cast does.
+    pub fn list_write_requests_by_request_ids(&self, request_ids: &[String]) -> Result<Vec<Value>> {
+        let mut wanted = std::collections::BTreeSet::new();
+        for id in request_ids {
+            wanted.insert(uuid_param(id, "requestIds")?);
+        }
+        let mut rows: Vec<RequestRecord> = all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| wanted.contains(&r.request_id.to_lowercase()))
+            .collect();
+        rows.sort_by_key(|r| r.sequence);
+        Ok(rows.iter().map(RequestRecord::to_row).collect())
+    }
+
     /// `insertWriteRequest(row)`: the stored request row.
     pub fn insert_write_request(&self, input: &WriteRequestInsert) -> Result<Value> {
         self.write(|tx| insert_write_request_in(tx, &*self.env, input))
