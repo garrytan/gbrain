@@ -6,6 +6,9 @@
  * expireCapturedFacts, listExpiredFactIds, listPagelessEntityFacts, listSourceIncarnations, readEntityRehomeState and
  * rehomeEntityFacts. The two writers (expireCapturedFacts, rehomeEntityFacts) write through the store's fact writer, and
  * rehomeEntityFacts also applies the withdrawal guard (facts/withdrawal_guard.rs) the SQL gets from its trigger.
+ * Served from facts/session_takes.rs (`gbrain repair agent-session-facts`): listAgentSessionTakeCandidates,
+ * listSettledSessionFacts, reattributeSessionFacts, retireSessionTakes, listOtherAttributedFactIds and listInactiveTakeIds.
+ * reattributeSessionFacts writes through the store's fact writer and retireSessionTakes through its take writer.
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
  * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, countLabelFacts, whose label line this member
  * reads into literal labels (label-line.ts), and countPurgedPageFacts, which reads the store's `page_purges` ledger. No
@@ -155,3 +158,45 @@ export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sour
 /** `listUnwithdrawnFacts`: the store answers the rows in the SQL's order with its columns. */
 export const listUnwithdrawnFacts: Member<'listUnwithdrawnFacts'> = (brain, sourceIds, slug, fenceKind) =>
   storeCall({ member: 'listUnwithdrawnFacts' }, () => brain.listUnwithdrawnFacts({ sourceIds, slug, fenceKind }));
+
+/** `listAgentSessionTakeCandidates`: the open self fact takes of the sources with their consolidated facts, by source, slug and id. */
+export const listAgentSessionTakeCandidates: Member<'listAgentSessionTakeCandidates'> = async (brain, sourceIds, ids, noteMark) => {
+  wholeIds('listAgentSessionTakeCandidates', ids);
+  if (!sourceIds.length) return [];
+  return storeCall({ member: 'listAgentSessionTakeCandidates' }, () =>
+    brain.listAgentSessionTakeCandidates({ sourceIds: [...sourceIds], ids: ids === null ? null : [...ids], noteMark }));
+};
+
+/** `listSettledSessionFacts`: the named unexpired, unsuperseded facts of the source attributed to `other`, with their context. */
+export const listSettledSessionFacts: Member<'listSettledSessionFacts'> = async (brain, sourceId, ids) => {
+  if (!ids.length) return [];
+  return storeCall({ member: 'listSettledSessionFacts' }, () => brain.listSettledSessionFacts(named('listSettledSessionFacts', sourceId, ids)));
+};
+
+/** `reattributeSessionFacts`: sets the named active database-only user facts to `other`, appending each note once. */
+export const reattributeSessionFacts: Member<'reattributeSessionFacts'> = async (brain, sourceId, facts, separator) => {
+  wholeIds('reattributeSessionFacts', facts.map(f => f.id));
+  if (!facts.length) return [];
+  return storeCall({ member: 'reattributeSessionFacts' }, () =>
+    brain.reattributeSessionFacts({ sourceId, facts: facts.map(f => ({ id: f.id, note: f.note })), separator }));
+};
+
+/** `retireSessionTakes`: retires the named open self fact takes of the source that no user fact feeds. */
+export const retireSessionTakes: Member<'retireSessionTakes'> = async (brain, sourceId, takeIds) => {
+  wholeIds('retireSessionTakes', takeIds);
+  if (!takeIds.length) return [];
+  return storeCall({ member: 'retireSessionTakes' }, () => brain.retireSessionTakes({ sourceId, takeIds: [...takeIds] }));
+};
+
+/** `listOtherAttributedFactIds`: the named facts of the source attributed to `other`, by id. */
+export const listOtherAttributedFactIds: Member<'listOtherAttributedFactIds'> = async (brain, sourceId, ids) => {
+  if (!ids.length) return [];
+  return storeCall({ member: 'listOtherAttributedFactIds' }, () => brain.listOtherAttributedFactIds(named('listOtherAttributedFactIds', sourceId, ids)));
+};
+
+/** `listInactiveTakeIds`: the named takes that are inactive, by id. */
+export const listInactiveTakeIds: Member<'listInactiveTakeIds'> = async (brain, ids) => {
+  wholeIds('listInactiveTakeIds', ids);
+  if (!ids.length) return [];
+  return storeCall({ member: 'listInactiveTakeIds' }, () => brain.listInactiveTakeIds({ ids: [...ids] }));
+};

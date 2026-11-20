@@ -69,6 +69,7 @@ pub mod remember_reads;
 pub mod repair;
 pub mod rest_sites;
 pub mod saved_match;
+pub mod session_takes;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;

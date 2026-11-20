@@ -67,7 +67,7 @@ pub struct RehomeArgs {
 }
 
 /// The distinct ids of `= ANY($n::bigint[])`, ascending. An id no row can have (below 1) names nothing.
-fn id_set(op: &str, ids: &[f64]) -> Result<BTreeSet<u64>> {
+pub(super) fn id_set(op: &str, ids: &[f64]) -> Result<BTreeSet<u64>> {
     let mut out = BTreeSet::new();
     for id in ids {
         let id = bigint(op, "ids", *id)?;
@@ -81,7 +81,7 @@ fn id_set(op: &str, ids: &[f64]) -> Result<BTreeSet<u64>> {
 }
 
 /// The rows of `source_id` named by `ids`, by id.
-fn named_rows(
+pub(super) fn named_rows(
     read: &dyn KvRead,
     source_id: &str,
     ids: &BTreeSet<u64>,
@@ -271,7 +271,7 @@ impl Store {
 }
 
 /// The distinct source ids of `= ANY($1::text[])`, in byte order.
-fn source_set(op: &str, ids: &[String]) -> Result<BTreeSet<String>> {
+pub(super) fn source_set(op: &str, ids: &[String]) -> Result<BTreeSet<String>> {
     for id in ids {
         no_nul(op, &[("sourceIds", id.as_str())])?;
     }

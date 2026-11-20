@@ -361,24 +361,26 @@ Twenty-eight members that were raw `executeRaw` statements in nine callers (`src
 `captured-facts.ts`, `facts-rehome.ts`, `src/commands/doctor/checks/fence-integrity.ts`, `facts-pages.ts`,
 `unlinked-facts.ts`, `src/core/facts/write-single.ts`, `capture-dedup.ts` and `claim-conflicts.ts`). Each runs the
 statement its caller ran, with the same text and parameters, in `src/core/engine-sql/facts-repair.ts` (15),
-`facts-doctor.ts` (3) and `facts-trust.ts` (10). The nine rows marked served below are implemented by
-`facts/captured.rs` ("Captured-facts and rehome repair"); the others are not implemented on Rust yet: each is named `facts` in
-`rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store serves it, so the repair,
-doctor and write-path callers stop on that refusal instead of the `raw_sql` refusal they stopped on before.
+`facts-doctor.ts` (3) and `facts-trust.ts` (10). Every row marked served below is implemented on Rust:
+`facts/captured.rs` ("Captured-facts and rehome repair"), `facts/session_takes.rs` ("Agent-session repair") and
+`facts/write_path.rs` ("Write-path, repair and fence-cycle reads") serve most of them. The one row not marked served
+(`countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog`) is named `facts` in
+`rust-engine/members.ts` and refuses by name with `engine_capability_missing`, so its callers stop on that refusal
+instead of the `raw_sql` refusal they stopped on before.
 
-| Member | Reads or writes | What the store would need |
+| Member | Reads or writes | What the statement reads or writes |
 | --- | --- | --- |
-| `listActiveSourceIds` (served), `listUnarchivedSourceIds` | `sources` | The source ids in byte order; `archived` is false or unset. |
+| `listActiveSourceIds`, `listUnarchivedSourceIds` (served) | `sources` | The source ids in byte order; `archived` is false or unset. |
 | `readRepairBrainId` (served) | `persistence_brain` | The brain id row, or null (callers fall back to `host`). The TypeScript member answers what `readPersistenceBrainId` answers. |
-| `listAgentSessionTakeCandidates`, `retireSessionTakes`, `listInactiveTakeIds` | `takes`, `facts` | The `consolidated_into` and `consolidated_at` columns of facts and the take columns `kind`, `holder`, `active`, `resolved_at`, `created_at`. |
-| `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |
+| `listAgentSessionTakeCandidates`, `retireSessionTakes`, `listInactiveTakeIds` (served) | `takes`, `facts` | The `consolidated_into` and `consolidated_at` columns of facts and the take columns `kind`, `holder`, `active`, `resolved_at`, `created_at`. |
+| `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` (served) | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |
 | `listFenceRewriteRows`, `expireCapturedFacts`, `listExpiredFactIds` (served) | `facts` | `row_num`, `expired_at`, `context`; the expiry puts its context before the fact's own. |
 | `listPagelessEntityFacts`, `readEntityRehomeState`, `rehomeEntityFacts`, `listSourceIncarnations` (served) | `facts`, `pages`, `sources` | Live-page lookups by (source, slug), database-only facts keyed by entity, and the source `incarnation` as text. |
 | `countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog` | `pages`, catalog | `body_storage`, `source_path`, the bounded body prefix, and `to_regclass` of `facts` and `fact_relink_attempts`. |
-| `readFactEntitySlugById`, `readSupersessionReplacement`, `linkSupersededFact` | `facts` | Two-fact join for the fence row, same-page test and validity bounds; `superseded_by` link. |
-| `listLivePageTitles`, `listPageAliasNames` | `pages`, `page_aliases` | Live titles and normalized aliases; the alias read throws on a brain with no aliases table. |
-| `listCaptureDuplicateCandidates`, `computeFactFingerprints` | `facts` | `gbrain_fact_fingerprint`, the member-owned-page exclusion and a numeric scan limit. |
-| `listClaimConflictPairs`, `countClaimConflictPairs` | `facts`, `decide_proposals`, `trust_proposals` | Typed claim columns, the as-of bucket, and the proposal tables that exclude a pair already proposed. |
+| `readFactEntitySlugById`, `readSupersessionReplacement`, `linkSupersededFact` (served) | `facts` | Two-fact join for the fence row, same-page test and validity bounds; `superseded_by` link. |
+| `listLivePageTitles`, `listPageAliasNames` (served) | `pages`, `page_aliases` | Live titles and normalized aliases; the alias read throws on a brain with no aliases table. |
+| `listCaptureDuplicateCandidates`, `computeFactFingerprints` (served) | `facts` | `gbrain_fact_fingerprint`, the member-owned-page exclusion and a numeric scan limit. |
+| `listClaimConflictPairs`, `countClaimConflictPairs` (served) | `facts`, `decide_proposals`, `trust_proposals` | Typed claim columns, the as-of bucket, and the proposal tables that exclude a pair already proposed. |
 
 ### Captured-facts and rehome repair (`facts/captured.rs`, `facts/withdrawal_guard.rs`)
 
@@ -395,6 +397,22 @@ Eight store methods serve nine members of `engine-sql/facts-repair.ts` (`readRep
 | `listPagelessEntityFacts` `{ sourceIds }` | `listPagelessEntityFacts` | Per (source, `entity_slug`) with no live page (a soft-deleted page counts as none): `{ source_id, slug, ids, fenced }`. `ids` are the database-only fact ids in id order, `null` when every fact is fence-held; `fenced` is the count of fence-held facts. By (source, slug) in byte order. |
 | `readEntityRehomeState` `{ sourceId, from, to }` | `readEntityRehomeState` | Always one object `{ from_live, to_live, ids }`, `ids` the database-only fact ids keyed under `from`, `null` when none. |
 | `rehomeEntityFacts` `{ sourceId, from, to }` | `rehomeEntityFacts` | Moves the database-only facts keyed under `from` to `to` in one write. A stint key a fact already holds on `to` refuses with `constraint_violation` (`idx_facts_ontology_stint_dedup`) and no fact moves; the TypeScript member raises it as Postgres does (see "Unique violations"). Answers null. |
+
+### Agent-session repair (`facts/session_takes.rs`)
+
+Six store methods serve the six `gbrain repair agent-session-facts` members. Each takes one JSON object in `camelCase`
+and refuses an unknown key. The store keeps no index of `consolidated_into`: the candidate read scans the facts of the
+named sources, and the retirement scans every fact (its `NOT EXISTS` and `min(consolidated_at)` read facts of any
+source).
+
+| Method | Member | Result |
+| --- | --- | --- |
+| `listAgentSessionTakeCandidates` `{ sourceIds, ids, noteMark }` | `listAgentSessionTakeCandidates` | `[{ id, source_id, slug, row_num, claim, fact_ids, user_fact_ids, noted }]`: each active, unresolved `kind: fact` / `holder: self` take on a page of the sources, with the facts of those sources consolidated into it (`ids` null is every take). `user_fact_ids` are the contributors attributed to `user` or unset; `noted` is true when an `other` contributor's context holds `noteMark`. A take created more than one second before its first consolidation is left out. By the page's source, then slug, in byte order (`COLLATE "C"`), then take id. |
+| `listSettledSessionFacts` `{ sourceId, ids }` | `listSettledSessionFacts` | `[{ id, context }]` of the named unexpired, unsuperseded facts of the source attributed to `other`, by id. |
+| `reattributeSessionFacts` `{ sourceId, facts, separator }` | `reattributeSessionFacts` | Sets each named active, unsuperseded database-only fact of the source attributed to `user` or unset to `other`, and appends its note after `separator` unless the context already holds it (an empty note is always held). Answers the changed `[{ id }]`, by id; a repeated id changes once, with its first note. Written through the fact writer. |
+| `retireSessionTakes` `{ sourceId, takeIds }` | `retireSessionTakes` | Sets `active = false` and moves `updated_at` on each named take whose page is in the source, that is still an open self fact take created no more than one second before its first consolidation, and that no `user` or unset fact of any source feeds. Answers the retired `[{ id }]`, by id. Written through the take writer. |
+| `listOtherAttributedFactIds` `{ sourceId, ids }` | `listOtherAttributedFactIds` | `[{ id }]` of the named facts of the source attributed to `other`, by id. |
+| `listInactiveTakeIds` `{ ids }` | `listInactiveTakeIds` | `[{ id }]` of the named takes that are inactive, by id. |
 
 `withdrawal_guard.rs` is `gbrain_preserve_fact_withdrawal`. It runs on every insert (`write_fact` with no stored
 row, the withdrawal half of `gbrain_guard_inserted_facts`) and on the rows these two writes (and the ontology repair
