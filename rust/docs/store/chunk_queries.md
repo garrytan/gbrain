@@ -21,6 +21,7 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |
 | `listContextualModeCandidates(sourceIds)` | served |
 | `resolveFrozenHits(hits, scope)` | served; a safe-chunk, trust or flag scope refuses |
+| `readSegmentRegions(hits)` | served; Rust-only optional member (search dedup's `segmentRegions`) |
 | `hasUnsealedPages({ sourceId?, sourceIds?, excludePrivate?, types?, excludeSlugPrefixes? })` | served; true when a live page in scope is below the safe-chunk fence (`chunker_version < 4`, or none recorded) |
 
 On `getChunkPage` and `getChunkWindows`, `excludePrivate: true` applies the store page policy (`storePagePolicy`, the
@@ -134,6 +135,12 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
 - `resolveFrozenHits` answers one row per hit in scope and per joined chunk, in hit order. A positive chunk id joins
   that chunk, any other id joins chunk index 0, and a page that holds no such chunk gives a row with NULL chunk
   columns.
+- `readSegmentRegions` takes `{ pageId, chunkId }` hits and answers `{ chunk_id, byte_start }` per hit whose chunk is
+  visible at its page's live body generation on a segmented page that is sealed or carries the activation projection
+  revision, with `byte_start` the stored start of the chunk's live occurrence, in chunk-id order. Each hit names its
+  page because the store has no chunk-id index, so the read opens only those pages. The SQL engines do not define the
+  member: `segmentRegions` (`src/core/search/dedup.ts`) reads the same rows there through `keywordBoundedRead`, which
+  refuses on Rust as raw SQL. Pinned by `test/engine-parity/segment-regions.test.ts`.
 
 ## Known differences
 

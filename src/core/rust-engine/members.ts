@@ -255,6 +255,7 @@ export const RUST_ENGINE_MEMBERS = {
   deleteChunksForPages: 'chunks',
   listContextualModeCandidates: 'chunks',
   resolveFrozenHits: 'chunks',
+  readSegmentRegions: 'chunks',
   listChunklessPagesWithContent: 'chunks',
   deleteChunks: 'chunks',
   // embeddings

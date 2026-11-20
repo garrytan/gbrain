@@ -36,7 +36,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
+mod segment_regions;
 mod site_reads;
+pub use segment_regions::SegmentHit;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,

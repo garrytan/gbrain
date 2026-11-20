@@ -4016,6 +4016,15 @@ export interface BrainEngine {
    */
   keywordBoundedRead<T>(read: (db: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T>;
 
+  /**
+   * The segmented-region read of search dedup (`segmentRegions`, search/dedup.ts) for an engine with no SQL dialect:
+   * `[{ chunk_id, byte_start }]`, one row per hit chunk of a served segmented page whose occurrence has a live
+   * manifest offset (the rows the SQL engines' statement under keywordBoundedRead returns). Each hit names the page
+   * the search returned it on. Only the Rust engine defines it; the SQL engines run the statement through
+   * keywordBoundedRead.
+   */
+  readSegmentRegions?(hits: ReadonlyArray<{ pageId: number; chunkId: number }>): Promise<Array<{ chunk_id: number; byte_start: number }>>;
+
   // ============================================================
   // Cycle locks: TTL lease rows in `gbrain_cycle_locks` (db-lock.ts owns the policy)
   // ============================================================
