@@ -219,12 +219,13 @@ export const RUST_ENGINE_MEMBERS = {
   // The alias targets of repair aliases and doctor dangling_aliases (engine-sql/alias-orphans.ts).
   listAliasTargets: 'pages',
   deleteOrphanedAliases: 'pages',
-  // The page scans of repair safe-chunks and origin-twins (engine-sql/repair-page-scans.ts).
+  // The page scans of repair safe-chunks, origin-twins, ghost-pages and legacy-twins (engine-sql/repair-page-scans.ts).
   listSafeChunksPending: 'pages',
   listOriginTwinGroups: 'pages',
   listLegacyOriginPairs: 'pages',
   listLiveOriginPages: 'pages',
   countLiveFileBackedPages: 'pages',
+  listRepairScanPages: 'pages',
   // The plan reads of repair frontmatter and segmented-tiling and the source hold listing (engine-sql/repair-plan-scans.ts).
   listPagesByOriginPath: 'pages',
   countSegmentedOriginPages: 'pages',

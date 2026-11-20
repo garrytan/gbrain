@@ -1,8 +1,8 @@
-//! The page scans of the `safe-chunks` and `origin-twins` repair plans
-//! (`src/core/engine-sql/repair-page-scans.ts`).
+//! The page scans of the `safe-chunks`, `origin-twins`, `ghost-pages` and `legacy-twins` repair
+//! plans (`src/core/engine-sql/repair-page-scans.ts`).
 //!
 //! Members: listSafeChunksPending, listOriginTwinGroups, listLegacyOriginPairs,
-//! listLiveOriginPages, countLiveFileBackedPages.
+//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages.
 //!
 //! Each member reads every page record once and filters it as the SQL's `WHERE` does, so a brain
 //! the store never wrote through its own guards still answers what the SQL engines answer. A
@@ -17,7 +17,7 @@ use crate::error::Result;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages};
 use crate::persistence::op_checkpoint_completed_keys;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -59,6 +59,61 @@ pub struct LegacyOriginPair {
 pub struct LiveOriginPage {
     pub id: u64,
     pub source_path: String,
+}
+
+/// A page the ghost-pages and legacy-twins repairs read (`RepairScanPage`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RepairScanPage {
+    pub id: u64,
+    pub slug: String,
+    pub revision: String,
+    pub content_hash: Option<String>,
+    pub source_path: Option<String>,
+    pub source_uri: Option<String>,
+    /// The write request of the live revision (`revision_write_request_id`).
+    pub request_id: Option<String>,
+    /// `updated_at` in epoch milliseconds.
+    pub updated_ms: f64,
+    pub deleted: bool,
+    pub database_only_reason: Option<String>,
+}
+
+/// `listRepairScanPages`'s query: `ids` (any state), else `slugs` (live, non-blank origin), else
+/// the live pages past `after_id`, at most `limit` (`legacy`: blank origin, no database-only stamp).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RepairScanQuery {
+    #[serde(default)]
+    pub ids: Option<Vec<u64>>,
+    #[serde(default)]
+    pub slugs: Option<Vec<String>>,
+    #[serde(default)]
+    pub after_id: u64,
+    #[serde(default)]
+    pub limit: u64,
+    #[serde(default)]
+    pub legacy: bool,
+}
+
+/// SQL's `COALESCE(btrim(source_path), '') = ''`: no origin, or only spaces.
+fn blank_origin(page: &PageRecord) -> bool {
+    page.source_path
+        .as_deref()
+        .is_none_or(|p| p.trim_matches(' ').is_empty())
+}
+
+fn scan_page(page: PageRecord) -> RepairScanPage {
+    RepairScanPage {
+        id: page.id,
+        revision: page.knowledge_revision,
+        content_hash: page.content_hash,
+        source_path: page.source_path,
+        source_uri: page.source_uri,
+        request_id: page.revision_receipt.request_id,
+        updated_ms: page.updated_at_us as f64 / 1000.0,
+        deleted: page.deleted_at_us.is_some(),
+        database_only_reason: page.database_only_reason,
+        slug: page.slug,
+    }
 }
 
 /// The live, file-backed pages of `source_id`, by id.
@@ -245,9 +300,51 @@ impl Store {
             .collect())
     }
 
-    /// `countLiveFileBackedPages(sourceId)`: the live pages of the source that record an origin.
-    pub fn count_live_file_backed_pages(&self, source_id: &str) -> Result<u64> {
+    /// `countLiveFileBackedPages(sourceId, { nonBlank })`: the live pages of the source that record
+    /// an origin; `non_blank` skips a blank one.
+    pub fn count_live_file_backed_pages(&self, source_id: &str, non_blank: bool) -> Result<u64> {
         let read = self.read()?;
-        Ok(live_file_backed(&*read, source_id)?.len() as u64)
+        Ok(live_file_backed(&*read, source_id)?
+            .iter()
+            .filter(|p| !non_blank || !blank_origin(p))
+            .count() as u64)
+    }
+
+    /// `listRepairScanPages(sourceId, q)`: the pages of the source `q` names, by id.
+    pub fn list_repair_scan_pages(
+        &self,
+        source_id: &str,
+        q: &RepairScanQuery,
+    ) -> Result<Vec<RepairScanPage>> {
+        let read = self.read()?;
+        let ids: Option<BTreeSet<u64>> = q.ids.as_ref().map(|ids| ids.iter().copied().collect());
+        let slugs: Option<BTreeSet<&str>> = q
+            .slugs
+            .as_ref()
+            .map(|s| s.iter().map(String::as_str).collect());
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                if p.source_id != source_id {
+                    return false;
+                }
+                if let Some(ids) = &ids {
+                    return ids.contains(&p.id);
+                }
+                if p.deleted_at_us.is_some() {
+                    return false;
+                }
+                if let Some(slugs) = &slugs {
+                    return slugs.contains(p.slug.as_str()) && !blank_origin(p);
+                }
+                p.id > q.after_id
+                    && (!q.legacy || (blank_origin(p) && p.database_only_reason.is_none()))
+            })
+            .collect();
+        pages.sort_by_key(|p| p.id);
+        if ids.is_none() && slugs.is_none() {
+            pages.truncate(usize::try_from(q.limit.max(1)).unwrap_or(usize::MAX));
+        }
+        Ok(pages.into_iter().map(scan_page).collect())
     }
 }

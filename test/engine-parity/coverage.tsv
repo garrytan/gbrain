@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 976/976
+# covered: 977/977
 # lifecycle: 9/9
 # pages: 51/51
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
-# repair_bookkeeping: 43/43
+# repair_bookkeeping: 44/44
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -97,13 +97,13 @@ getPage	pages	yes	133	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	558	yes	yes	yes	serves
+putPage	pages	yes	559	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	160	yes	yes	yes	serves
+softDeletePage	pages	yes	161	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -933,7 +933,8 @@ listSafeChunksPending	repair_bookkeeping	yes	1	no	yes	yes	serves
 listOriginTwinGroups	repair_bookkeeping	yes	1	no	yes	yes	serves
 listLegacyOriginPairs	repair_bookkeeping	yes	1	no	yes	yes	serves
 listLiveOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
-countLiveFileBackedPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+countLiveFileBackedPages	repair_bookkeeping	yes	2	no	yes	yes	serves
+listRepairScanPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listPagesByOriginPath	repair_bookkeeping	yes	1	no	yes	yes	serves
 countSegmentedOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listUntiledSegmentedPages	repair_bookkeeping	yes	1	no	yes	yes	serves

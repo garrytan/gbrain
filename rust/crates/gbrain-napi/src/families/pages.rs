@@ -192,14 +192,32 @@ impl Brain {
         self.run(env, move |s| s.list_live_origin_pages(&source_id, &paths))
     }
 
-    /// `countLiveFileBackedPages(sourceId)`: resolves the number of live pages recording an origin.
+    /// `countLiveFileBackedPages(sourceId, nonBlank)`: resolves the number of live pages recording
+    /// an origin (`nonBlank`: a non-blank one).
     #[napi]
     pub fn count_live_file_backed_pages<'env>(
         &self,
         env: &'env Env,
         source_id: String,
+        non_blank: bool,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.count_live_file_backed_pages(&source_id))
+        self.run(env, move |s| {
+            s.count_live_file_backed_pages(&source_id, non_blank)
+        })
+    }
+
+    /// `listRepairScanPages(sourceId, { ids, slugs, after_id, limit, legacy })`: resolves
+    /// `RepairScanPage[]` by id.
+    #[napi]
+    pub fn list_repair_scan_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_repair_scan_pages(&source_id, &required(query, "listRepairScanPages query")?)
+        })
     }
 
     /// `listPagesByOriginPath(sourceId)`: resolves `[{ id, slug, source_path, revision, title, head }]`

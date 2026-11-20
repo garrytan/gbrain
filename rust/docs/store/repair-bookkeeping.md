@@ -155,7 +155,8 @@ Pinned by `test/engine-parity/repair-aliases.test.ts` and the store test
 
 ## Repair page scans
 
-The plans of `gbrain repair safe-chunks` and `gbrain repair origin-twins` read live pages
+The plans of `gbrain repair safe-chunks`, `gbrain repair origin-twins`, `gbrain repair ghost-pages` and
+`gbrain repair legacy-twins` read pages
 (`src/core/engine-sql/repair-page-scans.ts`). The store scans every page record and filters it as
 the SQL's `WHERE` does (`repair_scans.rs`); it does not use the origin index, which leaves out an
 empty `source_path` that SQL's `IS NOT NULL` keeps.
@@ -166,13 +167,18 @@ empty `source_path` that SQL's `IS NOT NULL` keeps.
 | `listOriginTwinGroups(sourceId, limit)` | live paths two or more pages record, in byte order, as the SQL's `COLLATE "C"` |
 | `listLegacyOriginPairs(sourceId, prefix, limit)` | each live page whose path is `prefix` plus another live page's path, by the legacy id then the other's (the SQL now orders under its `LIMIT`) |
 | `listLiveOriginPages(sourceId, paths)` | live pages recording any of `paths`, by id |
-| `countLiveFileBackedPages(sourceId)` | live pages recording a `source_path` |
+| `countLiveFileBackedPages(sourceId, { nonBlank? })` | live pages recording a `source_path`; with `nonBlank`, one that is not empty after trimming spaces |
+| `listRepairScanPages(sourceId, q)` | the page rows the ghost-pages and legacy-twins scans read, by id: `{ afterId, limit }` live pages after an id, `legacy: true` only those with a blank origin and no `database_only_reason`; `{ slugs }` live pages at the slugs with a non-blank origin; `{ ids }` pages in any state, with `deleted` set. Each row carries the revision, content hash, origin, the revision's write request id and `updated_ms` |
 
 On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
 served yet, and its apply finds `pages_live_origin_key` present. So the kind previews and applies.
 The safe-chunks apply re-seals chunks, a B6 writer. Pinned by
-`test/engine-parity/repair-page-scans.test.ts` and the store test
-`scans_answer_what_the_sql_filters`.
+`test/engine-parity/repair-page-scans.test.ts` and the store tests
+`scans_answer_what_the_sql_filters` and `repair_scan_pages_answer_each_query_shape`.
+
+The ghost-pages and legacy-twins plans stop off the owner host until the worktree binding is
+served. With a binding, ghost-pages previews and applies on Rust; legacy-twins finds its pairs and
+then reads `twinMergeConflicts` (`persistence/twin-merge.ts`), which still runs raw SQL.
 
 ## Repair plan scans
 

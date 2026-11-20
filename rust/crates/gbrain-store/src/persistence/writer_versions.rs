@@ -225,7 +225,9 @@ pub(crate) fn segmented_gate_evidence_in(
         g.last_seen = g.last_seen.max(at);
         g.first_seen = g.first_seen.min(at);
     };
-    let mark = |r: &RequestRecord, column: &str| r.extra.get(column).and_then(Value::as_bool) == Some(true);
+    let mark = |r: &RequestRecord, column: &str| {
+        r.extra.get(column).and_then(Value::as_bool) == Some(true)
+    };
     for r in all_requests(read)? {
         if r.created_at_us >= since {
             let key = (

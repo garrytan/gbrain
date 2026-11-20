@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — the page scans of `gbrain repair safe-chunks` and `gbrain repair origin-twins` (batch 3 of the
- * repair-on-Rust plan).
+ * repair-on-Rust plan), and the page reads of `gbrain repair ghost-pages` and `gbrain repair legacy-twins`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a brain with markdown pages, code pages with and without a file, a soft-deleted page and a page whose
@@ -9,6 +9,9 @@
  *    (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: both plans read through `executeRaw`, which a Rust brain refuses, so each kind stopped before its first
  *    read there. The legacy-pair read also had no ORDER BY under its LIMIT, so the pairs it kept were not fixed.
+ *    The ghost-pages and legacy-twins scans read pages through `executeRaw` too; `listRepairScanPages` and
+ *    `countLiveFileBackedPages({ nonBlank })` now answer each of their query shapes (a page after an id, a legacy page
+ *    with no origin, live file pages by slug, pages in any state by id).
  *  - Why existing coverage misses it: test/repair-safe-chunks*.test.ts and test/origin-twins*.test.ts run on PGLite
  *    or Postgres only.
  *  - Seam: none. The safe-chunks apply re-seals chunks, a write that moves in batch 6, so this case previews it only.
@@ -88,5 +91,32 @@ describe('engine parity: repair page scans', () => {
       ids, fileBacked: await engine.countLiveFileBackedPages('default'),
     };
     return { members, safeChunks: shape(await preview(engine, 'safe-chunks')), originTwins: await previewThenApply(engine, 'origin-twins') };
+  }));
+
+  parityTest('ghost-pages and legacy-twins read the same pages for each scan shape on every engine', {
+    methods: ['putPage', 'softDeletePage', 'listRepairScanPages', 'countLiveFileBackedPages'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    await put(engine, 'notes/a-example', 'markdown', 'notes/a-example.md');
+    await put(engine, 'notes/B-example', 'markdown');
+    await put(engine, 'notes/b-example', 'markdown', 'notes/b-example.md');
+    await put(engine, 'notes/c-example', 'markdown');
+    await put(engine, 'notes/gone-example', 'markdown', 'notes/gone-example.md');
+    const row = (r: Awaited<ReturnType<BrainEngine['listRepairScanPages']>>[number]) => ({ ...r, id: typeof r.id, revision: typeof r.revision,
+      content_hash: typeof r.content_hash, request_id: r.request_id === null ? null : typeof r.request_id, updated_ms: typeof r.updated_ms });
+    const before = await engine.listRepairScanPages('default', { afterId: 0, limit: 10 });
+    const ids = Object.fromEntries(before.map(r => [r.slug, Number(r.id)]));
+    await engine.softDeletePage('notes/gone-example', { sourceId: 'default' });
+    return {
+      before: before.map(row),
+      all: (await engine.listRepairScanPages('default', { afterId: 0, limit: 10 })).map(r => r.slug),
+      paged: (await engine.listRepairScanPages('default', { afterId: ids['notes/a-example']!, limit: 2 })).map(r => r.slug),
+      legacy: (await engine.listRepairScanPages('default', { afterId: 0, limit: 10, legacy: true })).map(r => r.slug),
+      bySlug: (await engine.listRepairScanPages('default', { slugs: ['notes/b-example', 'notes/B-example', 'notes/gone-example', 'notes/none-example'] })).map(r => r.slug),
+      byId: (await engine.listRepairScanPages('default', { ids: [ids['notes/gone-example']!, ids['notes/c-example']!, 999_999] })).map(row),
+      otherSource: await engine.listRepairScanPages('other-example', { afterId: 0, limit: 10 }),
+      fileBacked: await engine.countLiveFileBackedPages('default'),
+      nonBlank: await engine.countLiveFileBackedPages('default', { nonBlank: true }),
+    };
   }));
 });

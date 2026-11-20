@@ -78,7 +78,7 @@ import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTar
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
-import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, SafeChunksPendingRow } from './engine-sql/repair-page-scans.ts';
+import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow } from './engine-sql/repair-page-scans.ts';
 import type { OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { GitHoldSwap } from './engine-sql/git-holds.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
@@ -1592,8 +1592,10 @@ export interface BrainEngine {
   listLegacyOriginPairs(sourceId: string, prefix: string, limit: number): Promise<LegacyOriginPair[]>;
   /** Live pages of the source recording any of `paths`, by id. */
   listLiveOriginPages(sourceId: string, paths: readonly string[]): Promise<LiveOriginPage[]>;
-  /** How many live pages of the source record an origin. */
-  countLiveFileBackedPages(sourceId: string): Promise<number>;
+  /** How many live pages of the source record an origin (`nonBlank`: a non-blank one). */
+  countLiveFileBackedPages(sourceId: string, opts?: { nonBlank?: boolean }): Promise<number>;
+  /** The ghost-pages and legacy-twins page reads of one source, by id (engine-sql/repair-page-scans.ts `RepairScanQuery`). */
+  listRepairScanPages(sourceId: string, q: RepairScanQuery): Promise<RepairScanPage[]>;
   /** Live pages of the source that record an origin, by slug in byte order (engine-sql/repair-plan-scans.ts). */
   listPagesByOriginPath(sourceId: string): Promise<OriginPathPageRow[]>;
   /** How many live file-backed pages of `sourceIds` store their body in segments. */

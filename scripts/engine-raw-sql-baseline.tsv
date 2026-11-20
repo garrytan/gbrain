@@ -454,7 +454,7 @@ src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
 src/core/generations/repair.ts	execute_raw	5
-src/core/ghost-pages.ts	execute_raw	3
+src/core/ghost-pages.ts	execute_raw	1
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
@@ -837,9 +837,7 @@ src/core/repair/failed-writes.ts	execute_raw	17
 src/core/repair/fences.ts	execute_raw	2
 src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
 src/core/repair/file-drift.ts	execute_raw	3
-src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
-src/core/repair/legacy-twins.ts	execute_raw	7
 src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	3

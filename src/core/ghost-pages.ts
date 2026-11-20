@@ -211,8 +211,8 @@ async function confirm(engine: BrainEngine, context: Extract<SourceContext, { ok
 /** #6910: a ghost on a reserved skillpack path that is a member of the source's adopted shared skillpack. */
 async function sharedPackMemberGhost(engine: BrainEngine, owner: GhostOwner, ghost: GhostPage): Promise<boolean> {
   if (!isReservedSkillBundlePath(ghost.path) && !isReservedSkillBundlePath(ghost.slug)) return false;
-  const [schema] = await engine.executeRaw<{ present: boolean }>(`SELECT to_regclass('shared_skill_packs') IS NOT NULL AS present`);
-  if (!schema?.present) return false;
+  // A Rust brain keeps no shared skillpacks, so it answers false here and never reaches the adoption read.
+  if (!await engine.sharedSkillPackTablePresent()) return false;
   const adopted = await engine.executeRaw('SELECT 1 FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [ghost.source_id, owner.source_incarnation]);
   return adopted.length > 0 && sharedPackMember(engine, ghost.source_id, owner.source_incarnation, [ghost.path, `${ghost.slug}.md`]);
 }
@@ -233,8 +233,7 @@ export async function scanGhostSource(engine: BrainEngine, sourceId: string, opt
   let unchecked = 0;
   for (;;) {
     opts.signal?.throwIfAborted();
-    const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, source_path, source_uri FROM pages
-      WHERE source_id=$1 AND deleted_at IS NULL AND id > $2 ORDER BY id LIMIT ${BATCH}`, [sourceId, after]);
+    const rows: PageRow[] = await engine.listRepairScanPages(sourceId, { afterId: after, limit: BATCH });
     for (const row of rows) {
       if (scan.inspected >= scanLimit) { scan.truncated = true; break; }
       scan.inspected++;

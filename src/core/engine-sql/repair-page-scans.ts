@@ -1,6 +1,6 @@
 /**
- * The page scans of the `safe-chunks` and `origin-twins` repair plans, moved here from repair/safe-chunks.ts and
- * repair/origin-twins.ts so the Rust engine can serve them as typed members. PGLite and Postgres read unscoped through
+ * The page scans of the `safe-chunks`, `origin-twins`, `ghost-pages` and `legacy-twins` repair plans, moved here from
+ * their repair modules (and ghost-pages.ts) so the Rust engine can serve them as typed members. PGLite and Postgres read unscoped through
  * executeRaw, as before. The Rust engine scans its page records (rust/crates/gbrain-store/src/repair_scans.rs;
  * rust/docs/store/repair-bookkeeping.md, "Repair page scans").
  */
@@ -19,6 +19,34 @@ export interface LegacyOriginPair { legacy_id: number; legacy_path: string; lega
 
 /** A live page and the origin it records. */
 export interface LiveOriginPage { id: number; source_path: string }
+
+/** A page the ghost-pages and legacy-twins repairs read: its live revision, origin, revision writer and state. */
+export interface RepairScanPage {
+  id: number; slug: string; revision: string; content_hash: string | null; source_path: string | null; source_uri: string | null;
+  request_id: string | null; updated_ms: number; deleted: boolean; database_only_reason: string | null;
+}
+
+/**
+ * Which pages of one source `listRepairScanPages` reads, by id: `afterId` pages the live pages past an id (`legacy`
+ * keeps those with a blank origin and no database-only stamp), `slugs` the live pages at those slugs recording a
+ * non-blank origin, `ids` those pages in any state.
+ */
+export type RepairScanQuery = { afterId: number; limit: number; legacy?: boolean } | { slugs: readonly string[] } | { ids: readonly number[] };
+
+const BLANK_ORIGIN = `COALESCE(btrim(source_path), '')=''`;
+
+/** The pages of the source `q` names, by id. */
+export async function listRepairScanPages(exec: LegacyUnscopedRead, sourceId: string, q: RepairScanQuery): Promise<RepairScanPage[]> {
+  const [where, params]: [string, unknown[]] = 'ids' in q ? ['id=ANY($2::bigint[])', [q.ids.map(Number)]]
+    : 'slugs' in q ? [`deleted_at IS NULL AND slug=ANY($2::text[]) AND NOT ${BLANK_ORIGIN}`, [[...q.slugs]]]
+    : [`deleted_at IS NULL AND id > $2${q.legacy ? ` AND ${BLANK_ORIGIN} AND database_only_reason IS NULL` : ''}`, [q.afterId]];
+  const limit = 'afterId' in q ? ` LIMIT ${Math.max(1, Math.floor(q.limit))}` : '';
+  const rows = await exec.executeRaw<RepairScanPage>(`SELECT id, slug, knowledge_revision::text AS revision, content_hash, source_path, source_uri,
+      revision_write_request_id::text AS request_id, (extract(epoch FROM updated_at) * 1000)::float8 AS updated_ms,
+      deleted_at IS NOT NULL AS deleted, database_only_reason
+    FROM pages WHERE source_id=$1 AND ${where} ORDER BY id${limit}`, [sourceId, ...params]);
+  return rows.map(row => ({ ...row, id: Number(row.id), updated_ms: Number(row.updated_ms), deleted: row.deleted === true }));
+}
 
 /** The live pages of `sourceIds` below the safe chunker version, or held for a credential re-chunk and inline, by id. */
 export async function listSafeChunksPending(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<SafeChunksPendingRow[]> {
@@ -55,8 +83,8 @@ export async function listLiveOriginPages(exec: LegacyUnscopedRead, sourceId: st
   return rows.map(row => ({ id: Number(row.id), source_path: row.source_path }));
 }
 
-/** The live pages of the source that record an origin. */
-export async function countLiveFileBackedPages(exec: LegacyUnscopedRead, sourceId: string): Promise<number> {
-  const [row] = await exec.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+/** The live pages of the source that record an origin; `nonBlank` skips a blank one. */
+export async function countLiveFileBackedPages(exec: LegacyUnscopedRead, sourceId: string, opts: { nonBlank?: boolean } = {}): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND ${opts.nonBlank ? `NOT ${BLANK_ORIGIN}` : 'source_path IS NOT NULL'}`, [sourceId]);
   return Number(row?.n ?? 0);
 }

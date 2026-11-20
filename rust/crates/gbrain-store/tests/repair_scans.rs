@@ -1,4 +1,4 @@
-//! The page scans of the safe-chunks and origin-twins repair plans. The three-arm cases are in
+//! The page scans of the safe-chunks, origin-twins, ghost-pages and legacy-twins repair plans. The three-arm cases are in
 //! test/engine-parity/repair-page-scans.test.ts; these pin the filters across a reopen-free store:
 //! soft-deleted pages drop out, the legacy-prefix pairing and its cap, and the rebuildable rule.
 
@@ -84,5 +84,71 @@ fn scans_answer_what_the_sql_filters() {
             .collect::<Vec<_>>(),
         vec!["x.md"]
     );
-    assert_eq!(store.count_live_file_backed_pages("default").unwrap(), 2);
+    assert_eq!(
+        store
+            .count_live_file_backed_pages("default", false)
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn repair_scan_pages_answer_each_query_shape() {
+    let dir = TempDir::new("repair-scan-pages");
+    let store = open(&dir);
+    put(&store, "a", "markdown", Some("a.md"), json!({}));
+    put(&store, "b", "markdown", None, json!({}));
+    put(&store, "c", "markdown", Some("  "), json!({}));
+    put(&store, "d", "markdown", Some("d.md"), json!({}));
+    store.soft_delete_page("d", None).unwrap();
+    let q = |v: Value| serde_json::from_value(v).unwrap();
+    let slugs = |rows: Vec<gbrain_store::repair_scans::RepairScanPage>| {
+        rows.into_iter().map(|r| r.slug).collect::<Vec<_>>()
+    };
+    let all = store
+        .list_repair_scan_pages("default", &q(json!({ "after_id": 0, "limit": 10 })))
+        .unwrap();
+    assert_eq!(slugs(all.clone()), vec!["a", "b", "c"]);
+    let past = store
+        .list_repair_scan_pages("default", &q(json!({ "after_id": all[0].id, "limit": 1 })))
+        .unwrap();
+    assert_eq!(slugs(past), vec!["b"]);
+    let legacy = store
+        .list_repair_scan_pages(
+            "default",
+            &q(json!({ "after_id": 0, "limit": 10, "legacy": true })),
+        )
+        .unwrap();
+    assert_eq!(slugs(legacy), vec!["b", "c"]);
+    let at = store
+        .list_repair_scan_pages("default", &q(json!({ "slugs": ["a", "b", "c", "d"] })))
+        .unwrap();
+    assert_eq!(slugs(at), vec!["a"]);
+    let any = store
+        .list_repair_scan_pages("default", &q(json!({ "ids": [all[0].id, all[0].id + 3] })))
+        .unwrap();
+    assert_eq!(
+        any.iter()
+            .map(|r| (r.slug.as_str(), r.deleted))
+            .collect::<Vec<_>>(),
+        vec![("a", false), ("d", true)]
+    );
+    assert_eq!(any[0].revision, all[0].revision);
+    assert!(any[0].updated_ms > 0.0);
+    assert!(
+        store
+            .list_repair_scan_pages("other", &q(json!({ "after_id": 0, "limit": 10 })))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .count_live_file_backed_pages("default", false)
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store.count_live_file_backed_pages("default", true).unwrap(),
+        1
+    );
 }
