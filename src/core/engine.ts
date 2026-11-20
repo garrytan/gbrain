@@ -3671,6 +3671,8 @@ export interface BrainEngine {
   listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
   /** file_list: the files of one page (or every page) the caller can read, at most 100; text sorts by byte and equal names fall to the file id. */
   listReadableFileRows(slug: string | undefined, excludePrivate: boolean): Promise<Array<Record<string, unknown>>>;
+  /** `files verify`: every file row by byte `storage_path`, at most `limit` (the `FileRow` columns). */
+  listFilesByStoragePath(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The live typed pages' distinct (source_id, type) pairs, in no promised order (onboard type_proliferation sorts them by byte). */
   listPageTypePairs(): Promise<Array<{ source_id: string; type: string }>>;
   /** Live pages with at least one outgoing `mentions` link. */

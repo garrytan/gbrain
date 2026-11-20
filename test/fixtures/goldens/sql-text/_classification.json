@@ -516,6 +516,7 @@
       "listFenceRowGroups": "out-of-scope:facts-cycle (born in engine-sql/facts-cycle.ts; pinned by test/engine-parity/facts-cycle.test.ts)",
       "listFencedFactsOfMissingPages": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "listFiles": "files",
+      "listFilesByStoragePath": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "listFilesForPage": "files",
       "listFreshExtractionOutcomes": "out-of-scope:facts-cycle (born in engine-sql/facts-cycle.ts; pinned by test/engine-parity/facts-cycle.test.ts)",
       "listGatedMirrorRequests": "out-of-scope:persistence-effect-scans (born in engine-sql/persistence-effect-scans.ts; pinned by test/engine-parity/effect-scans.test.ts)",

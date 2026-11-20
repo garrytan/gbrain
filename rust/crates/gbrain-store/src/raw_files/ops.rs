@@ -1,6 +1,6 @@
 //! The readable file list of the PGLite engine (`src/core/engine-sql/collate-page-reads.ts`).
 //!
-//! Members: listReadableFileRows (the napi call `listReadableFiles`).
+//! Members: listReadableFileRows (the napi call `listReadableFiles`) and listFilesByStoragePath (`listFilesByPath`).
 //!
 //! They read the `files` records of `raw_files.rs` (the path is the key). Lists sort bytewise, as PGLite's `C`
 //! collation does, with a null page slug last, and break a tie by file id. The readable reads take the caller's page
@@ -8,8 +8,8 @@
 //! source, soft-deleted pages included (the SQL has no `deleted_at` test), so a file that names its page loosely fails
 //! closed.
 
-use super::{FILE, FileRecord, collect_values};
-use crate::error::Result;
+use super::{FILE, FileRecord, collect_values, int4};
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::links::no_nul;
@@ -111,5 +111,22 @@ impl Store {
             }));
         }
         Ok(out)
+    }
+
+    /// `listFilesByStoragePath(limit)` (every `FileRow` column; `files verify` walks it): the files by `storage_path`
+    /// bytes, at most `limit`. A storage path names one file, so the order has no tie. `limit` must be a whole number
+    /// in the `integer` range and not negative (`invalid_argument` otherwise).
+    pub fn list_files_by_storage_path(&self, limit: &Value) -> Result<Vec<Value>> {
+        let limit = int4("listFilesByStoragePath", "limit", limit)?;
+        if limit < 0 {
+            return Err(StoreError::invalid(
+                "listFilesByStoragePath: limit must not be negative".to_string(),
+            ));
+        }
+        let read = self.read()?;
+        let mut files = all_files(&*read)?;
+        files.sort_by(|a, b| a.storage_path.cmp(&b.storage_path));
+        files.truncate(limit as usize);
+        Ok(files.iter().map(FileRecord::to_json).collect())
     }
 }

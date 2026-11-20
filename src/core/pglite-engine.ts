@@ -214,6 +214,7 @@ import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import * as collatePageReadsImpl from './engine-sql/collate-page-reads.ts';
+import * as filesByPathImpl from './engine-sql/files-by-path.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
@@ -1659,6 +1660,7 @@ export class PGLiteEngine implements BrainEngine {
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.rawRead); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.rawRead, opts); }
   listReadableFileRows(slug: string | undefined, excludePrivate: boolean) { return collatePageReadsImpl.listReadableFileRows(this.rawRead, slug, excludePrivate); }
+  listFilesByStoragePath(limit: number) { return filesByPathImpl.listFilesByStoragePath(this.rawRead, limit); }
   listPageTypePairs() { return collatePageReadsImpl.listPageTypePairs(this.rawRead); }
   countPagesWithMentionLinks() { return collatePageReadsImpl.countPagesWithMentionLinks(this.rawRead); }
   listGazetteerSourceIds() { return collatePageReadsImpl.listGazetteerSourceIds(this.rawRead); }

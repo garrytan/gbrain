@@ -1,4 +1,4 @@
-//! The readable file list (`listReadableFileRows`): one `#[napi] impl Brain` block over `gbrain_store::raw_files`
+//! The readable file list (`listReadableFileRows`) and the verify walk (`listFilesByStoragePath`): one `#[napi] impl Brain` block over `gbrain_store::raw_files`
 //! (src/core/engine-sql/collate-page-reads.ts).
 //!
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`, and resolves plain JSON
@@ -26,5 +26,15 @@ impl Brain {
             let policy: Option<PrivacyPolicy> = arg(policy, "listReadableFiles policy")?;
             s.list_readable_files(slug.as_deref(), policy.as_ref())
         })
+    }
+
+    /// `listFilesByPath(limit)`: the `FileRow`s by `storage_path` bytes, at most `limit`.
+    #[napi]
+    pub fn list_files_by_path<'env>(
+        &self,
+        env: &'env Env,
+        limit: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_files_by_storage_path(&limit))
     }
 }

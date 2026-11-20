@@ -208,6 +208,7 @@ import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import * as collatePageReadsImpl from './engine-sql/collate-page-reads.ts';
+import * as filesByPathImpl from './engine-sql/files-by-path.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
@@ -1334,6 +1335,7 @@ export class PostgresEngine implements BrainEngine {
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.executeRaw.bind(this), opts); }
   listReadableFileRows(slug: string | undefined, excludePrivate: boolean) { return collatePageReadsImpl.listReadableFileRows(this.executeRaw.bind(this), slug, excludePrivate); }
+  listFilesByStoragePath(limit: number) { return filesByPathImpl.listFilesByStoragePath(this.executeRaw.bind(this), limit); }
   listPageTypePairs() { return collatePageReadsImpl.listPageTypePairs(this.executeRaw.bind(this)); }
   countPagesWithMentionLinks() { return collatePageReadsImpl.countPagesWithMentionLinks(this.executeRaw.bind(this)); }
   listGazetteerSourceIds() { return collatePageReadsImpl.listGazetteerSourceIds(this.executeRaw.bind(this)); }

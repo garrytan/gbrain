@@ -158,10 +158,8 @@ describe('command listings sort text keys by byte', () => {
     });
   });
 
-  parityTest('files verify reports its rows by byte storage path', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const path of MIXED_SLUGS) {
-      await engine.executeRaw("INSERT INTO files (filename, storage_path, content_hash) VALUES ($1, $2, 'sha256:abc')", [path, `files/${path}`]);
-    }
+  parityTest('files verify reports its rows by byte storage path', { methods: ['upsertFile'] }, async (engine) => {
+    for (const path of MIXED_SLUGS) await engine.upsertFile({ filename: path, storage_path: `files/${path}`, content_hash: 'sha256:abc' });
     const lines: string[] = [];
     const errors = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { lines.push(a.join(' ')); });
     const logs = spyOn(console, 'log').mockImplementation(() => {});

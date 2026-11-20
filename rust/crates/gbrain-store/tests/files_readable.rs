@@ -1,4 +1,4 @@
-//! `listReadableFileRows` (`raw_files/ops.rs`): the files `file_list` shows, by byte order with an id
+//! `listReadableFileRows` and `listFilesByStoragePath` (`raw_files/ops.rs`): the files `file_list` shows, by byte order with an id
 //! tie-break, cut at 100, and hidden when the caller's page policy hides the page they name.
 
 mod common;
@@ -103,4 +103,43 @@ fn a_policy_hides_the_files_of_a_private_page_by_id_or_by_slug() {
     assert_eq!(paths(&rows), ["f/no-page", "f/open"]);
     let unrestricted = s.list_readable_files(None, None).unwrap();
     assert_eq!(unrestricted.len(), 4);
+}
+
+#[test]
+fn the_verify_walk_lists_every_column_by_storage_path_bytes_and_stops_at_the_limit() {
+    let dir = TempDir::new("files-by-path");
+    let s = open(&dir);
+    for path in ["files/b", "files/B", "files/a_b", "files/a-b", "files/é"] {
+        file(&s, Some("any"), path, path, None);
+    }
+    let all = s.list_files_by_storage_path(&json!(1000)).unwrap();
+    assert_eq!(
+        paths(&all),
+        ["files/B", "files/a-b", "files/a_b", "files/b", "files/é"]
+    );
+    for column in [
+        "id",
+        "source_id",
+        "page_slug",
+        "page_id",
+        "filename",
+        "storage_path",
+        "mime_type",
+        "size_bytes",
+        "content_hash",
+        "metadata",
+        "created_at",
+    ] {
+        assert!(all[0].get(column).is_some(), "{column}");
+    }
+    assert_eq!(all[0]["metadata"], json!({}));
+    let two = s.list_files_by_storage_path(&json!(2)).unwrap();
+    assert_eq!(paths(&two), ["files/B", "files/a-b"]);
+    assert!(s.list_files_by_storage_path(&json!(0)).unwrap().is_empty());
+    for bad in [json!(-1), json!(1.5), json!("1")] {
+        assert_eq!(
+            s.list_files_by_storage_path(&bad).unwrap_err().code,
+            "invalid_argument"
+        );
+    }
 }

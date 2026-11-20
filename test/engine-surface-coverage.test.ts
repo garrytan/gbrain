@@ -234,7 +234,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
-  'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles', 'listReadableFileRows',
+  'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles', 'listReadableFileRows', 'listFilesByStoragePath',
   // Collate-equal page, mention and fact-pool reads
   'listPageTypePairs', 'countPagesWithMentionLinks', 'listGazetteerSourceIds', 'listGazetteerPages', 'listGazetteerAliasRows', 'listStaleMentionPages', 'listStaleMentionLinks', 'listPoolEntityPairs', 'listPoolUnbackedKeys',
   // Collate-equal page-set reads

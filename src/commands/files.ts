@@ -4,6 +4,7 @@ import { join, relative, extname, basename, dirname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { hashStorageFile, uploadUnchangedFile, type StorageBackend, type StorageConfig } from '../core/storage.ts';
+import { FILES_VERIFY_LIMIT } from '../core/engine-sql/files-by-path.ts';
 import { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } from '../core/sql-query.ts';
 import { humanSize } from '../core/file-resolver.ts';
 import { createProgress } from '../core/progress.ts';
@@ -495,8 +496,7 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
 }
 
 async function verifyFiles(engine: BrainEngine) {
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`SELECT * FROM files ORDER BY storage_path COLLATE "C" LIMIT 1000`;
+  const rows = await engine.listFilesByStoragePath(FILES_VERIFY_LIMIT);
 
   if (rows.length === 0) {
     console.log('No files to verify.');
@@ -541,8 +541,8 @@ async function verifyFiles(engine: BrainEngine) {
     if (!sourceLocalPathCache.has(sid)) {
       let localPath: string | null = null;
       try {
-        const srcRows = await sql`SELECT local_path FROM sources WHERE id = ${sid}`;
-        localPath = srcRows[0]?.local_path ? String(srcRows[0].local_path) : null;
+        const source = await engine.getSource(sid);
+        localPath = source?.local_path ? String(source.local_path) : null;
       } catch { /* sources table unavailable — fall back to sync.repo_path */ }
       sourceLocalPathCache.set(sid, localPath);
     }

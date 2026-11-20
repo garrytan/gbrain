@@ -522,6 +522,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFilesForPage: 'files',
   listFiles: 'files',
   listReadableFileRows: 'files',
+  listFilesByStoragePath: 'files',
   listPageTypePairs: 'pages',
   countPagesWithMentionLinks: 'pages',
   listGazetteerSourceIds: 'pages',

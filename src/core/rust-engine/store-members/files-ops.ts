@@ -1,5 +1,5 @@
 /**
- * The readable file list `file_list` runs (src/core/engine-sql/collate-page-reads.ts), served from the store's `files`
+ * The readable file list `file_list` runs and the file walk `files verify` runs (src/core/engine-sql/collate-page-reads.ts, files-by-path.ts), served from the store's `files`
  * records (rust/crates/gbrain-store/src/raw_files/ops.rs, rust/docs/store/raw_files.md).
  *
  * Export only BrainEngine members from this file (index.ts spreads the whole module into STORE_MEMBERS).
@@ -30,5 +30,11 @@ function policy(member: string, excludePrivate: boolean): unknown {
 export const listReadableFileRows: Member<'listReadableFileRows'> = async (brain, slug, excludePrivate) => {
   const member = 'listReadableFileRows';
   const rows = await storeCall({ member }, () => brain.listReadableFiles(slug === undefined ? undefined : text(member, 'slug', slug), policy(member, excludePrivate)));
+  return (rows as Row[]).map(row => withDates(row, ['created_at']));
+};
+
+/** `files verify`: the store sorts `storage_path` by bytes, as `COLLATE "C"` does; the limit is a whole number the store checks. */
+export const listFilesByStoragePath: Member<'listFilesByStoragePath'> = async (brain, limit) => {
+  const rows = await storeCall({ member: 'listFilesByStoragePath' }, () => brain.listFilesByPath(limit));
   return (rows as Row[]).map(row => withDates(row, ['created_at']));
 };
