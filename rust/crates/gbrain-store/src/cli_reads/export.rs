@@ -568,10 +568,17 @@ impl Store {
         crate::pages::segmented_version_body_bytes(&*read, page, generation)
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with an access policy. The store keeps no folder
-    /// rules, so there are none.
+    /// `listAccessPolicySourceIds()`: the sources with access state (`access_policy_state`), by
+    /// source id. The keys hold the ids in byte order, which is the order a validated id sorts in.
     pub fn list_access_policy_source_ids(&self) -> Result<Vec<String>> {
-        Ok(Vec::new())
+        let read = self.read()?;
+        let prefix = [crate::keys::ACCESS_RULES, crate::access_rules::STATE];
+        let mut out = Vec::new();
+        crate::kv::scan_prefix(&*read, &prefix, false, &mut |k, _| {
+            out.push(String::from_utf8_lossy(&k[prefix.len()..]).into_owned());
+            true
+        })?;
+        Ok(out)
     }
 }
 
@@ -740,6 +747,12 @@ mod tests {
         assert_eq!(s.read_segmented_version_body_bytes(id, 1).unwrap(), None);
         assert_eq!(s.read_segmented_version_body_bytes(-1, 1).unwrap(), None);
         assert!(s.list_access_policy_source_ids().unwrap().is_empty());
+        s.put_access_policy_state("work").unwrap();
+        s.put_access_policy_state("default").unwrap();
+        assert_eq!(
+            s.list_access_policy_source_ids().unwrap(),
+            ["default", "work"]
+        );
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);
     }

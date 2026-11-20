@@ -23,7 +23,7 @@ of `src/core/access/policy-transfer.ts`). PGLite and Postgres run the same SQL a
 | `brain.listForcedCutSeqs(pageId, generation)` | the `seq` of each published row of the generation with `cut_kind = 'forced'`, in `seq` order; none for a missing page | `listForcedCutSeqs` |
 | `brain.readManifestSeqAt(pageId, generation, byteOffset)` | the `seq` of the published row of the generation that starts last at or before `byteOffset` (ties: the higher `seq`), or `null` | `readManifestSeqAt` |
 | `brain.readSegmentedVersionBodyBytes(pageId, generation)` | `body_bytes` of the newest (highest id) segmented version of the page with `body_generation = generation` and a recorded size, or `null` | `readSegmentedVersionBodyBytes` |
-| `brain.listAccessPolicySourceIds()` | `[]`: the store keeps no folder rules, so no source has an access policy and an export of every source carries no rulebook | `listAccessPolicySourceIds` |
+| `brain.listAccessPolicySourceIds()` | the ids of the sources with access state (`access_policy_state`, the `0x01` keys of [access_rules.md](access_rules.md)), in id order, so an export of every source carries each source's rulebook | `listAccessPolicySourceIds` |
 
 ## What the store does not keep
 
