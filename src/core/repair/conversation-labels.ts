@@ -54,6 +54,8 @@ import { authorizeStoredRequest, authorizeWrite } from '../persistence/authority
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withTrustKeep, withWriteTrust } from '../persistence/context.ts';
+import { agentVerbTrust } from '../trust/channel.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { METADATA_LABELS } from '../conversation-parser/builtins.ts';
@@ -369,6 +371,10 @@ async function retireManaged(engine: BrainEngine, config: Parameters<typeof wait
  * when the page is still at the parser input the preview decided it for.
  */
 async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): Promise<RetireResult> {
+  // Expiring a fact and marking its context authors nothing: the retired rows keep their tiers.
+  return withTrustKeep(tx, ['facts'], () => retirePageFactsKept(tx, page, hash));
+}
+async function retirePageFactsKept(tx: BrainEngine, page: LabelPage, hash: string): Promise<RetireResult> {
   const ids = page.facts.map(f => f.id);
   await tx.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) FOR UPDATE', [page.source_id, ids]);
   const live = new Map((await classifyLabelFacts(tx, [page.source_id], { slug: page.slug })).map(f => [f.id, f]));
@@ -394,7 +400,8 @@ async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): 
   const outcome: NewFact & { row_num: number; source_markdown_slug: string } = { fact: 'EXTRACTION_NOT_APPLICABLE', kind: 'fact', entity_slug: null,
     source: NON_EXTRACTABLE_AUDIT_SOURCE, source_session: `${NON_EXTRACTABLE_AUDIT_SOURCE}:${page.slug}:${decided.versionToken}`, confidence: 1.0, notability: 'low',
     context: stampExtractorVersion(`scanned, not extractable: ${decided.reason}`), row_num: top?.n == null ? 0 : Number(top.n) + 1, source_markdown_slug: page.slug };
-  const { inserted } = await tx.insertFacts([outcome], { source_id: page.source_id }); // gbrain-allow-direct-insert: the durable not-extractable outcome a label repair writes under the page lock (inside its receipted publication on a managed brain)
+  // The outcome marker is a row gbrain's own scan authors: agent-written.
+  const { inserted } = await withWriteTrust(tx, agentVerbTrust('repair:conversation-labels'), () => tx.insertFacts([outcome], { source_id: page.source_id })); // gbrain-allow-direct-insert: the durable not-extractable outcome a label repair writes under the page lock (inside its receipted publication on a managed brain)
   if (inserted !== 1) throw opError('storage_error', 'The not-extractable outcome was not written; nothing on the page changed.',
     `The repair of ${page.slug} in source ${page.source_id} could not insert its not-extractable outcome, so the transaction rolled back. Preview the repair again.`,
     { fix: previewFix(page.source_id) });

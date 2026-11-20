@@ -23,6 +23,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
+import { externalFeedTrust } from '../trust/channel.ts';
 import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { carryStoredFences } from './fence-carry.ts';
 import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError, ConnectorRunLimitError } from './client.ts';
@@ -155,6 +156,7 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
     }
     const { importFromContent } = await import('../import-file.ts');
     const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true,
+      writeTrust: externalFeedTrust(`connector:${ctx.tag}`),
       ...(ctx.gated ? { writeGate: { tier: 'external_untrusted' as const, origin: { channel: `connector:${ctx.tag}`, connector: ctx.tag, source_uri: relPath }, requestId: null } } : {}) });
     if (result.status === 'error' || result.error) throw new Error(result.error ?? `Import failed for ${relPath}`);
     status = result.status === 'imported' ? 'imported' : 'skipped';

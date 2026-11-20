@@ -62,6 +62,6 @@ export const synthesisAdapter: GenerationAdapter<SynthesisGenerationContext> = {
       'Nothing to do: every output stays live, and the next re-synthesis of the transcript plans from the pages as they are.', { docs: 'docs/architecture/generations.md#synthesis' });
   },
   retireItems: (tx, key, itemKeys, retiredBy) => retireDerivedPagesInTransaction(tx, key.sourceId, itemKeys, retiredBy),
-  restoreItem: (tx, key, itemKey, preimage) => importPageItem(tx, key.sourceId, itemKey, preimageMarkdown(preimage)),
+  restoreItem: (tx, key, itemKey, preimage) => importPageItem(tx, key.sourceId, itemKey, preimageMarkdown(preimage), { keepTier: true }),
   preimageIdentity,
 };

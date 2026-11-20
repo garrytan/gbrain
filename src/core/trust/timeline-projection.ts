@@ -11,7 +11,7 @@ import type { BatchOpts, BrainEngine, TimelineBatchInput } from '../engine.ts';
 import type { TimelineInput } from '../types.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { derivedWriteTrust } from './taint.ts';
-import { storedTrustTier, type TaintInput, type TrustTier } from './tier.ts';
+import { storedTrustTier, type TaintInput, type TrustTier, type WriteTrust } from './tier.ts';
 import { derivedGateConfig, derivedGateInput, recordTimelineFlag, timelineRowAllowed } from './derived-gate.ts';
 import { assessTimelineForGate } from '../write-gate.ts';
 import { PageMissingError } from '../engine-errors.ts';
@@ -24,6 +24,15 @@ async function pageInputs(engine: BrainEngine, refs: Array<{ source_id: string; 
       JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`,
     [JSON.stringify(refs)]);
   return new Map(rows.map(row => [`${row.source_id}:${row.slug}`, { table: 'pages', id: Number(row.id), tier: storedTrustTier(row.trust_tier) }]));
+}
+
+/**
+ * The trust a page's own timeline rows are stored with, for a writer already inside its page transaction (a managed
+ * publication, the stale-extract coordinator): the page's stored tier, capped at operator_curated, channel `derive:timeline`.
+ */
+export async function projectedTimelineTrust(engine: BrainEngine, sourceId: string, slug: string): Promise<WriteTrust> {
+  const input = (await pageInputs(engine, [{ source_id: sourceId, slug }])).get(`${sourceId}:${slug}`);
+  return derivedWriteTrust({ channel: CHANNEL, inputs: input ? [input] : [], projection: true });
 }
 
 /**

@@ -116,7 +116,7 @@ import {
   type RowSearchMeta,
 } from '../eval/longmemeval/resume.ts';
 import { EmbeddingCache, installEmbedCache, type EmbedTransportFn, type InstalledEmbedCache } from '../eval/shared/embed-cache.ts';
-import { importFromContent } from '../core/import-file.ts';
+import { importFromContent, ownerFileTrust } from '../core/import-file.ts';
 import { hybridSearch, type HybridSearchOpts } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
 import { normalizeExpansionVariantBudget } from '../core/search/fusion-lists.ts';
@@ -1425,7 +1425,7 @@ async function runOneQuestion(
     for (let i = 0; i < adapterPages.length; i++) {
       const p = adapterPages[i];
       pageMeta.push({ slug: p.slug, content: p.content, date: dates[i] });
-      await importFromContent(engine, p.slug, p.content, { noEmbed: opts.keywordOnly });
+      await importFromContent(engine, p.slug, p.content, { noEmbed: opts.keywordOnly, writeTrust: await ownerFileTrust(engine, 'default') });
       // Inline claim extractor populates the facts table so trajectory routing
       // has data to retrieve. Fail-open per session.
       if (ctx.trajectoryEnabled) {

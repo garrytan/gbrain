@@ -1477,6 +1477,7 @@ export async function verifyAndRepairDreamPages(
         // #5575 I2: the repaired page and its re-projected rows are written at
         // the tier of the transcripts it was synthesized from, with its edges.
         const derivation = await transcriptsDerivation(engine, ref.paths.map(path => ({ filePath: path, content: transcriptsByPath.get(path)!.content })), opts.meetingTranscriptsDir);
+        // write-trust: declared by derivedMaintenanceTransaction at the tier of the transcripts
         await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: await importFromContent(tx, ref.slug, md, {
           noEmbed: true, remote: false, preserveGateMarkers: true, sourceId: ref.source_id,
           beforeCommit: async inner => { await project(inner); await links?.apply(inner); },

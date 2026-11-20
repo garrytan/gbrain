@@ -121,7 +121,9 @@ export async function dedupePatternClaimSources(engine: BrainEngine, maintenance
       const content = serializePageToMarkdown({ ...snapshot.page, frontmatter }, snapshot.tags);
       if (maintenance) { batch.push({ slug, content, expectedRevision: snapshot.revision }); continue; }
       const [{ importFromContent }, { isAvailable }] = await Promise.all([import('../import-file.ts'), import('../ai/gateway.ts')]);
-      await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true });
+      await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true,
+        // The rewrite only adds claim sources to a stored page's frontmatter: it authors nothing, so the page keeps its tier.
+        keepTier: true });
       rewritten.push(slug);
     } catch (error) {
       skipped(slug, error);

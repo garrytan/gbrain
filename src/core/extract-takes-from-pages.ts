@@ -35,6 +35,9 @@ import { isDbOnly, loadStorageConfig } from './storage-config.ts';
 import { serializePageToMarkdown } from './markdown.ts';
 import { BudgetMeter, loadPricingOverrides } from './cycle/budget-meter.ts';
 import { parseTakesFence } from './takes-fence.ts';
+import { derivedWriteTrust } from './trust/taint.ts';
+
+const bootstrapTrust = derivedWriteTrust({ channel: 'derive:takes_bootstrap', inputs: [] });
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -449,7 +452,8 @@ export async function extractTakesFromPages(
         claimsExtracted += composed.rowNums.length;
       } else {
         const { rowNums, mirror } = await appendTakesToPageMdFirst(
-          { engine, slug: page.slug, brainDir: repoDir, sourceId: page.source_id }, rows,
+          // Claims an LLM read out of the page text: stored as a derived agent-written row.
+          { engine, slug: page.slug, brainDir: repoDir, sourceId: page.source_id, trust: bootstrapTrust }, rows,
         );
         claimsExtracted += rowNums.length;
         if (mirror.mirror_warning) mirrorWarnings++;

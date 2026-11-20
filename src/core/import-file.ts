@@ -17,6 +17,8 @@ import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
 import { importSizeLimit, MAX_FILE_SIZE, screenImportContent, settleContentDisposition, stripGateOwnedMarkers, type ContentRefusal, type FenceScreen } from './import-screen.ts';
 import type { WriteGateAssessment, WriteGateInput } from './write-gate.ts';
+import type { WriteTrust } from './trust/tier.ts';
+import { withTrustKeep } from './persistence/context.ts';
 import { applyImportFences } from './fence-repair/import-step.ts';
 import type { FenceIssueWire } from './fence-repair/tier1.ts';
 import type { FenceFix } from './fence-repair/types.ts';
@@ -309,6 +311,8 @@ export async function importFromContent(
     overrideTier?: unknown;
     /** #5575: the caller's trust tier and origin for this write; absent skips the write gate (owner paths). */
     writeGate?: WriteGateInput;
+    /** Without a write gate (it declares them otherwise): the `writeTrust` the rows are stored at, or `keepTier` for a re-import that authors nothing, which keeps the page's tier. */
+    writeTrust?: WriteTrust; keepTier?: boolean;
     /** #7880: external content (ingest_capture, connector and company-brain files) asking for `visibility: private` in a spelling page privacy does not read refuses `visibility_noncanonical` (`screenImportContent`); nothing is stored. */
     holdNoncanonicalPrivate?: boolean;
     beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
@@ -858,7 +862,7 @@ export async function importFromContent(
       apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }
         : opts.boundedChunkWrites ? { afterCommit: async (target: BrainEngine) => { if (chunkReplacementDeferred) await continueDeferredProjection(target, txOpts.sourceId, slug); } } : {}),
     });
-    await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, tx => run(tx, () => applyPrepared(tx)), writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
+    await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, tx => run(tx, () => opts.keepTier ? withTrustKeep(tx, ['pages'], () => applyPrepared(tx)) : applyPrepared(tx)), writeTrustOfGate(opts.writeGate) ?? opts.writeTrust).catch(async (err: unknown) => {
       await abortSegmentedStaging(engine, segmented?.prepared);
       // #4287: name the dimension-mismatch rollback instead of letting the bare
       // pgvector message ("expected N dimensions, not M") surface with no code,
@@ -1173,6 +1177,15 @@ export async function importFromFile(
 }
 
 /**
+ * The tier and origin an unmanaged owner-source import declares: the source's default (connector sources are external),
+ * lowered by the page's markers, as `ownerSourceGateInput` reads it for a markdown file. A code or image file has no
+ * frontmatter to lower it. A coordinated import (`prepare`) is declared by its journaled request instead.
+ */
+export async function ownerFileTrust(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, frontmatter?: Record<string, unknown> | null, sourceUri?: string | null): Promise<WriteTrust> {
+  return writeTrustOfGate(await ownerSourceGateInput(engine, sourceId, frontmatter, sourceUri))!;
+}
+
+/**
  * Import a code file. Bypasses markdown parsing entirely.
  * Uses tree-sitter code chunker for semantic splitting.
  * Page type is 'code', slug includes file extension.
@@ -1198,7 +1211,7 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string; history?: import('./page-state/versions.ts').VersionHistory;
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string; history?: import('./page-state/versions.ts').VersionHistory; writeTrust?: WriteTrust;
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult> } = {},
 ): Promise<ImportResult> {
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importCodeFile(engine, relativePath, content, opts));
@@ -1390,7 +1403,7 @@ export async function importCodeFile(
     const result: ImportResult = { slug, status: 'imported', chunks: chunks.length };
     return opts.prepare({ slug, parsedPage, observedRevision: existing?.knowledge_revision ?? null, noop: false, result, validate: async () => {}, apply });
   }
-  await maintenanceTransaction(engine, apply);
+  await maintenanceTransaction(engine, apply, opts.writeTrust ?? await ownerFileTrust(engine, sourceId ?? 'default'));
 
   // v0.20.0 Cathedral II Layer 5 (A1): extracted call-site edges persist
   // in code_edges_symbol (unresolved — we don't attempt within-file target
@@ -1494,6 +1507,8 @@ export interface ImportTransactionSpec {
   chunks?: ChunkInput[];
   /** Internal import assertion: all indexing inputs were checked as a full body. */
   safeChunks?: boolean;
+  /** The tier and origin the write declares (an unmanaged file import: the owner source's; see `ownerFileTrust`). */
+  writeTrust?: WriteTrust;
   /** Optional file-row insert (image ingest). Page link injected automatically. */
   file?: FileSpec;
   /**
@@ -1510,7 +1525,7 @@ export async function withImportTransaction(
   engine: BrainEngine,
   spec: ImportTransactionSpec,
 ): Promise<void> {
-  await maintenanceTransaction(engine, tx => applyImportTransaction(tx, spec));
+  await maintenanceTransaction(engine, tx => applyImportTransaction(tx, spec), spec.writeTrust);
 }
 
 async function applyImportTransaction(tx: BrainEngine, spec: ImportTransactionSpec): Promise<void> {
@@ -1818,6 +1833,8 @@ export interface ImportImageOptions {
    * with sourceId would TS-error on the importImageFile branch.
    */
   sourceId?: string;
+  /** The tier and origin an unmanaged image import declares; absent: the owner source's (`ownerFileTrust`). */
+  writeTrust?: WriteTrust;
 }
 
 /** Module-level limiter so concurrent imports across files share the budget. */
@@ -1981,6 +1998,7 @@ export async function importImageFile(
     hadExisting: !!existing,
     basePage: existing,
     sourceId: opts.sourceId,
+    ...(opts.prepare ? {} : { writeTrust: opts.writeTrust ?? await ownerFileTrust(engine, opts.sourceId ?? 'default') }),
     page: {
       type: 'image',
       page_kind: 'image',

@@ -26,6 +26,7 @@ import { loadConfig } from '../core/config.ts';
 import { StructuredAgentError } from '../core/errors.ts';
 import { parseMarkdown, serializeMarkdown } from '../core/markdown.ts';
 import { importFromContent } from '../core/import-file.ts';
+import { agentVerbTrust } from '../core/trust/channel.ts';
 import { privateRequestRefusal } from '../core/persistence/visibility-request.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget, writePageThrough, type WriteThroughResult } from '../core/write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../core/facts/file-body-guard.ts';
@@ -433,6 +434,8 @@ export async function persistSavedIdea(
       sourceId,
       sourcePath: `${args.slug}.md`,
       holdNoncanonicalPrivate: true,
+      // The saved idea is the agent's text, as the managed save (a CLI put_page) declares it.
+      writeTrust: agentVerbTrust('cli:brainstorm'),
     });
     if (imported.refusal?.code === 'visibility_noncanonical') throw privateRequestRefusal({ slug: imported.slug, source_id: sourceId }, parseMarkdown(args.content, `${imported.slug}.md`).frontmatter);
     if (imported.refusal) throw new Error(imported.refusal.message);

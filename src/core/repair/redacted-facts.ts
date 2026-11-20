@@ -64,6 +64,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { INJECTION_PATTERNS, LEGACY_EVAL_SHELL, restoreNeutralized } from '../think/sanitize.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { readBodyRange } from '../page-body/read-range.ts';
 
@@ -301,7 +302,8 @@ export interface Restore { id: number; from: string; to: string; visibility: str
  * write, so a row changed after the apply's own recheck is left alone and not
  * reported restored.
  */
-export const restoreRedactedRows = (tx: BrainEngine, sourceId: string, restores: Restore[]) => tx.executeRaw<{ id: number | string }>(`UPDATE facts f
+// The restore puts back the text a redaction replaced and authors nothing, so each fact keeps its tier.
+export const restoreRedactedRows = (tx: BrainEngine, sourceId: string, restores: Restore[]) => withTrustKeep(tx, ['facts'], () => tx.executeRaw<{ id: number | string }>(`UPDATE facts f
     SET fact=r.to_text, context=concat_ws(' | ', NULLIF(f.context,''), $3::text)
    FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, from_text text, to_text text, visibility text, entity_slug text, source_markdown_slug text, row_num int)
   WHERE f.source_id=$1 AND f.id=r.id AND f.fact=r.from_text AND f.visibility=r.visibility AND f.entity_slug IS NOT DISTINCT FROM r.entity_slug
@@ -309,7 +311,7 @@ export const restoreRedactedRows = (tx: BrainEngine, sourceId: string, restores:
     AND f.row_num IS NOT DISTINCT FROM r.row_num AND (r.row_num IS NULL OR f.source LIKE 'cli:extract-conversation-facts%')
   RETURNING f.id`,
 [sourceId, JSON.stringify(restores.map(r => ({ id: r.id, from_text: r.from, to_text: r.to, visibility: r.visibility, entity_slug: r.entity_slug,
-  source_markdown_slug: r.source_markdown_slug, row_num: r.row_num ?? null }))), RESTORED_CONTEXT]);
+  source_markdown_slug: r.source_markdown_slug, row_num: r.row_num ?? null }))), RESTORED_CONTEXT]));
 
 /**
  * Database-only and conversation-extractor rows: on a managed brain one database-only maintenance

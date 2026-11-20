@@ -52,7 +52,7 @@
 import type { GBrainConfig } from '../../core/config.ts';
 import { loadConfigWithEngine } from '../../core/config.ts';
 import { MAX_SEARCH_LIMIT } from '../../core/engine.ts';
-import { importFromContent } from '../../core/import-file.ts';
+import { importFromContent, ownerFileTrust } from '../../core/import-file.ts';
 import { embedQuery, __setEmbedTransportForTests } from '../../core/ai/gateway.ts';
 import { getMetricGloss } from '../../core/eval/metric-glossary.ts';
 import { hybridSearch, PRE_FUSION_POOL_FLOOR, type HybridSearchOpts } from '../../core/search/hybrid.ts';
@@ -1092,7 +1092,7 @@ async function diagnoseOne(ctx: DiagnoseOneCtx): Promise<MissDiagnosticsRow> {
 
   const armOpts: SearchOpts = { embeddingColumn: ctx.resolvedCol };
   const { vectorRows, keywordRows, titleRows, fusedResults } = await ctx.embedTxn(async () => {
-    for (const p of pages) await importFromContent(engine, p.slug, p.content, { noEmbed: false });
+    for (const p of pages) await importFromContent(engine, p.slug, p.content, { noEmbed: false, writeTrust: await ownerFileTrust(engine, 'default') });
 
     // Same gateway path hybridSearch embeds the query through (embedQuery →
     // the cache transport), so under an installed cache this is a hit.

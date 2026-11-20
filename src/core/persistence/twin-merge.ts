@@ -24,6 +24,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
+import { withTrustKeep } from './context.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
@@ -134,7 +135,8 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
   await refreshRelationships(tx, [...before, ...after]);
   noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'links', ids: movedLinks });
   noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'facts', ids: factIds });
-  await tx.softDeletePage(twin.slug, { sourceId });
+  // Retiring the merged twin authors nothing: its tier stays as it was.
+  await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(twin.slug, { sourceId }));
   await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${input.incarnation}:${twin.page_id}`]);
   return { links_moved: movedLinks, facts_moved: factIds, transitions_moved: movedTransitions.length, tags_moved: tagsMoved, deduplicated: linkLosers.length + transitionLosers.length };
 }

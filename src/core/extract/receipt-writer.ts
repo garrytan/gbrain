@@ -38,6 +38,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { derivedWriteTrust } from '../trust/taint.ts';
 import { isNeverFiledDerivedPage } from '../persistence/git-declared.ts';
 import { resealSafeChunks } from '../page-state/projections.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
@@ -221,6 +222,8 @@ export async function writeReceipt(
   const frontmatter = buildReceiptFrontmatter(input);
   const compiled_truth = buildReceiptBody(input);
 
+  // The receipt records a model-driven extraction, so it is written as a derived page at agent_written, the ceiling of every extractor that files one.
+  const receiptTrust = derivedWriteTrust({ channel: 'derive:extract_receipt', inputs: [] });
   const page = await maintenanceTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId: input.source_id, slug }]);
     const [prior] = await tx.executeRaw<{ type: string | null; source_path: string | null; source_uri: string | null; withheld_source_path: string | null }>(
@@ -253,7 +256,7 @@ export async function writeReceipt(
     // type='extract_receipt' from mode_null (belt+braces).
     await tx.updatePageContextualRetrievalState(slug, input.source_id, 'none', null);
     return written;
-  });
+  }, receiptTrust);
 
   return { slug, page };
 }

@@ -54,6 +54,7 @@ export async function importAtRevision(engine: BrainEngine, page: { source_id: s
   return maintenanceTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
     if ((await tx.readPageSnapshot(page.slug, { sourceId: page.source_id }))?.revision !== revision) return null;
+    // write-trust: kept by withTrustKeep, the page keeps its stored tier
     const result = await withTrustKeep(tx, ['pages'], () => importFromContent(tx, page.slug, content, { sourceId: page.source_id, noEmbed: !embed, preserveGateMarkers: true }));
     if (result.status === 'error') throw opError('invalid_params', `${page.source_id}:${page.slug} was not written: ${result.error ?? 'the import refused it'}`,
       `Preview ${preview} again; the page is listed with its current state.`);

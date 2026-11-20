@@ -370,6 +370,7 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
         }
         // forceRechunk: the trust_tier marker is hash-ephemeral, so removing it alone would read as unchanged content.
         const prior = intent.mode === 'restore_provenance' ? await readPageTrustState(tx, input.sourceId, input.slug) : null;
+        // write-trust: declared by withWriteAttribution above, and kept by withTrustKeep
         await importFromContent(tx, input.slug, markdown, { sourceId: input.sourceId, noEmbed: true, preserveGateMarkers: intent.mode !== 'revert', forceRechunk: true, allowEmptyOverwrite: intent.mode === 'revert' });
         if (prior) await recordAgentPageLowering(tx, { operation: TRUST_OWNER_PAGE_OPERATION, source_id: input.sourceId, slug: input.slug }, { tier: prior.tier, revision: prior.revision }, PROVENANCE_PROPOSER);
         if (writeThrough && file?.ok && file.target) {

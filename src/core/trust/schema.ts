@@ -45,6 +45,8 @@ import { HASH_EPHEMERAL_FRONTMATTER_KEYS } from '../utils.ts';
 import { OWNER_TIER_FLOOR, TRUST_TIERS, trustRankSql } from './tier.ts';
 import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 
+/** The message prefix the strict (test-only) tier trigger raises with for a write that declared no tier. */
+export const UNDECLARED_WRITE_TRUST = 'undeclared_write_trust';
 export type TrustTable = 'facts' | 'takes' | 'timeline_entries' | 'pages';
 export const TRUST_TABLES: readonly TrustTable[] = ['facts', 'takes', 'timeline_entries', 'pages'];
 /** Config key: when the last complete backfill apply finished (doctor `trust_tiers` stops recommending the backfill). */
@@ -181,8 +183,19 @@ const GUEST_CEILING_RETURN = `IF guest_ceiling IS NOT NULL AND ${rank('NEW.trust
  * too); `'guest_fail_closed'` adds the unreadable guest_sources refusal, and any later migration that re-creates this
  * function uses it.
  */
-const stampTierFunction = (mode: 'none' | 'guest' | 'guest_fail_closed') => {
+const stampTierFunction = (mode: 'none' | 'guest' | 'guest_fail_closed', strict = false) => {
   const guestSources = mode !== 'none';
+  // Test-only strict mode (never installed by a migration; `strict` is false on every migration path, so the default
+  // body stays byte-identical): a non-backfill INSERT, or a content rewrite that is not a keep-scope fence edit,
+  // from a writer that declared no tier raises instead of storing `unknown`.
+  // An INSERT ... ON CONFLICT DO UPDATE of a page that already exists is a rewrite, not a new row: under a keep scope
+  // the UPDATE phase keeps the tier, so only a page with no row yet counts as an undeclared insert there.
+  const undeclared = (what: string, unless = '') => strict ? `IF writer IS NULL${unless} THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='${UNDECLARED_WRITE_TRUST}: ${what} on ' || TG_TABLE_NAME || ' ran outside any withWriteTrust scope',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='trust_tier_guard_strict',
+        DETAIL=jsonb_build_object('op',TG_OP,'table',TG_TABLE_NAME,'query',left(current_query(),400))::text;
+    END IF;
+    ` : '';
   const ret = guestSources ? GUEST_CEILING_RETURN : 'RETURN NEW;';
   return `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE writer text; origin_text text; promo text; backfill boolean; keep boolean; changed boolean; effective text;${guestSources ? ' guest boolean := false; guest_ceiling text; guest_writers text[];' : ''}
@@ -197,7 +210,7 @@ BEGIN${SETTINGS}${guestSources ? guestGuard(mode === 'guest_fail_closed') : ''}
       END IF;
       ${ret}
     END IF;
-    NEW.trust_tier := COALESCE(writer, 'unknown');
+    ${undeclared('an INSERT', ` AND NOT (keep AND TG_TABLE_NAME = 'pages' AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = to_jsonb(NEW)->>'source_id' AND p.slug = to_jsonb(NEW)->>'slug'))`)}NEW.trust_tier := COALESCE(writer, 'unknown');
     NEW.write_origin := origin_text::jsonb;
     ${ret}
   END IF;
@@ -213,7 +226,7 @@ BEGIN${SETTINGS}${guestSources ? guestGuard(mode === 'guest_fail_closed') : ''}
   END IF;${guestSources ? '' : `
   ${CHANGED_CHAIN}`}
   IF changed AND NOT keep THEN
-    effective := COALESCE(writer, 'unknown');
+    ${undeclared('a content rewrite')}effective := COALESCE(writer, 'unknown');
     IF ${rank('effective')} < ${rank(`'${OWNER_TIER_FLOOR}'`)} THEN effective := ${lowerOf('OLD.trust_tier', 'effective')}; END IF;
     IF ${rank('NEW.trust_tier')} < ${rank('OLD.trust_tier')} THEN effective := ${lowerOf('NEW.trust_tier', 'effective')}; END IF;
     NEW.trust_tier := effective;
@@ -227,6 +240,12 @@ const STAMP_TIER_FUNCTION = stampTierFunction('none');
 export const GUEST_AWARE_STAMP_TIER_FUNCTION = stampTierFunction('guest');
 /** The current tier trigger function: guest-source rules that refuse a role unable to read guest_sources. */
 export const GUEST_FAIL_CLOSED_STAMP_TIER_FUNCTION = stampTierFunction('guest_fail_closed');
+/**
+ * Test-only: the current tier trigger function with the strict check. Install it with `CREATE OR REPLACE` in a test
+ * database (test/helpers/strict-write-trust.ts); no migration references it, and the other three exports above are
+ * unchanged byte for byte (the migration goldens pin them).
+ */
+export const STRICT_STAMP_TIER_FUNCTION_FOR_TESTS = stampTierFunction('guest_fail_closed', true);
 
 /**
  * A version row snapshots the page before the archiving write changes it, in

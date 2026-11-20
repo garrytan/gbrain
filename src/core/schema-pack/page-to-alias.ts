@@ -24,7 +24,7 @@ import type { OperationContext } from '../operations.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import type { PackResolverSpec } from './manifest-v1.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { keepTierTransaction } from '../persistence/attribution.ts';
 
 export interface PageToAliasRule {
   from_type: string;
@@ -225,7 +225,7 @@ export async function runPageToAliasCore(
         // D15: do NOT rewriteLinks. Alias table IS the resolver.
         // Soft-delete LAST so a crash between insert + delete leaves
         // alias present (idempotent on retry).
-        const sdResult = await maintenanceTransaction(ctx.engine, tx => tx.softDeletePage(r.slug, { sourceId: effectiveSourceId }));
+        const sdResult = await keepTierTransaction(ctx.engine, tx => tx.softDeletePage(r.slug, { sourceId: effectiveSourceId }));
         if (sdResult) soft_deleted++;
         opts.onProgress?.({ rule_index: i, aliasedSoFar: aliased });
       }

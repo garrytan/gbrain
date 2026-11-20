@@ -15,6 +15,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { PageType } from '../../types.ts';
 import { retireDerivedPagesInTransaction } from '../../persistence/derived-retirement-hold.ts';
+import { withTrustKeep } from '../../persistence/context.ts';
 import { lowerToDerivedTier, recordTaintEdges } from '../../trust/taint.ts';
 import type { TaintInput, WriteTrust } from '../../trust/tier.ts';
 import type { GenerationAdapter, GenerationKey } from '../contract.ts';
@@ -73,7 +74,8 @@ function singlePageAdapter(kind: SinglePageKind): GenerationAdapter<SinglePageCo
     async restoreItem(tx, key, itemKey, preimage) {
       const page: SinglePageContent = { type: String(preimage.type), title: String(preimage.title), compiled_truth: String(preimage.compiled_truth ?? ''),
         timeline: String(preimage.timeline ?? ''), frontmatter: (preimage.frontmatter as Record<string, unknown>) ?? {}, tags: (preimage.tags as string[]) ?? [] };
-      await writePage(tx, key.sourceId, itemKey, page, preimageIdentity(preimage));
+      // A restore puts the page back as it was and authors nothing: it keeps its stored tier.
+      await withTrustKeep(tx, ['pages'], () => writePage(tx, key.sourceId, itemKey, page, preimageIdentity(preimage)));
     },
     preimageIdentity,
   };

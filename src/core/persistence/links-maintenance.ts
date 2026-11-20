@@ -3,7 +3,8 @@ import { effectiveLinkExtractorWatermark } from '../link-extraction-watermark.ts
 import { isQuarantined } from '../quarantine.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { preparationConfigView } from './config-snapshot.ts';
-import { withCoordinatedWrite } from './context.ts';
+import { withCoordinatedWrite, withWriteTrust } from './context.ts';
+import { projectedTimelineTrust } from '../trust/timeline-projection.ts';
 import { yieldToEventLoop } from './journal.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { storedCanonicalTimeline, unrecordedCanonicalTimeline } from './canonical-projections.ts';
@@ -150,7 +151,8 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
       if (written.errors) return null;
       const timeline = (await unrecordedCanonicalTimeline(tx, current.page.id, canonical, slug)).map(entry => ({ slug, date: entry.date,
         source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id: sourceId }));
-      const added = timeline.length ? await tx.addTimelineEntriesBatch(timeline, { auditSite: 'extract.stale' }) : 0;
+      const added = timeline.length ? await withWriteTrust(tx, await projectedTimelineTrust(tx, sourceId, slug),
+        () => tx.addTimelineEntriesBatch(timeline, { auditSite: 'extract.stale' })) : 0;
       const at = stamp ?? new Date().toISOString();
       await tx.markPagesExtractedBatch([{ slug, source_id: sourceId, extractedAt: at }], at);
       return { ...written, timeline: added };

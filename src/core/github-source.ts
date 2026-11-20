@@ -8,6 +8,7 @@ export { isValidRepoName, parseGitHubSourceConfig } from './github-source-config
 export { AppTokenProvider, mintAppInstallationToken } from './github-app-token.ts';
 import { AppTokenProvider } from './github-app-token.ts';
 import { slugifyPath } from './sync.ts';
+import { externalFeedTrust } from './trust/channel.ts';
 /**
  * github-source — GitHub issues/PR sync for the `github` source kind.
  *
@@ -1014,7 +1015,9 @@ async function importPage(
     activePack,
   };
   const result = content === undefined ? await importFile(deps.engine, filePath, rel, opts)
-    : await importFromContent(deps.engine, slugifyPath(rel), content, { ...opts, sourcePath: rel, preserveGateMarkers: true, holdNoncanonicalPrivate: true });
+    : await importFromContent(deps.engine, slugifyPath(rel), content, { ...opts, sourcePath: rel, preserveGateMarkers: true, holdNoncanonicalPrivate: true,
+      // Fetched from GitHub: a third-party feed, as the managed connector sync declares it.
+      writeTrust: externalFeedTrust('connector:github') });
   if (result.status === 'error' || result.error) {
     throw new Error(result.error ?? `Import failed for ${rel}`);
   }

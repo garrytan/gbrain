@@ -13,7 +13,7 @@
  * marks the fixture seed_failed, and the run exits 2.
  */
 
-import { importFromContent } from '../../core/import-file.ts';
+import { importFromContent, ownerFileTrust } from '../../core/import-file.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import type { BrainBenchFixture } from './types.ts';
 
@@ -78,6 +78,8 @@ export async function seedBrain(engine: BrainEngine, fixture: BrainBenchFixture)
       result = await importFromContent(engine, page.slug, page.content, {
         noEmbed: true,
         sourceId,
+        // A corpus fixture is declared as an owner file import of its source.
+        writeTrust: await ownerFileTrust(engine, sourceId),
       });
     } catch (err) {
       throw new SeedError(fixture.fixture_id, page.slug, (err as Error).message);

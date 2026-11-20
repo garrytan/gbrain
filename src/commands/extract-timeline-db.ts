@@ -22,7 +22,8 @@ import { parseTimelineEntries, deriveTimelineAnchor } from '../core/link-extract
 import { eachStoredTimelineRow, retractRemovedTimelineEntries, segmentedTimelineText, storedTimelineKey, TimelineKeySet, unkeptTimelineRows, versionTimelineScan, type VersionTimelineScan } from '../core/timeline-extract.ts';
 import { timelineKey } from '../core/timeline-marker.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { maintenanceTransaction } from '../core/persistence/attribution.ts';
+import { addProjectedTimelineBatch, projectedTimelineTrust } from '../core/trust/timeline-projection.ts';
+import { withWriteTrust } from '../core/persistence/context.ts';
 import { segmentedCanonicalCollector, unrecordedCanonicalTimeline } from '../core/persistence/canonical-projections.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
@@ -137,7 +138,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
     batch.length = 0;
     unflushed.clear();
     try {
-      result.created += await maintenanceTransaction(engine, tx => tx.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_db' }));
+      result.created += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_db' });
       for (const key of held) if (!refusedPages.has(key)) opts.completed?.add(key);
     } catch (e) {
       for (const key of held) { refusedPages.add(key); opts.completed?.delete(key); }
@@ -325,8 +326,9 @@ async function plannedTimeline(engine: BrainEngine, page: Page, slug: string, so
 async function writePageTimeline(tx: BrainEngine, page: Page, slug: string, sourceId: string, inferDates: boolean, versions: VersionTimelineScan): Promise<number> {
   const plan = await plannedTimeline(tx, page, slug, sourceId, inferDates, undefined, { retract: true, versions });
   if (!plan.entries.length) return 0;
-  return tx.addTimelineEntriesBatch(plan.entries.map(entry => ({ slug, date: entry.date, source: entry.source,
-    summary: entry.summary, detail: entry.detail || '', source_id: sourceId })), { auditSite: 'extract.timeline_db' });
+  // The rows restate the page's own text, so they carry the page's tier (the projection `gbrain extract` stamps its timeline rows with).
+  return withWriteTrust(tx, await projectedTimelineTrust(tx, sourceId, slug), () => tx.addTimelineEntriesBatch(plan.entries.map(entry => ({ slug, date: entry.date, source: entry.source,
+    summary: entry.summary, detail: entry.detail || '', source_id: sourceId })), { auditSite: 'extract.timeline_db' }));
 }
 
 /**

@@ -522,6 +522,8 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
             sourceId: row.source_id, preserveGateMarkers: true,
             noEmbed: !!opts.noEmbed,
             forceRechunk: true,
+            // A re-chunk of the stored page authors nothing: the page keeps its tier.
+            keepTier: true,
           });
           if (imported.status === 'imported') {
             reindexed++;

@@ -14,7 +14,7 @@
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { moveSlugBindings } from '../../core/page-state/rename-alias.ts';
-import { maintenanceTransaction } from '../../core/persistence/attribution.ts';
+import { keepTierTransaction } from '../../core/persistence/attribution.ts';
 import { randomUUID } from 'node:crypto';
 import { lockedBeliefBatch } from '../../core/belief/writers.ts';
 import { markBeliefCommits } from '../../core/belief/append.ts';
@@ -49,7 +49,7 @@ export async function renamePageOntoSlug(engine: BrainEngine, input: { sourceId:
     return outcome;
   };
   try {
-    return recorded((await maintenanceTransaction(engine, move)) > 0 ? 'renamed' : 'noop');
+    return recorded((await keepTierTransaction(engine, move)) > 0 ? 'renamed' : 'noop');
   } catch (error) {
     if (!isUniqueViolation(error)) throw classifyOriginUniqueViolation(error, { sourceId, sourcePath: to, slug: newSlug }) ?? error;
     const [destination] = await engine.executeRaw<{ id: number | string; tombstone: boolean }>(
@@ -59,7 +59,7 @@ export async function renamePageOntoSlug(engine: BrainEngine, input: { sourceId:
     const tombstoneId = Number(destination.id);
     const nothingToMove = Symbol('nothing to move');
     try {
-      return await recorded(await maintenanceTransaction(engine, async tx => {
+      return await recorded(await keepTierTransaction(engine, async tx => {
         await tx.lockPageKeys([{ sourceId, slug: oldSlug }, { sourceId, slug: newSlug }]);
         // origin-guard-ok: rekeys a tombstone only (deleted_at IS NOT NULL), which claims no origin
         const rekeyed = await tx.executeRaw<{ id: number }>(
