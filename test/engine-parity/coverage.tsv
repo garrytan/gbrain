@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 926/933
+# covered: 927/933
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -38,7 +38,7 @@
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
-# minion_queue: 102/103
+# minion_queue: 103/103
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -88,7 +88,7 @@ getPage	pages	yes	108	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	502	yes	yes	yes	serves
+putPage	pages	yes	503	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -577,7 +577,7 @@ insertOauthClientGrant	minion_queue	yes	2	no	yes	yes	serves
 readTokenLifetimeClampedClients	minion_queue	yes	1	no	yes	yes	serves
 readScopeSourceConfigs	minion_queue	yes	3	no	yes	yes	serves
 readOauthAccessTokenRows	minion_queue	yes	4	no	yes	yes	serves
-lockActiveAccessTokens	minion_queue	no	0	no	-	-	-
+lockActiveAccessTokens	minion_queue	yes	1	no	yes	yes	serves
 readActiveAccessTokenByHash	minion_queue	yes	5	no	yes	yes	serves
 touchAccessTokenLastUsed	minion_queue	yes	2	no	yes	yes	serves
 deleteExpiredOauthCredentials	minion_queue	yes	1	no	yes	yes	serves
@@ -664,7 +664,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	11	no	yes	yes	serves
 listOauthClients	minion_queue	yes	1	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	22	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	23	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -924,11 +924,11 @@ countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 readAccessMembers	write_misc	yes	9	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	3	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
-revokeAccessToken	write_misc	yes	8	no	yes	yes	serves
+revokeAccessToken	write_misc	yes	9	no	yes	yes	serves
 deleteOAuthClient	write_misc	yes	5	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	4	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
-listPagesNamingReader	write_misc	yes	4	no	yes	yes	serves
+listPagesNamingReader	write_misc	yes	5	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves
