@@ -8,6 +8,7 @@ mod cli_entities;
 mod cli_reads_import;
 mod cli_reads_ops;
 mod cli_reads_search_pages;
+mod cli_reads_sweep;
 mod cli_sources;
 mod config;
 mod fact_relink;

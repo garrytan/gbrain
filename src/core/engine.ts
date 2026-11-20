@@ -14,6 +14,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AppliedPolicyRevision } from './engine-sql/access-control.ts';
+import type { FactsFencePagesQuery, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
@@ -4406,6 +4407,12 @@ export interface BrainEngine {
   /** Each source with folder access state and its newest applied folder-rule revision (null when none is applied), by source id. */
   listAppliedPolicyRevisions(): Promise<AppliedPolicyRevision[]>;
 
+  /** The maintenance sweep's facts-fence pages (engine-sql/sweep-reads.ts): newest `scanCap` recent pages, those holding a fence. */
+  listFactsFencePages(q: FactsFencePagesQuery): Promise<string[]>;
+  /** The sweep's links and timeline pages: recent pages whose links watermark is stale, less `exclude`, newest first. */
+  listSweepStalePages(q: SweepStalePagesQuery): Promise<SweepStalePageRow[]>;
+  /** Of the sweep's deferred segmented `slugs`, those still recent and stale. */
+  listSweepDeferredPages(q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]>;
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;

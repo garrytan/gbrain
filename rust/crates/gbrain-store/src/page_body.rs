@@ -870,6 +870,28 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
+/// A page's `body_storage` and `body_bytes` columns: `('inline', None)` for a page with no body state, as the column
+/// default reads.
+pub(crate) fn body_storage_columns(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<(String, Option<i64>)> {
+    Ok(read_body_state(read, page_id)?.map_or_else(
+        || ("inline".to_string(), None),
+        |s| (s.body_storage, s.body_bytes),
+    ))
+}
+
+/// Whether a published manifest row of the page (`gen_to IS NULL AND staging_id IS NULL`) has a facts slot
+/// (`facts_slots <> '[]'::jsonb`; a NULL `facts_slots` compares as unknown, so it does not).
+pub(crate) fn has_published_facts_slot(read: &dyn KvRead, page_id: u64) -> Result<bool> {
+    Ok(manifest_rows(read, page_id)?.iter().any(|(_, row)| {
+        live_published(row)
+            && !row.facts_slots.is_null()
+            && row.facts_slots != Value::Array(Vec::new())
+    }))
+}
+
 /// The live body generation and `body_bytes` of a segmented page, which its version snapshot
 /// references (`insertSegmentedVersion`); `None` for an inline page or a missing one.
 pub(crate) fn segmented_reference(
