@@ -49,6 +49,7 @@ import { estimateTokens, packToBudget } from '../search/token-budget.ts';
 import { DEFAULT_SOURCE_BOOSTS } from '../search/source-boost.ts';
 import type { GetPageOpts, Page, PageFilters } from '../types.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { Capability } from '../engine-capabilities.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { overlaidBoundedPrefix, pageLeadSource } from '../page-window/bounded-lead.ts';
 import { safeSynopsis } from './retrieval-reflex.ts';
@@ -106,6 +107,9 @@ export interface CompileViewEngine {
   listRelationshipNoteRows?: BrainEngine['listRelationshipNoteRows'];
   /** A segmented page's excerpt: its stored lead under the withdrawal overlay; absent → such a page renders without one. */
   readPageSnapshotsBatch?: BrainEngine['readPageSnapshotsBatch'];
+  /** Fence-row normalization for that overlay; absent → such a page renders without an excerpt. */
+  normalizeFenceLines?: BrainEngine['normalizeFenceLines'];
+  capabilities?: BrainEngine['capabilities'];
 }
 
 export interface CompileViewInput {
@@ -304,9 +308,11 @@ function renderEntry(page: Page, lead: string | null, relationshipNote?: string)
  */
 async function entryLead(engine: CompileViewEngine, page: Page): Promise<string | null> {
   const segmented = isSegmentedPage(page);
-  if (segmented && (!engine.executeRaw || !engine.readPageSnapshotsBatch)) return null;
+  if (segmented && (!engine.executeRaw || !engine.readPageSnapshotsBatch || !engine.normalizeFenceLines)) return null;
   const reader = { executeRaw: (sql: string, params?: unknown[]) => engine.executeRaw!(sql, params),
-    readPageSnapshotsBatch: (...args: Parameters<BrainEngine['readPageSnapshotsBatch']>) => engine.readPageSnapshotsBatch!(...args) } as Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>;
+    readPageSnapshotsBatch: (...args: Parameters<BrainEngine['readPageSnapshotsBatch']>) => engine.readPageSnapshotsBatch!(...args),
+    normalizeFenceLines: (...args: Parameters<BrainEngine['normalizeFenceLines']>) => engine.normalizeFenceLines!(...args),
+    capabilities: engine.capabilities ?? new Set<Capability>(['raw_sql']) } as Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'capabilities'>;
   const lead = await pageLeadSource(reader, page);
   return segmented ? overlaidBoundedPrefix(reader, { slug: page.slug, source_id: page.source_id ?? 'default', compiled_truth: lead }) : lead;
 }

@@ -53,6 +53,7 @@ test/engine-parity/owner-only-marks.test.ts	0	2
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
+test/engine-parity/page-withdrawal-overlay.test.ts	2	0
 test/engine-parity/pages.test.ts	24	3
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	36	0
