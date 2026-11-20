@@ -19,6 +19,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 export const LOCAL_CLIENT_SENTINEL = 'local';
 
@@ -312,7 +313,8 @@ export const MAX_ROWS_PER_CLIENT = 1000;
  * `maxRowsPerClient` (default MAX_ROWS_PER_CLIENT) per (source_id, client_id).
  * The cap is injectable (v0.45.7) so tests drive the REAL windowed DELETE with
  * a small cap instead of mirroring the SQL. Best-effort — runs at serve boot
- * and opportunistically on first-wake row creation.
+ * and opportunistically on first-wake row creation — but a capability refusal
+ * (`engine_capability_missing`) reaches the caller.
  */
 export async function gcSessionContextState(
   engine: BrainEngine,
@@ -323,7 +325,8 @@ export async function gcSessionContextState(
     await engine.ageOutSessionState(Math.max(1, Math.floor(olderThanDays)));
     // Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane.
     await engine.capSessionStatePerClient(Math.max(1, Math.floor(maxRowsPerClient)));
-  } catch {
-    /* best-effort */
+  } catch (e) {
+    // Best-effort, except a capability refusal: an engine that cannot run the GC says so instead of skipping it.
+    rethrowCapabilityMissing(e);
   }
 }

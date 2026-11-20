@@ -516,13 +516,15 @@ const PINS: Pin[] = [
     texts: [`DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval`],
   },
   {
+    // The caller's statement at eb30f47b89, with `, session_id COLLATE "C"` added to the window's ORDER BY so tied
+    // updated_at values rank by session_id bytes on every engine (test/engine-parity/session-state-cap.test.ts).
     from: 'src/core/context/session-state.ts:394 gcSessionContextState (per-client cap), at eb30f47b89',
     case: { method: 'capSessionStatePerClient', variant: 'default', run: e => e.capSessionStatePerClient(1000) },
     texts: [`DELETE FROM session_context_state s
        USING (
          SELECT source_id, client_id, session_id,
                 row_number() OVER (
-                  PARTITION BY source_id, client_id ORDER BY updated_at DESC
+                  PARTITION BY source_id, client_id ORDER BY updated_at DESC, session_id COLLATE "C"
                 ) AS rn
          FROM session_context_state
        ) ranked

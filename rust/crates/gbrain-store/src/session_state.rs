@@ -8,9 +8,9 @@
 //! part may hold a NUL byte (Postgres `text` refuses one too), so the split is exact.
 //!
 //! Time: `updated_at` is the store clock at the write (inside a transaction, the transaction's
-//! clock, as Postgres `now()` is the transaction start). `write_seq` numbers the writes in order:
-//! it stands for the heap order a Postgres sequential scan returns, which the LRU cap's sort sees
-//! as its input order (see `cap_session_state_per_client`).
+//! clock, as Postgres `now()` is the transaction start). The LRU cap ranks rows with equal
+//! `updated_at` by `session_id` bytes (see `cap_session_state_per_client`), so no write order is
+//! stored.
 //!
 //! JSON columns are stored as given and read back in Postgres `jsonb` key order
 //! (`crate::dream::jsonb`), which is what a PGLite read returns.
@@ -38,7 +38,6 @@ struct SessionRecord {
     facts_cursor_id: Option<i64>,
     degraded_wakes: i32,
     updated_at_us: i64,
-    write_seq: u64,
 }
 
 impl SessionRecord {
@@ -53,7 +52,6 @@ impl SessionRecord {
             facts_cursor_id: None,
             degraded_wakes: 0,
             updated_at_us: 0,
-            write_seq: 0,
         }
     }
 }
@@ -74,9 +72,6 @@ pub struct SessionStateWrite {
     pub facts_cursor_id: Option<f64>,
     pub degraded_wakes: String,
 }
-
-/// The counter of `write_seq` (`keys::meta`).
-const WRITE_SEQ: &str = "next_session_state_seq";
 
 fn session_key(source_id: &str, client_id: &str, session_id: &str) -> Vec<u8> {
     keys::text(keys::SESSION_STATE, &[source_id, client_id, session_id])
@@ -129,10 +124,9 @@ fn whole(op: &str, what: &str, value: f64) -> Result<i64> {
     Ok(value as i64)
 }
 
-/// Writes `record` with this write's time and the next `write_seq`.
+/// Writes `record` with this write's time.
 fn put_record(tx: &mut dyn KvWrite, key: &[u8], mut record: SessionRecord, now: i64) -> Result<()> {
     record.updated_at_us = now;
-    record.write_seq = crate::pages::next_id(tx, WRITE_SEQ)?;
     put_json(tx, key, &record)
 }
 
@@ -163,113 +157,6 @@ fn lane(key: &[u8]) -> &[u8] {
     match nuls.next() {
         Some(at) => &body[..at],
         None => body,
-    }
-}
-
-/// Postgres's in-memory sort (`src/include/lib/sort_template.h`, the `qsort` a `Sort` node runs
-/// on the rows that fit in `work_mem`). It is not stable: rows that compare equal end in an order
-/// that depends on the input order, and the LRU cap keeps the first rows of each lane in that order.
-/// This runs the same steps, so equal rows end where Postgres puts them.
-fn pg_qsort<T>(v: &mut [T], cmp: &dyn Fn(&T, &T) -> std::cmp::Ordering) {
-    use std::cmp::Ordering::{Greater, Less};
-    let med3 = |v: &[T], a: usize, b: usize, c: usize| -> usize {
-        if cmp(&v[a], &v[b]) == Less {
-            if cmp(&v[b], &v[c]) == Less {
-                b
-            } else if cmp(&v[a], &v[c]) == Less {
-                c
-            } else {
-                a
-            }
-        } else if cmp(&v[b], &v[c]) == Greater {
-            b
-        } else if cmp(&v[a], &v[c]) == Less {
-            a
-        } else {
-            c
-        }
-    };
-    let swapn = |v: &mut [T], a: usize, b: usize, n: usize| {
-        for i in 0..n {
-            v.swap(a + i, b + i);
-        }
-    };
-    let (mut a, mut n) = (0usize, v.len());
-    loop {
-        if n < 7 {
-            for pm in a + 1..a + n {
-                let mut pl = pm;
-                while pl > a && cmp(&v[pl - 1], &v[pl]) == Greater {
-                    v.swap(pl, pl - 1);
-                    pl -= 1;
-                }
-            }
-            return;
-        }
-        if (a + 1..a + n).all(|i| cmp(&v[i - 1], &v[i]) != Greater) {
-            return;
-        }
-        let mut pm = a + n / 2;
-        if n > 7 {
-            let mut pl = a;
-            let mut pn = a + n - 1;
-            if n > 40 {
-                let d = n / 8;
-                pl = med3(v, pl, pl + d, pl + 2 * d);
-                pm = med3(v, pm - d, pm, pm + d);
-                pn = med3(v, pn - 2 * d, pn - d, pn);
-            }
-            pm = med3(v, pl, pm, pn);
-        }
-        v.swap(a, pm);
-        let (mut pa, mut pb) = (a + 1, a + 1);
-        let (mut pc, mut pd) = (a + n - 1, a + n - 1);
-        loop {
-            while pb <= pc {
-                let r = cmp(&v[pb], &v[a]);
-                if r == Greater {
-                    break;
-                }
-                if r.is_eq() {
-                    v.swap(pa, pb);
-                    pa += 1;
-                }
-                pb += 1;
-            }
-            while pb <= pc {
-                let r = cmp(&v[pc], &v[a]);
-                if r == Less {
-                    break;
-                }
-                if r.is_eq() {
-                    v.swap(pc, pd);
-                    pd -= 1;
-                }
-                pc -= 1;
-            }
-            if pb > pc {
-                break;
-            }
-            v.swap(pb, pc);
-            pb += 1;
-            pc -= 1;
-        }
-        let pn = a + n;
-        let d1 = (pa - a).min(pb - pa);
-        swapn(v, a, pb - d1, d1);
-        let d1 = (pd - pc).min(pn - pd - 1);
-        swapn(v, pb, pn - d1, d1);
-        let d1 = pb - pa;
-        let d2 = pd - pc;
-        if d1 > 1 {
-            pg_qsort(&mut v[a..a + d1], cmp);
-        }
-        if d2 > 1 {
-            a = pn - d2;
-            n = d2;
-            continue;
-        }
-        return;
     }
 }
 
@@ -453,19 +340,19 @@ impl Store {
 
     /// `capSessionStatePerClient(maxRowsPerClient)`: keeps the newest `maxRowsPerClient` rows of
     /// each `(source_id, client_id)`. Postgres ranks rows with `row_number() OVER (PARTITION BY
-    /// source_id, client_id ORDER BY updated_at DESC)` over a sort of the table in heap order;
-    /// this sorts the rows in write order with the same algorithm (`pg_qsort`), so rows with equal
-    /// `updated_at` (written in one transaction) are kept or deleted as Postgres does.
+    /// source_id, client_id ORDER BY updated_at DESC, session_id COLLATE "C")`, a total order, so
+    /// rows with equal `updated_at` (written in one transaction) rank by `session_id` bytes. Within
+    /// a lane the key bytes after the lane are the `session_id` bytes, so the key breaks the tie.
     pub fn cap_session_state_per_client(&self, max_rows_per_client: f64) -> Result<()> {
         const OP: &str = "capSessionStatePerClient";
         let cap = whole(OP, "maxRowsPerClient", max_rows_per_client)?;
         self.write(|tx| {
             let mut rows = all_rows(&*tx)?;
-            rows.sort_by_key(|(_, r)| r.write_seq);
-            pg_qsort(&mut rows, &|x: &Row, y: &Row| {
+            rows.sort_by(|x: &Row, y: &Row| {
                 lane(&x.0)
                     .cmp(lane(&y.0))
                     .then_with(|| y.1.updated_at_us.cmp(&x.1.updated_at_us))
+                    .then_with(|| x.0.cmp(&y.0))
             });
             let mut current: Option<Vec<u8>> = None;
             let mut rank: i64 = 0;
@@ -706,28 +593,24 @@ mod tests {
         assert_eq!(kept(&s), ["c/s3", "c/s3", "c/s4", "c/s4"]);
     }
 
-    /// Rows with equal `updated_at` end where Postgres's sort puts them (pinned against PGLite and
-    /// Postgres 17).
+    /// Rows with equal `updated_at` rank by `session_id` bytes, whatever the write order (the 10 tie
+    /// cases of test/engine-parity/session-state-cap.test.ts).
     #[test]
-    fn cap_breaks_ties_as_postgres_does() {
-        assert_eq!(
-            tied(&one_lane(&["s1", "s2", "s3", "s4", "s5"]), 2.0),
-            ["c/s1", "c/s2"]
-        );
-        assert_eq!(
-            tied(&one_lane(&["s5", "s4", "s3", "s2", "s1"]), 2.0),
-            ["c/s4", "c/s5"]
-        );
-        assert_eq!(
-            tied(&one_lane(&["s3", "s1", "s5", "s2", "s4"]), 2.0),
-            ["c/s1", "c/s3"]
-        );
+    fn cap_breaks_ties_by_session_id_bytes() {
+        for order in [
+            ["s1", "s2", "s3", "s4", "s5"],
+            ["s5", "s4", "s3", "s2", "s1"],
+            ["s3", "s1", "s5", "s2", "s4"],
+        ] {
+            assert_eq!(tied(&one_lane(&order), 2.0), ["c/s1", "c/s2"]);
+        }
         let twelve = [
             "k07", "k03", "k11", "k01", "k09", "k12", "k05", "k02", "k10", "k04", "k08", "k06",
         ];
-        let mut first: Vec<String> = twelve[..5].iter().map(|s| format!("c/{s}")).collect();
-        first.sort();
-        assert_eq!(tied(&one_lane(&twelve), 5.0), first);
+        assert_eq!(
+            tied(&one_lane(&twelve), 5.0),
+            ["c/k01", "c/k02", "c/k03", "c/k04", "c/k05"]
+        );
         let two_lanes = |n: usize| -> Vec<(&'static str, String)> {
             (0..n)
                 .map(|i| {
@@ -738,29 +621,32 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(tied(&two_lanes(6), 1.0), ["c/m05", "d/m00"]);
-        assert_eq!(tied(&two_lanes(7), 1.0), ["c/m02", "d/m00"]);
-        assert_eq!(
-            tied(&two_lanes(8), 2.0),
-            ["c/m01", "c/m05", "d/m02", "d/m04"]
-        );
-        assert_eq!(
-            tied(&two_lanes(10), 2.0),
-            ["c/m03", "c/m07", "d/m02", "d/m06"]
-        );
+        assert_eq!(tied(&two_lanes(6), 1.0), ["c/m01", "d/m00"]);
+        assert_eq!(tied(&two_lanes(7), 1.0), ["c/m01", "d/m00"]);
+        for n in [8, 10] {
+            assert_eq!(
+                tied(&two_lanes(n), 2.0),
+                ["c/m01", "c/m03", "d/m00", "d/m02"]
+            );
+        }
         assert_eq!(
             tied(&two_lanes(40), 10.0),
             [
-                "c/m05", "c/m11", "c/m13", "c/m19", "c/m21", "c/m25", "c/m27", "c/m31", "c/m37",
-                "c/m39", "d/m04", "d/m10", "d/m16", "d/m20", "d/m22", "d/m26", "d/m28", "d/m32",
-                "d/m34", "d/m38"
+                "c/m01", "c/m03", "c/m05", "c/m07", "c/m09", "c/m11", "c/m13", "c/m15", "c/m17",
+                "c/m19", "d/m00", "d/m02", "d/m04", "d/m06", "d/m08", "d/m10", "d/m12", "d/m14",
+                "d/m16", "d/m18"
             ]
+        );
+        // Bytes, not a locale: "S2" (0x53) sorts before "s1" (0x73), and a prefix before a longer id.
+        assert_eq!(
+            tied(&one_lane(&["s1", "S2", "s", "s10"]), 2.0),
+            ["c/S2", "c/s"]
         );
     }
 
-    /// A row rewritten later moves to the end of the scan, as an updated Postgres tuple does.
+    /// Rows rewritten in one transaction tie again and rank by `session_id` bytes, not rewrite order.
     #[test]
-    fn cap_sees_rewrites_in_write_order() {
+    fn cap_ignores_rewrite_order() {
         let (s, clock) = store();
         for session in ["s1", "s2", "s3", "s4", "s5"] {
             s.upsert_session_state("default", "c", session, &write("a", "keep"))
@@ -772,6 +658,6 @@ mod tests {
                 .unwrap();
         }
         s.cap_session_state_per_client(2.0).unwrap();
-        assert_eq!(kept(&s), ["c/s3", "c/s5"]);
+        assert_eq!(kept(&s), ["c/s1", "c/s2"]);
     }
 }
