@@ -1354,6 +1354,7 @@ impl Store {
                 import_filename: meta.import_filename.clone(),
                 source_kind: meta.source_kind.clone(),
                 source_uri: meta.source_uri.clone(),
+                database_only_reason: None,
                 ingested_via: meta.ingested_via.clone(),
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),

@@ -3297,6 +3297,16 @@ export interface BrainEngine {
   listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]>;
   /** Records `sourcePath` as a page's origin (persistence/origin-guard.ts `bindOrigin` only); the number of pages whose origin changed. */
   bindPageOrigin(target: PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }): Promise<number>;
+  /** Forgets a page's recorded file (`source_path`, `source_uri`) and marks it database-only with `reason`; the knowledge revision stays. */
+  detachPageOrigin(pageId: number, reason: string): Promise<void>;
+  /** The page's `database_only_reason`, live or a tombstone, or null (also for no such page). */
+  readPageDatabaseOnlyReason(sourceId: string, slug: string): Promise<string | null>;
+  /** Gives a page a new knowledge revision, live or a tombstone (its text projection seal is cleared). */
+  bumpPageKnowledgeRevision(pageId: number): Promise<void>;
+  /** Removes frontmatter keys from a live page of the source; a page that held one takes a new knowledge revision. */
+  removePageFrontmatterKeys(sourceId: string, pageId: number, keys: readonly string[]): Promise<void>;
+  /** Sets a page's `type`, live or a tombstone; a changed type takes a new knowledge revision. */
+  setPageType(sourceId: string, slug: string, type: string): Promise<void>;
   /** Records a page's ingest provenance (`source_kind`, `ingested_via`, `ingested_at`); a missing page writes nothing. */
   stampPageIngest(slug: string, stamp: PageIngestStamp): Promise<void>;
   /** An import's closing seal: the chunker version always, the text seal when the page is at `seal.revision`; the page id, or null. */

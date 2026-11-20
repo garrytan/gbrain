@@ -349,7 +349,7 @@ async function applyOriginTwin(tx: BrainEngine, pair: OriginTwinPair, incarnatio
   const restore = ['gbrain', 'restore', pair.twin.slug, '--source-id', pair.source_id];
   const base = { source_id: pair.source_id, source_path: pair.source_path, survivor_slug: pair.survivor.slug, twin_slug: pair.twin.slug };
   if (pair.mode === 'detach') {
-    await tx.executeRaw('UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=$2 WHERE id=$1', [pair.twin.page_id, ORIGIN_TWIN_REASON]);
+    await tx.detachPageOrigin(pair.twin.page_id, ORIGIN_TWIN_REASON);
     return { status: 'origin_twin_detached', ...base };
   }
   const dropped = await droppedFrontmatter(tx, pair);

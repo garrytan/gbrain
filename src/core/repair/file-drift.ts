@@ -722,7 +722,7 @@ export async function prepareDriftDetach(engine: BrainEngine, row: WriteRequest)
   return { observedRevision: pin.revision, databaseOnlyReason: 'detached',
     validate: async tx => { await locked(tx); },
     apply: async tx => {
-      await tx.executeRaw('UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=$2 WHERE id=$1', [pin.page_id, DETACHED_REASON]);
+      await tx.detachPageOrigin(pin.page_id, DETACHED_REASON);
       return { status: 'detached', slug: row.slug, source_id: row.source_id, path: pin.path,
         hold_cleared: await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path: pin.path, observedAt: pin.observed_at }) };
     } };

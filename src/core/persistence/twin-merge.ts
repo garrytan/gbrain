@@ -100,7 +100,7 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
       { reason: 'twin_evidence_conflicts' });
   }
   await tx.createVersion(twin.slug, { sourceId });
-  await tx.executeRaw('UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=$2 WHERE id=$1', [twin.page_id, ORIGIN_TWIN_REASON]);
+  await tx.detachPageOrigin(twin.page_id, ORIGIN_TWIN_REASON);
   const before = [...await relationshipKeys(tx, 'links', [twin.page_id]), ...await relationshipKeys(tx, 'link_transitions', [twin.page_id])];
   const linkLosers = (await tx.executeRaw<{ id: number }>(LINK_LOSERS, params)).map(row => Number(row.id));
   const transitionLosers = (await tx.executeRaw<{ id: number }>(TRANSITION_LOSERS, params)).map(row => Number(row.id));

@@ -163,8 +163,7 @@ async function restoreAtom(ctx: OperationContext, atom: RestorableAtom): Promise
     if (!sameAtom((await restorableAtoms(tx, [atom.source_id], atom.id))[0], atom)) return false;
     await tx.createVersion(atom.slug, { sourceId: atom.source_id });
     await tx.restorePage(atom.slug, { sourceId: atom.source_id });
-    await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter-'retired_by'-'retired_at' WHERE id=$1 AND source_id=$2 AND deleted_at IS NULL`,
-      [atom.id, atom.source_id]);
+    await tx.removePageFrontmatterKeys(atom.source_id, atom.id, ['retired_by', 'retired_at']);
     return true;
   });
   return restored ? { applied: true, outcome: 'restored' } : changed('the atom, its origin or a later generation changed');

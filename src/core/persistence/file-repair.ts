@@ -275,7 +275,7 @@ function assertTrustedRepairCaller(ctx: Pick<OperationContext, 'remote'>): void 
  * condition (owner-refusal.ts). `remote` (default true) keeps the local identity path out of the text.
  */
 export async function managedRepairRoot(engine: BrainEngine, sourceId: string, kind: FileRepairKind = 'frontmatter', opts: { remote?: boolean } = {}): Promise<{ root: string; ownerEpoch: string; incarnation: string }> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readSourceIncarnation(sourceId);
   const binding = await getWorktreeBinding(engine, sourceId);
   const hostId = hostIdFor(engine);
   const owner = checkOwner(binding, source?.incarnation ?? '', hostId);
@@ -411,7 +411,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
       let applied = ready;
       if (moved) {
         if (await tx.updateSlug(moved.slug, row.slug, source) !== 1) throw changedSincePreview(row.source_id, p.path, `page ${moved.slug} could not move to ${row.slug}`, kind);
-        if (publication.renamedType) await tx.executeRaw('UPDATE pages SET type=$3 WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug, publication.renamedType]);
+        if (publication.renamedType) await tx.setPageType(row.source_id, row.slug, publication.renamedType);
         let movedImport: PreparedContentImport | undefined;
         await importFromContent(tx, row.slug, importContent, { ...importOptions, prepare: async value => { movedImport = value; return value.result; } });
         if (!movedImport || movedImport.slug !== row.slug) throw changedSincePreview(row.source_id, p.path, `page ${moved.slug} could not be prepared at ${row.slug}`, kind);

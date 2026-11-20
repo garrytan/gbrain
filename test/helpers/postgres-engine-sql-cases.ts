@@ -710,6 +710,11 @@ export const DOMAIN_OF: Record<string, string> = {
   'readGitHoldRecord': OOS.repairBookkeeping,
   'requestGitHoldRetry': OOS.repairBookkeeping,
   'readRepairBusyRows': OOS.repairBookkeeping,
+  'detachPageOrigin': OOS.writeGuards,
+  'readPageDatabaseOnlyReason': OOS.writeGuards,
+  'bumpPageKnowledgeRevision': OOS.writeGuards,
+  'removePageFrontmatterKeys': OOS.writeGuards,
+  'setPageType': OOS.writeGuards,
   'readMigrationRows': OOS.engineMigration, 'readMigrationPageColumns': OOS.engineMigration, 'readEngineMigrationHistory': OOS.engineMigration,
   'countLiveTimelineEntries': OOS.engineMigration, 'listManualLinkTransitions': OOS.engineMigration,
   // sources

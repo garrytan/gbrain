@@ -141,6 +141,12 @@ const INTERFACE_METHODS: readonly string[] = [
   'swapGitHold', 'readGitHoldRecord', 'requestGitHoldRetry',
   // A repair's busy-set rows (engine-sql/repair-busy.ts; covered by test/engine-parity/repair-busy.test.ts)
   'readRepairBusyRows',
+  // The page writes a repair apply runs (engine-sql/write-guards.ts; covered by test/engine-parity/page-repair-writes.test.ts)
+  'detachPageOrigin',
+  'readPageDatabaseOnlyReason',
+  'bumpPageKnowledgeRevision',
+  'removePageFrontmatterKeys',
+  'setPageType',
   'readHealthMemoClock', 'listSynopsisSourceIds',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',
