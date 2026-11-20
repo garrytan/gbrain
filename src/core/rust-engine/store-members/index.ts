@@ -47,6 +47,7 @@ import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as linksPreparation from './links-preparation.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
@@ -115,6 +116,8 @@ export const STORE_MEMBERS = {
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
   ...cliEntities,
+  // The slug aliases and slug fingerprint link preparation reads (rust/docs/store/links-preparation.md).
+  ...linksPreparation,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,

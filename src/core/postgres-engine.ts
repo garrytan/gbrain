@@ -282,6 +282,7 @@ import { KeywordTimeoutNegativeCache, keywordRerunPoolIdle } from './postgres-en
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
+import * as linksPreparationImpl from './engine-sql/links-preparation.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
@@ -1479,6 +1480,9 @@ export class PostgresEngine implements BrainEngine {
   readEntityCardRows(sourceId: string, match: entityReadsImpl.EntityCardMatch, opts?: { excludePrivate?: boolean }) { return this.preparationRead(exec => entityReadsImpl.readEntityCardRows(unscopedExecutor(exec, 'entities: entity card candidates ran unscoped through executeRaw'), sourceId, match, opts)); }
   readExtractionLagCounts(q: entityReadsImpl.ExtractionLagQuery) { return entityReadsImpl.readExtractionLagCounts(this, q); }
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
+  readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return this.ownRawRead(exec => linksPreparationImpl.readLiveSlugAliases(exec, sourceId, targets)); }
+  probeSourceSlugFingerprint(sourceId: string, afterId: number) { return this.ownRawRead(exec => linksPreparationImpl.probeSourceSlugFingerprint(exec, sourceId, afterId)); }
+  readSourceSlugFingerprint(sourceId: string) { return this.ownRawRead(exec => linksPreparationImpl.readSourceSlugFingerprint(exec, sourceId)); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
   readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this)); }

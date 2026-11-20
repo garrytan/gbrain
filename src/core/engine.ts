@@ -69,6 +69,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
+import type { LiveSlugAliasRow, SlugFingerprintProbe, SlugFingerprintRead } from './engine-sql/links-preparation.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
@@ -3949,6 +3950,19 @@ export interface BrainEngine {
    */
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
     opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /**
+   * Of `targets`, the alias slugs of one source that hold no live page while their canonical page is live (the targets a
+   * link may follow through `slug_aliases`). A brain without the alias table has none. No order.
+   */
+  readLiveSlugAliases(sourceId: string, targets: readonly string[]): Promise<LiveSlugAliasRow[]>;
+  /**
+   * One source's slug fingerprint, counting every page row (a soft-deleted page too, as `getAllSlugs` lists it): the
+   * count `n`, the sum `h` of Postgres `hashtextextended(slug, 0)` as a decimal string, and the highest id `m` (0 when
+   * empty); with the slugs of the pages whose id is above `afterId` (`added`, in no set order) and their hash sum `added_h`.
+   */
+  probeSourceSlugFingerprint(sourceId: string, afterId: number): Promise<SlugFingerprintProbe>;
+  /** The same fingerprint with every slug of the source (`slugs`, in no set order). */
+  readSourceSlugFingerprint(sourceId: string): Promise<SlugFingerprintRead>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
