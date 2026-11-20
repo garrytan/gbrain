@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1141/1147
+# covered: 1147/1153
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -24,7 +24,7 @@
 # raw_files: 26/26
 # takes: 24/24
 # dream: 37/37
-# contradictions: 22/22
+# contradictions: 28/28
 # facts: 19/19
 # segmented_body: 16/16
 # versions: 6/6
@@ -93,7 +93,7 @@ getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	552	yes	yes	yes	serves
+putPage	pages	yes	555	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -312,7 +312,7 @@ upsertCliFileRow	raw_files	yes	3	no	yes	yes	serves
 upsertRawFileRow	raw_files	yes	2	no	yes	yes	serves
 upsertSyncFileRow	raw_files	yes	2	no	yes	yes	serves
 sourceIdExists	raw_files	yes	2	no	yes	yes	serves
-readPageIdInSource	raw_files	yes	10	no	yes	yes	serves
+readPageIdInSource	raw_files	yes	13	no	yes	yes	serves
 readFileOwner	raw_files	yes	2	no	yes	yes	serves
 claimFilePage	raw_files	yes	2	no	yes	yes	serves
 upsertOpFileRow	raw_files	yes	3	no	yes	yes	serves
@@ -393,16 +393,22 @@ sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 listEdgeContradictionCandidates	contradictions	yes	4	no	yes	yes	serves
 listKnownEdgeProposals	contradictions	yes	4	no	yes	yes	serves
 listLinkContexts	contradictions	yes	5	no	yes	yes	serves
-recordEdgeProposal	contradictions	yes	5	no	yes	yes	serves
-readEdgeProposal	contradictions	yes	4	no	yes	yes	serves
+recordEdgeProposal	contradictions	yes	8	no	yes	yes	serves
+readEdgeProposal	contradictions	yes	5	no	yes	yes	serves
 edgeClosureLanded	contradictions	yes	3	no	yes	yes	serves
 readEdgeProposalEvidence	contradictions	yes	3	no	yes	yes	serves
 readEdgeProposalHash	contradictions	yes	3	no	yes	yes	serves
 markEdgeProposalStale	contradictions	yes	1	no	yes	yes	serves
 setEdgeProposalStatus	contradictions	yes	3	no	yes	yes	serves
 rejectOpenEdgeProposal	contradictions	yes	2	no	yes	yes	serves
-markEdgeProposalUndone	contradictions	yes	2	no	yes	yes	serves
+markEdgeProposalUndone	contradictions	yes	3	no	yes	yes	serves
 markRevertedEdgeProposals	contradictions	yes	4	no	yes	yes	serves
+listEdgeProposalCliRows	contradictions	yes	3	no	yes	yes	serves
+deleteHeldEdgeProposalErrors	contradictions	yes	1	no	yes	yes	serves
+listAppliedEdgeProposalIds	contradictions	yes	1	no	yes	yes	serves
+deleteEdgeProposalError	contradictions	yes	1	no	yes	yes	serves
+readEdgeProposalSourceId	contradictions	yes	1	no	yes	yes	serves
+markEdgeProposalDated	contradictions	yes	1	no	yes	yes	serves
 listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
@@ -466,7 +472,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	23	no	yes	yes	serves
-setConfig	config	yes	33	no	yes	yes	serves
+setConfig	config	yes	34	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
