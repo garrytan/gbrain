@@ -10,6 +10,9 @@
  * test/page-snapshot-batch.test.ts); the line fingerprints the overlay needs
  * are only computed for a page that has withdrawals, purges or a '*' purge
  * marker, because `overlayWithdrawalBody` ignores them otherwise.
+ * #9350: materialize relevant withdrawals once for the chosen prefix, and carry
+ * each source's '*' ledger on its first existing row only. Merge it back in memory;
+ * SQL retains min(withdrawn_at) across global/local duplicates at full precision.
  *
  * Page bodies are unbounded, so a call covers the longest prefix of `refs`
  * whose bodies fit `maxBytes` (always at least one ref); `covered` says how
@@ -39,6 +42,20 @@ export interface PageSnapshotBatch {
   covered: number;
 }
 
+/** Page-subject rows already carry SQL's earliest timestamp across their matching global and local claims. */
+function mergeWithdrawals(shared: PageWithdrawal[], local: PageWithdrawal[]): PageWithdrawal[] {
+  const merged: PageWithdrawal[] = [];
+  let at = 0;
+  for (const w of local) {
+    if (w.purged) break;
+    const key = `${w.visibility}:${w.fact_hash}`;
+    while (at < shared.length && `${shared[at]!.visibility}:${shared[at]!.fact_hash}` < key) merged.push(shared[at++]!);
+    if (at < shared.length && `${shared[at]!.visibility}:${shared[at]!.fact_hash}` === key) at++;
+    merged.push(w);
+  }
+  return merged.concat(shared.slice(at), local.filter(w => w.purged));
+}
+
 export async function readPageSnapshotsBatch(
   query: ReadQuery,
   refs: ReadonlyArray<{ slug: string; sourceId: string }>,
@@ -55,19 +72,34 @@ export async function readPageSnapshotsBatch(
   ), chosen AS (
     SELECT w.batch_n, w.batch_slug, w.batch_source_id, p.* FROM wanted w LEFT JOIN pages p ON p.id = w.batch_page_id
     WHERE w.batch_n = 1 OR w.batch_prior_bytes < $3
+  ), batch_withdrawals AS MATERIALIZED (
+    SELECT source_id,subject,visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals
+    WHERE source_id IN (SELECT source_id FROM chosen WHERE id IS NOT NULL)
+      AND (subject='*' OR (source_id,subject) IN (SELECT source_id,slug FROM chosen WHERE id IS NOT NULL))
+    GROUP BY source_id,subject,visibility,fact_hash
+  ), source_withdrawals AS (
+    SELECT source_id,jsonb_agg(jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,'withdrawn_at',withdrawn_at)
+      ORDER BY visibility,fact_hash) AS withdrawals FROM batch_withdrawals WHERE subject='*' GROUP BY source_id
+  ), page_withdrawals AS MATERIALIZED (
+    SELECT w.source_id,w.subject,jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,
+      'withdrawn_at',LEAST(w.withdrawn_at,g.withdrawn_at)) ORDER BY w.visibility,w.fact_hash) AS withdrawals
+    FROM batch_withdrawals w LEFT JOIN batch_withdrawals g ON g.source_id=w.source_id AND g.subject='*'
+      AND g.visibility=w.visibility AND g.fact_hash=w.fact_hash WHERE w.subject<>'*'
+    GROUP BY w.source_id,w.subject
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN p.batch_n=(SELECT min(c.batch_n) FROM chosen c WHERE c.source_id=p.source_id)
+      THEN sw.withdrawals END AS snapshot_source_withdrawals,
+    CASE WHEN sw.withdrawals IS NOT NULL OR wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN sw.withdrawals IS NOT NULL OR wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
-    CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
-      ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
-        FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
-        GROUP BY visibility,fact_hash) w), '[]'::jsonb)
+    LEFT JOIN source_withdrawals sw ON sw.source_id=p.source_id
+    LEFT JOIN page_withdrawals pw ON pw.source_id=p.source_id AND pw.subject=p.slug
+    CROSS JOIN LATERAL (SELECT COALESCE(pw.withdrawals, '[]'::jsonb)
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
         ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug
@@ -76,6 +108,8 @@ export async function readPageSnapshotsBatch(
         WHERE g.source_id=p.source_id AND g.subject='*') AS snapshot_global_purges) wd
     ORDER BY p.batch_n`,
   [refs.map(r => r.slug), refs.map(r => r.sourceId), opts.maxBytes ?? PAGE_SNAPSHOT_BATCH_MAX_BYTES, opts.includeDeleted === true]);
+  const shared = new Map<string, PageWithdrawal[]>();
+  for (const row of rows) if (row.snapshot_source_withdrawals != null) shared.set(String(row.source_id), row.snapshot_source_withdrawals as PageWithdrawal[]);
   for (const row of rows) {
     const key = pageSnapshotKey(String(row.batch_source_id), String(row.batch_slug));
     if (row.id == null) {
@@ -87,7 +121,7 @@ export async function readPageSnapshotsBatch(
     const page = rowToPage(row);
     const raw = (typeof row.snapshot_global_purges === 'string' ? JSON.parse(row.snapshot_global_purges) : row.snapshot_global_purges) as { count?: unknown; latest?: unknown } | null;
     const globalPurges: GlobalPurgeMarker = { count: Number(raw?.count ?? 0), latest: raw?.latest == null ? null : String(raw.latest), world_only: false };
-    const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
+    const withdrawals = [...mergeWithdrawals(shared.get(page.source_id) ?? [], row.snapshot_withdrawals as PageWithdrawal[]), ...await resolveGlobalPurges(query, page.source_id, globalPurges,
       [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
     if (!isSegmentedPage(page)) {
       page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);
