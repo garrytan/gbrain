@@ -33,10 +33,15 @@ export function topologyRow<R extends object>(row: unknown): R | null {
   return row === null || row === undefined ? null : withDates(row as R, ['created_at', 'updated_at']);
 }
 
-/** A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. */
+/**
+ * A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. `frontmatter`
+ * goes as the JSON text Postgres and PGLite store for it (`jsonbParam`), so a YAML date nested in it is its ISO string
+ * there too; the addon would send it as an empty object.
+ */
 export function withIsoDates<T extends object>(row: T): T {
   const out: Row = { ...(row as Row) };
   for (const [key, value] of Object.entries(out)) if (value instanceof Date) out[key] = value.toISOString();
+  if (out.frontmatter !== null && typeof out.frontmatter === 'object') out.frontmatter = JSON.parse(JSON.stringify(out.frontmatter));
   return out as T;
 }
 
