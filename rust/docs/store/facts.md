@@ -386,7 +386,8 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 
 ## Open loops (`facts/loops.rs`)
 
-The `open_loops` table, for the three members loops-store.ts calls through the engine and the
+The `open_loops` table, for the four engine members (`upsertOpenLoop`, `closeOpenLoop`, `listOpenLoops` and the
+entity card read `readEntityOpenLoops`, a TypeScript shim over the list read) and the
 `loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
 `loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
 staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.

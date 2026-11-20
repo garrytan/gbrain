@@ -1247,7 +1247,7 @@ export interface BrainEngine {
 
   /**
    * Page-write reads and upkeep that belong to no other domain (SQL and contracts in engine-sql/write-misc.ts). A Rust
-   * brain keeps no shared skillpacks, chronicle state, access members or memory proposals, so it answers those empty.
+   * brain has no native method for these yet, so each refuses with engine_capability_missing.
    */
   readSourceState(sourceId: string, opts?: SourceStateOptions): Promise<SourceStateRow | null>;
   readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
@@ -1263,8 +1263,8 @@ export interface BrainEngine {
   listAccessTokens(): Promise<AccessTokenRow[]>;
   /**
    * Whether a resident notifier recorded coverage for some source (freshnessReported). A schema from before the
-   * notifier tables rejects with the missing-table error its caller catches; a Rust brain keeps no notifier state and
-   * answers false.
+   * notifier tables rejects with the missing-table error its caller catches; a Rust brain refuses with
+   * engine_capability_missing until a native method lands.
    */
   notifierCoverageRecorded(): Promise<boolean>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
