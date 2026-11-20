@@ -150,7 +150,10 @@ page. Malformed input (a bad uuid, a NUL in text, a number outside int4, a negat
 database's own.
 
 Deleting a page for good removes its manifest rows, derivations, body state and stagings; its texts
-stay, as in PGLite, for the sweep. Deleting a source removes its texts and stagings, and refuses
+stay, as in PGLite, for the sweep. The retention purge (`purgeDeletedPages`) differs, as PGLite's
+does: in its transaction it also deletes every staging at a purged source and slug (a create
+staging names no page), then each text the purged pages named that no manifest row or live staging
+still needs. Deleting a source removes its texts and stagings, and refuses
 `constraint_violation` while a manifest row of any page names one of its texts (PGLite's manifest
 foreign key to the texts has no cascade).
 

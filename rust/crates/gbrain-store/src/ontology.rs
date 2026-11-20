@@ -132,8 +132,11 @@ impl OntologyQuery {
     /// `life/diary/` provenance under `exclude_diary`, the visibility list and the confidence
     /// floor.
     fn admits(&self, read: &dyn KvRead, r: &FactRecord) -> Result<bool> {
-        // `confidence` is a REAL column and the SQL engines compare it with the floor as a REAL, so 0.7 meets a 0.7 floor.
-        if r.confidence < self.min_confidence as f32 || self.min_confidence.is_nan() {
+        // SQL binds the floor as the column's REAL type, so compare at f32: a stored 0.7 is
+        // 0.699999988 and still meets a floor of 0.7.
+        #[allow(clippy::cast_possible_truncation)]
+        let floor = self.min_confidence as f32;
+        if r.confidence < floor || floor.is_nan() {
             return Ok(false);
         }
         if self
@@ -597,6 +600,35 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_confidence_floor_equal_to_the_stored_value_admits_it() {
+        // 0.7 stores as the REAL 0.699999988; SQL compares the floor at REAL too, so it is kept.
+        let s = store();
+        let mut a = obs("people/c", "role", "advisor", "m/a", Some("2026-05-01"));
+        a.confidence = 0.7;
+        s.merge_ontology_fact(&a).unwrap();
+        let mut b = obs("people/c", "role", "founder", "m/b", Some("2026-01-01"));
+        b.confidence = 0.7;
+        s.merge_ontology_fact(&b).unwrap();
+        let read = OntologyQuery {
+            entity_slug: "people/c".into(),
+            min_confidence: 0.7,
+            ..OntologyQuery::default()
+        };
+        assert_eq!(s.get_ontology(&read).unwrap().len(), 1);
+        let floor = OntologyQuery {
+            min_confidence: 0.7,
+            ..OntologyQuery::default()
+        };
+        assert_eq!(s.find_ontology_conflicts(&floor).unwrap().len(), 1);
+        let nan = OntologyQuery {
+            entity_slug: "people/c".into(),
+            min_confidence: f64::NAN,
+            ..OntologyQuery::default()
+        };
+        assert!(s.get_ontology(&nan).unwrap().is_empty());
     }
 
     #[test]

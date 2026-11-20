@@ -385,8 +385,9 @@ impl Store {
     /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? })`: the raw data of
     /// every page by that slug in scope (`sourceIds` when not empty, else `sourceId` when not
     /// empty, else every source), only `source` when one is given (not empty). Pages that are
-    /// soft deleted are skipped unless `includeDeleted`. PGLite gives no order; the store
-    /// returns scope order (`default` first, then by id), then source name.
+    /// soft deleted are skipped unless `includeDeleted`. Rows come in SQL's order: page source,
+    /// then raw-data source, both byte-wise (`COLLATE "C"`). `sourceIds` is a set: a repeated id
+    /// returns its rows once.
     pub fn get_raw_data(
         &self,
         slug: &str,
@@ -402,7 +403,10 @@ impl Store {
         no_nul(OP, &texts)?;
         let read = self.read()?;
         let mut out = Vec::new();
-        for id in scope_sources(&*read, &scope.source_id, &scope.source_ids)? {
+        let mut ids = scope_sources(&*read, &scope.source_id, &scope.source_ids)?;
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids {
             let Some(page) = read_page(&*read, &id, slug)? else {
                 continue;
             };
