@@ -9,8 +9,9 @@
 //! withdrawals, any other row by subject `*`, its entity, or, on an unbacked name key, any subject but an
 //! owned memory page. It then sets `expired_at` to that time and clamps `valid_until` to it.
 //!
-//! Only the members that run the guarded `UPDATE`s call this ([`super::captured`], `ontology_repair`); the
-//! other fact writers still skip it (rust/docs/store/facts.md, "Not modeled").
+//! `write_fact` calls this on every insert (the withdrawal half of `gbrain_guard_inserted_facts`), after the
+//! purge refusal. Of the updates, only the members that run the guarded `UPDATE`s call it ([`super::captured`],
+//! `ontology_repair`); the other fact updates still skip it (rust/docs/store/facts.md, "Not modeled").
 
 use super::purge::{owned_memory_subject, unbacked};
 use super::{FactRecord, MEMBER_PAGE_PREFIX};
