@@ -55,23 +55,28 @@ const transcript = (title: string, frontmatter = '') => [
 afterEach(() => { __setChatTransportForTests(null); resetGateway(); });
 
 describe('keep-quiet matching', () => {
-  const marks = (text: string, facts: string[]) => facts.filter(fact => keptQuiet(fact, keepQuietClaims(text)));
+  const said = (...lines: Array<[string, string]>) => lines.map(([speaker, text]) => ({ speaker, text }));
+  const marks = (messages: Array<{ speaker: string; text: string }>, facts: string[]) => facts.filter(fact => keptQuiet(fact, keepQuietClaims(messages)));
   test('a fact restating the keep-quiet claim is marked, and another claim in the same window is not', () => {
-    const text = '**user:** Got it. Keep this quiet for now, but Acme Example is merging with Beta Example. How often should I water basil?';
-    expect(marks(text, ['Acme Example is merging with Beta Example.', 'User asked that the Acme Example and Beta Example merger be kept quiet.',
+    const window = said(['user', 'Got it. Keep this quiet for now, but Acme Example is merging with Beta Example. How often should I water basil?']);
+    expect(marks(window, ['Acme Example is merging with Beta Example.', 'User asked that the Acme Example and Beta Example merger be kept quiet.',
       'User said work was busy and asked to keep the Acme Example merger with Beta Example quiet for now.', 'User waters basil twice a week.', 'Acme Example hired a new CFO.']))
       .toEqual(['Acme Example is merging with Beta Example.', 'User asked that the Acme Example and Beta Example merger be kept quiet.',
         'User said work was busy and asked to keep the Acme Example merger with Beta Example quiet for now.']);
   });
-  test('other cues mark their claim; an assistant turn and a trailing "between us" name none', () => {
-    expect(marks('**Owner Example:** Between us, Acme Example closed its seed round.', ['Acme Example closed its seed round.'])).toHaveLength(1);
-    expect(marks('**user:** Between us. Acme Example closed its seed round.', ['Acme Example closed its seed round.'])).toHaveLength(1);
-    expect(marks('**user:** Off the record, the Lisbon office opens in March.', ['The Lisbon office opens in March.'])).toHaveLength(1);
-    expect(marks('**user:** Acme Example closed its seed round. Please don\'t share this.', ['Acme Example closed its seed round.'])).toHaveLength(0);
-    expect(marks('**assistant:** Understood, I will keep that quiet. Basil likes a half-strength liquid feed every three weeks.',
+  test('other cues mark their claim; an assistant message, an idiom and a trailing "between us" name none', () => {
+    const SEED = 'Acme Example closed its seed round.';
+    expect(marks(said(['alice-example', 'Between us, Acme Example closed its seed round.']), [SEED])).toHaveLength(1);
+    expect(marks(said(['alice-example', 'Between us. Acme Example closed its seed round.']), [SEED])).toHaveLength(1);
+    expect(marks(said(['user', 'Off the record, the Lisbon office opens in March.']), ['The Lisbon office opens in March.'])).toHaveLength(1);
+    expect(marks(said(['alice-example', 'Thanks. Between us and the competition, Acme Example closed its seed round.']), [SEED])).toHaveLength(0);
+    expect(marks(said(['alice-example', 'Acme Example closed its seed round.'], ['bob-example', 'Don\'t mention it, Acme Example closed its seed round.']), [SEED])).toHaveLength(0);
+    expect(marks(said(['user', 'Acme Example closed its seed round. Please don\'t share this.']), [SEED])).toHaveLength(0);
+    expect(marks(said(['assistant', 'Understood, I will keep that quiet. Basil likes a half-strength liquid feed every three weeks.']),
       ['Basil likes a half-strength liquid feed every three weeks.'])).toHaveLength(0);
-    expect(marks('**user:** I want our chats to stay friendly and respectful between us.', ['User wants the chats to stay friendly and respectful.'])).toHaveLength(0);
-    expect(marks('**user:** Acme Example closed its seed round.', ['Acme Example closed its seed round.'])).toHaveLength(0);
+    expect(marks(said(['assistant', 'Off the record, Acme Example closed its seed round.']), [SEED])).toHaveLength(0);
+    expect(marks(said(['user', 'I want our chats to stay friendly and respectful between us.']), ['User wants the chats to stay friendly and respectful.'])).toHaveLength(0);
+    expect(marks(said(['user', 'Acme Example closed its seed round.']), [SEED])).toHaveLength(0);
   });
 });
 
@@ -88,27 +93,38 @@ describe('an unmanaged brain', () => {
     await engine.initSchema();
   });
   afterAll(async () => { await engine.disconnect(); });
-  test('a keep-quiet claim on a world page is stored private and the page\'s other facts stay world', async () => {
+  const BETWEEN = 'Beta Example opens a Lisbon office in March';
+  const ASSISTANT = 'Basil likes a half-strength liquid feed every three weeks';
+  /** Extract one world page through the production window path (gateway stub, real parser and renderer); its stored facts. */
+  async function extractPage(page: string): Promise<Array<{ fact: string; visibility: string }>> {
     await engine.setConfig('facts.extraction_enabled', 'true');
     await engine.setConfig('facts.default_visibility', 'world');
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
-    const page = 'conversations/2026-03-10/chat-example';
     await engine.putPage(page, { type: 'conversation' as never, title: 'Conversation 2026-03-10', timeline: '', frontmatter: { date: '2026-03-10' },
       compiled_truth: ['**user** (2026-03-10 9:00 AM): I send the quarterly plan on Thursday.',
-        '**user** (2026-03-10 9:01 AM): Keep this quiet for now, but Acme Example closed its seed round.'].join('\n') });
+        '**user** (2026-03-10 9:01 AM): Keep this quiet for now, but Acme Example closed its seed round.',
+        '**user** (2026-03-10 9:02 AM): Between us, Beta Example opens a Lisbon office in March.',
+        '**assistant** (2026-03-10 9:03 AM): Understood, I will keep that quiet. Basil likes a half-strength liquid feed every three weeks.'].join('\n') });
     __setChatTransportForTests(async (opts): Promise<ChatResult> => {
-      const text = opts.system === SLOT_TAG_SYSTEM ? '{"slots":[]}' : JSON.stringify({ facts: [
-        { fact: WORLD, kind: 'commitment', entity: null, confidence: 1, notability: 'high' },
-        { fact: QUIET, kind: 'fact', entity: null, confidence: 1, notability: 'high' },
-      ] });
+      const text = opts.system === SLOT_TAG_SYSTEM ? '{"slots":[]}' : JSON.stringify({ facts: [WORLD, QUIET, BETWEEN, ASSISTANT]
+        .map(fact => ({ fact, kind: 'fact', entity: null, confidence: 1, notability: 'high' })) });
       return { text, blocks: [{ type: 'text', text }], stopReason: 'end', model: 'test:stub', providerId: 'test',
         usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } } as ChatResult;
     });
     const spy = spyOn(process.stderr, 'write').mockImplementation(() => true);
     try { await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: [page], sleepMs: 0, overrideDisabled: true }); }
     finally { spy.mockRestore(); }
-    const rows = (await factRows(engine, page)).filter(row => row.fact !== 'EXTRACTION_COMPLETE');
-    expect(rows).toEqual([{ fact: WORLD, visibility: 'world' }, { fact: QUIET, visibility: 'private' }]);
+    return (await factRows(engine, page)).filter(row => row.fact !== 'EXTRACTION_COMPLETE');
+  }
+  test('keep-quiet claims on a world page are stored private and the page\'s other facts stay world', async () => {
+    expect(await extractPage('conversations/2026-03-10/chat-example')).toEqual([{ fact: WORLD, visibility: 'world' }, { fact: QUIET, visibility: 'private' },
+      { fact: BETWEEN, visibility: 'private' }, { fact: ASSISTANT, visibility: 'world' }]);
+  }, 60_000);
+  test('a claim purged while it was world is never narrowed back into memory', async () => {
+    await engine.executeRaw('DELETE FROM facts');
+    await engine.executeRaw(`INSERT INTO fact_purges(source_id, visibility, fact_hash) VALUES('default', 'world', gbrain_fact_fingerprint($1))`, [QUIET]);
+    expect(await extractPage('conversations/2026-03-11/chat-example')).toEqual([{ fact: WORLD, visibility: 'world' },
+      { fact: BETWEEN, visibility: 'private' }, { fact: ASSISTANT, visibility: 'world' }]);
   }, 60_000);
 });
 

@@ -5,7 +5,7 @@
  * visibility, so the owner's own reads are unchanged (R94).
  */
 
-const CUE = /\b(?:keep (?:this|it|that) (?:quiet|between us|to yourself|under wraps|on the down ?low)|off the record|(?:do not|don'?t) (?:share|repeat|mention|spread) (?:this|it|that)|(?:do not|don'?t) tell anyone)\b|^(?:just |strictly )?between (?:you and me|us|ourselves)\b/i;
+const CUE = /\b(?:keep (?:this|it|that) (?:quiet|between us|to yourself|under wraps|on the down ?low)|off the record|(?:do not|don'?t) (?:share|repeat|spread) (?:this|it|that)|(?:do not|don'?t) tell anyone)\b|^(?:just |strictly )?between (?:you and me|us|ourselves)(?=\s*(?:[,.:;!]|$|but\b))/i;
 const STOP = new Set(('the and but for now this that these those with from into onto about after before over under just also very '
   + 'its it\'s his her their our your you they them she him was were are has have had will would could should can may might '
   + 'not yet any all some more most then than when what which who whom whose where why how been being one two get got '
@@ -17,21 +17,21 @@ function words(text: string): Set<string> {
 
 /**
  * The word sets of the claims a window's keep-quiet sentences name: the words after the cue, else the rest of its
- * sentence, else (when the sentence opens with the cue, as in "Between us. ...") the next sentence. An assistant turn
- * ("I will keep that quiet") names no claim.
+ * sentence, else (when the sentence opens with the cue, as in "Between us. ...") the next sentence of the same message.
+ * An assistant message ("I will keep that quiet") names no claim.
  */
-export function keepQuietClaims(text: string): Set<string>[] {
-  const turns = text.split(/\n(?=\*\*[^*\n]{1,80}:\*\*)/).filter(turn => !/^\*\*assistant:\*\*/i.test(turn.trim()));
-  const sentences = turns.join('\n').replace(/\*\*[^*\n]{1,80}:\*\*/g, '\n').split(/(?<=[.!?])\s+|\n+/)
-    .map(sentence => sentence.trim().replace(/^[^\p{L}\p{N}]+/u, '')).filter(Boolean);
-  return sentences.flatMap((sentence, i) => {
-    const cue = CUE.exec(sentence);
-    if (!cue) return [];
-    const after = words(sentence.slice(cue.index + cue[0].length));
-    if (after.size >= 2) return [after];
-    const rest = words(sentence.slice(0, cue.index) + ' ' + sentence.slice(cue.index + cue[0].length));
-    if (rest.size >= 2) return [rest];
-    return cue.index === 0 ? [words(sentences[i + 1] ?? '')] : [];
+export function keepQuietClaims(messages: ReadonlyArray<{ speaker: string; text: string }>): Set<string>[] {
+  return messages.filter(message => message.speaker.trim().toLowerCase() !== 'assistant').flatMap(message => {
+    const sentences = message.text.split(/(?<=[.!?])\s+|\n+/).map(sentence => sentence.trim().replace(/^[^\p{L}\p{N}]+/u, '')).filter(Boolean);
+    return sentences.flatMap((sentence, i) => {
+      const cue = CUE.exec(sentence);
+      if (!cue) return [];
+      const after = words(sentence.slice(cue.index + cue[0].length));
+      if (after.size >= 2) return [after];
+      const rest = words(sentence.slice(0, cue.index) + ' ' + sentence.slice(cue.index + cue[0].length));
+      if (rest.size >= 2) return [rest];
+      return cue.index === 0 ? [words(sentences[i + 1] ?? '')] : [];
+    });
   });
 }
 
