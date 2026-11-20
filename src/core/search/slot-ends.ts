@@ -12,12 +12,13 @@ import { readSlotRows, type FactPoolScope } from './fact-relevance.ts';
  * floor, quarantine and private-page filters), so a row the caller cannot read never ends one it can. `entities` lists
  * the fact keys (factEntitySlugs) a reader already resolved for one entity, grouped as that entity. A stored valid_until
  * wins; a derived end becomes the row's valid_until where the row carries one, and an active-only reader drops a row
- * whose end has passed. A failed read leaves the rows as stored.
+ * whose end has passed. A failed read leaves the rows as stored. A row that names a dimension outside the slot
+ * vocabulary (or none) has no slot to end, so rows that are all like that cost no read.
  */
-export async function applySlotEnds<T extends { id: number; source_id: string; entity_slug: string | null; valid_until?: Date | string | null }>(
+export async function applySlotEnds<T extends { id: number; source_id: string; entity_slug: string | null; valid_until?: Date | string | null; dimension?: string | null }>(
   engine: BrainEngine, scope: FactPoolScope, rows: T[], opts: { activeOnly: boolean; entities?: ReadonlyArray<{ source_id: string; slugs: readonly string[] }> }): Promise<T[]> {
   const key = (source: string, slug: string) => source + '\u0000' + slug;
-  const keyed = new Map(rows.flatMap(r => (r.entity_slug ? [[key(r.source_id, r.entity_slug), { source_id: r.source_id, entity_slug: r.entity_slug }] as const] : [])));
+  const keyed = new Map(rows.flatMap(r => (r.entity_slug && (r.dimension === undefined || SLOT_DIMENSIONS.has(r.dimension ?? '')) ? [[key(r.source_id, r.entity_slug), { source_id: r.source_id, entity_slug: r.entity_slug }] as const] : [])));
   if (!keyed.size) return rows;
   const canonical = new Map<string, string>();
   for (const e of opts.entities ?? []) for (const s of e.slugs) {
