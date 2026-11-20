@@ -50,36 +50,68 @@ async function contextFor(engine: BrainEngine, path: Path, op: typeof putPage): 
 }
 
 /**
- * A put on the Rust engine returns, then the persistence consumer's projection pass (page-state/projections.ts selectWindowJobs,
- * reached from persistence/consumer.ts runResidentProjectionInvocation) refuses on raw_sql; the consumer catches it and writes
- * `[persistence] ... reason=engine_capability_missing` to stderr. That refusal is not link preparation's and has nothing to do
- * with wikilinks, but the case did reach it, so on the Rust arm the case ends on it (the harness wants a typed refusal as the
- * end of a case that reached one). Once the pass is served the line never appears and the case returns its value to compare.
+ * Two Rust-engine stops that are not link preparation's, named so a case can end on them without hiding a wrong put result:
+ *  - PROJECTION_PASS: after any put returns, the persistence consumer's projection pass refuses on raw_sql (page-state/projections.ts
+ *    selectWindowJobs, the `probed` statement at :665, reached from persistence/consumer.ts runResidentProjectionInvocation); the
+ *    consumer catches it and writes `[persistence] ... reason=engine_capability_missing` to stderr. A put with no wikilink hits it too.
+ *  - LINK_EFFECT: the MCP path builds its links in the post-commit `links` effect (persistence/effects.ts runLinksEffect, whose first
+ *    statement is `engine.executeRaw` at persistence/effect-links.ts:110, a read of persistence_requests), so a Rust brain never builds
+ *    them and the page keeps no link.
+ * The harness wants a case that reached a typed refusal to END on one. `endOnNamedStop` runs after the case compared its put result
+ * with the expected one (`expectPut`), so a wrong answer, page or link fails as itself and never becomes an accepted refusal.
  */
-async function observingConsumerRefusal<T>(backend: string, run: () => Promise<T>): Promise<T> {
+const PROJECTION_PASS = 'page-state/projections.ts:665 selectWindowJobs (projection pass, persistence/consumer.ts runResidentProjectionInvocation)';
+const LINK_EFFECT = 'persistence/effect-links.ts:110 runLinksEffect (executeRaw of persistence_requests, post-commit links effect)';
+
+/** Collects the persistence consumer's stderr lines while `run` and its effects settle. */
+async function withConsumerLog<T>(run: () => Promise<T>): Promise<{ value: T; refusedByConsumer: (bounded: boolean) => Promise<boolean> }> {
   const lines: string[] = [];
   const write = process.stderr.write.bind(process.stderr);
   process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
     if (String(chunk).includes('[persistence]')) lines.push(String(chunk));
     return (write as (...a: unknown[]) => boolean)(chunk, ...rest);
   }) as typeof process.stderr.write;
+  const refused = () => lines.some((l) => l.includes('reason=engine_capability_missing'));
   try {
     const value = await run();
-    if (backend === 'rust') {
-      const deadline = Date.now() + 5000;
-      while (!lines.some((l) => l.includes('reason=engine_capability_missing')) && Date.now() < deadline) await Bun.sleep(25);
-    }
-    const refusal = lines.find((l) => l.includes('reason=engine_capability_missing'));
-    if (refusal !== undefined) {
-      throw Object.assign(new Error(`the persistence consumer stopped on a typed refusal: ${refusal.trim()}`), { code: 'engine_capability_missing', reason: 'raw_sql' });
-    }
-    return value;
-  } finally {
+    return { value, refusedByConsumer: async (bounded) => {
+      // Bounded wait: the consumer's refusal is written by a background pass, so give it up to 5 s to appear.
+      for (const deadline = Date.now() + 5000; bounded && !refused() && Date.now() < deadline;) await Bun.sleep(25);
+      process.stderr.write = write as typeof process.stderr.write;
+      return refused();
+    } };
+  } catch (error) {
     process.stderr.write = write as typeof process.stderr.write;
+    throw error;
   }
 }
 
+/** The typed refusal a case ends on, naming the site. */
+const stoppedAt = (site: string) => Object.assign(new Error(`stopped on a typed refusal outside link preparation: ${site}`),
+  { code: 'engine_capability_missing', reason: 'raw_sql' });
+
+/**
+ * Runs a put case: the put's result is compared with `expected` on every arm; only then may the Rust arm end on a named stop.
+ * `expected` holds the links the page ends with where the engine builds them. The one allowed difference is the MCP path on
+ * Rust, whose links are not built (LINK_EFFECT): its links are then empty, everything else must still be equal to `expected`.
+ */
+async function putCase<T extends { links: unknown }>(backend: string, path: Path, run: () => Promise<T>, expected: T, wantsLinks: boolean): Promise<T> {
+  const { value, refusedByConsumer } = await withConsumerLog(run);
+  const linksNotBuilt = backend === 'rust' && path === 'mcp' && wantsLinks && (value.links as unknown[]).flat().length === 0;
+  if (linksNotBuilt) expect({ ...value, links: null }).toEqual({ ...expected, links: null });
+  else expect(value).toEqual(expected);
+  const refused = await refusedByConsumer(backend === 'rust');
+  if (backend !== 'rust') return value;
+  if (linksNotBuilt) {
+    if (!refused) throw new Error('the MCP put to an existing page built no link on Rust and the consumer logged no typed refusal that explains it');
+    throw stoppedAt(LINK_EFFECT);
+  }
+  if (refused) throw stoppedAt(PROJECTION_PASS);
+  return value;
+}
+
 const page = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${body}\n`;
+const BATCH_COUNTS = { committed: 2, failed: 0, pending: 0, total: 2 };
 const REQUEST = 'b0000000-0000-4000-8000-0000000000d1';
 
 /** The links a written page ends with, in a fixed order, by their endpoints and type. */
@@ -108,40 +140,55 @@ async function putOne(engine: BrainEngine, path: Path, slug: string, body: strin
   return { status: answer.status, slug: answer.slug };
 }
 
+type Link = { from: string; to: string; type: string };
+const link = (from: string, to: string): Link => ({ from, to, type: 'mentions' });
+
+/** The page a put stored, by what a reader sees. */
+async function storedPage(engine: BrainEngine, slug: string) {
+  const stored = await engine.getPage(slug);
+  return stored ? { slug: stored.slug, type: stored.type, title: stored.title } : null;
+}
+
 /**
- * Label, link target, slug written, links the written page ends with. The MCP path builds its links in an asynchronous effect
- * that keeps a link to a live page but not one to an alias slug (the same on PGLite and Postgres), so its alias case and the
- * alias link of its batch are expected to have no link; the CLI path resolves the alias.
+ * Label, link target, slug written, the links the written page ends with. The MCP path builds its links in an asynchronous
+ * effect that keeps a link to a live page but not one to an alias slug (the same on PGLite and Postgres), so its alias case
+ * is expected to have no link; the CLI path resolves the alias to the canonical page.
  */
-const CASES: Array<[string, string, string, number]> = [
-  ['an existing page', 'people/alice-example', 'notes/links-existing', 1],
-  ['an alias slug', 'people/bob-old', 'notes/links-alias', 1],
-  ['a missing page', 'people/nobody-example', 'notes/links-missing', 0],
+const CASES: Array<[string, string, string, Record<Path, Link[]>]> = [
+  ['an existing page', 'people/alice-example', 'notes/links-existing', { cli: [link('notes/links-existing', 'people/alice-example')], mcp: [link('notes/links-existing', 'people/alice-example')] }],
+  ['an alias slug', 'people/bob-old', 'notes/links-alias', { cli: [link('notes/links-alias', 'people/bob-example')], mcp: [] }],
+  ['a missing page', 'people/nobody-example', 'notes/links-missing', { cli: [], mcp: [] }],
 ];
 
 describe('engine parity: put with a wikilink', () => {
   for (const path of ['cli', 'mcp'] as const) {
-    for (const [label, target, slug, expected] of CASES) {
+    for (const [label, target, slug, links] of CASES) {
       parityTest(`${path}: put_page with a [[wikilink]] to ${label}`, {
-        methods: ['putPage', 'updateSlug', 'getLinks'], requires: 'raw_sql', timeout: 120_000,
-      }, (engine, backend) => inFreshHome(() => observingConsumerRefusal(backend, async () => {
+        methods: ['putPage', 'updateSlug', 'getLinks', 'getPage'], requires: 'raw_sql', timeout: 120_000,
+      }, (engine, backend) => inFreshHome(() => putCase(backend, path, async () => {
         await seed(engine);
         const answer = await putOne(engine, path, slug, `See [[${target}]] for context.`);
-        return { answer, links: await linksOf(engine, slug, path === 'mcp' && label === 'an alias slug' ? 0 : expected) };
-      })));
+        return { answer, stored: await storedPage(engine, slug), links: await linksOf(engine, slug, links[path].length) };
+      }, { answer: { status: 'created_or_updated', slug }, stored: { slug, type: 'note', title: slug }, links: links[path] }, links[path].length > 0)));
     }
 
     parityTest(`${path}: put_pages with a [[wikilink]]`, {
-      methods: ['putPage', 'updateSlug', 'getLinks'], requires: 'raw_sql', timeout: 120_000,
-    }, (engine, backend) => inFreshHome(() => observingConsumerRefusal(backend, async () => {
-      await seed(engine);
-      const ctx = await contextFor(engine, path, putPages);
-      const answer = await putPages.handler(ctx, { request_id: REQUEST, pages: [
-        { slug: 'notes/batch-a', content: page('Batch A', 'See [[people/alice-example]] and [[people/bob-old]].') },
-        { slug: 'notes/batch-b', content: page('Batch B', 'See [[people/nobody-example]].') },
-      ] }) as Record<string, unknown>;
-      const pages = answer.pages as Array<{ slug: string; state: string; status: string }>;
-      return { state: answer.state, counts: answer.counts, pages: pages.map((p) => ({ slug: p.slug, state: p.state, status: p.status })), links: [await linksOf(engine, 'notes/batch-a', path === 'cli' ? 2 : 1), await linksOf(engine, 'notes/batch-b', 0)] };
-    })));
+      methods: ['putPage', 'updateSlug', 'getLinks', 'getPage'], requires: 'raw_sql', timeout: 120_000,
+    }, (engine, backend) => inFreshHome(() => {
+      const aLinks = path === 'cli' ? [link('notes/batch-a', 'people/alice-example'), link('notes/batch-a', 'people/bob-example')] : [link('notes/batch-a', 'people/alice-example')];
+      return putCase(backend, path, async () => {
+        await seed(engine);
+        const ctx = await contextFor(engine, path, putPages);
+        const answer = await putPages.handler(ctx, { request_id: REQUEST, pages: [
+          { slug: 'notes/batch-a', content: page('notes/batch-a', 'See [[people/alice-example]] and [[people/bob-old]].') },
+          { slug: 'notes/batch-b', content: page('notes/batch-b', 'See [[people/nobody-example]].') },
+        ] }) as Record<string, unknown>;
+        const pages = answer.pages as Array<{ slug: string; state: string; status: string }>;
+        return { state: answer.state, counts: answer.counts, pages: pages.map((p) => ({ slug: p.slug, state: p.state, status: p.status })),
+          stored: [await storedPage(engine, 'notes/batch-a'), await storedPage(engine, 'notes/batch-b')],
+          links: [await linksOf(engine, 'notes/batch-a', aLinks.length), await linksOf(engine, 'notes/batch-b', 0)] };
+      }, { state: 'committed', counts: BATCH_COUNTS, pages: [{ slug: 'notes/batch-a', state: 'committed', status: 'created_or_updated' }, { slug: 'notes/batch-b', state: 'committed', status: 'created_or_updated' }],
+        stored: [{ slug: 'notes/batch-a', type: 'note', title: 'notes/batch-a' }, { slug: 'notes/batch-b', type: 'note', title: 'notes/batch-b' }], links: [aLinks, []] }, true);
+    }));
   }
 });
