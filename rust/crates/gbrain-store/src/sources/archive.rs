@@ -268,6 +268,7 @@ impl Store {
             }
             crate::cascade::remove_source_rows(tx, id)?;
             remove_sync_cursors(tx, id)?;
+            crate::persistence::remove_source_binding_in(tx, id, &record.incarnation)?;
             crate::trust::write_gate::remove_source_holds(tx, id)?;
             crate::eval_capture::remove_source_retrieved_slugs(tx, id)?;
             tx.delete(&source_key(id))?;

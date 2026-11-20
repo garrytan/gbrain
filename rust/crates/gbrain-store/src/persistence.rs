@@ -64,8 +64,8 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-mod connector_orphans;
 mod checkpoint_rows;
+mod connector_orphans;
 mod effect_scans;
 mod effect_worker;
 mod effects;
@@ -97,12 +97,12 @@ pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
-pub(crate) use op_checkpoint::{
-    delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
-};
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
+pub(crate) use op_checkpoint::{
+    delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
@@ -111,6 +111,7 @@ pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 pub use worktree_admission::WorktreeAdmissionKey;
+pub(crate) use worktrees::remove_source_binding_in;
 pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.

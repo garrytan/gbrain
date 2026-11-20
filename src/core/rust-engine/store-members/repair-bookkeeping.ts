@@ -22,10 +22,14 @@ export const listSourceIncarnations: StoreMember<[sourceIds: readonly string[]],
     return out;
   };
 
-/** The store keeps no writer bindings (a Rust brain is never managed), so no binding is an orphan. */
+/**
+ * No binding outlives its source: the store's source delete removes the binding of the deleted
+ * incarnation in the same write (`persistence::remove_source_binding_in`), and only a delete
+ * creates a new incarnation. So the list is empty.
+ */
 export const listOrphanBindings: StoreMember<[opts?: { limit?: number }], OrphanBinding[]> = async () => [];
 
-/** No binding exists to delete. */
+/** No binding is an orphan (see `listOrphanBindings`), so none is deleted. */
 export const deleteOrphanBinding: StoreMember<[binding: Pick<OrphanBinding, 'source_id' | 'source_incarnation'>], boolean> =
   async () => false;
 

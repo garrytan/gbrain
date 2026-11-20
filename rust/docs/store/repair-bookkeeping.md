@@ -12,8 +12,8 @@ store keeps (`src/core/rust-engine/store-members/repair-bookkeeping.ts`).
 | Member | SQL engines | Rust brain |
 | --- | --- | --- |
 | `listSourceIncarnations(ids)` | `{ id, incarnation }` of each named source, by `id COLLATE "C"` | `readSourceIncarnation` per distinct id, by id in code-unit order; a missing source is left out |
-| `listOrphanBindings({ limit })` | writer bindings whose source is gone or whose incarnation changed, with their pending requests | `[]`: the store keeps no writer bindings (a Rust brain is never managed) |
-| `deleteOrphanBinding(binding)` | deletes the binding when it is still an orphan | `false`: no binding exists |
+| `listOrphanBindings({ limit })` | writer bindings whose source is gone or whose incarnation changed, with their pending requests | `[]`: no binding outlives its source, because `deleteSourceRecord` removes the binding of the deleted incarnation in the same write and only a delete makes a new incarnation |
+| `deleteOrphanBinding(binding)` | deletes the binding when it is still an orphan | `false`: no binding is an orphan |
 | `readLoopFactState(loopId, { lock })` | the loop, its commitment fact and whether another open loop holds the fact; `lock` adds `FOR UPDATE` | `facts::loops` `read_loop_fact_state`; `lock` is moot, as the store serializes writes |
 | `expireSourceFactNow(factId, sourceId)` | expires one unexpired fact of the source now | `facts::loops` `expire_source_fact_now` (`rust/docs/store/facts.md`, "Open loops") |
 | `listConnectorSources({ lock })` | every source whose `config.kind` is a connector kind; `lock` share-locks them in id order | `listSourceRecords` filtered on the connector kinds, with `readSourceIncarnation`; `lock` sorts by id |

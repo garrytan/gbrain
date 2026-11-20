@@ -134,8 +134,8 @@ listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
-insertSource	pages	yes	4	no	yes	yes	serves
-deleteSourceRecord	pages	yes	5	no	yes	yes	serves
+insertSource	pages	yes	5	no	yes	yes	serves
+deleteSourceRecord	pages	yes	6	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
 holdPageEmbedding	pages	yes	1	no	yes	yes	serves
@@ -959,8 +959,8 @@ readSourceState	write_misc	yes	5	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	10	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	8	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	11	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	9	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	3	no	yes	yes	serves
 writerAdminStore	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
@@ -1028,7 +1028,7 @@ listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
 readFolderAccess	write_misc	yes	7	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	4	no	yes	yes	serves
-listOrphanBindings	repair_bookkeeping	yes	3	no	yes	yes	serves
+listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
 readLoopFactState	repair_bookkeeping	yes	2	no	yes	yes	serves
 expireSourceFactNow	repair_bookkeeping	yes	2	no	yes	yes	serves

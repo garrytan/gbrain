@@ -17,11 +17,17 @@
  *    (ids, timestamps) are never compared by value.
  */
 import { describe, expect, spyOn } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { runSources } from '../../src/commands/sources.ts';
 import { removeSource } from '../../src/core/sources-ops.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -189,5 +195,27 @@ describe('engine parity: source delete', () => {
       await engine.insertSource({ id: SRC, name: SRC, local_path: null, config: {} });
       const reborn = await observeSource(engine, SRC);
       return { dry, unconfirmed, result, missing, gone, reborn, kept: await observeSource(engine, KEEP) };
+    });
+  parityTest('a source delete removes its writer binding, so a new source with the same id can claim a checkout again',
+    { methods: ['getWorktreeBinding', 'worktreeClaimStore', 'deleteSourceRecord', 'listOrphanBindings', 'insertSource'], timeout: 120_000 },
+    async (engine) => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-parity-bound-delete-'));
+      try {
+        return await withEnv({ GBRAIN_HOME: join(dir, 'home'), DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+          await engine.insertSource({ id: SRC, name: SRC, local_path: dir, config: {} });
+          await registerLocalWriter(engine, 'cli');
+          await claimWorktree(engine, SRC, dir);
+          const bound = (await engine.getWorktreeBinding(SRC, null)) !== null;
+          const deleted = (await engine.deleteSourceRecord(SRC)).deleted;
+          const after = await engine.getWorktreeBinding(SRC, null);
+          const orphans = (await engine.listOrphanBindings()).map(row => row.source_id);
+          await engine.insertSource({ id: SRC, name: SRC, local_path: dir, config: {} });
+          const reclaim = await claimWorktree(engine, SRC, dir).then(() => 'claimed', (e: { code?: string }) => e.code ?? String(e));
+          expect({ bound, deleted, after, orphans, reclaim }).toEqual({ bound: true, deleted: true, after: null, orphans: [], reclaim: 'claimed' });
+          return { bound, deleted, after, orphans, reclaim };
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 });
