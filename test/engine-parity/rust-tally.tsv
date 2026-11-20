@@ -9,6 +9,7 @@ test/engine-parity/access-tokens.test.ts	12	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
+test/engine-parity/chronicle-publish-parity.test.ts	2	1
 test/engine-parity/chunk-reads.test.ts	13	0
 test/engine-parity/chunks.test.ts	14	1
 test/engine-parity/cli-capabilities.test.ts	2	0
@@ -40,12 +41,14 @@ test/engine-parity/facts-cycle.test.ts	14	0
 test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge.test.ts	16	2
 test/engine-parity/facts-repair.test.ts	10	3
-test/engine-parity/facts-trust.test.ts	8	5
+test/engine-parity/facts-trust.test.ts	9	4
 test/engine-parity/facts.test.ts	36	0
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/first-due.test.ts	1	0
-test/engine-parity/generation-output-parity.test.ts	7	0
+test/engine-parity/generation-output-parity.test.ts	15	0
+test/engine-parity/generation-page-rows-order.test.ts	1	0
+test/engine-parity/generation-write-parity.test.ts	1	2
 test/engine-parity/git-holds.test.ts	3	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
