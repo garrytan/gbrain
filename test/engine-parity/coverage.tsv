@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1038/1048
+# covered: 1041/1051
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -41,7 +41,7 @@
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
-# minion_queue: 117/119
+# minion_queue: 120/122
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -728,6 +728,9 @@ reserveChronicleJudgeSlot	minion_queue	yes	2	no	yes	yes	serves
 readChronicleLedger	minion_queue	yes	2	no	yes	yes	serves
 listSharedSkillMigrationRows	minion_queue	yes	1	no	yes	yes	serves
 normalizeDerivationClaims	minion_queue	yes	1	no	yes	yes	serves
+upsertFenceCandidatePart	minion_queue	yes	1	no	yes	yes	serves
+readFenceCandidateRecords	minion_queue	yes	1	no	yes	yes	serves
+readOpCheckpointRecords	minion_queue	yes	1	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	23	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
@@ -856,7 +859,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	27	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	25	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -909,7 +912,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
@@ -928,7 +931,7 @@ listMarkdownPageSlugs	collate_command_reads	yes	1	no	yes	yes	serves
 readSoftDeletedPageAtOrigin	collate_identity_downgrades	yes	1	no	yes	yes	serves
 listLivePagesAtOrigin	collate_identity_downgrades	yes	1	no	yes	yes	serves
 countPageCarryRows	collate_identity_downgrades	yes	1	no	yes	yes	serves
-writeOpCheckpointValues	collate_identity_downgrades	yes	2	no	yes	yes	serves
+writeOpCheckpointValues	collate_identity_downgrades	yes	3	no	yes	yes	serves
 readOpCheckpointValues	collate_identity_downgrades	yes	1	no	yes	yes	serves
 readCycleListingInstant	collate_cycle_window	yes	1	no	yes	yes	serves
 listSourceChangedPagesAfter	collate_cycle_window	yes	1	no	yes	yes	serves
