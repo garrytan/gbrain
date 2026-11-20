@@ -124,6 +124,7 @@ import type {
   SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert,
   SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
 } from './engine-sql/jobs-subagent.ts';
+import type * as CollateRepairReads from './engine-sql/collate-repair-reads.ts';
 import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3462,6 +3463,20 @@ export interface BrainEngine {
   listTypeOrphanPages(opts: { scope: { sourceId?: string; sourceIds?: string[] }; types: readonly string[]; limit: number }): Promise<Array<{ slug: string; source_id: string; type: string | null }>>;
   /** The live pages whose id is in `ids` with their tags in byte order, in no fixed order (export-snapshot.ts `readExportPages`). */
   readExportPageRows(ids: readonly string[]): Promise<Array<{ page: Page; tags: string[] }>>;
+  /** Per source, the alias rows (both tables) whose page row is absent, in source byte order (repair/aliases.ts). */
+  countOrphanedAliasRows(): Promise<CollateRepairReads.OrphanedAliasCount[]>;
+  /** Per (source, slug) of these sources, the alias rows whose page row is absent, in byte order of source then slug. */
+  listOrphanedAliasTargets(sourceIds: readonly string[]): Promise<CollateRepairReads.OrphanedAliasTarget[]>;
+  /** How many alias rows of these sources name a soft-deleted page. */
+  countSoftDeletedAliasTargets(sourceIds: readonly string[]): Promise<number>;
+  /** The active facts of these sources that share a source, visibility, speaker and fingerprint with another, in byte order (repair/duplicate-facts.ts). `auditSources` are the fact sources left out. */
+  listDuplicateFactRows(sourceIds: readonly string[], auditSources: readonly string[]): Promise<CollateRepairReads.DuplicateFactRow[]>;
+  /** Per page-less `entity_slug` of these sources: the database-only fact ids and the count of fence-held facts, in (source, slug) byte order (repair/facts-rehome.ts). */
+  listPagelessEntityFacts(sourceIds: string[]): Promise<CollateRepairReads.PagelessEntityFactRow[]>;
+  /** The id and incarnation (as text) of each named source, in id byte order. */
+  listSourceIncarnations(sourceIds: string[]): Promise<Array<{ id: string; incarnation: string }>>;
+  /** The facts the pre-#6023 writeback closed at their own instant, with their partners, in (source, id) order (repair/consolidate-ties.ts). */
+  listClosedConsolidationTies(sourceIds: readonly string[]): Promise<CollateRepairReads.ClosedTieRow[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
   /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */

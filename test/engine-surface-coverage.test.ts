@@ -141,7 +141,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Command page reads (engine-sql/collate-command-reads.ts; covered by test/engine-parity/collate-command-listings.test.ts)
   'listLivePagesNamingReader', 'readPageAccessRows', 'listMarkdownPageSlugs',
   // Slug reads that order by byte (engine-sql/collate-slug-reads.ts; covered by the collate-*.test.ts parity files)
-  'resolveLiveSlugByPath', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows',
+  'resolveLiveSlugByPath', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',

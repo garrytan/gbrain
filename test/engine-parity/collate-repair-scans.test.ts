@@ -13,12 +13,13 @@
  *  - Why existing coverage misses it: the repair tests seed one source and slugs that sort the same in every locale,
  *    and CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an
  *    en_US Postgres to see it fail.
- *  - Seam: source rows come from the createSource fixture; alias and fact rows from harness-only SQL. Every scan is raw
- *    SQL, so the Rust arm stops on its raw_sql refusal.
+ *  - Seam: source rows come from the createSource fixture; alias rows from putPage, updateSlug and deletePage (a rename's redirect
+ *    outlives a hard delete of its page); fact rows from insertFact and consolidateFact. Every scan is a typed member the
+ *    Rust arm serves from its alias and fact records.
  */
 import { describe, expect } from 'bun:test';
-import type { BrainEngine } from '../../src/core/engine.ts';
-import { aliasesRepair, ORPHANED_ALIAS_COUNTS_SQL } from '../../src/core/repair/aliases.ts';
+import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { aliasesRepair } from '../../src/core/repair/aliases.ts';
 import { findDuplicateFacts } from '../../src/core/repair/duplicate-facts.ts';
 import { classifyPagelessEntities } from '../../src/core/repair/facts-rehome.ts';
 import { findClosedTies } from '../../src/core/repair/consolidate-ties.ts';
@@ -38,42 +39,43 @@ async function sources(engine: BrainEngine, backend: Parameters<typeof createSou
   for (const id of MIXED_SOURCES) await createSource(engine, backend, id);
 }
 
-async function fact(engine: BrainEngine, sourceId: string, entity: string, text: string, extra: Record<string, unknown> = {}) {
-  const cols = ['source_id', 'entity_slug', 'fact', 'kind', 'visibility', 'source', ...Object.keys(extra)];
-  const vals = [sourceId, entity, text, 'fact', 'world', 'test', ...Object.values(extra)];
-  await engine.executeRaw(`INSERT INTO facts (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`, vals);
+async function fact(engine: BrainEngine, sourceId: string, entity: string, text: string, extra: Partial<NewFact> = {}) {
+  return (await engine.insertFact({ fact: text, kind: 'fact', entity_slug: entity, visibility: 'world', source: 'test', ...extra }, { source_id: sourceId })).id;
 }
 
 describe('repair scans list their items by byte', () => {
-  parityTest('orphaned-alias counts and the aliases plan list sources, then slugs, by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('orphaned-alias counts and the aliases plan list sources, then slugs, by byte', { methods: ['putPage', 'updateSlug', 'deletePage', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets'] }, async (engine, backend) => {
     await sources(engine, backend);
-    for (const source of MIXED_SOURCES) for (const slug of MIXED_SLUGS) {
-      await engine.executeRaw('INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES ($1, $2, $3)', [source, `old/${slug}`, slug]);
+    // A rename leaves a redirect from the old slug; a hard delete of the page leaves the redirect pointing at nothing.
+    for (const sourceId of MIXED_SOURCES) for (const slug of MIXED_SLUGS) {
+      await engine.putPage(`old/${slug}`, { type: 'note', title: slug, compiled_truth: slug, timeline: '' }, { sourceId });
+      await engine.updateSlug(`old/${slug}`, slug, { sourceId });
+      await engine.deletePage(slug, { sourceId });
     }
-    const counts = await engine.executeRaw<{ source_id: string }>(ORPHANED_ALIAS_COUNTS_SQL);
+    const counts = await engine.countOrphanedAliasRows();
     expect(counts.map(r => r.source_id).filter(id => MIXED_SOURCES.includes(id))).toEqual(BYTE_SOURCES);
     const plan = await aliasesRepair.plan(engine, { brain_id: 'host', source_ids: MIXED_SOURCES }, null);
     expect(plan.items.map(i => [i.source_id, i.slug])).toEqual(BYTE_PAIRS);
   });
 
-  parityTest('findDuplicateFacts lists its groups by source id by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findDuplicateFacts lists its groups by source id by byte', { methods: ['insertFact', 'listDuplicateFactRows'] }, async (engine, backend) => {
     await sources(engine, backend);
     for (const source of MIXED_SOURCES) for (let i = 0; i < 2; i++) await fact(engine, source, 'people/alice-example', 'Alice runs the example team');
     const groups = await findDuplicateFacts(engine, MIXED_SOURCES);
     expect(groups.map(g => g.source_id)).toEqual(BYTE_SOURCES);
   });
 
-  parityTest('classifyPagelessEntities lists sources, then entity slugs, by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('classifyPagelessEntities lists sources, then entity slugs, by byte', { methods: ['insertFact', 'listPagelessEntityFacts'] }, async (engine, backend) => {
     await sources(engine, backend);
     for (const source of MIXED_SOURCES) for (const slug of MIXED_SLUGS) await fact(engine, source, slug, `A fact about ${slug}`);
     const rows = await classifyPagelessEntities(engine, MIXED_SOURCES);
     expect(rows.map(r => [r.source_id, r.slug])).toEqual(BYTE_PAIRS);
   });
 
-  parityTest('findClosedTies lists its ties by source id by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findClosedTies lists its ties by source id by byte', { methods: ['insertFact', 'consolidateFact', 'listClosedConsolidationTies'] }, async (engine, backend) => {
     await sources(engine, backend);
-    const tie = { claim_metric: 'mrr', consolidated_into: 1, valid_from: '2026-01-01T00:00:00Z', valid_until: '2026-01-01T00:00:00Z' };
-    for (const source of MIXED_SOURCES) for (const n of [1, 2]) await fact(engine, source, 'companies/acme-example', `MRR reading ${n}`, tie);
+    const tie = { claim_metric: 'mrr', valid_from: new Date('2026-01-01T00:00:00Z'), valid_until: new Date('2026-01-01T00:00:00Z') };
+    for (const source of MIXED_SOURCES) for (const n of [1, 2]) await engine.consolidateFact(await fact(engine, source, 'companies/acme-example', `MRR reading ${n}`, tie), 1);
     const ties = await findClosedTies(engine, MIXED_SOURCES);
     expect([...new Set(ties.map(t => t.source_id))]).toEqual(BYTE_SOURCES);
   });

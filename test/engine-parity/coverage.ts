@@ -251,6 +251,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows'],
 
+  // repair_reads: the repair scans that order by byte (engine-sql/collate-repair-reads.ts)
+  repair_reads: ['countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows',
+    'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies'],
   // slug_reads: slug reads that order by byte (engine-sql/collate-slug-reads.ts)
   slug_reads: ['resolveLiveSlugByPath', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',

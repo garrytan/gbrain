@@ -25,6 +25,7 @@ mod notifier;
 mod op_checkpoint;
 mod page_visibility;
 mod pages;
+mod repair_reads;
 mod search;
 mod session_state;
 mod slug_reads;

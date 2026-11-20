@@ -14,8 +14,9 @@
  *    Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
  *  - Seam: pages, tags and links are written through the engine; the removed-path case sets source_path with
- *    harness-only SQL. Snapshot and fanout are engine methods, so the Rust arm runs them; the other readers use raw
- *    SQL, so the Rust arm stops on its raw_sql refusal.
+ *    refreshPageOrigin and the export case seeds through getPage. Snapshot, fanout, the export rows and the removed-path
+ *    lookup are served typed members, so the Rust arm runs them; initGuestSource still writes through raw SQL, so the
+ *    Rust arm stops on its raw_sql refusal for that case.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';

@@ -577,6 +577,34 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
+/// The `(source, canonical_slug)` of every `slug_aliases` row and the `(source, slug)` of every
+/// `page_aliases` row (one per row, any origin): the pages the alias rows name, for the repair
+/// scans that look for rows whose page is gone (`repair_reads`).
+pub(crate) fn alias_target_rows(
+    read: &dyn KvRead,
+) -> Result<(Vec<(String, String)>, Vec<(String, String)>)> {
+    let mut redirects = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &[keys::ALIAS, SLUG_ALIAS], false, &mut |k, v| {
+        let source = tail(k, 2).into_iter().next().unwrap_or_default();
+        match serde_json::from_slice::<SlugAliasRecord>(v) {
+            Ok(row) => redirects.push((source, row.canonical_slug)),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    let mut pages = Vec::new();
+    for (_, parts) in scan_tails(read, &[keys::ALIAS, PAGE_ALIAS_BY_SLUG])? {
+        if let [source, slug, _, _] = parts.as_slice() {
+            pages.push((source.clone(), slug.clone()));
+        }
+    }
+    Ok((redirects, pages))
+}
+
 /// The rank of an origin in `readAliases`: frontmatter answers before declared, declared before
 /// subject.
 fn origin_rank(origin: &str) -> u8 {

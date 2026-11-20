@@ -95,7 +95,11 @@ fn unarchived_slug_sources_list_live_holders_by_byte() {
         b.list_unarchived_slug_sources("notes/shared").unwrap(),
         vec!["a-z", "a0", "ab"]
     );
-    assert!(b.list_unarchived_slug_sources("missing").unwrap().is_empty());
+    assert!(
+        b.list_unarchived_slug_sources("missing")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -127,7 +131,12 @@ fn type_counts_and_orphans_follow_the_scope_and_byte_order() {
     let rows = b.list_type_orphan_pages(&query).unwrap();
     let pairs: Vec<(String, String)> = rows
         .iter()
-        .map(|r| (r["source_id"].as_str().unwrap().into(), r["slug"].as_str().unwrap().into()))
+        .map(|r| {
+            (
+                r["source_id"].as_str().unwrap().into(),
+                r["slug"].as_str().unwrap().into(),
+            )
+        })
         .collect();
     assert_eq!(
         pairs,
@@ -153,7 +162,8 @@ fn export_page_rows_carry_live_pages_with_byte_ordered_tags() {
             compiled_truth: slug.into(),
             ..PageInput::default()
         };
-        b.put_page(slug, &input, &PutPageOptions::default()).unwrap()["id"]
+        b.put_page(slug, &input, &PutPageOptions::default())
+            .unwrap()["id"]
             .as_u64()
             .unwrap()
     };
@@ -162,7 +172,9 @@ fn export_page_rows_carry_live_pages_with_byte_ordered_tags() {
         b.add_tag("tagged", tag, None).unwrap();
     }
     b.soft_delete_page("gone", None).unwrap();
-    let rows = b.read_export_page_rows(&[tagged, tagged, gone, 999_999]).unwrap();
+    let rows = b
+        .read_export_page_rows(&[tagged, tagged, gone, 999_999])
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["page"]["slug"], "tagged");
     assert_eq!(rows[0]["tags"], serde_json::json!(["a-z", "a/z", "ab"]));

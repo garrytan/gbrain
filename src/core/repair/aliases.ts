@@ -37,17 +37,11 @@ export const aliasesRepair: RepairHandler = {
   publication: 'projection',
   embeds: false,
   async plan(engine, scope, after) {
-    const rows = await engine.executeRaw<{ source_id: string; slug: string; page_aliases: number; slug_redirects: number }>(
-      `SELECT source_id,slug,sum(page_aliases)::int AS page_aliases,sum(slug_redirects)::int AS slug_redirects FROM (
-         SELECT pa.source_id,pa.slug,1 AS page_aliases,0 AS slug_redirects FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND ${MISSING('pa', 'slug')}
-         UNION ALL SELECT sa.source_id,sa.canonical_slug,0,1 FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND ${MISSING('sa', 'canonical_slug')}
-       ) o GROUP BY source_id,slug ORDER BY source_id COLLATE "C",slug COLLATE "C"`, [scope.source_ids]);
+    const rows = await engine.listOrphanedAliasTargets(scope.source_ids);
     const items: RepairItem[] = rows.map((row, index) => ({ cursor: { phase: 0, id: index + 1 }, source_id: row.source_id, slug: row.slug, chars: 0,
       action: 'delete_orphaned_aliases', change: { from: `${row.page_aliases} page alias(es), ${row.slug_redirects} slug redirect(s)`, to: 'deleted' } }));
-    const [soft] = await engine.executeRaw<{ n: number }>(`SELECT
-        (SELECT count(*)::int FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND ${SOFT_DELETED('pa', 'slug')})
-      + (SELECT count(*)::int FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND ${SOFT_DELETED('sa', 'canonical_slug')}) AS n`, [scope.source_ids]);
-    const residuals: Record<string, number> = soft?.n ? { soft_deleted_target: soft.n } : {};
+    const soft = await engine.countSoftDeletedAliasTargets(scope.source_ids);
+    const residuals: Record<string, number> = soft ? { soft_deleted_target: soft } : {};
     return { items: items.filter(item => afterCursor(item.cursor, after)), residuals };
   },
   async apply(ctx, item) {

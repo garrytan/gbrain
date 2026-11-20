@@ -54,15 +54,7 @@ export interface PagelessEntity {
 
 /** Every page-less entity slug of these sources, classified, in (source, slug) order. Read-only. */
 export async function classifyPagelessEntities(engine: BrainEngine, sourceIds: string[]): Promise<PagelessEntity[]> {
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }>(`
-    SELECT f.source_id, f.entity_slug AS slug,
-           array_agg(f.id ORDER BY f.id) FILTER (WHERE f.row_num IS NULL) AS ids,
-           count(*) FILTER (WHERE f.row_num IS NOT NULL) AS fenced
-      FROM facts f
-     WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, [sourceIds]);
+  const rows = await engine.listPagelessEntityFacts(sourceIds);
   const out: PagelessEntity[] = [];
   for (const row of rows) {
     const ids = (row.ids ?? []).map(Number);
@@ -82,8 +74,7 @@ function previewCommand(scope: RepairScope): string {
   return `gbrain repair facts-rehome${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, sources: unknown, entities: PagelessEntity[]) =>
   previewHash({ kind: 'facts-rehome-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, entities });

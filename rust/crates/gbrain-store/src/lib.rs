@@ -68,6 +68,7 @@ pub mod page_visibility;
 pub mod persistence;
 pub mod raw_files;
 pub mod relations;
+pub mod repair_reads;
 pub mod salience;
 pub mod session_state;
 pub mod slug_reads;

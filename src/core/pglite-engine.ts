@@ -290,6 +290,7 @@ import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
+import * as collateRepairReadsImpl from './engine-sql/collate-repair-reads.ts';
 import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { assertSchemaNotAhead } from './schema-client-behind.ts';
@@ -1537,6 +1538,13 @@ export class PGLiteEngine implements BrainEngine {
   countLivePageTypes(scope: collateSlugReadsImpl.TypeScope) { return collateSlugReadsImpl.countLivePageTypes(this.rawRead, scope); }
   listTypeOrphanPages(opts: Parameters<typeof collateSlugReadsImpl.listTypeOrphanPages>[1]) { return collateSlugReadsImpl.listTypeOrphanPages(this.rawRead, opts); }
   readExportPageRows(ids: readonly string[]) { return collateSlugReadsImpl.readExportPageRows(this.rawRead, ids); }
+  countOrphanedAliasRows() { return collateRepairReadsImpl.countOrphanedAliasRows(this.rawRead); }
+  listOrphanedAliasTargets(sourceIds: readonly string[]) { return collateRepairReadsImpl.listOrphanedAliasTargets(this.rawRead, sourceIds); }
+  countSoftDeletedAliasTargets(sourceIds: readonly string[]) { return collateRepairReadsImpl.countSoftDeletedAliasTargets(this.rawRead, sourceIds); }
+  listDuplicateFactRows(sourceIds: readonly string[], auditSources: readonly string[]) { return collateRepairReadsImpl.listDuplicateFactRows(this.rawRead, sourceIds, auditSources); }
+  listPagelessEntityFacts(sourceIds: string[]) { return collateRepairReadsImpl.listPagelessEntityFacts(this.rawRead, sourceIds); }
+  listSourceIncarnations(sourceIds: string[]) { return collateRepairReadsImpl.listSourceIncarnations(this.rawRead, sourceIds); }
+  listClosedConsolidationTies(sourceIds: readonly string[]) { return collateRepairReadsImpl.listClosedConsolidationTies(this.rawRead, sourceIds); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.rawRead, opts, timeoutMs); }

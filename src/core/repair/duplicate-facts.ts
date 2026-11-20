@@ -70,18 +70,7 @@ export interface DuplicateGroup {
 
 /** Every same-fingerprint group of active facts in these sources, in (source, visibility, fingerprint) order. Read-only. */
 export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[]): Promise<DuplicateGroup[]> {
-  const rows = await engine.executeRaw<{ id: number | string; source_id: string; visibility: string; fp: string; fact: string; entity_slug: string | null;
-    fenced: boolean; row_num: number | string | null; source_markdown_slug: string | null; speaker: string }>(`
-    SELECT * FROM (
-      SELECT f.id, f.source_id, f.visibility, gbrain_fact_fingerprint(f.fact) AS fp, f.fact, f.entity_slug, f.row_num, f.source_markdown_slug, f.created_at,
-             COALESCE(f.attributed_to, '') AS speaker,
-             (f.row_num IS NOT NULL AND f.source_markdown_slug IS NOT NULL AND COALESCE(f.source, '') NOT LIKE 'cli:%') AS fenced,
-             count(*) OVER (PARTITION BY f.source_id, f.visibility, COALESCE(f.attributed_to, ''), gbrain_fact_fingerprint(f.fact)) AS n
-        FROM facts f
-       WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-         AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
-    ) d WHERE d.n > 1
-    ORDER BY d.source_id COLLATE "C", d.visibility COLLATE "C", d.fp COLLATE "C", d.speaker COLLATE "C", d.fenced DESC, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
+  const rows = await engine.listDuplicateFactRows(sourceIds, [...AUDIT_ROW_SOURCES]);
   const groups: DuplicateGroup[] = [];
   let key = '';
   for (const row of rows) {
@@ -117,8 +106,7 @@ function previewCommand(scope: RepairScope, includeCrossEntity: boolean): string
   return `gbrain repair duplicate-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${includeCrossEntity ? ' --include-cross-entity' : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, includeCrossEntity: boolean, sources: unknown, groups: DuplicateGroup[]) =>
   previewHash({ kind: 'duplicate-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_cross_entity: includeCrossEntity },

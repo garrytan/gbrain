@@ -612,6 +612,75 @@ const PINS: Pin[] = [
     FROM export_page p WHERE p.deleted_at IS NULL`],
   },
   {
+    from: 'src/core/repair/aliases.ts:28 ORPHANED_ALIAS_COUNTS_SQL, at dded7edc51',
+    case: { method: 'countOrphanedAliasRows', variant: 'default', run: e => e.countOrphanedAliasRows() },
+    texts: [`SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
+    SELECT sa.source_id,1 AS slug_redirects,0 AS page_aliases FROM slug_aliases sa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug)
+    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug)) o GROUP BY source_id ORDER BY source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/repair/aliases.ts:40 aliasesRepair.plan, at dded7edc51',
+    case: { method: 'listOrphanedAliasTargets', variant: 'default', run: e => e.listOrphanedAliasTargets(['default']) },
+    texts: [`SELECT source_id,slug,sum(page_aliases)::int AS page_aliases,sum(slug_redirects)::int AS slug_redirects FROM (
+         SELECT pa.source_id,pa.slug,1 AS page_aliases,0 AS slug_redirects FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug)
+         UNION ALL SELECT sa.source_id,sa.canonical_slug,0,1 FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug)
+       ) o GROUP BY source_id,slug ORDER BY source_id COLLATE "C",slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/repair/aliases.ts:47 aliasesRepair.plan, at dded7edc51',
+    case: { method: 'countSoftDeletedAliasTargets', variant: 'default', run: e => e.countSoftDeletedAliasTargets(['default']) },
+    texts: [`SELECT
+        (SELECT count(*)::int FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug AND p.deleted_at IS NOT NULL))
+      + (SELECT count(*)::int FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug AND p.deleted_at IS NOT NULL)) AS n`],
+  },
+  {
+    from: 'src/core/repair/duplicate-facts.ts:73 findDuplicateFacts, at dded7edc51',
+    case: { method: 'listDuplicateFactRows', variant: 'default', run: e => e.listDuplicateFactRows(['default'], ['audit']) },
+    texts: [`
+    SELECT * FROM (
+      SELECT f.id, f.source_id, f.visibility, gbrain_fact_fingerprint(f.fact) AS fp, f.fact, f.entity_slug, f.row_num, f.source_markdown_slug, f.created_at,
+             COALESCE(f.attributed_to, '') AS speaker,
+             (f.row_num IS NOT NULL AND f.source_markdown_slug IS NOT NULL AND COALESCE(f.source, '') NOT LIKE 'cli:%') AS fenced,
+             count(*) OVER (PARTITION BY f.source_id, f.visibility, COALESCE(f.attributed_to, ''), gbrain_fact_fingerprint(f.fact)) AS n
+        FROM facts f
+       WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+         AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
+    ) d WHERE d.n > 1
+    ORDER BY d.source_id COLLATE "C", d.visibility COLLATE "C", d.fp COLLATE "C", d.speaker COLLATE "C", d.fenced DESC, d.created_at, d.id`],
+  },
+  {
+    from: 'src/core/repair/facts-rehome.ts:57 classifyPagelessEntities, at dded7edc51',
+    case: { method: 'listPagelessEntityFacts', variant: 'default', run: e => e.listPagelessEntityFacts(['default']) },
+    texts: [`
+    SELECT f.source_id, f.entity_slug AS slug,
+           array_agg(f.id ORDER BY f.id) FILTER (WHERE f.row_num IS NULL) AS ids,
+           count(*) FILTER (WHERE f.row_num IS NOT NULL) AS fenced
+      FROM facts f
+     WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     GROUP BY f.source_id, f.entity_slug
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/repair/facts-rehome.ts:85 sourcesOf, at dded7edc51',
+    case: { method: 'listSourceIncarnations', variant: 'default', run: e => e.listSourceIncarnations(['default']) },
+    texts: [`SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/repair/consolidate-ties.ts:47 findClosedTies, at dded7edc51',
+    case: { method: 'listClosedConsolidationTies', variant: 'default', run: e => e.listClosedConsolidationTies(['default']) },
+    texts: [`
+    SELECT f.source_id, f.id, f.entity_slug, f.consolidated_into AS take_id, f.valid_from::text AS valid_from,
+           (SELECT array_agg(g.id ORDER BY g.id) FROM facts g
+             WHERE g.source_id = f.source_id AND g.id <> f.id AND g.consolidated_into = f.consolidated_into
+               AND g.claim_metric = f.claim_metric AND g.claim_unit IS NOT DISTINCT FROM f.claim_unit
+               AND g.claim_period IS NOT DISTINCT FROM f.claim_period AND g.valid_from = f.valid_from) AS partners
+      FROM facts f
+     WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
+       AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
+     ORDER BY f.source_id COLLATE "C", f.id`],
+  },
+  {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
     texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],

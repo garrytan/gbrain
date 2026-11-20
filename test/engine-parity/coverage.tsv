@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 956/962
+# covered: 962/969
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -67,6 +67,7 @@
 # field_usage: 1/1
 # session_state: 7/7
 # alias_fanout_reads: 5/5
+# repair_reads: 6/7
 # slug_reads: 5/5
 # write_guards: 10/10
 # page_visibility: 4/4
@@ -91,10 +92,10 @@ getPage	pages	yes	112	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	551	yes	yes	yes	serves
+putPage	pages	yes	552	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	8	yes	yes	yes	serves
+deletePage	pages	yes	9	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	152	yes	yes	yes	serves
@@ -336,7 +337,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	55	yes	yes	yes	serves
+insertFact	facts	yes	58	yes	yes	yes	serves
 insertFacts	facts	yes	76	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	29	no	yes	yes	serves
@@ -348,7 +349,7 @@ listSupersessions	facts	yes	7	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	3	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
-consolidateFact	facts	yes	4	no	yes	yes	serves
+consolidateFact	facts	yes	5	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	3	no	yes	yes	serves
@@ -377,7 +378,7 @@ getStats	stats_ingest	yes	5	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	21	no	yes	yes	serves
+updateSlug	sync_aliases	yes	22	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -795,7 +796,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	72	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	68	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -964,6 +965,13 @@ resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
 readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	serves
+countOrphanedAliasRows	repair_reads	yes	1	no	yes	yes	serves
+listOrphanedAliasTargets	repair_reads	yes	1	no	yes	yes	serves
+countSoftDeletedAliasTargets	repair_reads	yes	1	no	yes	yes	serves
+listDuplicateFactRows	repair_reads	yes	1	no	yes	yes	serves
+listPagelessEntityFacts	repair_reads	yes	1	no	yes	yes	serves
+listSourceIncarnations	repair_reads	no	0	no	-	-	-
+listClosedConsolidationTies	repair_reads	yes	1	no	yes	yes	serves
 resolveLiveSlugByPath	slug_reads	yes	1	no	yes	yes	serves
 listUnarchivedSlugSources	slug_reads	yes	1	no	yes	yes	serves
 countLivePageTypes	slug_reads	yes	1	no	yes	yes	serves

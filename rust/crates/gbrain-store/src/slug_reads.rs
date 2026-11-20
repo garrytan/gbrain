@@ -115,10 +115,12 @@ impl Store {
     pub fn list_type_orphan_pages(&self, query: &TypeOrphanQuery) -> Result<Vec<Value>> {
         query.scope.check("listTypeOrphanPages")?;
         let named: Vec<&str> = query.types.iter().map(String::as_str).collect();
-        no_nul("listTypeOrphanPages", &named.iter().map(|t| ("types", *t)).collect::<Vec<_>>())?;
-        let limit = usize::try_from(query.limit).map_err(|_| {
-            StoreError::invalid("listTypeOrphanPages: limit must not be negative")
-        })?;
+        no_nul(
+            "listTypeOrphanPages",
+            &named.iter().map(|t| ("types", *t)).collect::<Vec<_>>(),
+        )?;
+        let limit = usize::try_from(query.limit)
+            .map_err(|_| StoreError::invalid("listTypeOrphanPages: limit must not be negative"))?;
         let read = self.read()?;
         let mut rows: Vec<(String, String, String)> = all_pages(&*read)?
             .into_iter()

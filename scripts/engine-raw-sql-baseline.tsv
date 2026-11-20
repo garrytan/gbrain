@@ -371,7 +371,7 @@ src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened befo
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
-src/core/export-snapshot.ts	execute_raw	4
+src/core/export-snapshot.ts	execute_raw	3
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1
@@ -536,7 +536,6 @@ src/core/ops/files.ts	execute_raw	12
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
-src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/put-page-revision-source.ts	execute_raw	1
@@ -814,21 +813,21 @@ src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4
 src/core/repair/access.ts	execute_raw	2
 src/core/repair/agent-session-facts.ts	execute_raw	9
-src/core/repair/aliases.ts	execute_raw	3
+src/core/repair/aliases.ts	execute_raw	1
 src/core/repair/atom-fence-rows.ts	execute_raw	3
 src/core/repair/atoms-restore.ts	execute_raw	5
 src/core/repair/attribution-backfill.ts	execute_raw	7
 src/core/repair/captured-facts.ts	execute_raw	6
 src/core/repair/connector-fences.ts	execute_raw	2
-src/core/repair/consolidate-ties.ts	execute_raw	3
+src/core/repair/consolidate-ties.ts	execute_raw	1
 src/core/repair/contact-rows.ts	execute_raw	4
 src/core/repair/content-receipt-root.ts	execute_raw	4
 src/core/repair/conversation-labels.ts	execute_raw	13
 src/core/repair/core.ts	execute_raw	5
-src/core/repair/duplicate-facts.ts	execute_raw	6
+src/core/repair/duplicate-facts.ts	execute_raw	4
 src/core/repair/extractor-facts.ts	execute_raw	8
 src/core/repair/fact-claim-dates.ts	execute_raw	3
-src/core/repair/facts-rehome.ts	execute_raw	4
+src/core/repair/facts-rehome.ts	execute_raw	2
 src/core/repair/failed-writes.ts	execute_raw	19
 src/core/repair/fences.ts	execute_raw	4
 src/core/repair/file-drift-class.ts	execute_raw	12	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
@@ -902,7 +901,6 @@ src/core/schema-pack/page-to-alias.ts	execute_raw	3
 src/core/schema-pack/page-to-link.ts	execute_raw	1
 src/core/schema-pack/query-cache-invalidator.ts	execute_raw	1
 src/core/schema-pack/retype.ts	execute_raw	3
-src/core/schema-pack/review.ts	execute_raw	2
 src/core/schema-pack/stats.ts	execute_raw	2
 src/core/schema-pack/sync.ts	execute_raw	3
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
@@ -966,7 +964,7 @@ src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	5
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
-src/core/sync-git.ts	execute_raw	3
+src/core/sync-git.ts	execute_raw	2
 src/core/sync-identity-downgrades.ts	execute_raw	8
 src/core/sync-pending.ts	execute_raw	3
 src/core/sync-policy.ts	execute_raw	1

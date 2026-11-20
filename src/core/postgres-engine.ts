@@ -287,6 +287,7 @@ import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
+import * as collateRepairReadsImpl from './engine-sql/collate-repair-reads.ts';
 import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
 import { postgresExecutor, type RunUnsafeOpts } from './engine-sql/dialect-postgres.ts';
@@ -1212,6 +1213,13 @@ export class PostgresEngine implements BrainEngine {
   countLivePageTypes(scope: collateSlugReadsImpl.TypeScope) { return collateSlugReadsImpl.countLivePageTypes(this.executeRaw.bind(this), scope); }
   listTypeOrphanPages(opts: Parameters<typeof collateSlugReadsImpl.listTypeOrphanPages>[1]) { return collateSlugReadsImpl.listTypeOrphanPages(this.executeRaw.bind(this), opts); }
   readExportPageRows(ids: readonly string[]) { return collateSlugReadsImpl.readExportPageRows(this.executeRaw.bind(this), ids); }
+  countOrphanedAliasRows() { return collateRepairReadsImpl.countOrphanedAliasRows(this.executeRaw.bind(this)); }
+  listOrphanedAliasTargets(sourceIds: readonly string[]) { return collateRepairReadsImpl.listOrphanedAliasTargets(this.executeRaw.bind(this), sourceIds); }
+  countSoftDeletedAliasTargets(sourceIds: readonly string[]) { return collateRepairReadsImpl.countSoftDeletedAliasTargets(this.executeRaw.bind(this), sourceIds); }
+  listDuplicateFactRows(sourceIds: readonly string[], auditSources: readonly string[]) { return collateRepairReadsImpl.listDuplicateFactRows(this.executeRaw.bind(this), sourceIds, auditSources); }
+  listPagelessEntityFacts(sourceIds: string[]) { return collateRepairReadsImpl.listPagelessEntityFacts(this.executeRaw.bind(this), sourceIds); }
+  listSourceIncarnations(sourceIds: string[]) { return collateRepairReadsImpl.listSourceIncarnations(this.executeRaw.bind(this), sourceIds); }
+  listClosedConsolidationTies(sourceIds: readonly string[]) { return collateRepairReadsImpl.listClosedConsolidationTies(this.executeRaw.bind(this), sourceIds); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.executeRaw.bind(this), opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.executeRaw.bind(this), opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.executeRaw.bind(this), opts, timeoutMs); }

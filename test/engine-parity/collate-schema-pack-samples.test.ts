@@ -12,8 +12,8 @@
  *    Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
  *  - Seam: pages are written with putPage (the orphan case writes them with an empty type). No schema pack is
- *    active, so the cores take their pack-less path. Every core reads raw SQL, so the Rust arm stops on its raw_sql
- *    refusal.
+ *    active, so the cores take their pack-less path. The orphan review reads through typed members, so the Rust arm
+ *    runs it; the retype and page-to-alias/link cores still read raw SQL, so the Rust arm stops on its raw_sql refusal.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';

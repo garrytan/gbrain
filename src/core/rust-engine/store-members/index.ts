@@ -79,6 +79,7 @@ import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
+import * as repairReads from './repair-reads.ts';
 import * as slugReads from './slug-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
@@ -129,6 +130,7 @@ export const STORE_MEMBERS = {
   ...linkTemporal,
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
+  ...repairReads,
   ...slugReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
