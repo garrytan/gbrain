@@ -296,9 +296,9 @@ for (const kind of testBackends()) describe(`inexact Git rename identity (#6729,
       // The edit lands after the verdict read the file (on its stored-title lookup) and before the identity move.
       let drifted = false;
       const racing = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-          const rows = await target.executeRaw(sql, params);
-          if (!drifted && sql.startsWith('SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path')) {
+        if (key === 'readRenameIdentityRows') return async (...args: Parameters<BrainEngine['readRenameIdentityRows']>) => {
+          const rows = await target.readRenameIdentityRows(...args);
+          if (!drifted) {
             drifted = true; write(s.root, 'notes/spec-2.md', doc('id: drifted-6729\ntitle: A different document', 'Edited.\n'));
           }
           return rows;
@@ -356,7 +356,7 @@ for (const kind of testBackends()) describe(`inexact Git rename identity (#6729,
     const manifest = buildSyncManifest(git(root, '-c', 'diff.renameLimit=5000', 'diff', '--name-status', '-M', base, target));
     expect(manifest.renamed.length).toBeGreaterThan(N / 2);
     expect(manifest.renamed.every(rename => (rename.similarity ?? 100) < 100)).toBe(true);
-    const engine0 = { executeRaw: async () => [] } as unknown as BrainEngine;
+    const engine0 = { readRenameIdentityRows: async () => [], readLiveIdentityHolders: async () => [] } as unknown as BrainEngine;
     const started = performance.now();
     const confirmed = await confirmRenameIdentities(engine0, root, base, target, manifest, { sourceId: 'bulk' });
     const elapsed = performance.now() - started;

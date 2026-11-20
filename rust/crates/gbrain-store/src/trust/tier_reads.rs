@@ -27,7 +27,7 @@ use crate::keys;
 use crate::kv::scan_prefix;
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
-use crate::pages::{PageRecord, VersionRecord, all_pages, read_page_by_id};
+use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, read_page_by_id};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -90,6 +90,13 @@ pub struct VersionIdsQuery {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageIdsQuery {
     pub ids: Vec<i64>,
+}
+
+/// A page named by source and slug (`listPageTrustTiersByKey`, `lockLivePagesByKey`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PageKeyRef {
+    pub source_id: String,
+    pub slug: String,
 }
 
 /// The scan's table: `pages` or `facts`.
@@ -395,6 +402,41 @@ impl Store {
                     "slug": page.slug,
                     "type": page.page_type,
                 }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `listPageTrustTiersByKey`: the id and stored trust tier of each named page, deleted or not,
+    /// in key order, a key named twice answering twice as the SQL join does (the join has no set
+    /// order). A key no page has answers nothing. Timeline projection stamps each row with its page's tier.
+    pub fn list_page_trust_tiers_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for PageKeyRef { source_id, slug } in refs {
+            if let Some(page) = read_page(&*read, source_id, slug)? {
+                out.push(json!({
+                    "id": page.id,
+                    "source_id": page.source_id,
+                    "slug": page.slug,
+                    "trust_tier": TrustTier::stored(page.trust_tier.as_deref()).as_str(),
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `lockLivePagesByKey`: the named pages that are live (not soft-deleted), in key order, a key
+    /// named twice answering twice as the SQL join does. The SQL engines hold each row `FOR SHARE` until the transaction ends; a
+    /// store transaction is serialized already, so no other write can delete one in between.
+    pub fn lock_live_pages_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for PageKeyRef { source_id, slug } in refs {
+            if let Some(page) = read_page(&*read, source_id, slug)?
+                && page.deleted_at_us.is_none()
+            {
+                out.push(json!({ "source_id": page.source_id, "slug": page.slug }));
             }
         }
         Ok(out)

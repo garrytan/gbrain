@@ -11,6 +11,7 @@ import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
   includeArchived?: boolean;
@@ -152,6 +153,15 @@ export async function listSourceLocalPaths(exec: LegacyUnscopedRead): Promise<st
   return rows.map(r => r.local_path);
 }
 
+/**
+ * How many live (not archived) sources are bound to a local repository, unscoped (the readiness sync probe read it
+ * through `executeRaw`). An empty path counts as unbound, as NULL does.
+ */
+export async function countRepoBoundSources(exec: LegacyUnscopedRead): Promise<number> {
+  const rows = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''`);
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** A source with a local path and its archived flag (`listLocalPathSources`). */
 export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
 
@@ -241,6 +251,126 @@ export async function countSourcePages(exec: LegacyUnscopedRead, sourceId: strin
     : 'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL';
   const [row] = await exec.executeRaw<{ n: number }>(sql, [sourceId]);
   return Number(row?.n ?? 0);
+}
+
+/**
+ * Records that the source's git sync reached `commit` and stamps `last_sync_at` with the database clock, in one UPDATE.
+ * `newestContentAt` (the HEAD committer time, ISO) is written in the same UPDATE when given; `null` clears it and
+ * `undefined` leaves it alone. An unknown source changes nothing (sync-anchor.ts `writeSyncAnchor`).
+ */
+export async function advanceSourceCommit(exec: SqlExecutor, sourceId: string, commit: string, newestContentAt?: string | null): Promise<void> {
+  if (newestContentAt !== undefined) {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+      [commit, sourceId, newestContentAt],
+    );
+    return;
+  }
+  await exec.executeRaw(
+    `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+    [commit, sourceId],
+  );
+}
+
+/** A stored page a sync size-state read reports (`readPageSizeRows`); `state`/`reason` are its page_embedding_budget row. */
+export interface PageSizeRow { slug: string; bytes: number | string | null; segmented: boolean; frontmatter: Record<string, unknown> | null; state: 'held' | 'capped' | null; reason: string | null }
+
+const PAGE_SIZE_ROWS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($3::text[])
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+
+/**
+ * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are
+ * segmented or have a page_embedding_budget row, by slug: the rows page-embedding-budget.ts readPageSizeStates maps.
+ */
+export async function readPageSizeRows(exec: LegacyUnscopedRead, sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]> {
+  return slugs
+    ? exec.executeRaw<PageSizeRow>(PAGE_SIZE_ROWS_FOR_SLUGS_SQL, [sourceId, maxBytes, [...slugs]])
+    : exec.executeRaw<PageSizeRow>(PAGE_SIZE_ROWS_SQL, [sourceId, maxBytes]);
+}
+
+/** A text-free purged change-reason pair (`reason_purge_tombstones`): the commit and repository path a purge found it under. */
+export interface ReasonPurgeTombstone { commit_sha: string; path: string }
+
+/**
+ * The source's tombstoned (commit, path) pairs, by commit then path; with `pair`, that pair when it is stored, else
+ * none: the reads a sync's reason scan, the purged-reason repair and a version snapshot check (reason-trailers.ts,
+ * repair/purged-change-reasons.ts, page-state/versions.ts).
+ */
+export async function readReasonPurgeTombstones(exec: LegacyUnscopedRead, sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]> {
+  return pair
+    ? exec.executeRaw<ReasonPurgeTombstone>('SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3', [sourceId, pair.commit_sha, pair.path])
+    : exec.executeRaw<ReasonPurgeTombstone>('SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 ORDER BY commit_sha, path', [sourceId]);
+}
+
+/**
+ * Stores each pair not stored yet and returns how many it added (facts/purge-reasons.ts `recordReasonTombstones`). No
+ * pairs add nothing; an unknown source throws (the `sources` foreign key) and stores nothing.
+ */
+export async function writeReasonPurgeTombstones(exec: SqlExecutor, sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number> {
+  if (!pairs.length) return 0;
+  return (await exec.executeRaw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
+    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
+  [sourceId, pairs.map(pair => pair.commit_sha), pairs.map(pair => pair.path)])).length;
+}
+
+/** Sets the page's embedding hold to `held` with `reason`, adding its page_embedding_budget row when it has none (page-embedding-budget.ts). */
+export async function holdPageEmbedding(exec: SqlExecutor, pageId: number, reason: string): Promise<void> {
+  await exec.executeRaw(`INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2)
+    ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason, updated_at = now()`, [pageId, reason]);
+}
+
+/** A live page with a file origin (`listSourcePathPages`). */
+export interface SourcePathPageRow { slug: string; source_path: string }
+
+/** The live pages of one source that have a `source_path`, in no set order: the pages a full sync reconciles (sync/full.ts). */
+export async function listSourcePathPages(exec: LegacyUnscopedRead, sourceId: string): Promise<SourcePathPageRow[]> {
+  return exec.executeRaw<SourcePathPageRow>(
+    `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
+    [sourceId],
+  );
+}
+
+/** The slugs of one source's live quarantined pages, in no set order: the pages link and timeline extraction skips (quarantine.ts `quarantinedSlugs`). */
+export async function listQuarantinedSlugs(exec: LegacyUnscopedRead, sourceId: string): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT slug FROM pages WHERE source_id = ${sourceId} AND deleted_at IS NULL AND NOT ${trustedSql(quarantineFilterFragment('pages'))}`);
+  const rows = await exec.executeRaw<{ slug: string }>(text, params);
+  return rows.map(row => row.slug);
+}
+
+/** A live page a rename's identity check compares (`readRenameIdentityRows`). */
+export interface RenameIdentityRow { slug: string; source_path: string | null; title: string | null }
+
+/**
+ * The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order
+ * (sync-rename-identity.ts). A value the database cannot encode throws the driver's error (22021/22P05), which the
+ * caller retries path by path.
+ */
+export async function readRenameIdentityRows(exec: LegacyUnscopedRead, sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameIdentityRow[]> {
+  return exec.executeRaw<RenameIdentityRow>(
+    `SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[]))`,
+    [sourceId, [...paths], [...slugs]],
+  );
+}
+
+/** A live page that holds a frontmatter id or a title (`readLiveIdentityHolders`). */
+export interface LiveIdentityHolderRow { slug: string; source_path: string | null; fm_id: string | null; title: string | null }
+
+/**
+ * The live pages of one source whose frontmatter id is in `ids` or whose title is in `titles`, in no set order
+ * (sync-rename-identity.ts). A value the database cannot encode throws the driver's error, which the caller handles.
+ */
+export async function readLiveIdentityHolders(exec: LegacyUnscopedRead, sourceId: string, ids: readonly string[], titles: readonly string[]): Promise<LiveIdentityHolderRow[]> {
+  return exec.executeRaw<LiveIdentityHolderRow>(
+    `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
+    [sourceId, [...ids], [...titles]],
+  );
 }
 
 /** The columns `insertSource` writes; the table fills the rest with its defaults. */

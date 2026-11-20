@@ -181,3 +181,225 @@ fn insert_source_creates_a_source_and_refuses_a_taken_id_or_name() {
     let again = store.get_source_by_id("wiki").unwrap().unwrap();
     assert_eq!(again.name.as_deref(), Some("Wiki"));
 }
+
+fn page_at(store: &Store, source_id: &str, slug: &str, path: Option<&str>, fm: serde_json::Value) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": slug, "compiled_truth": "body",
+        "source_path": path, "frontmatter": fm,
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({"sourceId": source_id})).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
+#[test]
+fn advancing_a_source_commit_stores_it_and_sets_clears_or_keeps_the_newest_time() {
+    let dir = TempDir::new("cli-src-advance");
+    let store = open(&dir);
+    source(&store, "repo", Some("/w/repo"), json!({}));
+    store
+        .advance_source_commit("repo", "aaaa111", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
+    let plain = store.read_plain_sync_source("repo").unwrap().unwrap();
+    assert_eq!(plain.last_commit.as_deref(), Some("aaaa111"));
+    let detail = store.get_source("repo").unwrap().unwrap();
+    assert_eq!(detail.last_commit.as_deref(), Some("aaaa111"));
+    store
+        .advance_source_commit("repo", "bbbb222", None)
+        .unwrap();
+    store
+        .advance_source_commit("repo", "cccc333", Some(None))
+        .unwrap();
+    assert_eq!(
+        store
+            .read_plain_sync_source("repo")
+            .unwrap()
+            .unwrap()
+            .last_commit
+            .as_deref(),
+        Some("cccc333")
+    );
+    store
+        .advance_source_commit("missing", "dddd444", None)
+        .unwrap();
+    assert!(store.get_source("missing").unwrap().is_none());
+}
+
+#[test]
+fn sync_route_page_reads_keep_to_live_pages_of_one_source() {
+    let dir = TempDir::new("cli-src-route");
+    let store = open(&dir);
+    source(&store, "repo", Some("/w/repo"), json!({}));
+    source(&store, "other", Some("/w/other"), json!({}));
+    page_at(
+        &store,
+        "repo",
+        "notes/a",
+        Some("notes/a.md"),
+        json!({"id": "doc-1"}),
+    );
+    page_at(
+        &store,
+        "repo",
+        "notes/n",
+        Some("notes/n.md"),
+        json!({"id": 42}),
+    );
+    page_at(&store, "repo", "notes/none", None, json!({}));
+    page_at(
+        &store,
+        "repo",
+        "notes/gone",
+        Some("notes/gone.md"),
+        json!({"id": "doc-1"}),
+    );
+    store.soft_delete_page("notes/gone", Some("repo")).unwrap();
+    page_at(
+        &store,
+        "other",
+        "notes/a",
+        Some("notes/a.md"),
+        json!({"id": "doc-1"}),
+    );
+    let paths: Vec<_> = store
+        .list_source_path_pages("repo")
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.slug, r.source_path))
+        .collect();
+    assert_eq!(
+        paths,
+        vec![
+            ("notes/a".to_string(), "notes/a.md".to_string()),
+            ("notes/n".to_string(), "notes/n.md".to_string()),
+        ]
+    );
+    let renamed: Vec<_> = store
+        .read_rename_identity_rows(
+            "repo",
+            &["notes/a.md".to_string(), "notes/gone.md".to_string()],
+            &["notes/n".to_string()],
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| r.slug)
+        .collect();
+    assert_eq!(renamed, vec!["notes/a", "notes/n"]);
+    let holders: Vec<_> = store
+        .read_live_identity_holders("repo", &["doc-1".to_string(), "42".to_string()], &[])
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.slug, r.fm_id))
+        .collect();
+    assert_eq!(
+        holders,
+        vec![
+            ("notes/a".to_string(), Some("doc-1".to_string())),
+            ("notes/n".to_string(), Some("42".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn page_size_rows_keep_to_live_embed_skip_or_over_limit_pages_of_one_source() {
+    let dir = TempDir::new("cli-src-size");
+    let store = open(&dir);
+    source(&store, "repo", Some("/w/repo"), json!({}));
+    source(&store, "other", Some("/w/other"), json!({}));
+    page_at(
+        &store,
+        "repo",
+        "notes/skip",
+        None,
+        json!({"embed_skip": true}),
+    );
+    page_at(&store, "repo", "notes/small", None, json!({}));
+    page_at(
+        &store,
+        "repo",
+        "notes/gone",
+        None,
+        json!({"embed_skip": true}),
+    );
+    store.soft_delete_page("notes/gone", Some("repo")).unwrap();
+    page_at(
+        &store,
+        "other",
+        "notes/other",
+        None,
+        json!({"embed_skip": true}),
+    );
+    let rows = store.read_page_size_rows("repo", 64, None).unwrap();
+    let slugs: Vec<&str> = rows.iter().map(|r| r.slug.as_str()).collect();
+    assert_eq!(slugs, ["notes/skip"]);
+    assert_eq!(rows[0].bytes, Some(4));
+    assert!(!rows[0].segmented);
+    assert!(rows[0].state.is_none() && rows[0].reason.is_none());
+    // A limit under the four-byte body brings in every live page of the source.
+    let over = store.read_page_size_rows("repo", 3, None).unwrap();
+    let slugs: Vec<&str> = over.iter().map(|r| r.slug.as_str()).collect();
+    assert_eq!(slugs, ["notes/skip", "notes/small"]);
+    let listed = store
+        .read_page_size_rows(
+            "repo",
+            3,
+            Some(&["notes/small".to_string(), "notes/gone".to_string()]),
+        )
+        .unwrap();
+    let slugs: Vec<&str> = listed.iter().map(|r| r.slug.as_str()).collect();
+    assert_eq!(slugs, ["notes/small"]);
+    assert!(
+        store
+            .read_page_size_rows("repo", 3, Some(&[]))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn quarantined_slugs_keep_to_live_pages_of_one_source_with_the_key_set() {
+    let dir = TempDir::new("cli-src-quarantine");
+    let store = open(&dir);
+    source(&store, "repo", Some("/w/repo"), json!({}));
+    source(&store, "other", Some("/w/other"), json!({}));
+    page_at(
+        &store,
+        "repo",
+        "notes/b",
+        None,
+        json!({"quarantine": {"reason": "junk_pattern"}}),
+    );
+    page_at(&store, "repo", "notes/a", None, json!({"quarantine": null}));
+    page_at(
+        &store,
+        "repo",
+        "notes/plain",
+        None,
+        json!({"content_flag": {"reason": "oversized"}}),
+    );
+    page_at(
+        &store,
+        "repo",
+        "notes/gone",
+        None,
+        json!({"quarantine": true}),
+    );
+    store.soft_delete_page("notes/gone", Some("repo")).unwrap();
+    page_at(
+        &store,
+        "other",
+        "notes/c",
+        None,
+        json!({"quarantine": true}),
+    );
+    assert_eq!(
+        store.list_quarantined_slugs("repo").unwrap(),
+        vec!["notes/a", "notes/b"]
+    );
+    assert_eq!(
+        store.list_quarantined_slugs("other").unwrap(),
+        vec!["notes/c"]
+    );
+    assert!(store.list_quarantined_slugs("missing").unwrap().is_empty());
+    assert!(store.list_quarantined_slugs("re\0po").unwrap().is_empty());
+}

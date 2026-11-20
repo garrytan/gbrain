@@ -1,5 +1,7 @@
 /**
- * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal, logIngest,
+ * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal, countBrainLivePages, countLivePagesBySource,
+ * countChunksBySource,
+ * readBrainMaturity, logIngest,
  * getIngestLog, listEnrichCandidates, findAnomalies).
  *
  * The store counts; these members resolve what PGLite resolves in TypeScript and finish the same arithmetic:
@@ -16,7 +18,7 @@ import type {
   AnomaliesOpts, AnomalyResult, BrainHealth, BrainStats, EnrichCandidate, EnrichCandidatesOpts, IngestLogEntry, IngestLogInput,
 } from '../../types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../types.ts';
-import type { OnboardSignal } from '../../engine-sql/health.ts';
+import type { BrainMaturityRow, ChunksBySourceRow, LivePagesBySourceRow, OnboardSignal } from '../../engine-sql/health.ts';
 import { throwIfAborted as throwIfQueryAborted } from '../../engine-sql/executor.ts';
 import { computeAnomaliesFromBuckets, type CohortDayRow, type CohortTodayRow } from '../../cycle/anomaly.ts';
 import { effectiveLinkExtractorWatermark } from '../../link-extraction-watermark.ts';
@@ -160,6 +162,32 @@ export const countOnboardSignal: StoreMember<[signal: OnboardSignal, entityTypes
     const input = { signal, entityTypes: { types: [...entityTypes.types], per_source: entityTypes.per_source.map((b) => ({ source_id: b.source_id, types: [...b.types] })) } };
     return storeCall({ member: 'countOnboardSignal' }, () => brain.countOnboardSignal(input));
   };
+
+/** Backup coverage's page count (engine-sql/health.ts countBrainLivePages): live pages in every source. */
+export const countBrainLivePages: StoreMember<[], number | null> = async (brain) =>
+  Number(await storeCall({ member: 'countBrainLivePages' }, () => brain.countBrainLivePages()));
+
+interface LiveCountsRow { source_id: string; pages: number; chunks: number; embedded: number }
+
+/** `gbrain sources status`'s live page counts (engine-sql/health.ts countLivePagesBySource), one row per source that has a live page. */
+export const countLivePagesBySource: StoreMember<[], LivePagesBySourceRow[]> = async (brain) =>
+  (await storeCall({ member: 'countLivePagesBySource' }, () => brain.liveCountsBySource()) as LiveCountsRow[])
+    .map(row => ({ source_id: row.source_id, n: Number(row.pages) }));
+
+/**
+ * `gbrain sources status`'s chunk counts (engine-sql/health.ts countChunksBySource): the chunks of live pages per source
+ * that has any, and those with a stored vector. The store holds one vector column, so `column` is the text column.
+ */
+export const countChunksBySource: StoreMember<[column: string], ChunksBySourceRow[]> = async (brain) => {
+  await requireTextColumn(brain, 'countChunksBySource');
+  return (await storeCall({ member: 'countChunksBySource' }, () => brain.liveCountsBySource()) as LiveCountsRow[])
+    .filter(row => Number(row.chunks) > 0)
+    .map(row => ({ source_id: row.source_id, total: Number(row.chunks), embedded: Number(row.embedded) }));
+};
+
+/** Backup coverage's young-brain row (engine-sql/health.ts readBrainMaturity); `since` as a Date, as Postgres returns it. */
+export const readBrainMaturity: StoreMember<[], BrainMaturityRow | null> = async (brain) =>
+  withDates(await storeCall({ member: 'readBrainMaturity' }, () => brain.readBrainMaturity()) as BrainMaturityRow, ['since']);
 
 /** The text node-postgres binds for a non-null parameter; null and undefined bind SQL NULL. */
 function boundText(value: unknown): string | null {

@@ -1,0 +1,11 @@
+**On the experimental Rust engine, a git sync now records the commit it reached and makes its page reads through typed engine members, so the next sync reads only the changes. A first sync on Rust exits clean, and a sync on Rust now holds a broken file the way PGLite does.**
+
+### Changed
+- Five reads and writes that a git sync made as raw SQL are now typed engine members: recording the commit a sync reached, listing a source's pages that have a file path, the two rename-detection reads, and the read that finds large or `embed_skip` pages for the sync receipt. PGLite and Postgres run the same SQL as before.
+- A git sync also checks the source's saved path, last commit and page count through members the Rust engine already served.
+- The Rust engine now keeps a page's embedding hold (its held state and reason), so the sync receipt shows the same held pages, state and reason as PGLite and Postgres.
+- The record a fact purge leaves of each purged change reason (a commit and a file path, never the text) is now read and written through typed engine members, and the Rust engine stores it. A sync, `gbrain repair purged-change-reasons` and a version snapshot read it the same way on every engine.
+- The sync hold store is now typed: writing, replacing, clearing and counting the hold a sync leaves on a broken file, its per-source summary, and the managed sync pass row. PGLite and Postgres run the same SQL as before. The Rust engine stores holds and pass rows as checkpoint rows, so a sync on Rust now holds a file with broken frontmatter instead of failing it.
+- `gbrain sources status` on a Rust brain now reports an error when it cannot count held files, instead of showing 0 held files. PGLite and Postgres keep showing 0 when that count fails.
+- Rename reconciliation and the legacy hold's page read during a sync, and the checkout read of `gbrain repair purged-change-reasons`, now use typed members too.
+- An incremental sync on the Rust engine still ends with failed files: a changed file needs a page version with its change reason, which the Rust store does not keep yet. `gbrain sync status` and `gbrain sources status` on Rust still stop at their first raw read. Those are the next step.

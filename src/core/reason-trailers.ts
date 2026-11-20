@@ -148,8 +148,7 @@ export async function scanSyncReasons(engine: BrainEngine, input: { sourceId: st
   const byPath = new Map<string, ReasonDecision>();
   const secrets: SyncReasonScan['secrets'] = [];
   let malformed = 0;
-  const tombstones = new Set((await engine.executeRaw<{ commit_sha: string; path: string }>(
-    'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1', [input.sourceId])).map(row => `${row.commit_sha}\0${row.path}`));
+  const tombstones = new Set((await engine.readReasonPurgeTombstones(input.sourceId)).map(row => `${row.commit_sha}\0${row.path}`));
   const forms = pathForms(repo.scopePrefix);
   const read = await readReasonTrailers(repo.gitRoot, range, caps.sync, commit => {
     const texts = trailerTexts(commit, forms);

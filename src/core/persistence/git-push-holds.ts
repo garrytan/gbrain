@@ -12,8 +12,9 @@ import type { Action } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { readIntegrateConflict, type IntegrateConflictState } from '../git/commit-push.ts';
 
-/** The error codes of a Git effect whose commit is local but whose push did not land. */
-export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'] as const;
+/** The error codes of a Git effect whose commit is local but whose push did not land (defined beside the sync status SQL that embeds them). */
+import { GIT_PUSH_CODES } from './sync-status-sql.ts';
+export { GIT_PUSH_CODES };
 
 export interface GitPushHold {
   source_id: string;

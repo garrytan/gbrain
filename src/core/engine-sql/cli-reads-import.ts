@@ -142,6 +142,24 @@ export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: 
     WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
 }
 
+/** The live pages of one source whose slug is in `slugs`, by slug (a sync's link extraction). */
+export async function listLinkPageMetadataForSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<LinkPageMetadataRow[]> {
+  return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...slugs]]);
+}
+
+/**
+ * The slugs of one source's pages (only those in `slugs` when given) that authored a body or frontmatter `attended`
+ * link to themselves, in no set order: the attendance origins link extraction reconciles.
+ */
+export async function listAttendedOriginSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs?: readonly string[]): Promise<string[]> {
+  const scoped = slugs ? sqlFragment` AND o.slug = ANY(${[...slugs]}::text[])` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=${sourceId} AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id${scoped}`);
+  return (await exec.executeRaw<{ slug: string }>(text, params)).map(row => row.slug);
+}
+
 /** Every stored non-event timeline row of one page, the date as `YYYY-MM-DD`, in no particular order. */
 export async function listStoredTimelineRows(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<StoredTimelineRow[]> {
   return exec.executeRaw<StoredTimelineRow>(

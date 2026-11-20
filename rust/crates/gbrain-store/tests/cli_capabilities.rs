@@ -97,6 +97,8 @@ fn local_paths_skip_empty_and_missing_paths_and_keep_archived_sources() {
     let mut paths = store.list_source_local_paths().unwrap();
     paths.sort();
     assert_eq!(paths, ["/work/alpha", "/work/zeta"]);
+    // The readiness sync probe counts only live bound sources: alpha (zeta is archived).
+    assert_eq!(store.count_repo_bound_sources().unwrap(), 1);
 }
 
 #[test]

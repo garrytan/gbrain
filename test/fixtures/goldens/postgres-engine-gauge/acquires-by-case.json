@@ -21,6 +21,15 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
+    "advanceSourceCommit#clearNewest": {
+      "raw": 1
+    },
+    "advanceSourceCommit#default": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeTraversalCache#allSources": {
@@ -37,6 +46,9 @@
     },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
+    "countRepoBoundSources#default": {
+      "raw": 1
+    },
     "countSourcePages#default": {
       "raw": 1
     },
@@ -197,6 +209,9 @@
     "getVersions#metadataOnly": {},
     "getVersions#sourceId": {},
     "getVersions#sourceIds": {},
+    "holdPageEmbedding#default": {
+      "raw": 1
+    },
     "insertFact#default": {},
     "insertFact#noEntity": {},
     "insertFact#supersedeId+embedding": {},
@@ -276,7 +291,13 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listQuarantinedSlugs#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
+    "listSourcePathPages#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
@@ -353,9 +374,27 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readLiveIdentityHolders#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#slugs": {
+      "raw": 1
+    },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readReasonPurgeTombstones#default": {
+      "raw": 1
+    },
+    "readReasonPurgeTombstones#pair": {
+      "raw": 1
+    },
+    "readRenameIdentityRows#default": {
+      "raw": 1
+    },
     "readSourceChunkerVersion#default": {
       "raw": 1
     },
@@ -506,7 +545,10 @@
     },
     "upsertEventProjection#default": {},
     "upsertFile#default": {},
-    "writeContradictionsRun#default": {}
+    "writeContradictionsRun#default": {},
+    "writeReasonPurgeTombstones#default": {
+      "raw": 1
+    }
   },
   "normalizer": "gauge-acquires-by-case-v1"
 }

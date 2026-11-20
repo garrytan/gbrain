@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -29,6 +29,13 @@ export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: Si
     excludePrivate: excludePrivate ?? null }));
 };
 
+/** entities/resolve.ts: the live pages among the slugs; `limit` 2 caps them. */
+export const readLiveSlugs: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { limit?: 2 }], string[]> = (brain, sourceId, slugs, opts) => {
+  const { limit } = takeOptions('readLiveSlugs', opts, ['limit']);
+  if (limit !== undefined && limit !== 2) refuseMember('readLiveSlugs', `limit ${String(limit)}`);
+  return storeCall({ member: 'readLiveSlugs', sourceId }, () => brain.readLiveSlugs(sourceId, [...slugs], limit === 2 ? 2 : null));
+};
+
 export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }], string | null> = (brain, sourceId, slugs, opts) =>
   storeCall({ member: 'findExactSlug', sourceId }, () => brain.findExactSlug(sourceId, [...slugs], opts?.retired ?? null));
 
@@ -38,8 +45,7 @@ export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly strin
  * text or the canonical one for its reader identities, as the page visibility guards serve it (page-visibility.ts).
  * Any other caller refuses before the read.
  */
-function retirementHopPolicy(privacy: RetirementPrivacy): StorePrivacyPolicy | undefined {
-  const member = 'readRetirementHop';
+function retirementHopPolicy(privacy: RetirementPrivacy, member = 'readRetirementHop'): StorePrivacyPolicy | undefined {
   if (privacy === 'none') return undefined;
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
   if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
@@ -58,6 +64,48 @@ export const readRetirementHop: StoreMember<[sourceId: string, slug: string, pri
     const policy = retirementHopPolicy(privacy);
     return storeCall({ member: 'readRetirementHop', slug, sourceId }, () => brain.readRetirementHop(sourceId, slug, policy ?? null));
   };
+
+/** entities/resolve.ts: the live pages among the slugs with their types, under the resolver privacy (retirementHopPolicy). */
+export const readLivePageTypes: StoreMember<[sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy], LivePageTypeRow[]> =
+  (brain, sourceId, slugs, privacy) => {
+    const policy = retirementHopPolicy(privacy, 'readLivePageTypes');
+    return storeCall({ member: 'readLivePageTypes', sourceId }, () => brain.readLivePageTypes(sourceId, [...slugs], policy ?? null)) as Promise<LivePageTypeRow[]>;
+  };
+
+/** entities/resolve.ts: the prefix pages titled the bare name, ignoring case, at most three. */
+export const readPrefixTitleMatches: StoreMember<[sourceId: string, patterns: readonly string[], title: string], PrefixTitleRow[]> = (brain, sourceId, patterns, title) =>
+  storeCall({ member: 'readPrefixTitleMatches', sourceId }, () => brain.readPrefixTitleMatches(sourceId, [...patterns], title)) as Promise<PrefixTitleRow[]>;
+
+/** entities/resolve.ts: the named live, non-retired pages entityReferenceCandidates offers, by slug, at most five. */
+export const readNamedEntitySlugs: StoreMember<[sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy], string[]> =
+  (brain, sourceId, slugs, privacy) => {
+    const policy = retirementHopPolicy(privacy, 'readNamedEntitySlugs');
+    return storeCall({ member: 'readNamedEntitySlugs', sourceId }, () => brain.readNamedEntitySlugs(sourceId, [...slugs], policy ?? null)) as Promise<string[]>;
+  };
+
+/** entities/resolve.ts: the distinct entity directories of the prefix pages, at most two. */
+export const readPrefixDirs: StoreMember<[sourceId: string, patterns: readonly string[]], string[]> = (brain, sourceId, patterns) =>
+  storeCall({ member: 'readPrefixDirs', sourceId }, () => brain.readPrefixDirs(sourceId, [...patterns])) as Promise<string[]>;
+
+/** entities/resolve.ts: the prefix candidates with their connection counts; one pattern caps at five, a list at ten. */
+export const readPrefixCandidates: StoreMember<[sourceId: string, q: PrefixCandidateQuery], PrefixCandidateRow[]> = (brain, sourceId, q) => {
+  const taken = takeOptions('readPrefixCandidates', q, ['patterns', 'pattern']);
+  const patterns = 'patterns' in taken ? [...(taken.patterns as readonly string[])] : [taken.pattern as string];
+  const limit = 'patterns' in taken ? 10 : 5;
+  if (('patterns' in taken) === ('pattern' in taken)) refuseMember('readPrefixCandidates', 'one of pattern or patterns');
+  return storeCall({ member: 'readPrefixCandidates', sourceId }, () =>
+    brain.readPrefixCandidates(sourceId, patterns, limit)) as Promise<PrefixCandidateRow[]>;
+};
+
+/** entities/resolve.ts: the title-similarity candidates of one resolver arm, under its privacy (retirementHopPolicy). */
+export const readTrigramCandidates: StoreMember<[sourceId: string, q: TrigramCandidateQuery], TrigramCandidateRow[]> = (brain, sourceId, q) => {
+  const taken = takeOptions('readTrigramCandidates', q, ['arm', 'titleLc', 'slugFragment', 'privacy']);
+  if (taken.arm !== 'same_name' && taken.arm !== 'near' && taken.arm !== 'fuzzy') refuseMember('readTrigramCandidates', `arm ${String(taken.arm)}`);
+  if (taken.arm === 'fuzzy' && taken.privacy !== undefined) refuseMember('readTrigramCandidates', 'privacy on the fuzzy arm');
+  const policy = q.arm === 'fuzzy' ? undefined : retirementHopPolicy(q.privacy, 'readTrigramCandidates');
+  return storeCall({ member: 'readTrigramCandidates', sourceId }, () =>
+    brain.readTrigramCandidates(sourceId, q.arm, q.titleLc, q.slugFragment, policy ?? null)) as Promise<TrigramCandidateRow[]>;
+};
 
 /** The store reads the page policy as readIdentitySiblingCandidates does; a widening caller refuses typed. */
 export const readEntityCardRows: StoreMember<[sourceId: string, match: EntityCardMatch, opts?: { excludePrivate?: boolean }], EntityCardRow[]> =

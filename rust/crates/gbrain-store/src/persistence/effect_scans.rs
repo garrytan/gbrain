@@ -3,7 +3,8 @@
 //! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
-//! worktree. This engine keeps no worktree, so every scan answers no row (the claim itself is
+//! worktree. This engine keeps only the worktrees an unmanaged claim records (`worktrees.rs`),
+//! and no effect row joins them, so every scan answers no row (the claim itself is
 //! `effect_worker.rs`).
 //! The parameters are still checked as their Postgres casts check them, so an argument Postgres
 //! refuses is refused here too.
