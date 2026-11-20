@@ -113,14 +113,14 @@ test('#5762 the Postgres blob never builds the indexes; v179 builds them concurr
 test('#5762 gbrain repair request-indexes rebuilds a dropped and an INVALID index on a current schema; a second run is a no-op', async () => withEnv(env, async () => {
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_open');
   await engine.executeRaw("UPDATE pg_index SET indisvalid=false WHERE indexrelid='persistence_requests_sync_run_committed'::regclass");
-  expect(await readRequestIndexStates(engine)).toEqual([{ name: NAMES[0], state: 'missing' }, { name: NAMES[1], state: 'invalid' }, ...ALL_NAMES.slice(2).map(name => ({ name, state: 'valid' }))]);
+  expect(await readRequestIndexStates(engine)).toEqual([{ name: NAMES[0], state: 'missing' }, { name: NAMES[1], state: 'invalid' }, ...ALL_NAMES.slice(2).map(name => ({ name, state: 'valid' as const }))]);
   const doctor = await requestIndexesCheck(engine);
   expect(doctor).toMatchObject({ name: 'persistence_request_indexes', status: 'warn', details: { count: 2, command: 'gbrain repair request-indexes --apply' } });
   expect(doctor.message).toContain('persistence_requests_sync_run_committed is INVALID');
   const scope = await resolveRepairScope(engine);
   const preview = await runRepair(ctx(), requestIndexesRepair, scope, { apply: false });
   expect(preview).toMatchObject({ affected: 2, cost: { lifetime_ids: 0 }, apply_command: 'gbrain repair request-indexes --apply' });
-  expect(await states()).toEqual(['missing', 'invalid', ...ALL_NAMES.slice(2).map(() => 'valid')]);
+  expect(await states()).toEqual(['missing', 'invalid', ...ALL_NAMES.slice(2).map(() => 'valid' as const)]);
   const applied = await runRepair(ctx(), requestIndexesRepair, scope, { apply: true });
   expect(applied).toMatchObject({ applied: 2, complete: true });
   expect(await states()).toEqual(ALL_NAMES.map(() => 'valid'));
