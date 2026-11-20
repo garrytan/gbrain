@@ -1,1 +1,0 @@
-**The Rust engine agent now wakes only for Capy comments, maintainer comments it didn't write, other people's pushes, merges and closes, and failed or timed-out full test runs on its own pull requests, not for every comment in the repository.**
