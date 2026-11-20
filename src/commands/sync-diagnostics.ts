@@ -2,6 +2,7 @@ import type { SyncResult } from './sync.ts';
 import type { GitHoldItem } from '../core/persistence/sync-holds.ts';
 import { fenceWhere } from '../core/fence-repair/refusal.ts';
 import { sizeStateLines } from '../core/page-embedding-budget.ts';
+import { DEFAULT_SYNC_MAX_DELETES, DEFAULT_SYNC_MAX_DELETE_RATIO, syncDeleteTripText } from '../core/sync-reconcile.ts';
 
 const HOLD_LINES = 20;
 
@@ -15,6 +16,15 @@ export function holdLine(item: GitHoldItem, verb: string): string {
   const step = item.fence?.auto_retry ? `No action needed: the next maintenance run repairs it. Preview: ${next}`
     : item.fix.consent.includes('paid') ? `Ask the user first, then: ${next}` : item.fix.actor === 'host_admin' ? `On the owner host: ${next}` : `Next: ${next}`;
   return `  ${verb} ${item.path}: ${item.code}${item.reason ? ` (${item.reason})` : ''}${fence}${where ? ` at ${where}` : ''}; ${page}. ${step}${then} (${item.docs})`;
+}
+
+/** #7130: the one line for deletes a managed pass withheld; every sync output mode prints it (printHoldNotes). */
+export function deletesWithheldLine(w: NonNullable<SyncResult['deletes_withheld']>): string {
+  const what = `${w.count} delete(s) of ${w.reconcilable} file-backed page(s) (${syncDeleteTripText(w.trip ?? 'mass_ratio',
+    w.caps ?? { maxDeletes: DEFAULT_SYNC_MAX_DELETES, maxDeleteRatio: DEFAULT_SYNC_MAX_DELETE_RATIO })})`;
+  return `  ${w.newly_withheld ? `Withheld ${what}` : `${what} are still withheld from an earlier sync`}; nothing was deleted. `
+    + `If the checkout is the wrong one or incomplete, restore it and sync again; if the deletion is intended, run `
+    + `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source ${w.source_id} on the brain host. Details: gbrain sync status --source ${w.source_id}`;
 }
 
 /**
@@ -31,6 +41,7 @@ export function printHoldNotes(result: SyncResult, write: (line: string) => void
   // #7199: the source synced, and files held this run wait on a person; the hold fix's verify step names the source.
   const source = result.holds_fix?.verify?.argv?.[3];
   if (result.reason === 'held_needs_human' && source) write(`Synced; ${result.held_needs_human} file(s) held for a person (gbrain sync status --source ${source}).`);
+  if (result.deletes_withheld) write(deletesWithheldLine(result.deletes_withheld));
   if (result.holds_released) write(`  Released ${result.holds_released} held file(s) that no longer need a decision.`);
   for (const item of (result.held ?? []).slice(0, HOLD_LINES)) write(holdLine(item, 'Held'));
   const shown = Math.min(result.held?.length ?? 0, HOLD_LINES);

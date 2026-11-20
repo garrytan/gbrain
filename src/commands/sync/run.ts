@@ -6,7 +6,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { isHostAbsolutePath, msysToNativePath } from '../../core/path-confine.ts';
 import { syncFailureJsonFields, readManagedSyncFailures } from '../../core/persistence/sync-failures.ts';
 import { syncHoldJsonFields } from '../../core/persistence/sync-holds.ts';
-import { printHoldNotes } from '../sync-diagnostics.ts';
+import { deletesWithheldLine, printHoldNotes } from '../sync-diagnostics.ts';
 import { getDefaultSourcePath } from '../../core/source-resolver.ts';
 import {
   resolveSyncAllEmbedPlan,
@@ -1087,6 +1087,7 @@ async function runSingleSourceSync(
       } else if (result.drain && result.drain.outcome !== 'synced') {
         for (const line of formatDrainSummary(result, resumeCommand, sourceId)) slog(`[${ts}] ${line}`);
       }
+      if (result.deletes_withheld?.newly_withheld) slog(`[${ts}] ${deletesWithheldLine(result.deletes_withheld).trimStart()}`);
       // Same gate as non-watch: only manage .gitignore on successful sync.
       // v0.41.13.0 (T7 / D-V3-5): partial joins the deferred posture.
       // Same repo-resolution path so watch mode catches the implicit-resolved case.

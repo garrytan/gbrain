@@ -82,6 +82,8 @@ export interface SyncResult {
   /** #5459 (P4.5): live pages a `--full` tree walk kept because their file is in the working tree and their import provenance is the working tree or unknown. */
   working_tree_kept?: number;
   /** #8007: pages whose file is gone kept because gbrain.yml's storage section is invalid. */ storage_invalid_kept?: number;
+  /** #7130: deletes a managed pass withheld (the 50% valve, sync.max_deletes or sync.max_delete_ratio); nothing was deleted. Absent for a remote caller and on a dry run. */
+  deletes_withheld?: import('../core/persistence/sync-pass-status.ts').SyncDeletesWithheld;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.
