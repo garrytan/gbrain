@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1241/1248
+# covered: 1243/1250
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -54,7 +54,7 @@
 # facts_trust: 49/49
 # facts_recall: 7/7
 # facts_conversation: 30/30
-# belief_ledger: 15/15
+# belief_ledger: 17/17
 # trust_tier_reads: 14/14
 # memory_mutation_reads: 12/12
 # withdrawal_discovery: 1/1
@@ -92,14 +92,14 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	150	no	yes	yes	serves
+transaction	lifecycle	yes	151	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	139	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
-lockPageKeys	pages	yes	5	no	yes	yes	serves
+lockPageKeys	pages	yes	6	no	yes	yes	serves
 putPage	pages	yes	619	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
@@ -494,7 +494,7 @@ applyTransactionSettings	import_guards	yes	71	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
-readLedgerSource	import_guards	yes	19	no	yes	yes	serves
+readLedgerSource	import_guards	yes	20	no	yes	yes	serves
 listCoveredSources	import_guards	yes	2	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	24	no	yes	yes	serves
@@ -1046,22 +1046,24 @@ countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	refuses:facts
 readBeliefTombstones	belief_ledger	yes	6	no	yes	yes	serves
 readLatestBeliefCoverage	belief_ledger	yes	2	no	yes	yes	serves
 hasBeliefBaseline	belief_ledger	yes	1	no	yes	yes	serves
-listBeliefBaselinePending	belief_ledger	yes	2	no	yes	yes	serves
+listBeliefBaselinePending	belief_ledger	yes	3	no	yes	yes	serves
 countBeliefBaselineSlugs	belief_ledger	yes	2	no	yes	yes	serves
 readBeliefRedactions	belief_ledger	yes	2	no	yes	yes	serves
 insertBeliefRedaction	belief_ledger	yes	2	no	yes	yes	serves
 releaseBeliefRedactions	belief_ledger	yes	2	no	yes	yes	serves
-insertBeliefEvents	belief_ledger	yes	6	no	yes	yes	serves
-markBeliefCommits	belief_ledger	yes	4	no	yes	yes	serves
+insertBeliefEvents	belief_ledger	yes	7	no	yes	yes	serves
+markBeliefCommits	belief_ledger	yes	5	no	yes	yes	serves
 readOpenBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
 endBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
 mintBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
 renameBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
 readMovedBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
+readBeliefStateRows	belief_ledger	yes	1	no	yes	yes	serves
+readBeliefFactsById	belief_ledger	yes	1	no	yes	yes	serves
 listCorePageRows	trust_tier_reads	yes	3	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
-readBeliefHistoryRows	trust_tier_reads	yes	5	no	yes	yes	serves
+readBeliefHistoryRows	trust_tier_reads	yes	6	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	2	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves

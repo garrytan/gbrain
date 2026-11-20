@@ -179,6 +179,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'mintBeliefLifetime': OOS.beliefLedger,
   'renameBeliefLifetime': OOS.beliefLedger,
   'readMovedBeliefLifetimes': OOS.beliefLedger,
+  'readBeliefStateRows': OOS.beliefLedger,
+  'readBeliefFactsById': OOS.beliefLedger,
   'hasCoveringFactWithdrawal': OOS.trustWithdrawals,
   'hasFactWithdrawalForSubject': OOS.trustWithdrawals,
   'insertFactWithdrawal': OOS.trustWithdrawals,

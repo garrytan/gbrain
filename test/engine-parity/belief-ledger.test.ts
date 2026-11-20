@@ -382,7 +382,7 @@ describe('engine parity: belief ledger writes', () => {
   parityTest(
     'enableBeliefLedger on a source with pages baselines each page\'s facts, takes, links and transitions, and a covered write records its fact',
     { methods: ['transaction', 'lockPageKeys', 'readLedgerSource', 'insertBeliefEvents', 'markBeliefCommits', 'listBeliefBaselinePending',
-      'readBeliefHistoryRows', 'readBeliefStateRows'] },
+      'readBeliefHistoryRows', 'readBeliefStateRows', 'readBeliefFactsById'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'work');
       const on = { sourceId: 'work' };
@@ -419,7 +419,15 @@ describe('engine parity: belief ledger writes', () => {
         transitions: state.transitions.map(x => ({ ...x, id: typeof x.id, from: end(x.from), to: end(x.to), origin: end(x.origin) })),
         writerTier: state.writerTier,
       };
-      const answer = { enabled: { ...enabled, runId: 'uuid' }, events, state: shaped };
+      // The two members called directly: one stream's raw rows, and the stream's facts read back by id.
+      const direct = await engine.transaction(tx => tx.readBeliefStateRows({ sourceId: 'work', slugs: ['notes/a'], pageIds: [], knownFp: {}, knownCounts: null,
+        knownPages: [], knownEntitySlugs: [], suppressed: false, planModePrev: null }));
+      const raw = { pages: direct.pages.map(p => p.slug), facts: direct.facts?.map(f => f.fact).sort() ?? null, takes: direct.takes?.length ?? null,
+        links: direct.links?.length ?? null, transitions: direct.transitions?.length ?? null, writerTier: direct.writer_tier };
+      const byId = (await engine.readBeliefFactsById(state.facts.map(f => f.id))).map(f => f.fact).sort();
+      expect(byId).toEqual(shaped.facts.map(f => f.fact).sort());
+      expect(await engine.readBeliefFactsById([])).toEqual([]);
+      const answer = { enabled: { ...enabled, runId: 'uuid' }, events, state: shaped, raw, byId };
       expect(answer.enabled).toMatchObject({ resumed: false, pages: 2, complete: true, unkeyable: [] });
       expect(events.filter(e => e.type === 'baseline').map(e => e.kind).sort()).toEqual(['fact', 'page', 'page']);
       expect(events.find(e => e.kind === 'page' && e.slug === 'notes/a')?.value?.counts).toEqual({ facts: 1, links: 1, takes: 1, link_transitions: 1 });
