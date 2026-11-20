@@ -766,6 +766,7 @@ test/sources-resolve-path.test.ts
 test/speaker-owner-connectors.test.ts
 test/speaker-owner-transcripts.test.ts
 test/speaker-owner-trust.test.ts
+test/st-write-move-parity.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
