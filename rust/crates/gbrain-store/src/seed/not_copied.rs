@@ -122,6 +122,11 @@ pub const NOT_COPIED: &[NotCopied] = &[
         "per-client request history in gbrain auth starts empty; lifetime totals carry in mcp_request_log_rollup",
     ),
     t(
+        "mention_gazetteer_entries",
+        Cache,
+        "the next mention pass rescans every page, not only the pages a name change touches",
+    ),
+    t(
         "mention_index_status",
         MachineLocal,
         "the mention index is rebuilt",
@@ -368,9 +373,19 @@ pub const NOT_COPIED: &[NotCopied] = &[
     ),
     t("take_grade_cache", Cache, "takes are graded again"),
     t(
+        "take_nudge_log",
+        Telemetry,
+        "earlier take nudges are not listed, so a nudge can repeat",
+    ),
+    t(
         "think_ab_results",
         Telemetry,
         "past think A/B results are not listed",
+    ),
+    t(
+        "trust_policy_state",
+        MachineLocal,
+        "each engine keeps its own trust policy generation counter; it is never copied",
     ),
     t(
         "wake_subscriptions",
