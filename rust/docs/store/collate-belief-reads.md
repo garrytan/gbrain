@@ -15,7 +15,7 @@ suite fills the family through a test-only seed ([test-seeds.md](test-seeds.md))
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.listOrphanLifetimes(sourceId, limit)` | `{ total, rows: [{ slug, page_lifetime, reason }] }` | `listOrphanLifetimes` (`no_page` half) |
+| `brain.listOrphanLifetimes(sourceId, limit, deep)` | `{ total, rows: [{ slug, page_lifetime, reason }] }` | `listOrphanLifetimes` (`no_page`; `no_lifetime` when `deep`) |
 | `brain.seedBeliefPageLifetimes(sourceId, slugs)` | the slugs it minted for (test-only, `test-seeds` build) | `mintLifetime` for each page |
 
 ## What the read answers
@@ -27,7 +27,7 @@ suite fills the family through a test-only seed ([test-seeds.md](test-seeds.md))
 | Order | Slug bytes, then lifetime uuid text bytes (`COLLATE "C"`) |
 | Limit | `max(1, limit)` rows; `total` counts every orphan (`count(*) OVER ()`) |
 | Unknown source | Zero orphans |
-| The deep read | Not served. `listOrphanLifetimes(..., deep = true)` also lists events that name a lifetime that does not exist, and the store keeps no belief events, so the TypeScript member refuses with the typed `belief_ledger` capability refusal instead of answering with the first half only. The write chunk that adds the events serves it |
+| The deep read | With `deep`, the source's events (any incarnation) that name a page lifetime no lifetime record holds, in any source (the SQL has no source test on the lifetime), one row for each distinct slug and lifetime, reason `no_lifetime`. They sort and count with the `no_page` rows. Events are the store's belief events ([collate-belief-writes.md](collate-belief-writes.md)); a shipped brain writes none yet |
 
 ## Keys
 

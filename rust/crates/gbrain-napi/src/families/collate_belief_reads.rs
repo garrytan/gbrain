@@ -11,17 +11,18 @@ use crate::store_binding::Brain;
 
 #[napi]
 impl Brain {
-    /// `listOrphanLifetimes(sourceId, limit)`: `{ total, rows: [{ slug, page_lifetime, reason }] }`
-    /// by slug and lifetime bytes; `reason` is `no_page`.
+    /// `listOrphanLifetimes(sourceId, limit, deep)`: `{ total, rows: [{ slug, page_lifetime, reason }] }`
+    /// by slug and lifetime bytes; `reason` is `no_page`, or `no_lifetime` for the events a `deep` read finds.
     #[napi]
     pub fn list_orphan_lifetimes<'env>(
         &self,
         env: &'env Env,
         source_id: String,
         limit: u32,
+        deep: bool,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.list_orphan_lifetimes(&source_id, limit as usize)
+            s.list_orphan_lifetimes(&source_id, limit as usize, deep)
         })
     }
 }

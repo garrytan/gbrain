@@ -3,8 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1,
- *    where the identity-downgrade record answers from typed members and the other three readers run raw SQL and stop on
- *    raw_sql) a tie is broken by a unique key after the existing sort keys:
+ *    where the identity-downgrade record, the stale-mention scan and the orphan lifetime sample answer from typed members and
+ *    the edge-contradiction cut runs raw SQL and stops on raw_sql) a tie is broken by a unique key after the existing sort keys:
  *    the orphan lifetime sample (orphanLifetimes) by the lifetime id, the stale-mention scan (scanStaleMentions) by the
  *    lowest page id, the edge-contradiction subject cut (runPhaseEdgeContradictions, max_subjects) by the lowest subject
  *    page id, and the identity-downgrade record of a renamed file (recordIdentityDowngrades) by the lowest page id.
@@ -12,20 +12,24 @@
  *    both hold, one refreshed_at stamped by a single refresh, one source_path two soft-deleted pages carry), so the rows
  *    that survived the cut were whichever the sort met first, and Postgres and PGLite could keep different ones.
  *  - Why existing coverage misses it: the cases give every row its own slug, timestamp or path, so no limit ever cut a tie.
- *  - Seam: pages and mention links go through the engine writers. Harness-only SQL inserts belief events that name a
- *    missing lifetime, inserts the relationship rows with one refreshed_at (the put_page operation cannot run on the Rust
+ *  - Seam: pages and mention links go through the engine writers. Typed insertBeliefEvents writes belief events that name a
+ *    missing lifetime (the open lifetime of the deleted page comes from the test-only seed seedBeliefPageLifetimes, which
+ *    needs the same test-seeds addon), harness-only SQL inserts the relationship rows with one refreshed_at (the put_page operation cannot run on the Rust
  *    arm), and gives soft-deleted pages one source_path and one deleted_at (no typed write sets them; the Rust arm uses the
- *    test-only seed seedPageOrigin, which needs an addon built with GBRAIN_RUST_TEST_SEEDS=1). The identity-downgrade record
- *    and the stale-mention scan read through typed members, so the Rust arm answers them (the scan's heap rewrite is a no-op there,
- *    as the Rust store keeps pages by id); the other two readers run raw SQL, so the Rust arm stops on raw_sql.
+ *    test-only seed seedPageOrigin, which needs an addon built with GBRAIN_RUST_TEST_SEEDS=1). The identity-downgrade record,
+ *    the stale-mention scan and the orphan sample read through typed members, so the Rust arm answers them (the scan's heap
+ *    rewrite is skipped there, as the Rust store keeps pages by id); the edge-contradiction cut runs raw SQL, so the Rust arm
+ *    stops on raw_sql.
  */
 import { describe, expect } from 'bun:test';
+import { createHash, randomUUID } from 'node:crypto';
 import { orphanLifetimes } from '../../src/core/belief/coverage-report.ts';
 import { scanStaleMentions } from '../../src/core/by-mention.ts';
 import { runPhaseEdgeContradictions, type EdgeJudgeFn } from '../../src/core/cycle/edge-contradictions.ts';
 import { recordIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { createSource, parityArms, seedPageOrigin } from './harness.ts';
+import type { BeliefEventRow } from '../../src/core/engine-sql/collate-belief-writes.ts';
+import { createSource, parityArms, seedBeliefLifetimes, seedPageOrigin } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -43,17 +47,20 @@ async function rewriteNewestFirst(engine: BrainEngine, table: 'pages', column: s
 }
 
 describe('orphan lifetime sample', () => {
-  parityTest('orphanLifetimes cuts rows of one slug by the lifetime id', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>(`SELECT incarnation::text AS incarnation FROM sources WHERE id = 'default'`);
+  parityTest('orphanLifetimes cuts rows of one slug by the lifetime id', { methods: ['putPage', 'deletePages', 'readLedgerSource', 'insertBeliefEvents', 'listOrphanLifetimes'], testSeeds: true }, async (engine, backend) => {
+    const { incarnation } = (await engine.readLedgerSource('default'))!;
     const lifetime = (key: string) => `00000000-0000-4000-8000-0000000000${key.charCodeAt(0).toString(16)}`;
     // Five events name five lifetimes that do not exist, and one open lifetime has no page. All six rows carry one slug, so
-    // only the lifetime id can order them; the open lifetime has the highest id, so it belongs after the events.
-    for (const key of KEYS) {
-      await engine.executeRaw(`INSERT INTO belief_events (event_key, source_id, source_incarnation, page_lifetime, slug, subject_kind, subject_key, event_type,
-          trust_tier, visibility, publication_id, ord, state_hash, cause) VALUES (decode(md5($1), 'hex'), 'default', $2::uuid, $3::uuid, 'tie/orphan', 'page', 'page', 'page.baseline',
-          'unknown', 'world', gen_random_uuid(), 0, '', '{}'::jsonb)`, [`orphan-${key}`, incarnation, lifetime(key)]);
-    }
-    await engine.executeRaw(`INSERT INTO belief_page_lifetimes (page_lifetime, source_id, source_incarnation, slug) VALUES ($1::uuid, 'default', $2::uuid, 'tie/orphan')`, [lifetime('z'), incarnation]);
+    // only the lifetime id can order them; the open lifetime's id is minted at random and sorts after the events' ids.
+    await engine.insertBeliefEvents(KEYS.map((key): BeliefEventRow => ({
+      event_key: createHash('md5').update(`orphan-${key}`).digest('hex'), source_id: 'default', source_incarnation: incarnation, page_lifetime: lifetime(key),
+      slug: 'tie/orphan', subject_kind: 'page', subject_key: '["page"]', event_type: 'page.baseline', origin: 'live', trust_tier: 'unknown', writer_tier: null,
+      tier_basis: 'unknown', visibility: 'world', publication_id: randomUUID(), ord: 0, source_time: null, valid_from: null, valid_until: null, value: null,
+      value_hash: null, prior_hash: null, state_hash: '', cause: '{}', claim_fp: null, purged: false, redacted_fields: null,
+    })));
+    await engine.putPage('tie/orphan', note('tie orphan'));
+    await seedBeliefLifetimes(engine, backend, 'default', ['tie/orphan']);
+    await engine.deletePages(['tie/orphan'], { sourceId: 'default' });
     const orphans = await orphanLifetimes(engine, 'default', 3, { deep: true });
     expect(orphans.count).toBe(KEYS.length + 1);
     const sampled = orphans.samples.map(s => [s.page_lifetime, s.reason]);

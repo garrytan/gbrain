@@ -15,6 +15,7 @@
 //! - `F 0x20 <source> 0x00 <slug> 0x00 <page lifetime uuid>` -> `LifetimeRecord` (JSON). A scan of
 //!   one source meets its lifetimes in slug byte order, and one slug's in uuid text order.
 
+use crate::belief_events::event_lifetimes;
 use crate::error::Result;
 use crate::kv::scan_prefix;
 use crate::links::no_nul;
@@ -22,6 +23,7 @@ use crate::pages::read_page;
 use crate::sources::read_source;
 use crate::{Store, keys};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// The byte after `keys::FACT` that marks a belief page lifetime.
 const LIFETIME: u8 = 0x20;
@@ -70,26 +72,36 @@ pub(crate) fn lifetime_key(source_id: &str, slug: &str, page_lifetime: &str) -> 
 }
 
 impl Store {
-    /// `listOrphanLifetimes(sourceId, limit)`: the open lifetimes of the source's current
-    /// incarnation whose slug has no page row (a soft-deleted page is a row), ordered by slug and
-    /// lifetime bytes, at most `max(1, limit)` of them, with the count of all of them.
-    pub fn list_orphan_lifetimes(&self, source_id: &str, limit: usize) -> Result<OrphanLifetimes> {
+    /// `listOrphanLifetimes(sourceId, limit, deep)`: the open lifetimes of the source's current
+    /// incarnation whose slug has no page row (a soft-deleted page is a row; reason `no_page`) and, when
+    /// `deep`, the lifetimes the source's events name that no lifetime record holds, in any source (reason
+    /// `no_lifetime`, one row for each slug and lifetime). Ordered by slug and lifetime bytes, at most
+    /// `max(1, limit)` of them, with the count of all of them.
+    pub fn list_orphan_lifetimes(
+        &self,
+        source_id: &str,
+        limit: usize,
+        deep: bool,
+    ) -> Result<OrphanLifetimes> {
         no_nul("listOrphanLifetimes", &[("sourceId", source_id)])?;
         let read = self.read()?;
-        let Some(source) = read_source(&*read, source_id)? else {
-            return Ok(OrphanLifetimes {
-                total: 0,
-                rows: Vec::new(),
-            });
-        };
+        let source = read_source(&*read, source_id)?;
         let mut found = Vec::new();
+        let mut known = BTreeSet::new();
         let mut failure = None;
-        scan_prefix(&*read, &source_prefix(source_id), false, &mut |_, v| {
+        scan_prefix(&*read, &[keys::FACT, LIFETIME], false, &mut |_, v| {
             match serde_json::from_slice::<LifetimeRecord>(v) {
-                Ok(l) if l.ended_at_us.is_none() && l.source_incarnation == source.incarnation => {
-                    found.push(l);
+                Ok(l) => {
+                    known.insert(l.page_lifetime.clone());
+                    if l.source_id == source_id
+                        && l.ended_at_us.is_none()
+                        && source
+                            .as_ref()
+                            .is_some_and(|s| l.source_incarnation == s.incarnation)
+                    {
+                        found.push(l);
+                    }
                 }
-                Ok(_) => {}
                 Err(e) => {
                     failure = Some(e);
                     return false;
@@ -108,6 +120,17 @@ impl Store {
                     page_lifetime: l.page_lifetime,
                     reason: "no_page".into(),
                 });
+            }
+        }
+        if deep {
+            for (slug, page_lifetime) in event_lifetimes(&*read, source_id)? {
+                if !known.contains(&page_lifetime) {
+                    orphans.push(OrphanLifetime {
+                        slug,
+                        page_lifetime,
+                        reason: "no_lifetime".into(),
+                    });
+                }
             }
         }
         orphans.sort_by(|a, b| {

@@ -221,6 +221,21 @@ fn each_event(
     failure.map_or(Ok(()), |e| Err(corrupt(e)))
 }
 
+/// The distinct `(slug, page_lifetime)` pairs the source's events name (a null lifetime names none), in byte order.
+pub(crate) fn event_lifetimes(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<BTreeSet<(String, String)>> {
+    let mut named = BTreeSet::new();
+    each_event(read, source_id, false, &mut |record| {
+        if let Some(lifetime) = record.row.page_lifetime {
+            named.insert((record.row.slug, lifetime));
+        }
+        true
+    })?;
+    Ok(named)
+}
+
 fn check_row(op: &str, row: &EventRow) -> Result<()> {
     no_nul(
         op,
