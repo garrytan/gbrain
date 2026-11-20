@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1044/1044
+# covered: 1052/1052
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -48,6 +48,7 @@
 # git_gap_census: 5/5
 # direction_evidence: 5/5
 # doctor_derived: 27/27
+# doctor_health: 8/8
 # doctor_persistence: 36/36
 # doctor_pages: 19/19
 # doctor_reads_acc: 24/24
@@ -103,13 +104,13 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	575	yes	yes	yes	serves
+putPage	pages	yes	580	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	25	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	166	yes	yes	yes	serves
+softDeletePage	pages	yes	168	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -137,7 +138,7 @@ listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
-insertSource	pages	yes	2	no	yes	yes	serves
+insertSource	pages	yes	4	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
@@ -251,13 +252,13 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	115	yes	yes	yes	serves
+addLink	links	yes	117	yes	yes	yes	serves
 addLinksBatch	links	yes	16	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	20	yes	yes	yes	serves
+getLinks	links	yes	21	yes	yes	yes	serves
 getBacklinks	links	yes	12	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -295,7 +296,7 @@ getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
 getLastSeen	timeline	yes	5	no	yes	yes	serves
-upsertEventProjection	timeline	yes	19	no	yes	yes	serves
+upsertEventProjection	timeline	yes	20	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	serves
@@ -309,7 +310,7 @@ upsertFile	raw_files	yes	5	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	49	yes	yes	yes	serves
+addTakesBatch	takes	yes	50	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
 listTakes	takes	yes	22	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
@@ -319,7 +320,7 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	2	no	yes	yes	serves
 supersedeTake	takes	yes	2	no	yes	yes	serves
-resolveTake	takes	yes	13	no	yes	yes	serves
+resolveTake	takes	yes	14	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	4	no	yes	yes	serves
@@ -399,11 +400,11 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	16	no	yes	yes	serves
-setConfig	config	yes	30	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
-listConfigKeys	config	yes	4	no	yes	yes	serves
+listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
-getConfigValues	config	yes	6	no	yes	yes	serves
+getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
@@ -723,7 +724,15 @@ listOntologyFactCandidates	doctor_derived	yes	1	no	yes	yes	refuses:health
 readAtomProvenanceCounts	doctor_derived	yes	1	no	yes	yes	refuses:health
 readExtractRollup7d	doctor_derived	yes	1	no	yes	yes	serves
 listRecordedHaltReasons7d	doctor_derived	yes	1	no	yes	yes	serves
-listCapacityCounters	doctor_persistence	yes	2	no	yes	yes	serves
+countContextualRetrievalCoverage	doctor_health	yes	1	no	yes	yes	serves
+countAbandonedThreads	doctor_health	yes	1	no	yes	yes	serves
+countAppliedGradeVerdicts	doctor_health	yes	2	no	yes	yes	serves
+countOrphanedEventProjections	doctor_health	yes	1	no	yes	yes	serves
+readTimelineDedupIndex	doctor_health	yes	2	no	yes	yes	serves
+readPagesUpsertArbiter	doctor_health	yes	2	no	yes	yes	serves
+readRetrievalTrackingColumn	doctor_health	yes	2	no	yes	yes	serves
+readRequestIndexStates	doctor_health	yes	2	no	yes	yes	serves
+listCapacityCounters	doctor_persistence	yes	4	no	yes	yes	serves
 listOutstandingHolders	doctor_persistence	yes	2	no	yes	yes	serves
 countPersistenceRequestRows	doctor_persistence	yes	2	no	yes	yes	serves
 listLifetimeCounters	doctor_persistence	yes	2	no	yes	yes	serves

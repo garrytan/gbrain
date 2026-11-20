@@ -22,31 +22,6 @@
 import type { BrainEngine } from './engine.ts';
 
 const CONSTRAINT_NAME = 'pages_source_slug_key';
-/** Sorted column set the ON CONFLICT (source_id, slug) inference needs. */
-const EXPECTED_COLUMN_SET = ['slug', 'source_id'];
-
-/** Parse the column list out of a pg_indexes `indexdef` string. */
-function parseIndexColumns(indexdef: string): string[] {
-  const open = indexdef.indexOf('(');
-  const close = indexdef.indexOf(')', open);
-  if (open < 0 || close < 0) return [];
-  return indexdef
-    .slice(open + 1, close)
-    .split(',')
-    .map(c => c.trim().split(/\s+/)[0]) // drop any "col DESC"/opclass suffix
-    .filter(Boolean);
-}
-
-/** True when the indexdef is a non-partial unique index on exactly {source_id, slug}. */
-function isArbiterShape(indexdef: string): boolean {
-  if (!/^CREATE UNIQUE INDEX/i.test(indexdef)) return false;
-  if (/\)\s+WHERE\s+/i.test(indexdef)) return false; // partial indexes can't arbitrate
-  const cols = parseIndexColumns(indexdef).sort();
-  return (
-    cols.length === EXPECTED_COLUMN_SET.length &&
-    EXPECTED_COLUMN_SET.every((c, i) => cols[i] === c)
-  );
-}
 
 export interface PagesUpsertArbiterStatus {
   /** The pages table exists (nothing to check if not). */
@@ -60,44 +35,9 @@ export interface PagesUpsertArbiterStatus {
 }
 
 export async function checkPagesUpsertArbiter(engine: BrainEngine): Promise<PagesUpsertArbiterStatus> {
-  const tbl = await engine.executeRaw<{ reg: string | null }>(
-    `SELECT to_regclass('pages')::text AS reg`,
-  );
-  const tablePresent = !!tbl[0]?.reg;
-  if (!tablePresent) {
-    return { tablePresent: false, arbiterPresent: false, needsRepair: false, duplicateGroups: 0 };
-  }
-  // Catalog-anchored candidate set (#550 residual): pg_indexes was a bare
-  // text scan on tablename, which false-passed on exactly the drift shapes
-  // this module exists to catch — an INVALID index (a failed CREATE INDEX
-  // CONCURRENTLY remnant renders a normal-looking indexdef but cannot
-  // arbitrate), a DEFERRABLE unique (indimmediate = false, unusable for ON
-  // CONFLICT), and a same-named table in ANOTHER schema (tablename has no
-  // schema qualifier, while the table probe above resolved via search_path).
-  // Anchoring on the SAME to_regclass('pages') plus the catalog validity
-  // flags closes all three; indpred IS NULL keeps the existing
-  // partial-index exclusion at the catalog level too.
-  const rows = await engine.executeRaw<{ indexdef: string }>(
-    `SELECT pg_get_indexdef(x.indexrelid) AS indexdef
-       FROM pg_index x
-      WHERE x.indrelid = to_regclass('pages')
-        AND x.indisunique
-        AND x.indisvalid
-        AND x.indisready
-        AND x.indimmediate
-        AND x.indpred IS NULL`,
-  );
-  const arbiterPresent = rows.some(r => isArbiterShape(r.indexdef));
-  let duplicateGroups = 0;
-  if (!arbiterPresent) {
-    const dup = await engine.executeRaw<{ n: string }>(
-      `SELECT COUNT(*)::text AS n FROM (
-         SELECT 1 FROM pages GROUP BY source_id, slug HAVING COUNT(*) > 1
-       ) d`,
-    );
-    duplicateGroups = parseInt(dup[0]?.n ?? '0', 10);
-  }
-  return { tablePresent, arbiterPresent, needsRepair: !arbiterPresent, duplicateGroups };
+  // The catalog-anchored shape probe and the duplicate count (engine-sql/doctor-health.ts readPagesUpsertArbiter).
+  const { tablePresent, arbiterPresent, duplicateGroups } = await engine.readPagesUpsertArbiter();
+  return { tablePresent, arbiterPresent, needsRepair: tablePresent && !arbiterPresent, duplicateGroups };
 }
 
 export interface PagesUpsertArbiterRepairResult {

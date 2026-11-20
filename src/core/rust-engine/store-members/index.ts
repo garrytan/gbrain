@@ -93,6 +93,7 @@ import * as decideProposals from './decide-proposals.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as doctorReads from './doctor-reads.ts';
 import * as doctorDerived from './doctor-derived.ts';
+import * as doctorHealth from './doctor-health.ts';
 import * as doctorPersistence from './doctor-persistence.ts';
 import * as doctorPages from './doctor-pages.ts';
 import * as doctorAcc from './doctor-acc.ts';
@@ -174,6 +175,8 @@ export const STORE_MEMBERS = {
   ...doctorReads,
   // The second doctor set: served, answered empty where the store keeps no writer, or left out to refuse (rust/docs/store/cli-reads-doctor-derived.md).
   ...doctorDerived,
+  // The doctor health set: served from the store or its key layout; readRequestIndexStates refuses (rust/docs/store/cli-reads-doctor-health.md).
+  ...doctorHealth,
   // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
   ...doctorPersistence,
   ...doctorPages,

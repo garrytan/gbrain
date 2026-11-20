@@ -483,7 +483,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // readRawProvenanceGaps counts the gaps in the store.
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
-      untypedWarnings: ['backup_coverage', 'extract_atoms_backlog', 'provenance_stamp_drift',
+      // persistence_request_indexes warns the same way: readRequestIndexStates refuses (the store has no request-table
+      // indexes) and the check reports the refusal with "Health is unknown"; PGLite reads the indexes as valid.
+      untypedWarnings: ['backup_coverage', 'extract_atoms_backlog', 'persistence_request_indexes', 'provenance_stamp_drift',
         'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog

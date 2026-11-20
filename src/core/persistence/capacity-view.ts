@@ -31,8 +31,7 @@ export type CounterRow = { key: string; outstanding_count: string; intent_bytes:
 
 /** The brain and principal counter rows (the input `capacityDiagnostics` reads). */
 export async function readCapacityCounters(engine: BrainEngine): Promise<CounterRow[]> {
-  return engine.executeRaw<CounterRow>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,
-    terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE "C"`);
+  return engine.listCapacityCounters();
 }
 
 export async function readCapacityView(engine: BrainEngine): Promise<CapacityView> {

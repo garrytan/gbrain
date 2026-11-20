@@ -75,6 +75,9 @@ const throwingEngine = {
   executeRaw: async () => {
     throw new Error('boom-executeRaw');
   },
+  listConfigKeys: async () => {
+    throw new Error('boom-executeRaw');
+  },
 } as unknown as BrainEngine;
 
 describe('schema_pack_consistency', () => {

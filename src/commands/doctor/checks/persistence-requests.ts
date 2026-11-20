@@ -7,7 +7,6 @@ import { preparationBudgetMs } from '../../../core/persistence/preparation-budge
 import { readPreparationPolicy } from '../../../core/persistence/switches.ts';
 import { resolvePrepare, resolveSessionTimeouts } from '../../../core/db.ts';
 import { agentFix, checkError, doctorVerify } from '../check-fix.ts';
-import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { lostCallerWrites } from '../../../core/repair/failed-writes.ts';
 import { readCapacityThresholds } from '../../../core/persistence/capacity-forecast.ts';
 import { doctorCapacityForecast, forecastOrNull } from '../capacity-memo.ts';
@@ -33,7 +32,6 @@ const HORIZON_DAYS = 3650;
  */
 export async function requestIndexesCheck(engine: BrainEngine): Promise<Check> {
   const docs = 'docs/guides/repair.md#request-indexes';
-  if (answersFromCatalog(engine)) return catalogSkipCheck('persistence_request_indexes', 'no_planner');
   try {
     const indexes = await readRequestIndexStates(engine);
     const broken = indexes.filter(index => index.state === 'missing' || index.state === 'invalid');

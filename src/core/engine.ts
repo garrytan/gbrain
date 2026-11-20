@@ -22,6 +22,7 @@ import type * as CoreNoticesSql from './engine-sql/core-notices.ts';
 import type * as GitGapCensusSql from './engine-sql/git-gap-census.ts';
 import type * as DirectionEvidenceSql from './engine-sql/direction-evidence.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
+import type * as DoctorHealthSql from './engine-sql/doctor-health.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
@@ -4926,6 +4927,23 @@ export interface BrainEngine {
   readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
   /** The recorded halt reasons of the 7-day extract rollup, per kind and reason. */
   listRecordedHaltReasons7d(): Promise<DoctorDerivedSql.RecordedHaltReasonRow[]>;
+  // Doctor reads, health set (engine-sql/doctor-health.ts): the calibration, remote-report, catalog and request-index statements.
+  /** Live pages below the markdown chunker version, below the safe-chunk fence (all, code) and never CR-evaluated; `sourceIds` narrows it. */
+  countContextualRetrievalCoverage(markdownChunkerVersion: number, sourceIds?: string[]): Promise<DoctorHealthSql.ContextualRetrievalCoverage>;
+  /** Active, unresolved, unsuperseded takes of weight >= 0.7 stated more than 12 months ago; `sourceIds` narrows it by page source. */
+  countAbandonedThreads(sourceIds?: string[]): Promise<number>;
+  /** Grade verdicts the judge applied (`take_grade_cache.applied`); `sourceIds` narrows it to takes on those sources' pages. */
+  countAppliedGradeVerdicts(sourceIds?: string[]): Promise<number>;
+  /** Timeline projections whose event page is soft-deleted; `sourceIds` narrows it by the event page's source. */
+  countOrphanedEventProjections(sourceIds?: string[]): Promise<number>;
+  /** Whether `timeline_entries` exists, and the definition of its dedup index (null when absent). */
+  readTimelineDedupIndex(): Promise<DoctorHealthSql.TimelineDedupIndex>;
+  /** The pages(source_id, slug) upsert arbiter, and the duplicate groups that block restoring it when it is missing. */
+  readPagesUpsertArbiter(): Promise<DoctorHealthSql.PagesUpsertArbiter>;
+  /** Whether pages has the `last_retrieved_at` column brainstorm and LSD read. */
+  readRetrievalTrackingColumn(): Promise<boolean>;
+  /** The validity and build progress of each named request-table index, in the given order. */
+  readRequestIndexStates(names: readonly string[]): Promise<DoctorHealthSql.RequestIndexRow[]>;
   // Doctor persistence reads (engine-sql/doctor-persistence.ts): the statements the persistence checks ran through executeRaw.
   /** Every counter row of the brain and of each principal, in key order. */
   listCapacityCounters(): Promise<DoctorPersistenceSql.CapacityCounterRow[]>;

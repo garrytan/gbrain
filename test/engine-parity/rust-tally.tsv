@@ -26,6 +26,7 @@ test/engine-parity/direction-evidence.test.ts	0	1
 test/engine-parity/doctor-acc.test.ts	4	0
 test/engine-parity/doctor-checkpoints.test.ts	5	0
 test/engine-parity/doctor-derived.test.ts	7	7
+test/engine-parity/doctor-health.test.ts	15	3
 test/engine-parity/doctor-pages.test.ts	16	0
 test/engine-parity/doctor-persistence.test.ts	4	0
 test/engine-parity/doctor-reads.test.ts	1	0

@@ -40,7 +40,7 @@ export type RequestPrincipal = readonly [kind: string, id: string];
 
 export interface CapacityCounterRow { key: string; outstanding_count: string; intent_bytes: string; lifetime_ids: string; terminal_bytes: string; recovery_bytes: string }
 const CAPACITY_COUNTERS_SQL = `SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,
-      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key`;
+      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE "C"`;
 /** Every counter row of the brain and of each principal, in key order. */
 export async function listCapacityCounters(raw: EngineRawRead): Promise<CapacityCounterRow[]> {
   return raw<CapacityCounterRow>(CAPACITY_COUNTERS_SQL);

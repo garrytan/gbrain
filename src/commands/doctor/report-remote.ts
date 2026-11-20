@@ -66,6 +66,7 @@ import {
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
 import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from './budget.ts';
 import { checkSynopsisTierCoverage } from './checks/synopsis-coverage.ts';
 import { brainScorePlanFix, checkError } from './check-fix.ts';
 import type { RenderContext } from '../../core/agent-output.ts';
@@ -179,14 +180,7 @@ export async function doctorReportRemote(
   // migration-verify-hook-never-runs-on-stamped-brains.
   try {
     // Source isolation: a scoped caller counts only its own sources' projections.
-    const orphans = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM timeline_entries te
-       JOIN pages ep ON ep.id = te.event_page_id
-       WHERE te.event_page_id IS NOT NULL AND ep.deleted_at IS NOT NULL
-         ${opts.sourceIds ? 'AND ep.source_id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
-    const n = Number(orphans[0]?.n ?? 0);
+    const n = await engine.countOrphanedEventProjections(opts.sourceIds);
     checks.push(
       n === 0
         ? { name: 'chronicle_projection_health', status: 'ok', message: 'No orphaned event projections' }
@@ -198,8 +192,11 @@ export async function doctorReportRemote(
               '(hidden at read time; clean up with `gbrain integrity auto`).',
           },
     );
-  } catch {
-    checks.push({ name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' });
+  } catch (e) {
+    // A refused read leaves the backlog unknown: warn with the refusal, never the ok fallback.
+    const refusal = capabilityRefusal(e);
+    checks.push(refusal ? capabilityUnknownCheck('chronicle_projection_health', refusal)
+      : { name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' });
   }
 
   // 3. Brain score (#4592: same scope as the connection count above)
@@ -304,10 +301,9 @@ export async function doctorReportRemote(
     const { findMisroutedPages } = await import('../../core/multi-source-drift.ts');
     // Source isolation: a scoped caller's roster (and the sample slugs the
     // walk returns) stays inside its grant; unscoped = brain-wide.
-    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
-      `SELECT id, local_path FROM sources ${opts.sourceIds ? 'WHERE id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
+    const sources = (await engine.listSourceRecords())
+      .filter(s => !opts.sourceIds || opts.sourceIds.includes(s.id))
+      .map(s => ({ id: s.id, local_path: s.local_path }));
     const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
     if (sources.length > 1 && nonDefaultWithPath.length > 0) {
       const result = await findMisroutedPages(

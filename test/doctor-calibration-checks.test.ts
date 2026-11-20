@@ -1,7 +1,7 @@
 /**
  * v0.36.1.0 (T12) — calibration doctor check tests.
  *
- * Hermetic. Mock engine + injected executeRaw responses (and typed profile members).
+ * Hermetic. Mock engine with the typed members the checks read.
  *
  * Tests cover:
  *  - checkAbandonedThreads: zero count → ok; non-zero → ok with count
@@ -38,19 +38,15 @@ function buildMockEngine(opts: {
     async getConfig(): Promise<string | null> {
       return null;
     },
-    async executeRaw<T>(sql: string): Promise<T[]> {
-      if (opts.throwOn && opts.throwOn.test(sql)) {
-        throw new Error('mock engine error: ' + sql.slice(0, 50));
-      }
-      if (sql.includes('FROM takes')) {
-        return [{ count: opts.abandonedCount ?? 0 } as unknown as T];
-      }
-      if (sql.includes('FROM take_grade_cache')) {
-        return [{ applied_count: opts.gradeAppliedCount ?? 0 } as unknown as T];
-      }
-      return [] as T[];
+    // Every read is a typed member; `throwOn` matches the member name.
+    async countAbandonedThreads() {
+      if (opts.throwOn?.test('countAbandonedThreads')) throw new Error('mock engine error: countAbandonedThreads');
+      return opts.abandonedCount ?? 0;
     },
-    // The profile reads are typed members; `throwOn` matches their names the way it matches SQL text.
+    async countAppliedGradeVerdicts() {
+      if (opts.throwOn?.test('countAppliedGradeVerdicts')) throw new Error('mock engine error: countAppliedGradeVerdicts');
+      return opts.gradeAppliedCount ?? 0;
+    },
     async getLatestCalibrationProfile() {
       if (opts.throwOn?.test('getLatestCalibrationProfile')) throw new Error('mock engine error: getLatestCalibrationProfile');
       return opts.freshGeneratedAt ? { generated_at: opts.freshGeneratedAt } : null;
@@ -79,7 +75,7 @@ describe('checkAbandonedThreads', () => {
   });
 
   test('engine throw → warn with diagnostic (non-blocking)', async () => {
-    const out = await checkAbandonedThreads(buildMockEngine({ throwOn: /FROM takes/ }));
+    const out = await checkAbandonedThreads(buildMockEngine({ throwOn: /countAbandonedThreads/ }));
     expect(out.status).toBe('warn');
     expect(out.message).toContain('Could not check abandoned threads');
   });
@@ -146,7 +142,7 @@ describe('checkGradeConfidenceDrift', () => {
   });
 
   test('engine throw → warn with diagnostic', async () => {
-    const out = await checkGradeConfidenceDrift(buildMockEngine({ throwOn: /FROM take_grade_cache/ }));
+    const out = await checkGradeConfidenceDrift(buildMockEngine({ throwOn: /countAppliedGradeVerdicts/ }));
     expect(out.status).toBe('warn');
     expect(out.message).toContain('Could not check grade confidence drift');
   });

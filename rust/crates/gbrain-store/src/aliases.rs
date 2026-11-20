@@ -502,7 +502,7 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
     Ok(())
 }
 
-fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
+pub(crate) fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
     get_json(read, &cr_key(page_id))
 }
 

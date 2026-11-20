@@ -171,7 +171,6 @@ export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
  * off the actual index shape via checkPagesUpsertArbiter.
  */
 export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Check> {
-  if (answersFromCatalog(engine)) return catalogSkipCheck('pages_upsert_arbiter', 'store_keyed_pages');
   try {
     const { checkPagesUpsertArbiter } = await import('../../../core/pages-upsert-arbiter.ts');
     const status = await checkPagesUpsertArbiter(engine);

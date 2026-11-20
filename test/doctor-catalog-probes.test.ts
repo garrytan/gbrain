@@ -37,10 +37,8 @@ import { sessionLaneBudgetEntry } from '../src/commands/doctor/checks/session-la
 import { ownerHostStaleEntry } from '../src/commands/doctor/checks/owner-host-stale.ts';
 import { embeddingColumnRegistryEntry } from '../src/commands/doctor/checks/embedding-health.ts';
 import { rlsEntry, rlsEventTriggerEntry } from '../src/commands/doctor/checks/schema-health.ts';
-import { jsonbIntegrityCheck, pagesUpsertArbiterCheck, pgvectorCheck } from '../src/commands/doctor/checks/core-health.ts';
+import { jsonbIntegrityCheck, pgvectorCheck } from '../src/commands/doctor/checks/core-health.ts';
 import { checkManagedGuardSchemaDrift } from '../src/commands/doctor/checks/managed-guard.ts';
-import { requestIndexesCheck } from '../src/commands/doctor/checks/persistence-requests.ts';
-import { checkBrainstormHealth } from '../src/commands/doctor/checks/graph-embedding.ts';
 import { readExpressionIndexesWithoutStats } from '../src/core/planner-stats.ts';
 import { checkLinkSourceCheck } from '../src/core/link-source-check-repair.ts';
 
@@ -107,13 +105,10 @@ describe('engine parity: catalog probes', () => {
     return { checks, gaps };
   });
 
-  parityTest('relation catalog: the column, index, JSONB, guard and upsert-index checks answer (skipped on Rust)', { methods: [] }, async (engine, backend) =>
+  parityTest('relation catalog: the column-type, JSONB and guard checks answer (skipped on Rust)', { methods: [] }, async (engine, backend) =>
     group(engine, backend, [
       ['managed_guard_schema_drift', () => checkManagedGuardSchemaDrift(engine), 'no_relation_catalog'],
-      ['persistence_request_indexes', () => requestIndexesCheck(engine), 'no_planner'],
       ['jsonb_integrity', () => jsonbIntegrityCheck(engine), 'no_jsonb_storage'],
-      ['pages_upsert_arbiter', () => pagesUpsertArbiterCheck(engine), 'store_keyed_pages'],
-      ['brainstorm_health', () => checkBrainstormHealth(engine), 'no_relation_catalog'],
       ['embedding_column_registry', () => runEntry(engine, embeddingColumnRegistryEntry), 'no_column_types'],
     ]));
 

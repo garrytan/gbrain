@@ -183,14 +183,10 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine, opts: { so
     // multi-source brains where different sources point at conflicting packs.
     // A remote caller's grant confines the comparison to its own sources'
     // override keys, so it never counts another source's override.
-    const rows = opts.sourceIds
-      ? await engine.executeRaw<{ key: string; value: string }>(
-        `SELECT key, value FROM config WHERE key = ANY($1::text[])`,
-        [opts.sourceIds.map((id) => `schema_pack.source.${id}`)],
-      )
-      : await engine.executeRaw<{ key: string; value: string }>(
-        `SELECT key, value FROM config WHERE key LIKE 'schema_pack.source.%'`,
-      );
+    const keys = opts.sourceIds
+      ? opts.sourceIds.map((id) => `schema_pack.source.${id}`)
+      : await engine.listConfigKeys('schema_pack.source.');
+    const rows = keys.length ? await engine.getConfigValues(keys) : [];
     if (rows.length === 0) {
       return { name: 'schema_pack_source_drift', status: 'ok', message: 'No per-source pack overrides — drift N/A.' };
     }

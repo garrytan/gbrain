@@ -99,7 +99,7 @@ describe('brainstorm_health', () => {
 
   test('column probe throwing -> warn (degraded), never a crash', async () => {
     const throwing = {
-      executeRaw: async () => {
+      readRetrievalTrackingColumn: async () => {
         throw new Error('probe-down');
       },
     } as unknown as BrainEngine;

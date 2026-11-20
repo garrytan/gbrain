@@ -155,6 +155,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements',
   'listLiveGenerationRetirements', 'listHeldGenerations', 'listPendingGenerationMembers', 'listOrphanGenerationCandidates',
   'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'readExtractRollup7d', 'listRecordedHaltReasons7d',
+  // Doctor health reads (engine-sql/doctor-health.ts; covered by test/engine-parity/doctor-health.test.ts)
+  'countContextualRetrievalCoverage', 'countAbandonedThreads', 'countAppliedGradeVerdicts', 'countOrphanedEventProjections', 'readTimelineDedupIndex', 'readPagesUpsertArbiter', 'readRetrievalTrackingColumn', 'readRequestIndexStates',
   // Doctor persistence reads (engine-sql/doctor-persistence.ts; covered by test/engine-parity/doctor-persistence.test.ts)
   'listCapacityCounters', 'listOutstandingHolders', 'countPersistenceRequestRows', 'listLifetimeCounters',
   'readAdmissionSample', 'listRunningRequestStalls', 'readLiveConsumerSummary', 'readCounterDrift',

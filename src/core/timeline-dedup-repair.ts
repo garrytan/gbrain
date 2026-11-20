@@ -77,19 +77,12 @@ export function parseIndexColumns(indexdef: string): string[] {
 }
 
 export async function checkTimelineDedupIndex(engine: BrainEngine): Promise<TimelineDedupStatus> {
-  const tbl = await engine.executeRaw<{ reg: string | null }>(
-    `SELECT to_regclass('timeline_entries')::text AS reg`,
-  );
-  const tablePresent = !!tbl[0]?.reg;
+  const { tablePresent, indexdef } = await engine.readTimelineDedupIndex();
   if (!tablePresent) {
     return { tablePresent: false, indexPresent: false, columns: [], needsRepair: false };
   }
-  const rows = await engine.executeRaw<{ indexdef: string }>(
-    `SELECT indexdef FROM pg_indexes WHERE indexname = $1`,
-    [INDEX_NAME],
-  );
-  const indexPresent = rows.length > 0;
-  const columns = indexPresent ? parseIndexColumns(rows[0].indexdef) : [];
+  const indexPresent = indexdef !== null;
+  const columns = indexdef !== null ? parseIndexColumns(indexdef) : [];
   const correct =
     columns.length === EXPECTED_COLUMNS.length &&
     EXPECTED_COLUMNS.every((c, i) => columns[i] === c);

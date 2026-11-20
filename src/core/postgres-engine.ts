@@ -198,6 +198,7 @@ import * as gitGapCensusImpl from './engine-sql/git-gap-census.ts';
 import * as directionEvidenceImpl from './engine-sql/direction-evidence.ts';
 import type { GitGapKeyWindow } from './engine-sql/git-gap-census.ts';
 import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
+import * as doctorHealthImpl from './engine-sql/doctor-health.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
@@ -1284,6 +1285,15 @@ export class PostgresEngine implements BrainEngine {
   readEvidenceVersionBodies(versionIds: readonly (string | number)[]) { return directionEvidenceImpl.readEvidenceVersionBodies(this.executeRaw.bind(this), versionIds); }
   markMirrorReadOnlyPage(sourceId: string, slug: string) { return directionEvidenceImpl.markMirrorReadOnlyPage(this.autocommitSql, sourceId, slug); }
 
+  // Doctor reads, health set (engine-sql/doctor-health.ts).
+  countContextualRetrievalCoverage(markdownChunkerVersion: number, sourceIds?: string[]) { return doctorHealthImpl.countContextualRetrievalCoverage(this.executeRaw.bind(this), markdownChunkerVersion, sourceIds); }
+  countAbandonedThreads(sourceIds?: string[]) { return doctorHealthImpl.countAbandonedThreads(this.executeRaw.bind(this), sourceIds); }
+  countAppliedGradeVerdicts(sourceIds?: string[]) { return doctorHealthImpl.countAppliedGradeVerdicts(this.executeRaw.bind(this), sourceIds); }
+  countOrphanedEventProjections(sourceIds?: string[]) { return doctorHealthImpl.countOrphanedEventProjections(this.executeRaw.bind(this), sourceIds); }
+  readTimelineDedupIndex() { return doctorHealthImpl.readTimelineDedupIndex(this.executeRaw.bind(this)); }
+  readPagesUpsertArbiter() { return doctorHealthImpl.readPagesUpsertArbiter(this.executeRaw.bind(this)); }
+  readRetrievalTrackingColumn() { return doctorHealthImpl.readRetrievalTrackingColumn(this.executeRaw.bind(this)); }
+  readRequestIndexStates(names: readonly string[]) { return doctorHealthImpl.readRequestIndexStates(this.executeRaw.bind(this), names); }
   // Doctor reads, second set (engine-sql/doctor-derived.ts).
   readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.executeRaw.bind(this), opts); }
   countSafeIndexPending(sourceIds?: string[]) { return doctorDerivedImpl.countSafeIndexPending(this.executeRaw.bind(this), sourceIds); }

@@ -170,6 +170,7 @@ test/engine-parity/direction-evidence.test.ts
 test/engine-parity/doctor-acc.test.ts
 test/engine-parity/doctor-checkpoints.test.ts
 test/engine-parity/doctor-derived.test.ts
+test/engine-parity/doctor-health.test.ts
 test/engine-parity/doctor-pages.test.ts
 test/engine-parity/doctor-persistence.test.ts
 test/engine-parity/doctor-reads.test.ts

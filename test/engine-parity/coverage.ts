@@ -185,6 +185,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements',
     'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations', 'listPendingGenerationMembers',
     'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'readExtractRollup7d', 'listRecordedHaltReasons7d',],
+  // doctor_health: the calibration, remote-report, catalog and request-index statements doctor checks ran through executeRaw (engine-sql/doctor-health.ts)
+  doctor_health: [
+    'countContextualRetrievalCoverage', 'countAbandonedThreads', 'countAppliedGradeVerdicts', 'countOrphanedEventProjections', 'readTimelineDedupIndex', 'readPagesUpsertArbiter', 'readRetrievalTrackingColumn', 'readRequestIndexStates',
+  ],
   // doctor_persistence: the persistence statements doctor checks ran through executeRaw (engine-sql/doctor-persistence.ts)
   doctor_persistence: [
     'listCapacityCounters', 'listOutstandingHolders', 'countPersistenceRequestRows', 'listLifetimeCounters',

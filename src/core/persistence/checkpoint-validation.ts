@@ -153,21 +153,9 @@ export interface RequestIndexState {
  * A fresh read of the online-built request indexes (#5762's checkpoint pair and #6511's slug index by default): valid,
  * missing, INVALID, or still being built by another session. The checkpoint timeout hint reads the pair it depends on.
  */
-export async function readRequestIndexStates(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>,
+export async function readRequestIndexStates(engine: Pick<BrainEngine, 'readRequestIndexStates'>,
   indexes: ReadonlyArray<{ name: string }> = PERSISTENCE_REQUEST_ONLINE_INDEXES): Promise<RequestIndexState[]> {
-  const names = indexes.map(index => index.name);
-  if (engine.kind !== 'postgres') {
-    const rows = await engine.executeRaw<{ name: string; present: boolean }>(
-      'SELECT n.name, to_regclass(n.name) IS NOT NULL AS present FROM unnest($1::text[]) AS n(name)', [names]);
-    return rows.map(row => ({ name: row.name, state: row.present ? 'valid' : 'missing' }));
-  }
-  const rows = await engine.executeRaw<{ name: string; valid: boolean | null; phase: string | null; blocks_done: string | null; blocks_total: string | null }>(
-    `SELECT n.name, i.indisvalid AS valid, p.phase, p.blocks_done::text, p.blocks_total::text
-       FROM unnest($1::text[]) WITH ORDINALITY AS n(name, position)
-       LEFT JOIN pg_index i ON i.indexrelid = to_regclass(n.name)
-       LEFT JOIN LATERAL (SELECT phase, blocks_done, blocks_total FROM pg_stat_progress_create_index p
-         WHERE p.relid = i.indrelid AND p.index_relid IN (i.indexrelid, 0) LIMIT 1) p ON true
-      ORDER BY n.position`, [names]);
+  const rows = await engine.readRequestIndexStates(indexes.map(index => index.name));
   return rows.map(row => row.valid === null ? { name: row.name, state: 'missing' }
     : row.valid ? { name: row.name, state: 'valid' }
       : row.phase !== null ? { name: row.name, state: 'building', progress: { phase: row.phase, blocks_done: Number(row.blocks_done ?? 0), blocks_total: Number(row.blocks_total ?? 0) } }
@@ -215,6 +203,6 @@ export function formatCheckpointTimeoutHint(indexes: RequestIndexState[], input:
       + `${input.requestId ?? '<request-id>'} and attach the persistence_request_indexes and persistence_request_growth entries of gbrain doctor --json.` };
 }
 
-export async function checkpointTimeoutHint(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, input: Parameters<typeof formatCheckpointTimeoutHint>[1]): Promise<CheckpointTimeoutHint> {
+export async function checkpointTimeoutHint(engine: Pick<BrainEngine, 'readRequestIndexStates'>, input: Parameters<typeof formatCheckpointTimeoutHint>[1]): Promise<CheckpointTimeoutHint> {
   return formatCheckpointTimeoutHint(await readRequestIndexStates(engine, PERSISTENCE_SYNC_RUN_INDEXES), input);
 }

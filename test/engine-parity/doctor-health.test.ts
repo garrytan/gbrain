@@ -1,0 +1,366 @@
+/**
+ * BrainEngine parity: the doctor health reads of engine-sql/doctor-health.ts (calibration, remote report, catalog and
+ * request-index checks) and the doctor checks and ops route that read them.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: each member returns the same answer on every engine arm (PGLite always; Postgres with DATABASE_URL; the
+ *    Rust arm through test/engine-parity/harness.ts), so a doctor check reports the same finding on each. The catalog
+ *    checks have two cases each: (a) a fresh brain, compared on all three arms; (b) a brain whose schema drifted, which
+ *    only the SQL engines can have: PGLite and Postgres seed the drift with harness-only DDL and pin the finding, and
+ *    the Rust arm pins the answer its key layout gives (never a skip).
+ *  - Regression: an engine whose read drifts, refuses on raw SQL, or answers a silent empty where the SQL engines count
+ *    rows gives a different doctor status, message or details per backend.
+ *  - Why existing coverage misses it: the doctor check tests run these checks on PGLite only, and the Rust arm skipped
+ *    the catalog checks (`catalogSkipCheck`) or stopped on the raw SQL refusal.
+ *  - Seam: typed members, seeded through typed writers; the drift fixtures of the (b) cases are DDL behind the backend
+ *    switch, restored before the case ends.
+ *
+ * Named differences (the Rust arm does not equal PGLite, by design):
+ *  - persistence_request_indexes: PGLite and Postgres read the request-table indexes as valid; the Rust store has none
+ *    (it finds a request by a full scan of its request keys), so `readRequestIndexStates` refuses by name and the check
+ *    reports "Health is unknown". The case ends on that refusal, so the Rust tally counts it as refused.
+ */
+import { describe, expect } from 'bun:test';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { parityArms } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import { checkAbandonedThreads, checkContextualRetrievalCoverage, checkGradeConfidenceDrift } from '../../src/commands/doctor/checks/calibration.ts';
+import { checkSchemaPackSourceDrift } from '../../src/commands/doctor/schema-pack-checks.ts';
+import { linkSourceCheckConstraintCheck, pagesUpsertArbiterCheck } from '../../src/commands/doctor/checks/core-health.ts';
+import { requestIndexesCheck } from '../../src/commands/doctor/checks/persistence-requests.ts';
+import { checkBrainstormHealth } from '../../src/commands/doctor/checks/graph-embedding.ts';
+import { checkTimelineDedupIndex } from '../../src/core/timeline-dedup-repair.ts';
+import { readCapacityView } from '../../src/core/persistence/capacity-view.ts';
+import { cachedOpsSnapshot } from '../../src/commands/doctor/ops-snapshot.ts';
+import { PERSISTENCE_REQUEST_ID_INDEX, PERSISTENCE_REQUEST_ONLINE_INDEXES } from '../../src/core/persistence/schema.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+const OTHER = 'other-source';
+
+async function put(engine: BrainEngine, slug: string, extra: Record<string, unknown> = {}, opts: Record<string, unknown> = {}): Promise<number> {
+  const page = await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '', ...extra } as never, opts as never);
+  return Number(page.id);
+}
+
+/** Runs `fn` with a schema drift in place, and puts the schema back before returning. */
+async function withDrift<T>(engine: BrainEngine, drift: string[], restore: string[], fn: () => Promise<T>): Promise<T> {
+  for (const statement of drift) await engine.executeRaw(statement);
+  try {
+    return await fn();
+  } finally {
+    for (const statement of restore) await engine.executeRaw(statement);
+  }
+}
+
+describe('doctor health reads', () => {
+  parityTest(
+    'contextual_retrieval_coverage counts chunker drift, unsealed pages and unstamped markdown per source',
+    { methods: ['insertSource', 'putPage', 'softDeletePage', 'countContextualRetrievalCoverage'] },
+    async (engine) => {
+      const empty = await checkContextualRetrievalCoverage(engine);
+      await engine.insertSource({ id: OTHER, name: OTHER, local_path: null, config: {} });
+      await put(engine, 'notes/old', { chunker_version: 1 });
+      await put(engine, 'notes/stamped', { chunker_version: 4 }, { contextualRetrieval: { mode: 'title', corpusGeneration: null } });
+      await put(engine, 'notes/receipt', { type: 'extract_receipt', chunker_version: 4 });
+      await put(engine, 'src/main-ts', { page_kind: 'code', chunker_version: 2, frontmatter: { file: 'src/main.ts' } });
+      await put(engine, 'notes/gone', { chunker_version: 1 });
+      await engine.softDeletePage('notes/gone');
+      await put(engine, 'notes/elsewhere', { chunker_version: 1 }, { sourceId: OTHER });
+      const all = await engine.countContextualRetrievalCoverage(99);
+      const current = await engine.countContextualRetrievalCoverage(1);
+      const scoped = await engine.countContextualRetrievalCoverage(99, ['default']);
+      const nowhere = await engine.countContextualRetrievalCoverage(99, ['nowhere']);
+      expect(nowhere).toEqual({ chunker_drift: 0, unsealed: 0, unsealed_code: 0, mode_null: 0 });
+      const check = await checkContextualRetrievalCoverage(engine, { sourceIds: ['default'] });
+      return { empty, all, current, scoped, nowhere, check };
+    },
+  );
+
+  parityTest(
+    'abandoned_threads counts old high-conviction takes nobody revisited, by page source',
+    { methods: ['insertSource', 'putPage', 'addTakesBatch', 'resolveTake', 'countAbandonedThreads'] },
+    async (engine) => {
+      const empty = await checkAbandonedThreads(engine);
+      await engine.insertSource({ id: OTHER, name: OTHER, local_path: null, config: {} });
+      const page = await put(engine, 'notes/takes');
+      const elsewhere = await put(engine, 'notes/other-takes', {}, { sourceId: OTHER });
+      const take = (row: number, extra: Record<string, unknown>) => ({ page_id: page, row_num: row, claim: `claim ${row}`, kind: 'take', holder: 'h', ...extra });
+      await engine.addTakesBatch([
+        take(1, { weight: 0.9, since_date: '2020-01-15' }),
+        take(2, { weight: 0.9, since_date: '2020-03' }),
+        take(3, { weight: 0.7, since_date: '2020-01-15' }), // real 0.7 widens below 0.7
+        take(4, { weight: 0.5, since_date: '2020-01-15' }),
+        take(5, { weight: 0.9, since_date: '2099-01-01' }),
+        take(6, { weight: 0.9 }),
+        take(7, { weight: 0.9, since_date: '2020-01-15', active: false }),
+        take(8, { weight: 0.9, since_date: '2020-01-15', superseded_by: 1 }),
+        take(9, { weight: 0.9, since_date: '2020-01-15' }),
+      ] as never);
+      await engine.resolveTake(page, 9, { quality: 'correct', resolvedBy: 'tester' } as never);
+      await engine.addTakesBatch([{ page_id: elsewhere, row_num: 1, claim: 'other', kind: 'take', holder: 'h', weight: 0.9, since_date: '2020-01-15' }] as never);
+      const all = await engine.countAbandonedThreads();
+      const scoped = await engine.countAbandonedThreads(['default']);
+      const nowhere = await engine.countAbandonedThreads(['nowhere']);
+      expect({ all, scoped, nowhere }).toEqual({ all: 3, scoped: 2, nowhere: 0 });
+      const check = await checkAbandonedThreads(engine, { sourceIds: ['default'] });
+      return { empty, all, scoped, nowhere, check };
+    },
+  );
+
+  parityTest(
+    'chronicle projection health counts projections of soft-deleted event pages, by event source',
+    { methods: ['putPage', 'upsertEventProjection', 'softDeletePage', 'countOrphanedEventProjections'] },
+    async (engine) => {
+      const empty = await engine.countOrphanedEventProjections();
+      await put(engine, 'people/alice-example');
+      await put(engine, 'life/events/2026-02-01-001', { type: 'event', frontmatter: { event: { kind: 'meeting' } } });
+      await put(engine, 'life/events/2026-02-02-001', { type: 'event', frontmatter: { event: { kind: 'meeting' } } });
+      await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug: 'life/events/2026-02-01-001', date: '2026-02-01', summary: 'Met' });
+      await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug: 'life/events/2026-02-02-001', date: '2026-02-02', summary: 'Kept' });
+      const live = await engine.countOrphanedEventProjections();
+      await engine.softDeletePage('life/events/2026-02-01-001');
+      const orphaned = await engine.countOrphanedEventProjections();
+      const scoped = await engine.countOrphanedEventProjections(['default']);
+      const nowhere = await engine.countOrphanedEventProjections(['nowhere']);
+      expect({ empty, live, orphaned, scoped, nowhere }).toEqual({ empty: 0, live: 0, orphaned: 1, scoped: 1, nowhere: 0 });
+      return { empty, live, orphaned, scoped, nowhere };
+    },
+  );
+
+  parityTest(
+    'grade_confidence_drift (a): a fresh brain has no applied verdicts',
+    { methods: ['countAppliedGradeVerdicts'] },
+    async (engine) => {
+      const check = await checkGradeConfidenceDrift(engine);
+      const scoped = await engine.countAppliedGradeVerdicts(['default']);
+      return { check, scoped };
+    },
+  );
+
+  parityTest(
+    'grade_confidence_drift (b): applied verdicts count on the SQL engines; Rust holds none',
+    { methods: ['countAppliedGradeVerdicts'] },
+    async (engine, backend) => {
+      if (backend === 'rust') {
+        // The store keeps no take_grade_cache, and grade-takes writes it through raw SQL, which Rust refuses.
+        expect(await checkGradeConfidenceDrift(engine)).toEqual({ name: 'grade_confidence_drift', status: 'ok', message: 'Only 0 auto-applied verdicts — need 30+ for drift detection' });
+        return 'pinned';
+      }
+      const page = await put(engine, 'notes/graded');
+      await engine.addTakesBatch([{ page_id: page, row_num: 1, claim: 'graded', kind: 'take', holder: 'h', weight: 0.9 }] as never);
+      const [take] = await engine.executeRaw<{ id: number }>(`SELECT id FROM takes WHERE page_id = $1`, [page]);
+      await engine.executeRaw(`INSERT INTO take_grade_cache (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
+        VALUES ($1, 'p1', 'judge', 'e1', 'correct', 0.9, true), ($1, 'p1', 'judge', 'e2', 'correct', 0.9, false)`, [take!.id]);
+      expect(await checkGradeConfidenceDrift(engine)).toEqual({ name: 'grade_confidence_drift', status: 'ok', message: 'Only 1 auto-applied verdicts — need 30+ for drift detection' });
+      expect(await engine.countAppliedGradeVerdicts([OTHER])).toBe(0);
+      return 'pinned';
+    },
+  );
+
+  parityTest(
+    'schema_pack_source_drift reads the per-source pack overrides, scoped to the caller sources',
+    { methods: ['setConfig', 'listConfigKeys', 'getConfigValues'] },
+    async (engine) => {
+      const none = await checkSchemaPackSourceDrift(engine);
+      await engine.setConfig('schema_pack.source.default', 'pack-a');
+      await engine.setConfig(`schema_pack.source.${OTHER}`, 'pack-b');
+      await engine.setConfig('schema_pack.sources', 'not-an-override');
+      const diverged = await checkSchemaPackSourceDrift(engine);
+      const scoped = await checkSchemaPackSourceDrift(engine, { sourceIds: ['default'] });
+      const nowhere = await checkSchemaPackSourceDrift(engine, { sourceIds: ['nowhere'] });
+      expect(diverged.status).toBe('warn');
+      return { none, diverged, scoped, nowhere };
+    },
+  );
+});
+
+describe('doctor catalog checks', () => {
+  parityTest(
+    'pages_upsert_arbiter (a): a fresh brain has the (source_id, slug) arbiter',
+    { methods: ['readPagesUpsertArbiter'] },
+    async (engine) => ({ check: await pagesUpsertArbiterCheck(engine), read: await engine.readPagesUpsertArbiter() }),
+  );
+
+  parityTest(
+    'pages_upsert_arbiter (b): a dropped arbiter fails on the SQL engines; Rust keys pages by (source, slug)',
+    { methods: ['readPagesUpsertArbiter'] },
+    async (engine, backend) => {
+      // Rust: keys.rs keys::page is (source, slug); pages.rs store_page writes that one key; page_body.rs refuses a
+      // taken pair with the pages_source_slug_key error; pages.rs rename_page refuses a taken slug and deletes the old
+      // key (store test a_source_and_slug_hold_one_page_record). So the arbiter is present with no duplicate group.
+      if (backend === 'rust') {
+        expect(await engine.readPagesUpsertArbiter()).toEqual({ tablePresent: true, arbiterPresent: true, duplicateGroups: 0 });
+        expect(await pagesUpsertArbiterCheck(engine)).toEqual({ name: 'pages_upsert_arbiter', status: 'ok', message: 'pages has the UNIQUE(source_id, slug) upsert arbiter' });
+        return 'pinned';
+      }
+      await put(engine, 'notes/a');
+      await withDrift(engine, ['ALTER TABLE pages DROP CONSTRAINT pages_source_slug_key'],
+        ['ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)'], async () => {
+          expect(await engine.readPagesUpsertArbiter()).toEqual({ tablePresent: true, arbiterPresent: false, duplicateGroups: 0 });
+          const check = await pagesUpsertArbiterCheck(engine);
+          expect({ name: check.name, status: check.status }).toEqual({ name: 'pages_upsert_arbiter', status: 'fail' });
+          expect(check.message).toContain('pages is missing the UNIQUE(source_id, slug) arbiter');
+        });
+      return 'pinned';
+    },
+  );
+
+  parityTest(
+    'links_link_source_check (a): a fresh brain has the kebab-case gate, and a kebab provenance link is written',
+    { methods: ['putPage', 'addLink', 'getLinks'] },
+    async (engine) => {
+      await put(engine, 'concepts/from');
+      await put(engine, 'notes/to');
+      await engine.addLink('concepts/from', 'notes/to', '', 'synthesized_from', 'concept-provenance');
+      const links = (await engine.getLinks('concepts/from')).map(l => ({ to: l.to_slug, source: l.link_source }));
+      return { check: await linkSourceCheckConstraintCheck(engine), links };
+    },
+  );
+
+  parityTest(
+    'links_link_source_check (b): a dropped gate warns on the SQL engines; the Rust links store enforces it on every write',
+    { methods: ['putPage', 'addLink'] },
+    async (engine, backend) => {
+      await put(engine, 'concepts/from');
+      await put(engine, 'notes/to');
+      // Rust: rust/crates/gbrain-store/src/links.rs valid_link_source checks every link_source write.
+      if (backend === 'rust') {
+        const refused = await engine.addLink('concepts/from', 'notes/to', '', 'cites', 'Not Kebab').then(() => null, (e: Error) => e.message);
+        expect(refused).not.toBeNull();
+        expect(await linkSourceCheckConstraintCheck(engine)).toEqual({ name: 'links_link_source_check', status: 'ok', message: 'links_link_source_check has the v114 kebab-case gate' });
+        return 'pinned';
+      }
+      const [row] = await engine.executeRaw<{ def: string }>(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = to_regclass('links') AND conname = 'links_link_source_check'`);
+      await withDrift(engine, ['ALTER TABLE links DROP CONSTRAINT links_link_source_check'],
+        [`ALTER TABLE links ADD CONSTRAINT links_link_source_check ${row!.def}`], async () => {
+          await engine.addLink('concepts/from', 'notes/to', '', 'synthesized_from', 'concept-provenance');
+          const check = await linkSourceCheckConstraintCheck(engine);
+          expect({ name: check.name, status: check.status }).toEqual({ name: 'links_link_source_check', status: 'warn' });
+          expect(check.message).toContain('links_link_source_check is absent');
+        });
+      return 'pinned';
+    },
+  );
+
+  parityTest(
+    'timeline dedup index (a): a fresh brain has the four-column dedup index',
+    { methods: ['readTimelineDedupIndex'] },
+    async (engine) => ({ status: await checkTimelineDedupIndex(engine), read: await engine.readTimelineDedupIndex() }),
+  );
+
+  parityTest(
+    'timeline dedup index (b): a three-column index needs repair on the SQL engines; Rust dedups on all four columns',
+    { methods: ['readTimelineDedupIndex'] },
+    async (engine, backend) => {
+      // Rust: rust/crates/gbrain-store/src/timeline.rs keys the dedup on (page_id, date, md5(summary), source).
+      if (backend === 'rust') {
+        expect(await checkTimelineDedupIndex(engine)).toEqual({ tablePresent: true, indexPresent: true, columns: ['page_id', 'date', 'md5(summary)', 'source'], needsRepair: false });
+        return 'pinned';
+      }
+      const { indexdef } = await engine.readTimelineDedupIndex();
+      await withDrift(engine, ['DROP INDEX idx_timeline_dedup', 'CREATE UNIQUE INDEX idx_timeline_dedup ON timeline_entries (page_id, date, summary)'],
+        ['DROP INDEX idx_timeline_dedup', indexdef!], async () => {
+          expect(await checkTimelineDedupIndex(engine)).toEqual({ tablePresent: true, indexPresent: true, columns: ['page_id', 'date', 'summary'], needsRepair: true });
+        });
+      return 'pinned';
+    },
+  );
+
+  parityTest(
+    'persistence_request_indexes (a): valid on the SQL engines; health unknown on Rust, which has no request indexes',
+    { methods: ['readRequestIndexStates'] },
+    async (engine, backend) => {
+      const check = await requestIndexesCheck(engine);
+      if (backend === 'rust') {
+        // Named difference: Rust finds a request by a full scan of its request keys (persistence.rs all_requests).
+        expect({ status: check.status, health: (check.details as { health?: string }).health }).toEqual({ status: 'warn', health: 'unknown' });
+        expect(check.message).toContain('readRequestIndexStates');
+        expect(check.message).toContain('Health is unknown.');
+        // End on the refusal itself: the check caught it to report health unknown.
+        await engine.readRequestIndexStates([PERSISTENCE_REQUEST_ID_INDEX.name]);
+      }
+      expect(check.status).toBe('ok');
+      return { check, states: await engine.readRequestIndexStates([...PERSISTENCE_REQUEST_ONLINE_INDEXES.map(i => i.name), 'idx_never_built']) };
+    },
+  );
+
+  parityTest(
+    'persistence_request_indexes (b): a dropped request index warns on the SQL engines; Rust stays unknown',
+    { methods: ['readRequestIndexStates'] },
+    async (engine, backend) => {
+      if (backend === 'rust') {
+        const check = await requestIndexesCheck(engine);
+        expect({ status: check.status, health: (check.details as { health?: string }).health }).toEqual({ status: 'warn', health: 'unknown' });
+        await engine.readRequestIndexStates([PERSISTENCE_REQUEST_ID_INDEX.name]);
+      }
+      const [row] = await engine.executeRaw<{ indexdef: string }>(`SELECT indexdef FROM pg_indexes WHERE indexname = $1`, [PERSISTENCE_REQUEST_ID_INDEX.name]);
+      await withDrift(engine, [`DROP INDEX ${PERSISTENCE_REQUEST_ID_INDEX.name}`], [row!.indexdef], async () => {
+        const check = await requestIndexesCheck(engine);
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain(`${PERSISTENCE_REQUEST_ID_INDEX.name} is missing`);
+      });
+      return 'pinned';
+    },
+  );
+
+  parityTest(
+    'brainstorm_health (a): the retrieval tracking column is present on every engine',
+    { methods: ['readRetrievalTrackingColumn'] },
+    async (engine) => {
+      const check = await checkBrainstormHealth(engine);
+      expect(check.status).toBe('ok');
+      return { check, column: await engine.readRetrievalTrackingColumn() };
+    },
+  );
+
+  parityTest(
+    'brainstorm_health (b): a missing column warns on the SQL engines; the Rust store records retrievals',
+    { methods: ['readRetrievalTrackingColumn'] },
+    async (engine, backend) => {
+      // Rust: rust/crates/gbrain-store/src/page_ops/retrievals.rs records each page retrieval (bumpPageRetrievals).
+      if (backend === 'rust') {
+        expect(await engine.readRetrievalTrackingColumn()).toBe(true);
+        return 'pinned';
+      }
+      await withDrift(engine, ['ALTER TABLE pages RENAME COLUMN last_retrieved_at TO last_retrieved_at_parity'],
+        ['ALTER TABLE pages RENAME COLUMN last_retrieved_at_parity TO last_retrieved_at'], async () => {
+          expect(await engine.readRetrievalTrackingColumn()).toBe(false);
+          const check = await checkBrainstormHealth(engine);
+          expect({ status: check.status, missing: check.message.includes('pages.last_retrieved_at column missing') }).toEqual({ status: 'warn', missing: true });
+        });
+      return 'pinned';
+    },
+  );
+});
+
+describe('doctor ops route (/admin/api/ops)', () => {
+  parityTest(
+    'the ops route capacity view reads the same counters on every engine',
+    { methods: ['listCapacityCounters'] },
+    async (engine) => {
+      const view = await readCapacityView(engine);
+      expect('status' in view).toBe(false);
+      return view;
+    },
+  );
+
+  parityTest(
+    'the ops route snapshot: capacity is read on the SQL engines; the full Rust ops report stops on the connection check',
+    { methods: ['listCapacityCounters'] },
+    async (engine, backend) => {
+      const snapshot = await cachedOpsSnapshot(engine);
+      expect('status' in snapshot.capacity).toBe(false);
+      if (backend === 'rust') {
+        // The ops tier stops at the database connection check (a raw SELECT 1): the report holds that one failed check
+        // and the capacity view, and no read of this file refuses. rust-engine/admin-unowned-rust (pingStore, lane 12)
+        // and rust-engine/doctor-slices lift that stop; until then the case ends on the stop itself and the Rust tally
+        // counts it as refused.
+        expect(snapshot.report.checks.map(c => ({ name: c.name, status: c.status }))).toEqual([{ name: 'connection', status: 'fail' }]);
+        await engine.executeRaw('SELECT 1');
+      }
+      expect(snapshot.report.checks.length).toBeGreaterThan(1);
+      return { capacity: snapshot.capacity };
+    },
+  );
+});

@@ -2707,6 +2707,50 @@ mod tests {
         );
     }
 
+    /// Doctor `pages_upsert_arbiter` answers "present, 0 duplicate groups" on a Rust brain because a page record is
+    /// keyed by (source, slug) (`keys::page`): a second write at the pair rewrites the one record, a rename onto a
+    /// taken slug is refused, and a rename deletes the old key, so no pair ever holds two records.
+    #[test]
+    fn a_source_and_slug_hold_one_page_record() {
+        let store = crate::test_support::store();
+        let pairs = |store: &Store| -> (usize, usize) {
+            let pages = all_pages(&*store.read().unwrap()).unwrap();
+            let distinct: std::collections::BTreeSet<(String, String)> = pages
+                .iter()
+                .map(|p| (p.source_id.clone(), p.slug.clone()))
+                .collect();
+            (pages.len(), distinct.len())
+        };
+        let first = put(&store, "notes/one");
+        let again = put(&store, "notes/one");
+        assert_eq!(again.id, first.id);
+        assert_eq!(pairs(&store), (1, 1));
+
+        let two = put(&store, "notes/two");
+        let refused = store
+            .write(|tx| rename_page(tx, &*store.env, &two, "notes/one"))
+            .unwrap_err();
+        assert_eq!(refused.code, CONSTRAINT_VIOLATION);
+        assert_eq!(pairs(&store), (2, 2));
+
+        let moved = store
+            .write(|tx| rename_page(tx, &*store.env, &first, "notes/three"))
+            .unwrap();
+        assert_eq!(moved.id, first.id);
+        let read = store.read().unwrap();
+        assert!(
+            read_page(&*read, DEFAULT_SOURCE, "notes/one")
+                .unwrap()
+                .is_none()
+        );
+        drop(read);
+        assert_eq!(pairs(&store), (2, 2));
+        // The freed slug takes a new page, still one record per pair.
+        let reused = put(&store, "notes/one");
+        assert_ne!(reused.id, first.id);
+        assert_eq!(pairs(&store), (3, 3));
+    }
+
     #[test]
     fn rename_page_to_the_same_slug_keeps_the_revision() {
         let store = crate::test_support::store();

@@ -6,6 +6,7 @@ pub mod doctor;
 pub mod doctor_acc;
 pub mod doctor_checkpoints;
 pub mod doctor_derived;
+pub mod doctor_health;
 pub mod doctor_pages;
 pub mod doctor_persistence;
 pub mod doctor_sources;

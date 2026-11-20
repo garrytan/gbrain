@@ -457,6 +457,16 @@ export const RUST_ENGINE_MEMBERS = {
   listLocalEditAdoptions: 'persistence_journal',
   listDerivationPurgeSweeps: 'persistence_journal',
 
+  // doctor reads, health set (engine-sql/doctor-health.ts)
+  countContextualRetrievalCoverage: 'health',
+  countAbandonedThreads: 'takes',
+  countAppliedGradeVerdicts: 'takes',
+  countOrphanedEventProjections: 'timeline',
+  readTimelineDedupIndex: 'timeline',
+  readPagesUpsertArbiter: 'pages',
+  readRetrievalTrackingColumn: 'pages',
+  readRequestIndexStates: 'persistence_journal',
+
   // health: doctor reads, second set (engine-sql/doctor-derived.ts)
   readIgnoredPrivacyLabelCounts: 'health',
   countSafeIndexPending: 'health',

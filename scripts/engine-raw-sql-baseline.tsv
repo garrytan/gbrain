@@ -32,7 +32,7 @@ src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/access-pages-read-by-nobody.ts	execute_raw	5	GBRA-582 item 9 (handover PR 2): set-based read-by-nobody scan over pages.page_readers and access_group_members; no typed engine method exists yet
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
-src/commands/doctor/checks/calibration.ts	execute_raw	6
+src/commands/doctor/checks/calibration.ts	execute_raw	3
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	1
 src/commands/doctor/checks/content-quality.ts	execute_raw	3
 src/commands/doctor/checks/core-health.ts	execute_raw	3
@@ -50,7 +50,6 @@ src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
 src/commands/doctor/checks/git-convergence.ts	execute_raw	2
 src/commands/doctor/checks/git-holds.ts	execute_raw	4
-src/commands/doctor/checks/graph-embedding.ts	execute_raw	1
 src/commands/doctor/checks/guest-source.ts	execute_raw	2
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
 src/commands/doctor/checks/knowledge-health.ts	execute_raw	2
@@ -84,8 +83,6 @@ src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
 src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
-src/commands/doctor/report-remote.ts	execute_raw	2
-src/commands/doctor/schema-pack-checks.ts	execute_raw	2
 src/commands/doctor/skill-checks.ts	execute_raw	1
 src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
@@ -555,7 +552,7 @@ src/core/page-state/tags.ts	execute_raw	3
 src/core/page-state/versions.ts	execute_raw	6
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
-src/core/pages-upsert-arbiter.ts	execute_raw	6
+src/core/pages-upsert-arbiter.ts	execute_raw	3
 src/core/persistence/activation.ts	execute_raw	9
 src/core/persistence/admin-intent.ts	execute_raw	3
 src/core/persistence/admin-lock.ts	execute_raw	7
@@ -566,9 +563,8 @@ src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	10
-src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
-src/core/persistence/checkpoint-validation.ts	execute_raw	5
+src/core/persistence/checkpoint-validation.ts	execute_raw	3
 src/core/persistence/compaction-pass.ts	execute_raw	1
 src/core/persistence/concept-rebuild.ts	execute_raw	11	#9653: the held-concept rebuild's hold, member and stated-row checks run in its purge transaction, next to the engine purge it calls
 src/core/persistence/config-snapshot.ts	execute_raw	2
@@ -960,7 +956,7 @@ src/core/takes-quality-eval/trend.ts	execute_raw	1
 src/core/takes-write.ts	execute_raw	5
 src/core/think/index.ts	execute_raw	2
 src/core/think/persist-take.ts	execute_raw	1
-src/core/timeline-dedup-repair.ts	execute_raw	11
+src/core/timeline-dedup-repair.ts	execute_raw	9
 src/core/timeline-extract.ts	execute_raw	9
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/token-mint.ts	execute_raw	2

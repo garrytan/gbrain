@@ -11,7 +11,6 @@ import { pricingSetCommand } from '../../../core/budget/no-pricing.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
-import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
 import { isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
 import { isCrossSourceLinksEnabled } from '../../../core/link-extraction.ts';
 
@@ -142,18 +141,9 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine, opts: { sou
  * signal.
  */
 export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
-  // Rust: the column probe needs the relation catalog (rust/catalog/relations.json), which does not exist yet.
-  if (answersFromCatalog(engine)) return catalogSkipCheck('brainstorm_health', 'no_relation_catalog');
-  // (1) Column probe — fast, single-query.
+  // (1) Column probe — fast, single-query (on Rust, the store's page retrieval records).
   try {
-    const probeRows = await engine.executeRaw<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM information_schema.columns
-         WHERE table_name = 'pages' AND column_name = 'last_retrieved_at'
-       ) AS exists`,
-      []
-    );
-    const columnPresent = probeRows[0]?.exists === true;
+    const columnPresent = await engine.readRetrievalTrackingColumn();
     if (!columnPresent) {
       return {
         name: 'brainstorm_health',
