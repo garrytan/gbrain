@@ -124,7 +124,7 @@ src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
 src/commands/doctor/checks/purged-page-facts.ts	execute_raw	1
 src/commands/doctor/checks/queue-assets.ts	execute_raw	3
 src/commands/doctor/checks/queue-assets.ts	sql_template	1
-src/commands/doctor/checks/queue-jobs.ts	execute_raw	12
+src/commands/doctor/checks/queue-jobs.ts	execute_raw	2
 src/commands/doctor/checks/routing-federation.ts	execute_raw	7
 src/commands/doctor/checks/rows-behind.ts	execute_raw	1
 src/commands/doctor/checks/runtime-build-skew.ts	execute_raw	1
@@ -171,7 +171,7 @@ src/commands/engine-status.ts	execute_raw	1
 src/commands/enrich.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
-src/commands/export.ts	execute_raw	3
+src/commands/export.ts	execute_raw	2
 src/commands/extract-conversation-facts.ts	execute_raw	2
 src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-mentions-explain.ts	execute_raw	6
@@ -219,7 +219,7 @@ src/commands/recall.ts	execute_raw	1
 src/commands/reconcile-links.ts	execute_raw	1
 src/commands/reindex-code.ts	execute_raw	2
 src/commands/reindex-multimodal.ts	sql_template	5
-src/commands/reindex-search-vector.ts	execute_raw	4
+src/commands/reindex-search-vector.ts	execute_raw	3
 src/commands/reindex-synopsis.ts	execute_raw	2
 src/commands/reindex-vectors.ts	execute_raw	2
 src/commands/reindex.ts	execute_raw	4
@@ -289,7 +289,6 @@ src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner-only.ts	execute_raw	2	#9634, pre-ratchet: reads sources.config to tell whether the brain or one source is owner-only; no typed engine method exists yet
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
-src/core/access/policy-transfer.ts	execute_raw	1
 src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
@@ -297,7 +296,7 @@ src/core/access/serves.ts	execute_raw	2
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
-src/core/advisor/collect-stalled-jobs.ts	execute_raw	2
+src/core/advisor/collect-stalled-jobs.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/chat-usage.ts	execute_raw	1
@@ -320,7 +319,7 @@ src/core/behavior-change-notice.ts	execute_raw	1
 src/core/belief/append.ts	execute_raw	7
 src/core/belief/backfill.ts	execute_raw	8
 src/core/belief/changes.ts	execute_raw	2
-src/core/belief/coverage-report.ts	execute_raw	13
+src/core/belief/coverage-report.ts	execute_raw	12
 src/core/belief/coverage.ts	execute_raw	5
 src/core/belief/history.ts	execute_raw	2
 src/core/belief/identity.ts	execute_raw	2
@@ -457,7 +456,6 @@ src/core/entity-identity.ts	execute_raw	6
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
-src/core/export-snapshot.ts	execute_raw	4
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1
@@ -509,7 +507,7 @@ src/core/facts/single-prepare.ts	execute_raw	7
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	8
-src/core/facts/withdrawal-discovery.ts	execute_raw	9
+src/core/facts/withdrawal-discovery.ts	execute_raw	4
 src/core/facts/withdrawal.ts	execute_raw	17
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	2
@@ -637,7 +635,6 @@ src/core/minions/queue.ts	execute_raw	86
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	5
 src/core/minions/submission-authority.ts	execute_raw	7
-src/core/minions/supervisor.ts	execute_raw	2
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
@@ -658,7 +655,7 @@ src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	7
-src/core/ops/admin.ts	execute_raw	4
+src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
@@ -697,12 +694,12 @@ src/core/oversized-backfill.ts	execute_raw	6
 src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
 src/core/owned-folder/remove.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the source row (incarnation, local_path, config) to find its connector cursor
 src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the owned-folder sources' rows for pages_in
-src/core/page-body/body-tiling.ts	execute_raw	4
+src/core/page-body/body-tiling.ts	execute_raw	3
 src/core/page-body/ingest.ts	execute_raw	3
 src/core/page-body/projection.ts	execute_raw	11
-src/core/page-body/read-range.ts	execute_raw	6
+src/core/page-body/read-range.ts	execute_raw	5
 src/core/page-body/rechunk.ts	execute_raw	8
-src/core/page-body/segment-blocks.ts	execute_raw	2
+src/core/page-body/segment-blocks.ts	execute_raw	1
 src/core/page-body/segment-conversation.ts	execute_raw	3
 src/core/page-body/segment-derive.ts	execute_raw	33
 src/core/page-body/segment-facts.ts	execute_raw	1
@@ -1083,7 +1080,7 @@ src/core/schema-pack/sync.ts	execute_raw	3
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
-src/core/search/alias-fanout.ts	execute_raw	4
+src/core/search/alias-fanout.ts	execute_raw	1
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/embedding-column.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	5
@@ -1109,7 +1106,7 @@ src/core/search/safe-chunks.ts	execute_raw	2
 src/core/search/saved-facts-match.ts	execute_raw	2
 src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
 src/core/search/telemetry.ts	execute_raw	2
-src/core/search/transcript-quote.ts	execute_raw	3
+src/core/search/transcript-quote.ts	execute_raw	2
 src/core/search/two-pass.ts	execute_raw	5
 src/core/secret-store/restore.ts	execute_raw	3	secret restore reads the page revision and live knowledge_revision and flips secret_store.status; no typed engine method for the secret store exists yet
 src/core/secret-store/spool.ts	execute_raw	1	GST-2988 PR 2 spool: reads every allowed (restored) key_id and value_mac from secret_store to rebuild allowed.json; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
@@ -1221,7 +1218,6 @@ src/core/url-source-origin.ts	execute_raw	4
 src/core/vector-index.ts	driver_call	2
 src/core/vector-index.ts	execute_raw	9
 src/core/vector-prewarm.ts	execute_raw	4
-src/core/verbs/entity-card-identity.ts	execute_raw	1
 src/core/verbs/entity-card.ts	execute_raw	7
 src/core/verbs/entity-names.ts	execute_raw	1
 src/core/verbs/entity-references.ts	execute_raw	1
