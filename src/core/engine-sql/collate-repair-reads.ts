@@ -9,18 +9,13 @@
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
-const MISSING = (alias: string, column: string) =>
-  `NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=${alias}.source_id AND p.slug=${alias}.${column})`;
-const SOFT_DELETED = (alias: string, column: string) =>
-  `EXISTS (SELECT 1 FROM pages p WHERE p.source_id=${alias}.source_id AND p.slug=${alias}.${column} AND p.deleted_at IS NOT NULL)`;
-
 export interface OrphanedAliasCount { source_id: string; slug_redirects: number; page_aliases: number }
 
 /** Per source, the alias rows (both tables) whose target page row is absent, in byte order of source id (repair/aliases.ts `ORPHANED_ALIAS_COUNTS_SQL`). */
 export async function countOrphanedAliasRows(raw: EngineRawRead): Promise<OrphanedAliasCount[]> {
   return raw<OrphanedAliasCount>(`SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
-    SELECT sa.source_id,1 AS slug_redirects,0 AS page_aliases FROM slug_aliases sa WHERE ${MISSING('sa', 'canonical_slug')}
-    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE ${MISSING('pa', 'slug')}) o GROUP BY source_id ORDER BY source_id COLLATE "C"`);
+    SELECT sa.source_id,1 AS slug_redirects,0 AS page_aliases FROM slug_aliases sa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug)
+    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug)) o GROUP BY source_id ORDER BY source_id COLLATE "C"`);
 }
 
 export interface OrphanedAliasTarget { source_id: string; slug: string; page_aliases: number; slug_redirects: number }
@@ -29,16 +24,16 @@ export interface OrphanedAliasTarget { source_id: string; slug: string; page_ali
 export async function listOrphanedAliasTargets(raw: EngineRawRead, sourceIds: readonly string[]): Promise<OrphanedAliasTarget[]> {
   return raw<OrphanedAliasTarget>(
     `SELECT source_id,slug,sum(page_aliases)::int AS page_aliases,sum(slug_redirects)::int AS slug_redirects FROM (
-         SELECT pa.source_id,pa.slug,1 AS page_aliases,0 AS slug_redirects FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND ${MISSING('pa', 'slug')}
-         UNION ALL SELECT sa.source_id,sa.canonical_slug,0,1 FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND ${MISSING('sa', 'canonical_slug')}
+         SELECT pa.source_id,pa.slug,1 AS page_aliases,0 AS slug_redirects FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug)
+         UNION ALL SELECT sa.source_id,sa.canonical_slug,0,1 FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug)
        ) o GROUP BY source_id,slug ORDER BY source_id COLLATE "C",slug COLLATE "C"`, [[...sourceIds]]);
 }
 
 /** How many alias rows of these sources (both tables) name a soft-deleted page (repair/aliases.ts `plan`). */
 export async function countSoftDeletedAliasTargets(raw: EngineRawRead, sourceIds: readonly string[]): Promise<number> {
   const [soft] = await raw<{ n: number }>(`SELECT
-        (SELECT count(*)::int FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND ${SOFT_DELETED('pa', 'slug')})
-      + (SELECT count(*)::int FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND ${SOFT_DELETED('sa', 'canonical_slug')}) AS n`, [[...sourceIds]]);
+        (SELECT count(*)::int FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug AND p.deleted_at IS NOT NULL))
+      + (SELECT count(*)::int FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug AND p.deleted_at IS NOT NULL)) AS n`, [[...sourceIds]]);
   return Number(soft?.n ?? 0);
 }
 

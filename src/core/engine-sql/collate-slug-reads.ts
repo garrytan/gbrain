@@ -7,6 +7,7 @@
 import type { Page } from '../types.ts';
 import { rowToPage } from '../utils.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
 
 /**
  * The slug of the live page that records `path` as its origin, across every source; with several such pages, the one in
@@ -39,26 +40,18 @@ export async function listUnarchivedSlugSources(raw: EngineRawRead, slug: string
 /** The live pages `schema review-orphans` reads: those of `sourceIds` when given, else of `sourceId`, else every source. */
 export interface TypeScope { sourceId?: string; sourceIds?: string[] }
 
-function typeScopeWhere(scope: TypeScope): { where: string; params: unknown[] } {
-  const params: unknown[] = [];
-  let where = 'deleted_at IS NULL';
+function typeScopeWhere(scope: TypeScope): SqlFragment {
   if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    where += ` AND source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    where += ` AND source_id = $${params.length}`;
+    return sqlFragment`deleted_at IS NULL AND source_id = ANY(${scope.sourceIds}::text[])`;
   }
-  return { where, params };
+  if (scope.sourceId) return sqlFragment`deleted_at IS NULL AND source_id = ${scope.sourceId}`;
+  return sqlFragment`deleted_at IS NULL`;
 }
 
 /** How many live pages in scope carry each stored type (schema-pack/review.ts `findTypeOrphans`). The statement has no `ORDER BY`. */
 export async function countLivePageTypes(raw: EngineRawRead, scope: TypeScope): Promise<Array<{ type: string | null; n: string }>> {
-  const { where, params } = typeScopeWhere(scope);
-  return raw<{ type: string | null; n: string }>(
-    `SELECT type, count(*)::text AS n FROM pages WHERE ${where} GROUP BY type`,
-    params,
-  );
+  const { text, params } = renderFragment(sqlFragment`SELECT type, count(*)::text AS n FROM pages WHERE ${typeScopeWhere(scope)} GROUP BY type`);
+  return raw<{ type: string | null; n: string }>(text, params);
 }
 
 /**
@@ -70,14 +63,10 @@ export async function listTypeOrphanPages(
   raw: EngineRawRead,
   opts: { scope: TypeScope; types: readonly string[]; limit: number },
 ): Promise<Array<{ slug: string; source_id: string; type: string | null }>> {
-  const { where, params } = typeScopeWhere(opts.scope);
-  return raw<{ slug: string; source_id: string; type: string | null }>(
-    `SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
-      WHERE ${where} AND (type IS NULL OR type = '' OR type = ANY($${params.length + 1}::text[]))
-      ORDER BY source_id COLLATE "C", slug COLLATE "C"
-      LIMIT ${opts.limit}`,
-    [...params, [...opts.types]],
-  );
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
+      WHERE ${typeScopeWhere(opts.scope)} AND (type IS NULL OR type = '' OR type = ANY(${[...opts.types]}::text[]))
+      ORDER BY source_id COLLATE "C", slug COLLATE "C"`);
+  return raw<{ slug: string; source_id: string; type: string | null }>(`${text}\n      LIMIT ${opts.limit}`, params);
 }
 
 /** A live page and its tags in byte order, as an export reads them. */

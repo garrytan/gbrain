@@ -224,6 +224,7 @@ src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
 src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
 src/core/export-snapshot.ts	readExportPages	sql	STREAM	
+src/core/engine-sql/collate-slug-reads.ts	readExportPageRows	sql	STREAM	the export read of whole pages by id (was inside export-snapshot.ts readExportPages): inline pages only, a segmented page streams through segmentedExportMarkdown
 src/core/extract-ner.ts	extractNerLinks	field	STREAM	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	call:serializePageToMarkdown	SEGW	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	field	STREAM	inline rows only (SQL filter)
