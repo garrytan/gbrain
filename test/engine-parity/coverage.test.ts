@@ -55,9 +55,9 @@ describe('engine parity coverage list', () => {
     }
   });
 
-  test('arm capabilities: SQL arms run raw SQL and managed persistence, only Postgres holds the schema lock, Rust has none yet', () => {
+  test('arm capabilities: every arm runs managed persistence, only the SQL arms run raw SQL, only Postgres holds the schema lock', () => {
     expect(PARITY_ARMS.map((arm) => [arm, [...armCapabilities(arm)].sort()])).toEqual([
-      ['pglite', ['managed_persistence', 'raw_sql']], ['postgres', ['managed_persistence', 'raw_sql', 'schema_migration_lock']], ['rust', []],
+      ['pglite', ['managed_persistence', 'raw_sql']], ['postgres', ['managed_persistence', 'raw_sql', 'schema_migration_lock']], ['rust', ['managed_persistence']],
     ]);
     expect([missingCapability('raw_sql'), missingCapability('schema_migration_lock'), missingCapability('managed_persistence')]).toEqual([
       { kind: 'refuses', label: 'refuses:raw_sql' }, { kind: 'n/a', label: 'n/a:postgres-only' },

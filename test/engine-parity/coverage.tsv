@@ -498,7 +498,7 @@ ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	3	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
-readCounterRows	persistence_journal	yes	6	no	yes	yes	serves
+readCounterRows	persistence_journal	yes	5	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	39	no	yes	yes	serves
 insertWriteRequest	persistence_journal	yes	43	no	yes	yes	serves

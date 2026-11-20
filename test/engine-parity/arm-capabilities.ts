@@ -15,8 +15,8 @@
  *    `holdSchemaMigrationLock` is an optional member only Postgres implements;
  *    PGLite (and Rust) serialize schema migrations in-process instead
  *    (src/core/schema-migration-lock.ts).
- *  - `managed_persistence` refuses: the Rust engine has no managed worktree, so a write to one refuses naming it
- *    (src/core/engine-capabilities.ts).
+ *  - `managed_persistence` refuses on an arm without it, naming it (src/core/engine-capabilities.ts). Every arm,
+ *    Rust included, reports it.
  *
  * When `BrainEngine.capabilities` and `src/core/engine-capabilities.ts` land
  * (plan PR 5), `armCapabilities` reads the engine's own set instead of this
@@ -50,7 +50,7 @@ export function armCapabilities(arm: ParityArmName): ReadonlySet<EngineCapabilit
   switch (arm) {
     case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
     case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence']);
-    case 'rust': return new Set<EngineCapability>();
+    case 'rust': return new Set<EngineCapability>(['managed_persistence']);
     default: return assertNever(arm);
   }
 }

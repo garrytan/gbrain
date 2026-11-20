@@ -52,7 +52,7 @@ export function requireTransactions(engine: object, step: string, why: string): 
 
 /**
  * The named refusal of a managed-checkout persistence step (worktree admission, the refresh barrier, an import hold,
- * grouped admission, the background owner check) on an engine without `managed_persistence` (the Rust engine). The
+ * grouped admission, the background owner check) on an engine without `managed_persistence`. The
  * step calls it before it reads or locks anything, so nothing of the write ran. PGLite, Postgres and transaction
  * handles (no capability set) pass.
  */

@@ -6,7 +6,7 @@ test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
-test/engine-parity/bound-write.test.ts	1	2
+test/engine-parity/bound-write.test.ts	3	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chunk-page-segmented.test.ts	7	0
 test/engine-parity/chunk-reads.test.ts	12	0
@@ -72,7 +72,7 @@ test/engine-parity/jobs-status.test.ts	11	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	15	0
 test/engine-parity/jobs.test.ts	14	1
-test/engine-parity/journal-typed-sites.test.ts	4	3
+test/engine-parity/journal-typed-sites.test.ts	5	2
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/large-page.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
@@ -96,7 +96,7 @@ test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	40	0
-test/engine-parity/persistence-declaration.test.ts	7	3
+test/engine-parity/persistence-declaration.test.ts	10	0
 test/engine-parity/persistence.test.ts	50	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
