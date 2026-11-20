@@ -314,6 +314,24 @@ the batch whose seeded runRepair case proves it on all three arms.
 | `planner-stats` | A | RUN | B9 |
 | `slug-conflicts` | PL | RUN | B9 |
 
+## Repair page writes
+
+The one-row page writes a repair apply runs are typed members (`src/core/engine-sql/write-guards.ts`;
+the store table is in `write-guards.md`): `detachPageOrigin` (origin twins, file drift, twin merge),
+`readPageDatabaseOnlyReason` (the origin-twin check of a page write), `bumpPageKnowledgeRevision`
+(secret spans), `removePageFrontmatterKeys` (atom restore) and `setPageType` (file repair). The page
+record keeps `database_only_reason`, which the store dropped before. Each apply still runs these
+inside a maintenance transaction, which a Rust brain does not open yet, so the applies run on Rust
+once the transaction API lands. Pinned by `test/engine-parity/page-repair-writes.test.ts`.
+
+## Kinds that need the owner host
+
+`ghost-pages`, `legacy-twins` and `rows-behind` read the source's worktree binding first. With no
+binding, the three engines give the same answer: the first two refuse `not_owner_host`, and
+`rows-behind` previews no rows. The binding is a `persistence_journal` record, which a Rust brain
+does not serve yet, so their owner-host path waits for the batch that serves it. Pinned by
+`test/engine-parity/repair-owner-kinds.test.ts`.
+
 ### Applies moved to a later batch
 
 These B3 kinds preview on Rust in B3, with the same output as PGLite and Postgres; their apply stays
