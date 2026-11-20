@@ -459,8 +459,9 @@ src/core/grants/service.ts	sql_template	11
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
-src/core/guests/promote.ts	execute_raw	4
-src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
+src/core/guests/promote.ts	execute_raw	3
+src/core/guests/sources.ts	execute_raw	2	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
+src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3

@@ -129,6 +129,7 @@ import type {
 import type * as CollateRepairReads from './engine-sql/collate-repair-reads.ts';
 import type * as CollateTypePageReads from './engine-sql/collate-type-page-reads.ts';
 import type * as CollateFactsHomeReads from './engine-sql/collate-facts-home-reads.ts';
+import type * as CollateGuestSources from './engine-sql/collate-guest-sources.ts';
 import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3491,6 +3492,10 @@ export interface BrainEngine {
   listFencedFactsOfMissingPages(sourceId: string): Promise<Array<{ id: number; slug: string }>>;
   /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page. */
   readPageFileOrigin(sourceId: string, slug: string): Promise<CollateFactsHomeReads.PageFileOrigin | null>;
+  /** Writes the source's guest_sources row, or merges `writers` into it (distinct, in byte order; the row keeps its ceiling), and answers the row (guests/sources.ts initGuestSource). */
+  upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string): Promise<CollateGuestSources.GuestSourceRow>;
+  /** The live page at `slug` in each guest source (only `guestSource` when given), by source id in byte order (guests/promote.ts). */
+  listGuestNotes(slug: string, guestSource?: string): Promise<Array<{ id: number; source_id: string }>>;
   /** The live pages of a type (in one source when given), by slug then id in byte order, up to `limit` (page-to-link phase, schema-pack/page-to-link.ts). */
   listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }): Promise<CollateTypePageReads.TypePageBody[]>;
   /** The live pages of a type in one source, by slug in byte order, up to `limit` (page-to-alias phase, schema-pack/page-to-alias.ts). */

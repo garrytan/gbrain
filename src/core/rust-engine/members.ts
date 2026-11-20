@@ -92,6 +92,8 @@ export const RUST_ENGINE_MEMBERS = {
   listHeldFactRows: 'facts',
   listFencedFactsOfMissingPages: 'facts',
   readPageFileOrigin: 'pages',
+  upsertGuestSource: 'sources',
+  listGuestNotes: 'pages',
   listTypePageBodies: 'pages',
   listSourceTypePageBodies: 'pages',
   countRetypeCandidates: 'pages',

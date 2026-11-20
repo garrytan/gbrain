@@ -89,6 +89,7 @@ import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as repairReads from './repair-reads.ts';
 import * as factsHomeReads from './facts-home-reads.ts';
+import * as guestSources from './guest-sources.ts';
 import * as slugReads from './slug-reads.ts';
 import * as typePageReads from './type-page-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
@@ -143,6 +144,7 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...repairReads,
   ...factsHomeReads,
+  ...guestSources,
   ...slugReads,
   ...typePageReads,
   ...entityIdentities,

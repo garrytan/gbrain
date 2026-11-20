@@ -67,6 +67,7 @@ pub mod extraction;
 pub mod facts;
 pub mod field_usage;
 pub mod generations;
+pub mod guest_sources;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;

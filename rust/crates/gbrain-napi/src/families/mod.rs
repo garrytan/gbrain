@@ -25,6 +25,7 @@ mod fact_relink_writes;
 mod field_usage;
 mod generations;
 mod graph;
+mod guest_sources;
 mod import_members;
 mod journal;
 mod large_page;

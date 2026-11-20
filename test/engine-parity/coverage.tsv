@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1036/1046
+# covered: 1038/1048
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -79,6 +79,7 @@
 # repair_reads: 6/7
 # slug_reads: 6/6
 # facts_home_reads: 3/4
+# guest_sources: 2/2
 # type_page_reads: 4/4
 # write_guards: 10/10
 # page_visibility: 4/4
@@ -95,7 +96,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	104	no	yes	yes	serves
+transaction	lifecycle	yes	103	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -120,8 +121,8 @@ resolveSlugs	pages	yes	6	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	8	no	yes	yes	serves
-updateSourceConfig	pages	yes	2	no	yes	yes	serves
-getSource	pages	yes	6	no	yes	yes	serves
+updateSourceConfig	pages	yes	3	no	yes	yes	serves
+getSource	pages	yes	7	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	2	no	yes	yes	serves
@@ -137,7 +138,7 @@ readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
-lockSourceRow	pages	yes	1	no	yes	yes	serves
+lockSourceRow	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	2	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
@@ -855,7 +856,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	29	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	27	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -912,7 +913,7 @@ readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
-listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
+listGuestSourceIds	cli_reads_import	yes	2	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	10	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	3	no	yes	yes	serves
@@ -1061,6 +1062,8 @@ scanUnfencedFactRows	facts_home_reads	yes	1	no	yes	yes	serves
 listHeldFactRows	facts_home_reads	yes	1	no	yes	yes	serves
 listFencedFactsOfMissingPages	facts_home_reads	yes	1	no	yes	yes	serves
 readPageFileOrigin	facts_home_reads	no	0	no	-	-	-
+upsertGuestSource	guest_sources	yes	2	no	yes	yes	serves
+listGuestNotes	guest_sources	yes	1	no	yes	yes	serves
 listTypePageBodies	type_page_reads	yes	2	no	yes	yes	serves
 listSourceTypePageBodies	type_page_reads	yes	1	no	yes	yes	serves
 countRetypeCandidates	type_page_reads	yes	1	no	yes	yes	serves

@@ -226,6 +226,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listHeldFactRows': OOS.callerRawSql,
   'listFencedFactsOfMissingPages': OOS.callerRawSql,
   'readPageFileOrigin': OOS.callerRawSql,
+  'upsertGuestSource': OOS.callerRawSql,
+  'listGuestNotes': OOS.callerRawSql,
   'listTypePageBodies': OOS.callerRawSql,
   'listSourceTypePageBodies': OOS.callerRawSql,
   'countRetypeCandidates': OOS.callerRawSql,
@@ -1713,6 +1715,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('listLiveSourceIncarnations', [['default', (e) => e.listLiveSourceIncarnations(['default'])]]),
   ...variants('listAttendanceScanWindow', [['default', (e) => e.listAttendanceScanWindow('default', '', 10)]]),
+  ...variants('upsertGuestSource', [['default', (e) => e.upsertGuestSource('default', ['a-z', 'ab'], 'external_untrusted')]]),
+  ...variants('listGuestNotes', [['all', (e) => e.listGuestNotes('notes/a')], ['one source', (e) => e.listGuestNotes('notes/a', 'default')]]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

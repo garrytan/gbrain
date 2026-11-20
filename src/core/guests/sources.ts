@@ -13,6 +13,7 @@ import { addSource } from '../sources-ops.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { lookupGuestSource } from './admission.ts';
 import { sourceConfigText } from '../source-rows.ts';
+import { servesTransactions } from '../rust-engine/errors.ts';
 
 export const GUEST_TRUST_CEILING: TrustTier = 'external_untrusted';
 const PRINCIPAL_KINDS: readonly Principal['kind'][] = ['oauth_client', 'legacy_token', 'local_cli', 'local_stdio', 'application'];
@@ -29,12 +30,12 @@ export function isGuestWriter(value: string): boolean {
  * The oauth_client writers in `writers` that name no live registered OAuth client, refused as client_not_found with
  * nothing written: a mistyped or deleted client id would sit on the list and let nobody write.
  */
-export async function unregisteredClientWriters(engine: Pick<BrainEngine, 'executeRaw'>, writers: readonly string[]): Promise<OperationError | null> {
+export async function unregisteredClientWriters(engine: Pick<BrainEngine, 'listOauthClients'>, writers: readonly string[]): Promise<OperationError | null> {
   const clientId = (w: string) => w.startsWith('oauth_client:') ? w.slice('oauth_client:'.length) : null;
   const ids = writers.map(clientId).filter((id): id is string => id !== null);
   if (!ids.length) return null;
-  const live = new Set((await engine.executeRaw<{ client_id: string }>(
-    'SELECT client_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL', [ids])).map(r => r.client_id));
+  const named = new Set(ids);
+  const live = new Set((await engine.listOauthClients()).filter(r => r.deleted_at == null && named.has(r.client_id)).map(r => r.client_id));
   const unknown = writers.filter(w => { const id = clientId(w); return id !== null && !live.has(id); });
   if (!unknown.length) return null;
   return opError('client_not_found', `No registered OAuth client matches writer ${unknown.join(', ')}; nothing was written.`,
@@ -58,7 +59,7 @@ export async function planGuestSource(engine: BrainEngine, sourceId: string, wri
   const source = found ? { local_path: found.local_path, config_guest: sourceConfigText(found.config, 'guest') === 'true' } : undefined;
   const guest = source ? await readGuestSource(engine, sourceId) : null;
   const unmarked = !!source && !guest && !source.config_guest;
-  const [held] = unmarked ? await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]) : [];
+  const held = unmarked ? { n: await engine.countSourcePages(sourceId, { includeDeleted: true }) } : undefined;
   return { sourceId, exists: !!source, localPath: source?.local_path ?? null, guest, writers: [...new Set([...(guest?.writers ?? []), ...writers])].sort(),
     configGuest: source?.config_guest === true, pages: Number(held?.n ?? 0) };
 }
@@ -83,21 +84,20 @@ export class GuestSourceHoldsPages extends Error {
 export async function initGuestSource(engine: BrainEngine, sourceId: string, writers: readonly string[]): Promise<GuestSource> {
   const managed = await managedPersistenceEnabled(engine);
   if (managed && !(await planGuestSource(engine, sourceId, [])).exists) await addSource(engine, { id: sourceId, federated: true });
-  return engine.transaction(async tx => {
+  // An engine without transactions (the Rust engine) runs the steps one after another, each atomic on its own: a page
+  // that lands between the count and the write is not excluded there.
+  const steps = async (tx: BrainEngine) => {
     // Lock the row first, then ask whether either guest record marks it (guestSourceSql through listGuestSourceIds).
     const source = await tx.lockSourceRow(sourceId);
     if (!source) await addSource(tx, { id: sourceId, federated: true });
     else if ((await tx.listGuestSourceIds([sourceId])).length === 0) {
-      const [held] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]);
-      if (Number(held?.n ?? 0) > 0) throw new GuestSourceHoldsPages(sourceId, Number(held!.n));
+      const held = await tx.countSourcePages(sourceId, { includeDeleted: true });
+      if (held > 0) throw new GuestSourceHoldsPages(sourceId, held);
     }
-    await tx.executeRaw(`UPDATE sources SET config = config || jsonb_build_object('federated', true, 'guest', true, 'trust_ceiling', $2::text) WHERE id = $1`,
-      [sourceId, GUEST_TRUST_CEILING]);
-    const [row] = await tx.executeRaw<GuestSource>(`INSERT INTO guest_sources (source_id, writers, trust_ceiling) VALUES ($1, $2::text[], $3)
-      ON CONFLICT (source_id) DO UPDATE SET writers = ARRAY(SELECT DISTINCT w COLLATE "C" FROM unnest(guest_sources.writers || EXCLUDED.writers) AS w ORDER BY w COLLATE "C")
-      RETURNING source_id, writers, trust_ceiling`, [sourceId, [...new Set(writers)].sort(), GUEST_TRUST_CEILING]);
-    return row!;
-  });
+    await tx.updateSourceConfig(sourceId, { federated: true, guest: true, trust_ceiling: GUEST_TRUST_CEILING });
+    return tx.upsertGuestSource(sourceId, [...new Set(writers)].sort(), GUEST_TRUST_CEILING);
+  };
+  return servesTransactions(engine) ? engine.transaction(steps) : steps(engine);
 }
 
 export type WritersChange = { clear?: boolean; add?: readonly string[]; remove?: readonly string[] };

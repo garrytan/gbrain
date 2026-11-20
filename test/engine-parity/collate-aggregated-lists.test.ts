@@ -15,8 +15,8 @@
  *    Postgres to see it fail.
  *  - Seam: pages, tags and links are written through the engine; the removed-path case sets source_path with
  *    refreshPageOrigin and the export case seeds through getPage. Snapshot, fanout, the export rows and the removed-path
- *    lookup are served typed members, so the Rust arm runs them; initGuestSource still writes through raw SQL, so the
- *    Rust arm stops on its raw_sql refusal for that case.
+ *    lookup are served typed members, so the Rust arm runs them; initGuestSource runs on the Rust arm through the typed
+ *    guest source members, each step atomic on its own because that arm has no transaction.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -57,7 +57,7 @@ describe('aggregated lists come out by byte', () => {
     expect(snapshot!.tags).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('initGuestSource merges writers by byte', { methods: ['executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('initGuestSource merges writers by byte', { methods: ['getSource', 'lockSourceRow', 'listGuestSourceIds', 'updateSourceConfig', 'upsertGuestSource'] }, async (engine) => {
     await initGuestSource(engine, 'guest-a', ['ab']);
     const merged = await initGuestSource(engine, 'guest-a', ['a-z', 'a/z']);
     expect(merged.writers).toEqual([...BYTE_SLUGS]);

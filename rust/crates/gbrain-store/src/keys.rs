@@ -115,6 +115,8 @@ pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
+/// Family `guest_sources` (`guest_sources.rs`): one record per guest source row. Every letter was taken, so the tag is a digit.
+pub const GUEST_SOURCE: u8 = b'0';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
