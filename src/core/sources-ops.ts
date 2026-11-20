@@ -941,6 +941,8 @@ export interface RemoveResult {
   clone_path: string | null;
   /** #7646: why a gbrain-managed clone was left on disk (`relative_path`: its stored path names no fixed directory). */
   clone_skipped_reason?: 'relative_path';
+  /** GST-3022: chat-day files under .gbrain-owned/<id>/ the removal takes out in one commit (or keeps, with keepStorage). */
+  owned_files?: number;
   dryRun: boolean;
 }
 
@@ -983,6 +985,7 @@ export async function removeSource(
   }
 
   const pageCount = await countAllPages(engine, opts.id);
+  const ownedFiles = await (await import('./owned-folder/remove.ts')).previewOwnedRemoval(engine, opts.id);
 
   if (opts.dryRun) {
     return {
@@ -990,6 +993,7 @@ export async function removeSource(
       pages_deleted: pageCount,
       clone_removed: false,
       clone_path: src.local_path,
+      ...(ownedFiles ? { owned_files: ownedFiles } : {}),
       dryRun: true,
     };
   }
@@ -1053,13 +1057,14 @@ export async function removeSource(
     }
   }
 
-  await deleteSourceRow(engine, opts.id);
+  await (await import('./owned-folder/remove.ts')).removeOwnedFolderThen(engine, opts.id, { keep: opts.keepStorage }, () => deleteSourceRow(engine, opts.id));
 
   return {
     id: opts.id,
     pages_deleted: pageCount,
     clone_removed: cloneRemoved,
     clone_path: src.local_path,
+    ...(ownedFiles ? { owned_files: ownedFiles } : {}),
     ...(cloneSkippedReason ? { clone_skipped_reason: cloneSkippedReason } : {}),
     dryRun: false,
   };
