@@ -14,6 +14,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { parseAppleContactsSourceConfig } from '../core/apple-contacts/source-config.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { appleContactsError } from '../core/apple/contacts-client.ts';
 import { readOwnerKey, sendContactsBatch, type ContactsWriteChange } from '../core/apple/contacts-write-client.ts';
 import { listSources } from '../core/sources-ops.ts';
@@ -136,5 +137,5 @@ export async function runAppleContacts(engine: BrainEngine, args: string[]): Pro
   const result = reply.results[0];
   if (asJson) console.log(JSON.stringify(reply));
   else console.log((result ? result.status + (result.reason ? ' (' + result.reason + ')' : '') + (result.id ? ': card ' + result.id : '') : 'no result') + '\nbatch ' + reply.batch + (reply.next ? '\n' + reply.next : ''));
-  if (!result || !['applied', 'replayed'].includes(result.status)) process.exitCode = 1;
+  if (!result || !['applied', 'replayed'].includes(result.status)) setCliExitVerdict(1);
 }
