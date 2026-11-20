@@ -847,7 +847,6 @@ src/core/schema-migrations/v275-rls-backfill-unguarded-tables.ts	execute_raw	4
 src/core/schema-migrations/v281-derived-state-maintainers-fail-closed.ts	execute_raw	1
 src/core/schema-migrations/v302-link-transitions-source.ts	execute_raw	5
 src/core/schema-missing-tables.ts	execute_raw	1
-src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
 src/core/schema-pack/lint-rules.ts	execute_raw	3

@@ -65,6 +65,7 @@ pub mod persistence;
 pub mod raw_files;
 pub mod relations;
 pub mod salience;
+pub mod schema_detect;
 pub mod stats;
 pub mod takes;
 pub mod telemetry;

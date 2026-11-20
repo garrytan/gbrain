@@ -65,6 +65,7 @@ import * as factsTrust from './facts-trust.ts';
 import * as factsForget from './facts-forget.ts';
 import * as factsRecall from './facts-recall.ts';
 import * as factsQuoted from './facts-quoted.ts';
+import * as schemaDetect from './schema-detect.ts';
 import * as factsWritePath from './facts-write-path.ts';
 import * as factsRemember from './facts-remember.ts';
 import * as derivationTrust from './derivation-trust.ts';
@@ -126,6 +127,8 @@ export const STORE_MEMBERS = {
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsQuoted, ...factsWritePath, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
+  // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
+  ...schemaDetect,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").

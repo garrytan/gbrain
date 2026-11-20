@@ -1320,6 +1320,12 @@ export interface BrainEngine {
   findPages(query: FindPagesQuery): Promise<FoundPages>;
   /** #7191: live page counts per (source, type), with distinct-slug totals per type group when `groupTypes` is set. */
   countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts>;
+  /** `gbrain schema detect`: live page totals of one source, typed and untyped (SQL in engine-sql/schema-detect.ts). */
+  pageTypeTotals(sourceId: string): Promise<import('./engine-sql/schema-detect.ts').PageTypeTotals>;
+  /** `gbrain schema detect`: the slug prefixes with at least `minPages` live pages, largest first, with their page types in byte order. */
+  pagePrefixSamples(sourceId: string, minPages: number, limit: number): Promise<import('./engine-sql/schema-detect.ts').PagePrefixSample[]>;
+  /** `gbrain schema detect`: live typed page counts per type, largest first (a tie in byte order), at most `limit`. */
+  countPagesByTypeForSource(sourceId: string, limit: number): Promise<import('./engine-sql/schema-detect.ts').PageTypeCount[]>;
   /**
    * Fuzzy slug resolver.
    *

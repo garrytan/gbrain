@@ -82,6 +82,7 @@ mod page_ops;
 mod raw_files;
 mod relations;
 mod salience;
+mod schema_detect;
 mod stats;
 mod takes;
 mod telemetry;

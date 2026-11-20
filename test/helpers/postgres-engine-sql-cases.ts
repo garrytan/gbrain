@@ -93,6 +93,7 @@ const OOS = {
   contradictionsCycle: 'out-of-scope:contradictions-cycle (born in engine-sql/contradictions-cycle.ts; pinned byte-identical by test/family-tail-sites-sql-pin.test.ts and test/engine-parity/family-tail-sites.test.ts)',
   ontologyRepair: 'out-of-scope:ontology-repair (born in engine-sql/ontology-repair.ts; pinned byte-identical by test/family-tail-sites-sql-pin.test.ts and test/engine-parity/family-tail-sites.test.ts)',
   adminReads: 'out-of-scope:admin-reads (born in engine-sql/admin-reads.ts; pinned byte-identical by test/family-tail-sites-sql-pin.test.ts and test/engine-parity/family-tail-sites.test.ts)',
+  schemaDetect: 'out-of-scope:schema-detect (the schema detect page-shape reads, born in engine-sql/schema-detect.ts; pinned by test/schema-detect-sql-pin.test.ts and test/engine-parity/schema-detect.test.ts)',
   factsTrust: 'out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)',
   factsRepairSites: 'out-of-scope:facts-repair-sites (repair command statements, born in engine-sql/facts-repair.ts; pinned byte-identical by test/facts-repair-sites-sql-pin.test.ts and test/engine-parity/facts-repair-sites.test.ts)',
   factsDoctorSites: 'out-of-scope:facts-doctor-sites (doctor check statements, born in engine-sql/facts-doctor.ts; pinned byte-identical by test/facts-repair-sites-sql-pin.test.ts and test/engine-parity/facts-repair-sites.test.ts)',
@@ -771,6 +772,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOntologyFactCandidates': OOS.ontologyRepair,
   'restoreOntologyFact': OOS.ontologyRepair,
   'listVisiblePageSlugs': OOS.adminReads,
+  'pageTypeTotals': OOS.schemaDetect,
+  'pagePrefixSamples': OOS.schemaDetect,
+  'countPagesByTypeForSource': OOS.schemaDetect,
   'readPagesForVersionHistory': OOS.adminReads,
   // chunks
   'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',

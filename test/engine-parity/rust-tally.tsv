@@ -94,6 +94,7 @@ test/engine-parity/remember-whole.test.ts	1	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/restriction-flag-reads.test.ts	3	0
 test/engine-parity/retrieval-coverage.test.ts	12	1
+test/engine-parity/schema-detect.test.ts	4	0
 test/engine-parity/search-reads.test.ts	16	0
 test/engine-parity/search.test.ts	20	0
 test/engine-parity/segmented-body.test.ts	16	0
