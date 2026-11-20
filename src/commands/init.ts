@@ -204,7 +204,9 @@ async function runInitBranches(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck, content });
+    // A kept config here is PGLite (a kept Rust brain returned above): it keeps its database_path unless --path names another.
+    const pglitePath = customPath ?? kept?.database_path ?? null;
+    return initPGLite({ jsonOutput, apiKey, customPath: pglitePath, aiOpts, schemaPack, skipEmbedCheck, content });
   }
 
   // Supabase/Postgres mode

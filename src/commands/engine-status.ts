@@ -214,12 +214,16 @@ async function runProbe(
   }
   const started = Date.now();
   const engine = await createEngine(engineConfig);
+  // Opening a Rust store creates it, like PGLite: a missing store is reported (after the addon check), never made.
+  if (engineKind === 'rust' && dataDir && !existsSync(dataDir)) return { ok: false, note: 'data_dir_missing' };
   try {
     // SINGLE attempt, ONE connection — the driver's connect_timeout bounds
     // it (never a custom race), and a status probe must never run the
     // 3-attempt backoff ladder or hold pooler slots while diagnosing.
     await connectWithRetry(engine, { ...engineConfig, poolSize: 1 }, { noRetry: true, log: () => {} });
-    await engine.executeRaw('SELECT 1');
+    // The Rust engine serves no raw SQL; a typed config read proves its store answers.
+    if (engineKind === 'rust') await engine.getConfig('version');
+    else await engine.executeRaw('SELECT 1');
     const result: ProbeResult = { ok: true, latency_ms: Date.now() - started };
     if (engineKind === 'postgres') {
       // First real callers of the ConnectionManager introspection surface

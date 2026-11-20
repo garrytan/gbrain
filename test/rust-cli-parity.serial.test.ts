@@ -264,6 +264,12 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     expect(setupRows.filter((r) => r.state === 'diverged')).toEqual([]);
   });
 
+  test('the CLI selects the Rust engine (a build without it must fail here, not pass as no-engine)', () => {
+    // The addon is present (this block skips without it), so every setup row ran on the Rust brain.
+    expect(rustArm).toBe('on');
+    expect(setupRows.filter((r) => r.state === 'no-engine')).toEqual([]);
+  });
+
   for (const args of COMMANDS) {
     test(label(args), async () => {
       const [pg, rust] = await Promise.all([cli(brains.pglite, args), rustArm === 'on' ? cli(brains.rust, args) : Promise.resolve(null)]);

@@ -865,6 +865,17 @@ export async function resolveSourceWithTier(
   return resolved;
 }
 
+/**
+ * True when `err` is an engine capability refusal (a Rust store answering no raw SQL) and the user selected a source
+ * (GBRAIN_SOURCE, a .gbrain-source dotfile or the sources.default config). The caller must then refuse rather than
+ * fall back to the cross-source view, which would serve reads from a source the user did not choose.
+ */
+export async function refusedSourceTarget(engine: BrainEngine, err: unknown, cwd: string = hookSessionCwd()): Promise<boolean> {
+  if ((err as { code?: unknown } | null)?.code !== 'engine_capability_missing') return false;
+  if (ambientSourceEnv({}) || readDotfileWalk(cwd)) return true;
+  return !!(await engine.getConfig('sources.default').catch(() => null));
+}
+
 async function resolveSourceWithTierChain(
   engine: BrainEngine,
   explicit: string | null | undefined,

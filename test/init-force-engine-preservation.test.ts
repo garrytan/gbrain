@@ -261,6 +261,31 @@ describe('init --non-interactive engine routing', () => {
     }
   });
 
+  test('existing pglite config at a custom path: init --non-interactive keeps that path, never the default', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-custom-home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-custom-cwd-'));
+    try {
+      const custom = join(home, 'elsewhere', 'brain.pglite');
+      mkdirSync(join(home, '.gbrain'));
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: custom }, null, 2));
+      const first = await runCli(['init', '--pglite', '--path', custom, '--no-embedding'], { gbrainHome: home, cwd });
+      expect(first.exitCode).toBe(0);
+      const put = await runCli(['put', 'notes/sentinel', '--content', '# Sentinel\n\nKept across re-init.\n'], { gbrainHome: home, cwd });
+      expect(put.exitCode).toBe(0);
+      const r = await runCli(['init', '--non-interactive', '--no-embedding'], { gbrainHome: home, cwd });
+      expect(r.exitCode).toBe(0);
+      expect({ engine: readConfig(home).engine, database_path: readConfig(home).database_path }).toEqual({ engine: 'pglite', database_path: custom });
+      expect(existsSync(join(home, '.gbrain', 'brain.pglite'))).toBe(false);
+      // The brain the config names after re-init is the one that holds the page.
+      const get = await runCli(['get', 'notes/sentinel'], { gbrainHome: home, cwd });
+      expect(get.exitCode).toBe(0);
+      expect(get.stdout).toContain('Kept across re-init.');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test('no config and no engine flag: init --non-interactive still demands --url and writes no config', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-fresh-home-'));
     const cwd = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-fresh-cwd-'));

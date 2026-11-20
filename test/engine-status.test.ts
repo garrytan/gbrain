@@ -19,6 +19,15 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+
+const ADDON_TARGET = detectAddonTarget();
+const BUILT_ADDON = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${ADDON_TARGET ?? 'unsupported'}.node`);
+const HAVE_ADDON = ADDON_TARGET !== null && existsSync(BUILT_ADDON);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
+  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT_ADDON} does not exist; run bun run rust:build`);
+}
+const withAddon = test.skipIf(!HAVE_ADDON);
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const REPO = join(import.meta.dir, '..');
@@ -180,6 +189,32 @@ describe('gbrain engine status', () => {
     expect(report.probe.diagnosis).toBeUndefined();
     expect(existsSync(store)).toBe(false);
     expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and a MISSING rust store: data_dir_missing, store NOT created, exit 1', () => {
+    // Opening a Rust store creates it, like PGLite: the read-only probe must report the missing path, not make it.
+    const missing = join(home, 'no-such-dir', 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: missing });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    const report = parseReport(stdout);
+    expect(report.effective_engine).toBe('rust');
+    expect(report.probe).toEqual({ ok: false, note: 'data_dir_missing' });
+    expect(existsSync(missing)).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and an existing rust store: ok, through a typed read (no raw SQL refusal)', () => {
+    const store = join(home, 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: store });
+    // A first probe-free command opens and creates the store; the probe then reads it.
+    const init = run(['stats', '--json'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(init.status).toBe(0);
+    expect(existsSync(store)).toBe(true);
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    const report = parseReport(stdout);
+    expect(report.probe.ok).toBe(true);
+    expect(report.probe.refusal).toBeUndefined();
+    expect(status).toBe(0);
   }, 60_000);
 
   test('unknown token reaching the command parser: exit 2', () => {
