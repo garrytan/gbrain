@@ -140,6 +140,10 @@ pub struct RecentSalienceOptions {
     #[serde(default)]
     pub holders: Option<Vec<Option<String>>>,
     pub recency: Recency,
+    /// `excludePrivate`: the page policy `pageReadFilter` adds, as `facts/privacy.rs`
+    /// `page_hidden` reads it; null hides nothing.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// A page reference of `getSalienceScores`.
@@ -311,6 +315,7 @@ impl Store {
             read: &*read,
             archived: HashMap::new(),
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut rows: Vec<(f64, PageRecord, Value)> = Vec::new();
         for page in all_pages(&*read)? {
             if opts
@@ -320,6 +325,11 @@ impl Store {
                 || (opts.exclude_briefings && page.slug.starts_with("briefings/"))
                 || !listed(&opts.source_ids, &page.source_id)
                 || !live.passes(&page)?
+            {
+                continue;
+            }
+            if let Some(policy) = &opts.exclude_private
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

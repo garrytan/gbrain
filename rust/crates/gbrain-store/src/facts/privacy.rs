@@ -812,4 +812,43 @@ mod tests {
         assert!(hidden(OwnerOnly::Closed, &open) && hidden(OwnerOnly::Closed, &bare));
         assert!(!hidden(OwnerOnly::Lineage, &open) && !hidden(OwnerOnly::Lineage, &in_vault));
     }
+
+    /// `privateEntityFilterForCaller`'s keyed arm (GBRA-574): a bare name key is covered by the privacy
+    /// of the page at `<dir>/<key>` in each name-key directory, as a slugged entity is by its own page.
+    #[test]
+    fn a_bare_entity_key_is_hidden_by_its_private_directory_page() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| {
+            let input: crate::pages::PageInput = serde_json::from_value(json!({
+                "type": "person", "title": slug, "compiled_truth": "body", "timeline": "", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store.put_page(slug, &input, &Default::default()).unwrap();
+        };
+        put("people/alice-example", json!({ "visibility": "private" }));
+        put("companies/acme-example", json!({}));
+        put("notes/alice-example", json!({ "visibility": "private" }));
+        let fact = |entity: &str| FactRecord {
+            source_id: "default".into(),
+            entity_slug: Some(entity.into()),
+            visibility: "world".into(),
+            ..Default::default()
+        };
+        let hidden = |row: &FactRecord| {
+            let read = store.read().unwrap();
+            let policy = PrivacyPolicy {
+                honor_aliases: true,
+                entity_privacy: true,
+                owner_only: OwnerOnly::Lineage,
+                ..Default::default()
+            };
+            hidden_by_private_provenance(&*read, row, &policy).unwrap()
+        };
+        assert!(hidden(&fact("alice-example")));
+        assert!(hidden(&fact("people/alice-example")));
+        assert!(!hidden(&fact("acme-example")));
+        // Only the name-key directories cover a bare key; a slugged key is judged by its own page only.
+        assert!(!hidden(&fact("bob-example")));
+        assert!(!hidden(&fact("notes/bob-example")));
+    }
 }

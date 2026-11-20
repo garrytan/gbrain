@@ -27,9 +27,10 @@
 //! key to `pages`, so its rows outlive a hard delete of the page and answer again for a page
 //! created later at the same slug. [`remove_page_rows`] therefore removes only the contextual
 //! retrieval state, which is a column of the page row. `slug_rename_history` has no foreign key to
-//! `pages` either, and PGLite's single `deletePage` keeps its rows; the batch purges
-//! (`deletePages`, `purgeDeletedPages`) drop the rows that end at a purged slug
-//! (`scrubPurgedSlugStores`), which [`scrub_purged_rename_history`] does for their Rust caller.
+//! `pages` either, and PGLite's single `deletePage` keeps its rows. The batch purges
+//! (`deletePages`, `purgeDeletedPages`) run `scrubPurgedSlugStores`, which drops the page aliases
+//! of a purged slug, the slug aliases that resolve to it and the rename rows that end at it;
+//! [`scrub_purged_slug_stores`] does that for them here.
 //! All three tables cascade from `sources`: [`remove_source_rows`] removes every row of a deleted
 //! source.
 //!
@@ -326,10 +327,39 @@ fn record_rename_history(tx: &mut dyn KvWrite, source: &str, old: &str, new: &st
     tx.put(&rename_key(source, old, new), &[])
 }
 
+/// The three stores of `scrubPurgedSlugStores` this family keeps, in the order of its
+/// `SLUG_STORES` list (src/core/persistence/purge-slug-stores.ts:6): `page_aliases` by `slug`,
+/// `slug_aliases` by `canonical_slug` (an alias spelled like a purged slug that names another page
+/// stays), then `slug_rename_history` by `new_slug`. `deletePages` and `purgeDeletedPages`
+/// (`page_ops::scrub_purged_slugs`) call it in the purge's transaction, after the pages are gone,
+/// as src/core/engine-sql/pages.ts:237 and :397 do. A single `deletePage` and a soft delete keep
+/// every row.
+pub(crate) fn scrub_purged_slug_stores(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    slugs: &[String],
+) -> Result<()> {
+    if has_nul(&[source]) {
+        return Ok(());
+    }
+    for slug in slugs.iter().filter(|s| !has_nul(&[s.as_str()])) {
+        for (alias, origin) in page_alias_rows(&*tx, source, slug)? {
+            delete_page_alias(tx, source, &alias, slug, &origin)?;
+        }
+    }
+    for slug in slugs.iter().filter(|s| !has_nul(&[s.as_str()])) {
+        for (_, parts) in scan_tails(&*tx, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, slug]))? {
+            if let [alias] = parts.as_slice() {
+                delete_slug_alias(tx, source, alias)?;
+            }
+        }
+    }
+    scrub_purged_rename_history(tx, source, slugs)?;
+    Ok(())
+}
+
 /// `scrubPurgedSlugStores` on `slug_rename_history`: drops the rows of `source` that end at a
 /// purged slug (a row from a purged slug to another page stays).
-// page_ops (`deletePages`, `purgeDeletedPages`) is its caller; until that lands only tests call it.
-#[allow(dead_code)]
 pub(crate) fn scrub_purged_rename_history(
     tx: &mut dyn KvWrite,
     source: &str,
