@@ -36,8 +36,6 @@ const EXEMPT: Record<string, string> = {
     'sorts page keys on both sides of an equality; the order is never output.',
   'src/core/persistence/admin-intent.ts|ORDER BY id) FROM persistence_worktrees)':
     'sorts worktree ids, not source ids.',
-  'src/core/persistence/admin-intent.ts|ORDER BY id) FROM gbrain_cycle_locks WHE':
-    'sorts lock ids, not source ids.',
   'src/core/repair/stale-atoms.ts|ORDER BY CASE class WHEN \'origin_gone\' T':
     'sorts atom ids, not source ids.',
 };
