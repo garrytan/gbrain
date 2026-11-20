@@ -238,7 +238,6 @@ export async function writeSyncAnchor(
 ): Promise<void> {
   return withCompanyBrainSource(engine, sourceId, async engine => {
   if (sourceId) {
-    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
       // Wave-D review (#4369 follow-up): guard the commit-anchor trio
@@ -284,10 +283,8 @@ export async function writeSyncAnchor(
         );
         return;
       }
-      await engine.executeRaw(
-        `UPDATE sources SET ${col} = $1 WHERE id = $2`,
-        [value, sourceId],
-      );
+      // The plain local_path write: no name and no federated change.
+      await engine.attachSourcePath(sourceId, value);
     }
     return;
   }

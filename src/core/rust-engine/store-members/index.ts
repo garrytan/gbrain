@@ -47,6 +47,7 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as syncHoldStore from './sync-hold-store.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
@@ -125,6 +126,8 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
+  // The git sync hold store and managed sync pass rows, kept as op checkpoint rows (rust/docs/store/persistence.md, "Checkpoint rows").
+  ...syncHoldStore,
   // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
   ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).

@@ -28,7 +28,7 @@ import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
-import type { ReasonPurgeTombstone } from './engine-sql/sync-reason-reads.ts';
+import type { GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from './engine-sql/sync-hold-store.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -75,7 +75,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
   NotifierFirstDueRow, PendingWantedMarker, SourceSyncShapeRow, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
@@ -1507,6 +1507,20 @@ export interface BrainEngine {
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
   insertSource(row: SourceInsert): Promise<void>;
+  /** The live pages of one source (only `slugs` when given) a sync size-state read reports, by slug (engine-sql/sources.ts). */
+  readPageSizeRows(sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]>;
+  /** Sets the page's embedding hold to `held` with `reason` (engine-sql/sources.ts). */
+  holdPageEmbedding(pageId: number, reason: string): Promise<void>;
+  /** The source's purged change-reason pairs by commit then path, or only `pair` when stored (engine-sql/sources.ts). */
+  readReasonPurgeTombstones(sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]>;
+  /** Stores the pairs not stored yet and returns how many it added; an unknown source throws (engine-sql/sources.ts). */
+  writeReasonPurgeTombstones(sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number>;
+  /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
+  listSourcePathPages(sourceId: string): Promise<SourcePathPageRow[]>;
+  /** The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order (engine-sql/sources.ts). */
+  readRenameIdentityRows(sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameIdentityRow[]>;
+  /** The live pages of one source whose frontmatter id is in `ids` or whose title is in `titles`, in no set order (engine-sql/sources.ts). */
+  readLiveIdentityHolders(sourceId: string, ids: readonly string[], titles: readonly string[]): Promise<LiveIdentityHolderRow[]>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */
@@ -1541,12 +1555,6 @@ export interface BrainEngine {
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;
-  /**
-   * Whether a resident notifier recorded coverage for some source (freshnessReported). A schema from before the
-   * notifier tables rejects with the missing-table error its caller catches; a Rust brain keeps no notifier state and
-   * answers false.
-   */
-  notifierCoverageRecorded(): Promise<boolean>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
   readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
   /** A resumable op's checkpoint parent with `keys` (sorted by the caller) as its completed keys, stamped now (op-checkpoint.ts recordCompleted). */
@@ -1557,6 +1565,8 @@ export interface BrainEngine {
   deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
   /** The checkpoint's paths deleted, its parent kept (op-checkpoint.ts clearOpCheckpoint's second sweep). */
   deleteOpCheckpointPaths(op: string, fingerprint: string): Promise<void>;
+  /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many (op-checkpoint.ts purgeStaleCheckpoints). */
+  purgeStaleCheckpoints(ttlDays: number): Promise<number>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */
@@ -3682,10 +3692,29 @@ export interface BrainEngine {
   readGitHoldRetryRequest(fingerprint: string): Promise<Array<{ paths?: unknown }> | null>;
   /** A sync hold report's summary counters (null when none) and the source's `mirror_read_only` text (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldReportInputs(sourceId: string, fingerprint: string): Promise<GitHoldReportInputs>;
-  /** Every purged change reason's (commit, path) of one source; a sync import never stamps them again (SQL in engine-sql/sync-reason-reads.ts). */
-  readReasonPurgeTombstones(sourceId: string): Promise<ReasonPurgeTombstone[]>;
   /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
   readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
+  // The git sync hold store (SQL in engine-sql/sync-hold-store.ts); sync-holds.ts keeps the hold semantics.
+  /** Creates the source incarnation's hold summary row when missing, else touches it (Postgres: locks it); returns its count. */
+  lockGitHoldSummary(sourceId: string, incarnation: string): Promise<number>;
+  /** Adds `delta` to the hold summary's count and each weight to its counter, none below zero; no summary row, no write. */
+  adjustGitHoldSummary(sourceId: string, incarnation: string, delta: number, weights: GitHoldSummaryWeights): Promise<void>;
+  /** The hold record at `path` of the source incarnation as stored, or null. */
+  readGitHoldRow<R = Record<string, unknown>>(sourceId: string, incarnation: string, path: string): Promise<R | null>;
+  /** Stores `record` as the hold at `path`, replacing any. */
+  writeGitHoldRow(sourceId: string, incarnation: string, path: string, record: object): Promise<void>;
+  /** Replaces the hold at `path` with `next` only while it is still `expected` (JSON equality); true when it landed. */
+  replaceGitHoldRow(sourceId: string, incarnation: string, path: string, expected: object, next: object): Promise<boolean>;
+  /** Deletes the hold at `path`; no hold, no change. */
+  deleteGitHoldRow(sourceId: string, incarnation: string, path: string): Promise<void>;
+  /** The source incarnation's outstanding holds (its summary's count), 0 without a summary. */
+  countGitHolds(sourceId: string, incarnation: string): Promise<number>;
+  /** The managed sync pass row of one source incarnation, or null (SQL in engine-sql/sync-hold-store.ts). */
+  readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string): Promise<SyncPassRowRead<V> | null>;
+  /** The managed sync pass rows of the sources' live incarnations (null: every source), in no set order. */
+  readLiveSyncPassRows<V = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<SyncPassRowRead<V> & { source_id: string }>>;
+  /** Writes the managed sync pass row under its lease fence; false when it did not land (persistence/sync-pass-row.ts writePassRow). */
+  writeSyncPassRow(sourceId: string, incarnation: string, value: { lease_token?: unknown }, opts?: SyncPassRowWrite): Promise<boolean>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */

@@ -43,12 +43,10 @@ export async function activeSlugsBySourcePath(
     // toward skipping cheap renames, never toward moving a guessed row.
     if (signal?.aborted) break;
     const batch = paths.slice(i, i + DELETE_BATCH_SIZE);
-    const rows = await engine.executeRaw<{ slug: string; source_path: string }>(
-      `SELECT slug, source_path FROM pages
-        WHERE source_path = ANY($1::text[]) AND source_id = $2 AND deleted_at IS NULL`,
-      [batch, sourceId],
-    );
+    // No slugs: only the pages whose source_path is in the batch.
+    const rows = await engine.readRenameIdentityRows(sourceId, batch, []);
     for (const r of rows) {
+      if (r.source_path === null) continue;
       const arr = out.get(r.source_path);
       if (arr) arr.push(r.slug);
       else out.set(r.source_path, [r.slug]);

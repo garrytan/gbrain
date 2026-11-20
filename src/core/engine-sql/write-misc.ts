@@ -66,16 +66,6 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
 }
 
 /**
- * Whether a resident notifier has recorded coverage for any source (a `sync_notifier_sources` row with `observed_at`):
- * one half of whether search carries the freshness notice (notifier/status.ts freshnessReported).
- */
-export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promise<boolean> {
-  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
-  const covered = row?.covered;
-  return covered === true || covered === 't' || covered === 1;
-}
-
-/**
  * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
  * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
  * value is skipped, so the child rows still load, and reported as `corruptParent`.

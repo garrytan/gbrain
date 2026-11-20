@@ -102,12 +102,6 @@ export const hasLabelledOnlyMember: StoreMember<[], boolean> = async (brain) =>
   (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true);
 
 /**
- * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no
- * source has recorded coverage and search carries the freshness notice only when `sync.on_commit` is on.
- */
-export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
-
-/**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
  * among them, so a memoized health answer is reused only while nothing was written since it was read.
  */

@@ -204,12 +204,10 @@ src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	1
-src/commands/sync/full.ts	execute_raw	1
-src/commands/sync/holds.ts	execute_raw	4
+src/commands/sync/holds.ts	execute_raw	3
 src/commands/sync/plain-directory.ts	execute_raw	1
 src/commands/sync/preflight.ts	execute_raw	3
 src/commands/sync/rename-collision.ts	execute_raw	2
-src/commands/sync/rename-reconcile.ts	execute_raw	1
 src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
@@ -410,7 +408,7 @@ src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
 src/core/facts/purge-overlay.ts	execute_raw	3
-src/core/facts/purge-reasons.ts	execute_raw	8
+src/core/facts/purge-reasons.ts	execute_raw	7
 src/core/facts/purge-verify.ts	execute_raw	20
 src/core/facts/purge.ts	execute_raw	36	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/question-recall.ts	execute_raw	1
@@ -530,7 +528,6 @@ src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
-src/core/op-checkpoint.ts	execute_raw	1
 src/core/ops/admin.ts	execute_raw	2
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/context.ts	execute_raw	1
@@ -565,7 +562,7 @@ src/core/page-body/segment-rewrite.ts	execute_raw	9
 src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
-src/core/page-embedding-budget.ts	execute_raw	6
+src/core/page-embedding-budget.ts	execute_raw	4
 src/core/page-embedding-lease.ts	execute_raw	1
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
@@ -580,7 +577,7 @@ src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	10
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
 src/core/page-state/tags.ts	execute_raw	3
-src/core/page-state/versions.ts	execute_raw	9
+src/core/page-state/versions.ts	execute_raw	8
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
@@ -750,7 +747,7 @@ src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
 src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	27
+src/core/persistence/sync-holds.ts	execute_raw	19
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-markers.ts	execute_raw	9
@@ -764,7 +761,6 @@ src/core/persistence/sync-pass-confirm.ts	execute_raw	8
 src/core/persistence/sync-pass-episode.ts	execute_raw	2
 src/core/persistence/sync-pass-fold.ts	execute_raw	3
 src/core/persistence/sync-pass-readers.ts	execute_raw	1
-src/core/persistence/sync-pass-row.ts	execute_raw	4
 src/core/persistence/sync-pass-run.ts	execute_raw	14
 src/core/persistence/sync-pass-status.ts	execute_raw	3
 src/core/persistence/sync-pass.ts	execute_raw	14
@@ -851,7 +847,7 @@ src/core/repair/orphan-children.ts	execute_raw	6
 src/core/repair/overwritten-edits.ts	execute_raw	3
 src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	3
-src/core/repair/purged-change-reasons.ts	execute_raw	7
+src/core/repair/purged-change-reasons.ts	execute_raw	5
 src/core/repair/purged-page-facts.ts	execute_raw	5
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/receipt-compaction.ts	execute_raw	3
@@ -964,17 +960,16 @@ src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
 src/core/sweep.ts	execute_raw	3
-src/core/sync-anchor.ts	execute_raw	3
+src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
 src/core/sync-identity-downgrades.ts	execute_raw	8
 src/core/sync-pending.ts	execute_raw	2
 src/core/sync-policy.ts	execute_raw	1
-src/core/sync-rename-identity.ts	execute_raw	4
+src/core/sync-rename-identity.ts	execute_raw	1
 src/core/sync-status-report.ts	execute_raw	1
-src/core/sync-upstream.ts	execute_raw	2
-src/core/sync.ts	execute_raw	1
+src/core/sync-upstream.ts	execute_raw	1
 src/core/synopsis-sweep.ts	execute_raw	3
 src/core/take-proposals.ts	execute_raw	8
 src/core/takes-horizon.ts	execute_raw	5
