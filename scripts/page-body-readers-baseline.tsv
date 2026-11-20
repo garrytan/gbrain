@@ -207,6 +207,9 @@ src/core/engine-sql/link-reads.ts	LINK_CONTEXT_ORIGIN_SQL	sql	INLINE	moved from 
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
+src/core/engine-sql/page-purge.ts	countPageCascadeRows	field	STREAM	moved from persistence/page-purge.ts purgePageInTransaction: counts the page cascade rows, reads no body text
+src/core/engine-sql/page-purge.ts	countPageCascadeRows	sql	STREAM	moved from persistence/page-purge.ts purgePageInTransaction
+src/core/engine-sql/page-purge.ts	listPageVersionBodiesForPurge	sql	STREAM	moved from persistence/page-purge.ts tombstonePage
 src/core/engine-sql/pages.ts	PAGE_VERSION_COLUMNS	sql	SEGW	lane 1e: versions of segmented pages carry no body
 src/core/engine-sql/pages.ts	listCorpusSample	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
 src/core/engine-sql/pages.ts	listPrefixSampledPages	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
@@ -511,10 +514,8 @@ src/core/persistence/page-prepare.ts	remoteCoreMarkingKept	call:serializePageToM
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
-src/core/persistence/page-purge.ts	purgePageInTransaction	sql	STREAM	
 src/core/persistence/page-purge.ts	tombstonePage	call:contentHash	META	
 src/core/persistence/page-purge.ts	tombstonePage	field	STREAM	
-src/core/persistence/page-purge.ts	tombstonePage	sql	STREAM	
 src/core/persistence/prepared-maintenance.ts	stampMaintenancePage	call:serializePageToMarkdown	SEGW	
 src/core/persistence/prepared-maintenance.ts	verifyMaintenanceOutputs	call:serializePageToMarkdown	SEGW	
 src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	call:contentHash	META	

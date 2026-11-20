@@ -364,6 +364,37 @@ source refuses with `purged_content`, as the Postgres `pages_refuse_purged` trig
 upsert, so the `BEFORE INSERT` trigger fires even when the page already holds the hash), every other page write
 (`pages::write_page`) on insert or when the hash or source changes.
 
+### The page purge's reads and tombstone edits
+
+Seventeen members (`src/core/engine-sql/page-purge.ts`; `facts/page_purge_reads.rs`, `facts/page_purges.rs`,
+`facts/purge_ledger.rs`, `facts/take_purges.rs`). A page's facts are those filed on it (the `F 0x04` page index) and
+those extracted from it and filed on none (a page-extraction source whose context head is the slug; the source's facts
+are walked, as `countPurgedPageFacts` does). Outcome markers are never claims. Members whose SQL has no order
+(`DISTINCT`, `UNION`) answer sorted, as the SQL functions do.
+
+| JS | Resolves |
+| --- | --- |
+| `listPurgeClaimFacts(sourceId, slug)` | `[{ id, fact, source }]` of the page's first 1000 facts by id, outcome markers included |
+| `listPurgeClaimTakes(pageId)` | `[{ id, claim }]` of the page's first 1000 takes by id; an unknown or negative id answers nothing |
+| `listPurgeSegmentClaims(sourceId, slug, pageId)` | the text of the page's facts (outcome markers apart) and takes, once each, in byte order |
+| `listQueuedPagePurges(sourceId, after, limit)` | `[{ id, slug, page_id }]`: the source's queued `delete_page` requests with `intent.purge` true after sequence `after`, by sequence, up to `limit`, each with the id of the page at its slug (`null` for none). Reads the journal's request records. `after` that is not an integer refuses |
+| `listPageLinkStreams(sourceId, pageId)` | the slug of the stream of every link to or from the page (the origin page's slug when the link has one), in byte order, for the streams in `sourceId` |
+| `readPurgePageBody(pageId)` | `{ content_hash, body_generation }` of the page; `null` for none. A page with no segmented body state reads generation 0 |
+| `listPageMirrorFacts(sourceId, slug)` | `[{ fact_hash, visibility, subject }]`: each distinct claim of the page that is not an outcome marker, `fact_hash` the `gbrain_fact_fingerprint`, `subject` the entity or `*` |
+| `listPageMirrorTakeHashes(pageId)` | the fingerprint of each distinct take claim of the page, in byte order |
+| `countPageCascadeRows(pageId)` | `{ chunks, versions, takes, timeline }` of the page |
+| `listPageVersionSourcePaths(pageId)` | the distinct source paths of the page's versions, up to 64, in byte order |
+| `listPageVersionBodiesForPurge(pageId)` | the page's newest 1000 versions, newest first: title, type, both text columns (null for a segmented snapshot), frontmatter, tags, `body_storage`, `body_generation`, and the content hash of a segmented snapshot (an inline snapshot answers `null`, as the SQL engines' inline insert leaves the column null) |
+| `insertPageFactPurges(sourceId, slug, requestId, actor)` | writes one `fact_purges` tombstone per distinct (visibility, entity or `*`, fingerprint) of the page's facts, outcome markers apart, reason `page purge`, at the transaction clock; an existing tombstone keeps its columns. A `requestId` that is not a UUID refuses; a page with no claims writes nothing and reads no source |
+| `listPagePurgeTombstones(sourceId, limit)` | `[{ content_hash, slug }]` newest first |
+| `listPagePurgeRows(sourceId \| null, limit)` | `[{ source_id, slug, content_hash, request_id, purged_at }]` of one source or of every source, newest first |
+| `deletePagePurgeTombstones(sourceId, slug)` | removes the slug's tombstones and resolves each one's request id (`null` for none). It takes no row lock: the store admits one write transaction at a time, so the transaction `unpurgePage` opens, which also reads `lockSourceRow`, already serializes its writers |
+| `deleteFactPurgesByRequests(sourceId, requestIds)` | removes the source's `fact_purges` rows of those requests; how many |
+| `deleteTakePurgesByRequests(sourceId, requestIds)` | removes the source's `take_purges` rows of those requests; how many |
+
+Tombstones list newest first by their purge time, equal times in key order. An id that is not a UUID in `requestIds`
+refuses with `invalid_argument`.
+
 | Member | What it answers | Rust |
 | --- | --- | --- |
 | `listSessionFactsForClassification` | Active, unsuperseded facts of the capture lanes whose attribution is the user or unset, optionally only the named ids, by (source, id). | Served |

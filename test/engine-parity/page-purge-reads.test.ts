@@ -31,6 +31,7 @@ const SRC = 'default';
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const REQ = 'a0000000-0000-4000-8000-0000000000a1';
 const REQ2 = 'a0000000-0000-4000-8000-0000000000a2';
+const JOURNAL_KEYS = ['principal:local_cli:parity-writer', 'brain'];
 
 const note = (title: string, body: string, source_path?: string) => ({ type: 'note' as const, title, compiled_truth: body, frontmatter: {}, ...(source_path ? { source_path } : {}) });
 
@@ -118,7 +119,7 @@ async function seed(engine: BrainEngine, backend: Parameters<typeof createSource
 
 describe('engine parity: page purge reads and tombstone commands', () => {
   parityTest('readPurgeClaims and readSegmentClaims read the page\'s facts and takes: filed or extracted, outcome markers apart, one source only', {
-    methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'executeRaw'],
+    methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listPurgeSegmentClaims'],
   }, async (engine, backend) => {
     const { doomed, keeper } = await seed(engine, backend);
     const claims = await readPurgeClaims(engine, SRC, 'notes/doomed', doomed);
@@ -146,7 +147,7 @@ describe('engine parity: page purge reads and tombstone commands', () => {
   });
 
   parityTest('linkStreamSlugs names the streams of every link to or from the page: the origin page\'s slug when it has one', {
-    methods: ['putPage', 'addLink', 'executeRaw'],
+    methods: ['putPage', 'addLink', 'listPageLinkStreams'],
   }, async (engine, backend) => {
     const { doomed, keeper } = await seed(engine, backend);
     const out = {
@@ -161,7 +162,7 @@ describe('engine parity: page purge reads and tombstone commands', () => {
   });
 
   parityTest('readPagePurgeTombstones maps content hashes to slugs for one source, newest first, up to a limit; listPagePurges lists them as the command shows', {
-    methods: ['upsertPagePurges', 'executeRaw'],
+    methods: ['upsertPagePurges', 'listPagePurgeTombstones', 'listPagePurgeRows'],
   }, async (engine, backend) => {
     await seed(engine, backend);
     const shown = (r: Record<string, unknown>) => ({
@@ -188,7 +189,7 @@ describe('engine parity: page purge reads and tombstone commands', () => {
   });
 
   parityTest('unpurgePage clears the slug\'s tombstones and the fact and take tombstones of their requests, in its source only', {
-    methods: ['upsertPagePurges', 'insertFactPurge', 'insertTakePurge', 'transaction', 'countPagePurgeTombstones', 'executeRaw'],
+    methods: ['upsertPagePurges', 'insertFactPurge', 'insertTakePurge', 'transaction', 'lockSourceRow', 'deletePagePurgeTombstones', 'deleteFactPurgesByRequests', 'deleteTakePurgesByRequests', 'countPagePurgeTombstones'],
   }, async (engine, backend) => {
     await seed(engine, backend);
     const remaining = async () => ({
@@ -212,6 +213,195 @@ describe('engine parity: page purge reads and tombstone commands', () => {
     expect(out.afterFirst).toMatchObject({ doomed: 0, gone: 1, otherSource: 1 });
     expect(out.again).toMatchObject({ cleared: 0, fact_tombstones_cleared: 0, take_tombstones_cleared: 0 });
     expect(out.otherSource).toMatchObject({ cleared: 1, fact_tombstones_cleared: 0, take_tombstones_cleared: 0 });
+    return out;
+  });
+
+  parityTest('listPurgeClaimFacts, listPurgeClaimTakes, listPurgeSegmentClaims, listPageMirrorFacts and listPageMirrorTakeHashes answer for a page, an empty page, another source and an unknown id', {
+    methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listPurgeSegmentClaims', 'listPageMirrorFacts', 'listPageMirrorTakeHashes'],
+  }, async (engine, backend) => {
+    const { doomed, keeper } = await seed(engine, backend);
+    const facts = async (sourceId: string, slug: string) => (await engine.listPurgeClaimFacts(sourceId, slug)).map(f => ({ id: label(engine, f.id), fact: f.fact, source: f.source }));
+    const takes = async (pageId: number) => (await engine.listPurgeClaimTakes(pageId)).map(t => t.claim);
+    const out = {
+      facts: await facts(SRC, 'notes/doomed'),
+      factsOtherSource: await facts('other', 'notes/doomed'),
+      factsKeeper: await facts(SRC, 'notes/keeper'),
+      factsNone: await facts(SRC, 'notes/never'),
+      takes: await takes(doomed),
+      takesKeeper: await takes(keeper),
+      takesUnknown: [await takes(987654), await takes(-1)],
+      segment: await engine.listPurgeSegmentClaims(SRC, 'notes/doomed', doomed),
+      segmentNone: await engine.listPurgeSegmentClaims(SRC, 'notes/never', 987654),
+      mirror: await engine.listPageMirrorFacts(SRC, 'notes/doomed'),
+      mirrorOtherSource: await engine.listPageMirrorFacts('other', 'notes/doomed'),
+      mirrorNone: await engine.listPageMirrorFacts(SRC, 'notes/never'),
+      mirrorTakes: await engine.listPageMirrorTakeHashes(doomed),
+      mirrorTakesNone: [await engine.listPageMirrorTakeHashes(987654), await engine.listPageMirrorTakeHashes(-1)],
+    };
+    // Five facts of the page (the outcome marker among them); the mirror drops the marker, and the two takes hash to two claims.
+    expect(out.facts).toHaveLength(5);
+    expect(out.takes).toEqual(['Doomed harbor ledger fact', 'The harbor will reopen in spring']);
+    expect(out.mirror.map(m => m.subject).sort()).toEqual(['*', '*', '*', 'people/alice']);
+    expect(out.mirrorTakes).toHaveLength(2);
+    expect(out.mirrorNone).toEqual([]);
+    expect(out.factsOtherSource.map(f => f.id)).toEqual(['extracted-other-source', 'other-source']);
+    return out;
+  });
+
+  parityTest('listQueuedPagePurges lists the queued purge requests of a source after a sequence, by sequence, each with its page', {
+    methods: ['putPage', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'listQueuedPagePurges'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const doomed = await engine.putPage('notes/doomed', note('Doomed', 'Doomed notes.'));
+    const sequences: Record<string, string> = {};
+    const admit = async (requestId: string, over: { operation?: string; slug?: string; intent?: unknown; sourceId?: string }, name: string) => {
+      const sourceId = over.sourceId ?? SRC;
+      const source = await engine.readSourceMembership(sourceId);
+      await engine.lockPersistenceCounters(JOURNAL_KEYS);
+      const slug = over.slug ?? 'notes/doomed';
+      const row = await engine.insertWriteRequest({
+        principalKind: 'local_cli', principalId: 'parity-writer', requestId, operation: over.operation ?? 'delete_page', sourceId,
+        sourceIncarnation: source!.incarnation, pageId: null, slug, worktreeId: null, topologyGeneration: null,
+        digest: 'd'.repeat(64), intent: over.intent ?? { kind: 'delete_page', slug, purge: true }, authority: { scopes: ['write'] }, intentBytes: 100,
+        terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: JOURNAL_KEYS,
+        clientRequestId: null, state: 'queued', deferredRefreshId: null,
+      });
+      sequences[name] = String(row.sequence);
+    };
+    await admit('b0000000-0000-4000-8000-0000000000b1', {}, 'first');
+    await admit('b0000000-0000-4000-8000-0000000000b2', { slug: 'notes/no-page' }, 'no-page');
+    await admit('b0000000-0000-4000-8000-0000000000b3', { intent: { kind: 'delete_page', purge: false } }, 'soft');
+    await admit('b0000000-0000-4000-8000-0000000000b4', { operation: 'put_page' }, 'put');
+    await admit('b0000000-0000-4000-8000-0000000000b5', { intent: { kind: 'delete_page' } }, 'plain');
+    await admit('b0000000-0000-4000-8000-0000000000b6', { sourceId: 'other' }, 'other');
+    await admit('b0000000-0000-4000-8000-0000000000b7', { slug: 'notes/doomed' }, 'last');
+    const view = async (sourceId: string, after: string, limit: number) =>
+      (await engine.listQueuedPagePurges(sourceId, after, limit)).map(r => ({ idIsUuid: /^[0-9a-f-]{36}$/.test(r.id), slug: r.slug, page: r.page_id === null ? null : r.page_id === doomed.id ? 'doomed' : 'other' }));
+    const out = {
+      all: await view(SRC, '0', 32),
+      afterFirst: await view(SRC, sequences.first!, 32),
+      afterLast: await view(SRC, sequences.last!, 32),
+      limited: await view(SRC, '0', 1),
+      zero: await view(SRC, '0', 0),
+      otherSource: await view('other', '0', 32),
+      noSource: await view('nobody', '0', 32),
+    };
+    expect(out.all.map(r => r.slug)).toEqual(['notes/doomed', 'notes/no-page', 'notes/doomed']);
+    expect(out.all.map(r => r.page)).toEqual(['doomed', null, 'doomed']);
+    expect(out.afterLast).toEqual([]);
+    expect(out.limited).toHaveLength(1);
+    return out;
+  });
+
+  parityTest('readPurgePageBody, listPageVersionBodiesForPurge, listPageVersionSourcePaths and countPageCascadeRows read the page\'s stored body, versions and cascade', {
+    methods: ['putPage', 'createVersion', 'upsertChunks', 'addTimelineEntry', 'addTakesBatch', 'readPurgePageBody', 'listPageVersionBodiesForPurge', 'listPageVersionSourcePaths', 'countPageCascadeRows'],
+  }, async (engine, backend) => {
+    const { doomed, keeper } = await seed(engine, backend);
+    await engine.upsertChunks('notes/doomed', [{ chunk_index: 0, chunk_text: 'The harbor ledger', chunk_source: 'compiled_truth' }, { chunk_index: 1, chunk_text: 'starts here', chunk_source: 'compiled_truth' }]);
+    await engine.addTimelineEntry('notes/doomed', { date: '2026-01-02', summary: 'first entry' });
+    await engine.addTimelineEntry('notes/doomed', { date: '2026-01-03', summary: 'second entry' });
+    const versions = (await engine.listPageVersionBodiesForPurge(doomed)).map(v => ({
+      title: v.title, type: v.type, compiled_truth: v.compiled_truth, timeline: v.timeline, frontmatter: v.frontmatter, tags: v.tags,
+      body_storage: v.body_storage, body_generation: v.body_generation ?? null, hashIsText: typeof v.content_hash === 'string' }));
+    const body = await engine.readPurgePageBody(doomed);
+    const out = {
+      body: body && { hashIsText: typeof body.content_hash === 'string', body_generation: body.body_generation },
+      bodyKeeper: (await engine.readPurgePageBody(keeper))?.body_generation,
+      bodyUnknown: [await engine.readPurgePageBody(987654), await engine.readPurgePageBody(-1)],
+      versions,
+      versionsUnknown: [await engine.listPageVersionBodiesForPurge(987654), await engine.listPageVersionBodiesForPurge(-1)],
+      paths: await engine.listPageVersionSourcePaths(doomed),
+      pathsKeeper: await engine.listPageVersionSourcePaths(keeper),
+      pathsUnknown: await engine.listPageVersionSourcePaths(987654),
+      cascade: await engine.countPageCascadeRows(doomed),
+      cascadeKeeper: await engine.countPageCascadeRows(keeper),
+      cascadeUnknown: [await engine.countPageCascadeRows(987654), await engine.countPageCascadeRows(-1)],
+    };
+    expect(out.versions.map(v => v.compiled_truth)).toEqual(['The harbor ledger, second draft.', 'The harbor ledger starts here.']);
+    expect(out.paths).toEqual(['notes/doomed-old.md', 'notes/doomed.md']);
+    expect(out.cascade).toEqual({ chunks: 2, versions: 2, takes: 2, timeline: 2 });
+    expect(out.cascadeKeeper).toEqual({ chunks: 0, versions: 0, takes: 1, timeline: 0 });
+    return out;
+  });
+
+  parityTest('insertPageFactPurges tombstones each distinct claim of the page once, outcome markers apart, and refuses a request id that is no uuid', {
+    methods: ['putPage', 'insertFacts', 'insertFact', 'insertPageFactPurges', 'isFactPurged'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    // Fingerprints of purge tombstones are of the normalized claim: a differently written repeat is purged with it.
+    await fenced(engine, 'repeat', 'doomed HARBOR ledger fact.', { source_markdown_slug: 'notes/doomed' });
+    const purged = async (sourceId: string, visibility: 'private' | 'world', claim: string, entity: string | null) => engine.isFactPurged(sourceId, visibility, claim, entity);
+    const probe = async () => ({
+      filed: await purged(SRC, 'world', 'Doomed harbor ledger fact', null),
+      repeat: await purged(SRC, 'world', 'DOOMED harbor ledger fact', null),
+      entity: await purged(SRC, 'private', 'Alice keeps the harbor keys', 'people/alice'),
+      entityOtherSubject: await purged(SRC, 'private', 'Alice keeps the harbor keys', 'people/bob'),
+      extracted: await purged(SRC, 'private', 'Extracted harbor ledger fact', null),
+      marker: await purged(SRC, 'private', 'EXTRACTION_COMPLETE', null),
+      otherPage: await purged(SRC, 'world', 'Keeper harbor fact', null),
+      otherSource: await purged('other', 'world', 'Doomed harbor ledger fact', null),
+    });
+    const before = await probe();
+    await engine.insertPageFactPurges(SRC, 'notes/doomed', REQ, 'owner:local');
+    await engine.insertPageFactPurges(SRC, 'notes/doomed', REQ2, 'owner:other');
+    const after = await probe();
+    await engine.insertPageFactPurges(SRC, 'notes/empty', REQ, 'owner:local');
+    await engine.insertPageFactPurges('nobody', 'notes/empty', REQ, 'owner:local');
+    const refused = await engine.insertPageFactPurges(SRC, 'notes/doomed', 'not-a-uuid', 'owner:local').then(() => 'allowed', () => 'refused');
+    expect(Object.values(before).some(Boolean)).toBe(false);
+    expect(after).toEqual({ filed: true, repeat: true, entity: true, entityOtherSubject: false, extracted: true, marker: false, otherPage: false, otherSource: false });
+    return { before, after, refused };
+  });
+
+  parityTest('deletePagePurgeTombstones, deleteFactPurgesByRequests and deleteTakePurgesByRequests remove one slug\'s or one request\'s tombstones, in their source only', {
+    methods: ['upsertPagePurges', 'insertFactPurge', 'insertTakePurge', 'deletePagePurgeTombstones', 'deleteFactPurgesByRequests', 'deleteTakePurgesByRequests', 'countPagePurgeTombstones'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    const state = async () => ({
+      doomed: await engine.countPagePurgeTombstones(SRC, 'notes/doomed'), gone: await engine.countPagePurgeTombstones(SRC, 'notes/gone'), other: await engine.countPagePurgeTombstones('other', 'notes/doomed'),
+    });
+    const before = await state();
+    const none = await engine.deletePagePurgeTombstones(SRC, 'notes/never');
+    const empty = [await engine.deleteFactPurgesByRequests(SRC, []), await engine.deleteTakePurgesByRequests(SRC, [])];
+    const unknownRequest = [await engine.deleteFactPurgesByRequests(SRC, ['a0000000-0000-4000-8000-0000000000ff']), await engine.deleteTakePurgesByRequests(SRC, ['a0000000-0000-4000-8000-0000000000ff'])];
+    const otherSource = [await engine.deleteFactPurgesByRequests('other', [REQ]), await engine.deleteTakePurgesByRequests('other', [REQ])];
+    const badUuid = await engine.deleteFactPurgesByRequests(SRC, ['not-a-uuid']).then(() => 'allowed', () => 'refused');
+    const slugless = await engine.deletePagePurgeTombstones('other', 'notes/doomed');
+    const cleared = (await engine.deletePagePurgeTombstones(SRC, 'notes/doomed')).sort();
+    const repeated = await engine.deletePagePurgeTombstones(SRC, 'notes/doomed');
+    const facts = await engine.deleteFactPurgesByRequests(SRC, [REQ, REQ]);
+    const takes = await engine.deleteTakePurgesByRequests(SRC, [REQ]);
+    const factsAgain = await engine.deleteFactPurgesByRequests(SRC, [REQ]);
+    const after = await state();
+    const out = { before, none, empty, unknownRequest, otherSource, badUuid, slugless, cleared, repeated, facts, takes, factsAgain, after };
+    expect(out.cleared).toEqual([REQ, REQ]);
+    expect(out.slugless).toEqual([null]);
+    expect(out).toMatchObject({ facts: 2, takes: 1, factsAgain: 0, after: { doomed: 0, gone: 1, other: 0 } });
+    return out;
+  });
+
+  parityTest('listPageLinkStreams, listPagePurgeTombstones and listPagePurgeRows answer directly: one source or all, newest first, up to a limit, an unknown page or source empty', {
+    methods: ['putPage', 'addLink', 'upsertPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones', 'listPagePurgeRows'],
+  }, async (engine, backend) => {
+    const { doomed, keeper } = await seed(engine, backend);
+    const rowsView = (rows: Awaited<ReturnType<BrainEngine['listPagePurgeRows']>>) =>
+      rows.map(r => ({ source_id: r.source_id, slug: r.slug, content_hash: r.content_hash, request_id: r.request_id, purgedAtIsDate: !Number.isNaN(new Date(r.purged_at).getTime()) }))
+        .sort((a, b) => `${a.source_id}/${a.content_hash}`.localeCompare(`${b.source_id}/${b.content_hash}`));
+    const out = {
+      streams: [await engine.listPageLinkStreams(SRC, doomed), await engine.listPageLinkStreams(SRC, keeper), await engine.listPageLinkStreams('other', doomed), await engine.listPageLinkStreams(SRC, 987654), await engine.listPageLinkStreams(SRC, -1)],
+      tombstones: (await engine.listPagePurgeTombstones(SRC, 10)).map(t => [t.content_hash, t.slug]).sort(),
+      tombstonesLimited: (await engine.listPagePurgeTombstones(SRC, 1)).length,
+      tombstonesZero: await engine.listPagePurgeTombstones(SRC, 0),
+      tombstonesOther: (await engine.listPagePurgeTombstones('other', 10)).map(t => [t.content_hash, t.slug]),
+      tombstonesNone: await engine.listPagePurgeTombstones('nobody', 10),
+      rowsAll: rowsView(await engine.listPagePurgeRows(null, 10)),
+      rowsOther: rowsView(await engine.listPagePurgeRows('other', 10)),
+      rowsLimited: (await engine.listPagePurgeRows(null, 1)).length,
+      rowsNone: await engine.listPagePurgeRows('nobody', 10),
+    };
+    expect(out.streams[0]).toEqual(['notes/doomed', 'notes/keeper', 'notes/third']);
+    expect(out.rowsAll).toHaveLength(4);
+    expect(out.rowsOther[0]).toMatchObject({ request_id: null, purgedAtIsDate: true });
     return out;
   });
 });

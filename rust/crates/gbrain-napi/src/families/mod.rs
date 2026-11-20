@@ -78,6 +78,7 @@ mod ontology;
 mod page_body;
 mod page_embedding_budget;
 mod page_ops;
+mod page_purge;
 mod purge_effects;
 mod purge_plan;
 mod raw_files;

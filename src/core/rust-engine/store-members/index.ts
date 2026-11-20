@@ -68,6 +68,7 @@ import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as headBlocker from './head-blocker.ts';
 import * as labelDoor from './label-door.ts';
+import * as pagePurge from './page-purge.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as withdrawalCommit from './withdrawal-commit.ts';
 import * as withdrawalDiscovery from './withdrawal-discovery.ts';
@@ -144,6 +145,8 @@ export const STORE_MEMBERS = {
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...headBlocker,
   ...labelDoor,
+  // The reads and tombstone edits of a page purge (rust/docs/store/facts.md).
+  ...pagePurge,
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
   ...withdrawalCommit,

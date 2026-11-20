@@ -104,6 +104,7 @@ import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/wri
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 import type { CheckoutFileRow, OriginDependentRow, OriginRefInput, PageLabelRow, PrivacyOriginRow } from './engine-sql/label-door.ts';
+import type * as PagePurgeSql from './engine-sql/page-purge.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -4052,6 +4053,42 @@ export interface BrainEngine {
   readPurgeReceiptSourcePath(sourceId: string): Promise<string | null>;
   /** How many tombstones the page purge left for the slug. Reads page_purges. */
   countPagePurgeTombstones(sourceId: string, slug: string): Promise<number>;
+  // The reads and tombstone edits of a page purge (engine-sql/page-purge.ts; persistence/page-purge.ts). A page's facts are the
+  // facts filed on it and those extracted from it and filed on none; outcome markers are never claims.
+  /** The page's first 1000 facts by id (outcome markers included; the caller drops them): the journal sweep's claims. Reads facts. */
+  listPurgeClaimFacts(sourceId: string, slug: string): Promise<PagePurgeSql.PurgeClaimFactRow[]>;
+  /** The page's first 1000 takes by id. Reads takes. */
+  listPurgeClaimTakes(pageId: number): Promise<PagePurgeSql.PurgeClaimTakeRow[]>;
+  /** Every claim of the page, once each in text order: its facts (outcome markers apart) and its takes, unbounded. Reads facts and takes. */
+  listPurgeSegmentClaims(sourceId: string, slug: string, pageId: number): Promise<string[]>;
+  /** The queued purges (`delete_page`, `intent.purge` true) of the source after `afterSequence`, by sequence, up to `limit`, each with the page id at its slug (null for none). Reads persistence_requests and pages. */
+  listQueuedPagePurges(sourceId: string, afterSequence: string, limit: number): Promise<PagePurgeSql.QueuedPagePurgeRow[]>;
+  /** The slug of the belief stream of every link to or from the page (the origin page's when the link has one), once each, sorted. Reads links and pages. */
+  listPageLinkStreams(sourceId: string, pageId: number): Promise<string[]>;
+  /** The page purge's fact tombstones: one per distinct claim of the page's facts, outcome markers apart (`ON CONFLICT DO NOTHING`). Writes fact_purges; run it in the purge transaction. */
+  insertPageFactPurges(sourceId: string, slug: string, requestId: string, actor: string): Promise<void>;
+  /** The page's newest 1000 saved versions, newest first, with the columns that give each body its import hash. Reads page_versions. */
+  listPageVersionBodiesForPurge(pageId: number): Promise<PagePurgeSql.PageVersionPurgeRow[]>;
+  /** The page's stored content hash and body generation, null when no page has the id. Reads pages. */
+  readPurgePageBody(pageId: number): Promise<PagePurgeSql.PurgePageBodyRow | null>;
+  /** Each distinct claim of the page that is not an outcome marker (fingerprint, visibility, subject), sorted. Reads facts. */
+  listPageMirrorFacts(sourceId: string, slug: string): Promise<PagePurgeSql.PageMirrorFactRow[]>;
+  /** The fingerprint of each distinct take claim of the page, sorted. Reads takes. */
+  listPageMirrorTakeHashes(pageId: number): Promise<string[]>;
+  /** How many chunks, versions, takes and timeline entries the page has: what its hard delete removes by cascade. Reads content_chunks, page_versions, takes and timeline_entries. */
+  countPageCascadeRows(pageId: number): Promise<PagePurgeSql.PageCascadeCounts>;
+  /** The distinct source paths of the page's saved versions, up to 64, sorted. Reads page_versions. */
+  listPageVersionSourcePaths(pageId: number): Promise<string[]>;
+  /** The source's page tombstones (content hash, slug), newest first, up to `limit`. Reads page_purges. */
+  listPagePurgeTombstones(sourceId: string, limit: number): Promise<Array<{ content_hash: string; slug: string }>>;
+  /** The page tombstones of one source, or of every source for null, newest first, up to `limit`. Reads page_purges. */
+  listPagePurgeRows(sourceId: string | null, limit: number): Promise<PagePurgeSql.PagePurgeListRow[]>;
+  /** Removes the source's page tombstones under the slug; each one's request id (null for none). Writes page_purges; run it in a transaction that holds `lockSourceRow`. */
+  deletePagePurgeTombstones(sourceId: string, slug: string): Promise<Array<string | null>>;
+  /** Removes the source's fact tombstones of these purge requests; how many. Writes fact_purges. */
+  deleteFactPurgesByRequests(sourceId: string, requestIds: readonly string[]): Promise<number>;
+  /** Removes the source's take tombstones of these purge requests; how many. Writes take_purges. */
+  deleteTakePurgesByRequests(sourceId: string, requestIds: readonly string[]): Promise<number>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */

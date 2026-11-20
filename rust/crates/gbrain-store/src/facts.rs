@@ -54,6 +54,7 @@ pub mod generations;
 mod held_cells;
 pub mod holding_purges;
 pub mod loops;
+pub(crate) mod page_purge_reads;
 pub(crate) mod page_purges;
 pub use page_purges::PagePurgeUpsert;
 mod privacy;
