@@ -431,12 +431,27 @@ export function personSlugFromContact(c: ContactData, disambiguate = false, dir:
 }
 
 /**
+ * How another contacts source renders the same page shape (apple-contacts): its own ownership key and source line,
+ * groups as `tags`, the name parts and nickname, and each value's label in the contact line. Empty for Google.
+ */
+export interface PersonPageOptions {
+  idKey?: string;
+  sourceLabel?: string;
+  groupsKey?: 'groups' | 'tags';
+  names?: { given: string | null; family: string | null; nickname: string | null };
+  /** value → label ("mobile", "work") shown beside the value. */
+  valueLabels?: ReadonlyMap<string, string>;
+  /** `visibility: private`: the page stays database-only, never in a Git checkout. */
+  private?: boolean;
+}
+
+/**
  * Render a person page for a contact. Ownership rule (enforced in
  * google-source.ts:sweepContacts): pages carrying the google_contact_id
  * marker are connector-owned and fully re-rendered; hand-authored pages at
  * the same path are skipped entirely — body AND frontmatter untouched.
  */
-export function renderPersonPage(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR): RenderedPage | null {
+export function renderPersonPage(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR, opts: PersonPageOptions = {}): RenderedPage | null {
   const slug = personSlugFromContact(c, disambiguate, dir);
   if (!slug || (c.emails.length === 0 && c.phones.length === 0)) return null;
   const name = c.displayName ?? c.emails[0] ?? c.phones[0];
@@ -451,10 +466,14 @@ export function renderPersonPage(c: ContactData, disambiguate = false, dir: stri
     `aliases: ${yamlList(aliases)}`,
     `emails: ${yamlList(c.emails)}`,
     ...(c.phones.length > 0 ? [`phones: ${yamlList(c.phones)}`] : []),
-    `google_contact_id: ${yamlStr(c.resourceName)}`,
+    `${opts.idKey ?? 'google_contact_id'}: ${yamlStr(c.resourceName)}`,
+    ...(opts.names?.given ? [`given_name: ${yamlStr(opts.names.given)}`] : []),
+    ...(opts.names?.family ? [`family_name: ${yamlStr(opts.names.family)}`] : []),
+    ...(opts.names?.nickname ? [`nickname: ${yamlStr(opts.names.nickname)}`] : []),
     ...(c.organization ? [`company: ${yamlStr(c.organization)}`] : []),
     ...(c.title ? [`role: ${yamlStr(c.title)}`] : []),
-    ...(groups.length > 0 ? [`groups: ${yamlList(groups)}`] : []),
+    ...(groups.length > 0 ? [`${opts.groupsKey ?? 'groups'}: ${yamlList(groups)}`] : []),
+    ...(opts.private ? ['visibility: private'] : []),
     '---',
   ];
   const body = [
@@ -463,8 +482,8 @@ export function renderPersonPage(c: ContactData, disambiguate = false, dir: stri
     '',
     [
       c.title && c.organization ? neutralizeOutsideText(`${c.title} at ${c.organization}.`) : c.organization ? neutralizeOutsideText(`Works at ${c.organization}.`) : null,
-      neutralizeOutsideText(`Contact: ${[...c.emails, ...c.phones].join(', ')}.`),
-      `[Source: Google Contacts]`,
+      neutralizeOutsideText(`Contact: ${[...c.emails, ...c.phones].map((v) => opts.valueLabels?.get(v) ? `${v} (${opts.valueLabels.get(v)})` : v).join(', ')}.`),
+      `[Source: ${opts.sourceLabel ?? 'Google Contacts'}]`,
     ]
       .filter(Boolean)
       .join(' '),

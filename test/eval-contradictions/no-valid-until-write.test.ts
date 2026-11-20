@@ -91,6 +91,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/withdrawal-schema.ts',
   'src/core/generations/adapters/fact-rows.ts',
   'src/core/persistence/canonical-projections.ts',
+  'src/core/persistence/connector-fact-retirement.ts', // GST-3256: a connector expires only rows whose source is exactly its own provenance; no withdrawal record
   'src/core/persistence/facts-prepare.ts', // #7214: a published supersession closes the retired interval (supersededValidUntil)
   'src/core/persistence/loop-fact-retirement.ts',
   'src/core/persistence/memory-prepare.ts', // #7214: remember (replaces or cosine) closes the retired interval (supersededValidUntil)

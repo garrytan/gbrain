@@ -68,13 +68,13 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'getUnverifiedExtractionPageIds', 'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages'],
   tags: ['addTag', 'removeTag', 'getTags', 'pruneFrontmatterTags', 'addPageTagsById'],
   timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
-    'getLastSeen', 'upsertEventProjection',
+    'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails',
     'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered', 'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates', 'storedTimelineRowsByPageIds'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles'],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
-    'addSynthesisEvidence', 'listActiveTakesForPages'],
+    'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows'],
   dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
   contradictions: ['writeContradictionsRun', 'loadContradictionsTrend', 'getContradictionCacheEntry', 'putContradictionCacheEntry',
     'sweepContradictionCache'],
@@ -97,7 +97,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
-  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk'],
+  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
+    // group D (code traversal cache)
+    'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache'],
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
     'listEvalCaptureFailures'],
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
@@ -128,6 +130,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
     'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent'],
   owner_only: ['ownerOnlyMarkTriggers'],
+  wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
 };
 

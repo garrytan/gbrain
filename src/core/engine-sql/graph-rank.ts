@@ -48,7 +48,7 @@ import { quarantineFilterFragment } from '../quarantine.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { MAX_RETIREMENT_HOPS, retiredPageSql } from '../entities/resolve.ts';
 import { staleForExtractionSql } from './pages.ts';
-import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from '../mentions/pass.ts';
+import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from '../mentions/versions.ts';
 
 export type RankDirection = 'in' | 'out' | 'both';
 

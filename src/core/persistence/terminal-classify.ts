@@ -359,7 +359,7 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
 /** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
 const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page', 'remember', 'forget', 'forget_fact',
   'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']);
+  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts', 'retire_connector_facts']);
 
 /**
  * #7630: the operation a fault's fix depends on. A reconcile or managed write (import, repair, quarantine clear,

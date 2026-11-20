@@ -59,6 +59,11 @@ async function runConnectorKind(engine: BrainEngine, sourceId: string, config: R
       const { runIMessageSync } = await import('../../core/imessage/imessage-source.ts');
       return runIMessageSync(engine, sourceId, parseIMessageSourceConfig(config), options);
     }
+    case 'apple-contacts': {
+      const { parseAppleContactsSourceConfig } = await import('../../core/apple-contacts/source-config.ts');
+      const { runAppleContactsSync } = await import('../../core/apple-contacts/apple-contacts-source.ts');
+      return runAppleContactsSync(engine, sourceId, parseAppleContactsSourceConfig(config), options);
+    }
     default: return assertNever(config.kind);
   }
 }

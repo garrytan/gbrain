@@ -58,6 +58,8 @@ const OOS = {
   timelineReads: 'out-of-scope:timeline-reads (born in engine-sql/timeline-reads.ts; pinned by test/engine-parity/timeline-reads.test.ts)',
   writeMisc: 'out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/write-misc-sql-pin.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
+  wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
+  pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts and takes.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -179,6 +181,12 @@ export const DOMAIN_OF: Record<string, string> = {
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
   'ownerOnlyMarkTriggers': OOS.ownerOnly,
+  'lockRegisteredSourceIds': OOS.wantedLinks,
+  'replaceWantedLinkRows': OOS.wantedLinks,
+  'removeTimelineRows': OOS.pageWriteRows,
+  'updateTimelineDetails': OOS.pageWriteRows,
+  'matchTakeRows': OOS.pageWriteRows,
+  'deleteTakeRows': OOS.pageWriteRows,
   'listIdentityDecisions': OOS.identityDecisions,
   'listRestrictedIdentityMembers': OOS.identityDecisions,
   'applyIdentityDecisions': OOS.identityDecisions,
@@ -265,6 +273,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // code-edges
   'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'getCallersOf': 'code-edges',
   'getCalleesOf': 'code-edges', 'getEdgesByChunk': 'code-edges',
+  'getCodeTraversalCache': 'code-edges', 'putCodeTraversalCache': 'code-edges', 'clearCodeTraversalCache': 'code-edges',
   // cjk-search: the CJK branch of the two keyword methods (cases tagged #cjk)
   'searchKeyword': 'cjk-search', 'searchKeywordChunks': 'cjk-search',
 
@@ -924,6 +933,18 @@ export const SQL_CASES: SqlCase[] = [
     ['default', (e) => e.getEdgesByChunk(1)],
     ['in+edgeType', (e) => e.getEdgesByChunk(1, { direction: 'in', edgeType: 'calls' })],
     ['out', (e) => e.getEdgesByChunk(1, { direction: 'out' })],
+  ]),
+  ...variants('getCodeTraversalCache', [
+    ['default', (e) => e.getCodeTraversalCache({ symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 })],
+  ]),
+  ...variants('putCodeTraversalCache', [
+    ['default', (e) => e.putCodeTraversalCache(
+      { symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 }, { nodes: ['A.f'] }, '2026-01-02T00:00:00.000Z', 7,
+    )],
+  ]),
+  ...variants('clearCodeTraversalCache', [
+    ['sourceId', (e) => e.clearCodeTraversalCache({ sourceId: SRC })],
+    ['allSources', (e) => e.clearCodeTraversalCache({ allSources: true })],
   ]),
 
   // ── cjk-search (CJK branch only) ──
