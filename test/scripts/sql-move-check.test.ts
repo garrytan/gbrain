@@ -141,9 +141,10 @@ describe('sql-move-check', () => {
   });
 });
 
-// The eleven statements copied into engine-sql, each found by the text it starts with, and the file whose inline text
-// it must equal byte for byte. The callers still hold their own copy until the cut that switches them over; that cut
-// moves each row's origin to the engine-sql text it now calls, or drops the row with the inline statement.
+// The eleven statements #9812 copied into engine-sql, each found by the text it starts with, and the file that held
+// the inline text. #9812 kept the inline copies until the cut that switches the callers over; on this branch that cut
+// is done (the callers delegate to engine-sql), so each row now pins the single home: the statement is in engine-sql
+// and its old origin no longer holds it.
 const REPO = resolve(import.meta.dir, '..', '..');
 const COPIED: { module: string; start: string; origin: string }[] = [
   { module: 'code-traversal-cache', start: 'SELECT response_json, computed_at', origin: 'code-intel/traversal-cache.ts' },
@@ -171,7 +172,7 @@ function literalStartingWith(src: string, start: string): string | null {
 }
 
 describe('sql-move-check: the real engine-sql copies', () => {
-  // test-reads-source-ok[structural]: the claim under test is that two source texts are byte-identical, so the text itself is the subject.
+  // test-reads-source-ok[structural]: the claim under test is where a statement's text lives (engine-sql only), so the text itself is the subject.
   const read = (rel: string) => readFileSync(join(REPO, 'src/core', rel), 'utf8');
 
   it('lists eleven statements', () => {
@@ -179,19 +180,10 @@ describe('sql-move-check: the real engine-sql copies', () => {
   });
 
   for (const { module, start, origin } of COPIED) {
-    it(`${module}: "${start.replace(/\n/g, ' ').slice(0, 44)}" equals its origin in ${origin} byte for byte`, () => {
+    it(`${module}: \"${start.replace(/\n/g, ' ').slice(0, 44)}\" lives in engine-sql only; ${origin} no longer holds it`, () => {
       const text = literalStartingWith(read(`engine-sql/${module}.ts`), start);
       expect(text).not.toBeNull();
-      expect(read(origin)).toContain(text!);
+      expect(read(origin)).not.toContain(text!);
     });
   }
-
-  it('a one-character change to a copied statement is caught', () => {
-    for (const { module, start, origin } of COPIED) {
-      const text = literalStartingWith(read(`engine-sql/${module}.ts`), start)!;
-      const changed = text.replace(/\s=\s|\sAND\s|\sFROM\s|\sON\s/, (m) => m.replace(' ', '  '));
-      expect(changed).not.toBe(text);
-      expect(read(origin).includes(changed)).toBe(false);
-    }
-  });
 });
