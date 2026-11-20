@@ -400,3 +400,69 @@ fn a_legacy_token_converts_once_with_one_more_revision_and_a_bad_kind_leaves_it(
         None
     );
 }
+
+fn locked(b: &Brain, id: Option<&str>, name: Option<&str>) -> Vec<Value> {
+    b.lock_active_access_tokens(id, name)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn the_rescope_read_finds_active_tokens_by_id_in_any_case_or_exact_name_oldest_first_without_the_hash()
+ {
+    let b = brain("tokens-lock");
+    let late = insert(
+        &b,
+        token(
+            "twin",
+            "h-late",
+            json!({ "created_at": "2026-02-02T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let early = insert(
+        &b,
+        token(
+            "twin",
+            "h-early",
+            json!({ "created_at": "2026-01-01T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "solo",
+            "h-gone",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let ids: Vec<Value> = locked(&b, None, Some("twin"))
+        .iter()
+        .map(|r| r["id"].clone())
+        .collect();
+    assert_eq!(ids, vec![json!(early), json!(late)], "oldest first");
+    let by_id = locked(&b, Some(&late.to_ascii_uppercase()), None);
+    assert_eq!(by_id.len(), 1);
+    assert_eq!(by_id[0]["name"], json!("twin"));
+    assert_eq!(by_id[0]["private_pages"], json!("none"));
+    assert!(by_id[0].get("token_hash").is_none());
+    assert!(
+        locked(&b, None, Some("Twin")).is_empty(),
+        "the name is exact"
+    );
+    assert!(
+        locked(&b, None, Some("solo")).is_empty(),
+        "a revoked token is left out"
+    );
+    assert!(locked(&b, Some(&gone), None).is_empty());
+    assert!(locked(&b, Some("00000000-0000-4000-8000-0000000000c9"), None).is_empty());
+    assert!(b.lock_active_access_tokens(None, None).is_err());
+    assert!(
+        b.lock_active_access_tokens(Some(&late), Some("twin"))
+            .is_err()
+    );
+}

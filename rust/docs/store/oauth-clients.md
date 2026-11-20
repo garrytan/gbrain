@@ -27,6 +27,15 @@ names every column of the probe (the store keeps every column); `insertOauthClie
 `insertOauthClient` and drops the register audit row (the store keeps no `oauth_grant_audit`);
 `readTokenLifetimeClampedClients()` is `[]` (no audit, so no upgrade clamped a client).
 
+The member binding of a client (`member_id`, `may_act_for`, the four attest columns and `reads_unscoped`, columns of the
+whole row) is read and written by the credential binding members (gbrain-store `jobs::credential_binding`), as for a
+token ([access-tokens.md](access-tokens.md) "Member binding"): `readCredentialBindingForUpdate` also returns
+`grant_types` and `confidential` (a secret hash is stored); `readLiveMember('oauth_client', id)` and
+`readMayActFor('oauth_client', id)` read the client not deleted with this id; `readAccessCredentials({ memberId })`
+lists the live clients bound to the member after its tokens. Every write goes through `put_client`, so the row is
+checked again. `readOAuthClientWriteGrant(clientId)` (`brain.readOauthClientWriteGrant`) returns the columns the write
+re-check reads and `deleted_at`, deleted or not, or null ([journal.md](journal.md)).
+
 Defaults when a column is left out: `grant_types` `{client_credentials}` (an explicit null stays null), `federated_read`
 and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace` `prefixes`, `grant_revision` 0,
 `private_pages` and `private_facts` `none`, `created_at` the store clock, every other column null. `created_at`,

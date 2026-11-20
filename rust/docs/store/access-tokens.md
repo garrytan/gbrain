@@ -7,12 +7,13 @@ The store keeps only the `access_tokens` columns the legacy-token mint, the read
 touch. The SQL for the PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts` (mint, floor) and
 `src/core/engine-sql/access-credentials.ts` (list, grant read, liveness, revokes, the bearer check); the store serves the
 same members. Only `readLiveAccessToken` returns a token hash (the member-key setup compares it to the key file); the
-store never logs one. The other readers and writers of the table
-(rescope, rotate, the legacy-shape conversion in `resolveTokenGrant`) are still raw SQL and stop on a Rust brain.
+store never logs one. The member binding columns (`member_id`, `may_act_for`, the four attest columns and
+`reads_unscoped`) are read and written by the credential binding members below. The grant edits of `gbrain auth rescope`
+(`--sources`, `--operations`, `--takes-holders`, `--private-*`) and rotate are still raw SQL and stop on a Rust brain.
 
 | Member | Returns |
 | --- | --- |
-| `brain.insertAccessToken(row)` | `{ id }`, the generated UUID. `row` has `name`, `token_hash`, `scopes` (null is a full-access token), `permissions` (an object), the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`, `takes_holders`, each null for NULL) and, optionally, `min_trust` and `revoked_at`. The row is born at `grant_revision` 1 |
+| `brain.insertAccessToken(row)` | `{ id }`, the generated UUID. `row` has `name`, `token_hash`, `scopes` (null is a full-access token), `permissions` (an object), the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`, `takes_holders`, each null for NULL) and, optionally, `min_trust`, `revoked_at`, `member_id`, `may_act_for` and `created_at` (ISO text; left out, the store clock). The row is born at `grant_revision` 1 |
 | `brain.findActiveAccessTokens(target)` | `[{ id, name, min_trust }]`: the tokens with no `revoked_at` whose id (as text) or name is `target`, by id. Names are not unique, so there may be several |
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
 | `brain.listAccessTokens()` | every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id): `{ id, name, scopes, created_at, last_used_at, revoked_at }` plus the grant columns `gbrain auth list` prints. `last_used_at` is always null (not kept) |
@@ -22,10 +23,11 @@ store never logs one. The other readers and writers of the table
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
 | `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it), and the table defaults for the rest (the member and attest columns and `reads_unscoped` null, `private_pages` and `private_facts` `none`). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
-| `brain.listUnboundTokenNames()` | the distinct names of the tokens not revoked and bound to no member, in byte order (`SELECT DISTINCT name COLLATE "C" ... ORDER BY name`). No store member binds a token yet, so every live token is listed |
+| `brain.listUnboundTokenNames()` | the distinct names of the tokens not revoked and bound to no member, in byte order (`SELECT DISTINCT name COLLATE "C" ... ORDER BY name`) |
 | `brain.readLiveAccessToken(name)` | `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` of the token not revoked with exactly this name, or null. When several share the name, the oldest (then the lowest id) answers |
 | `brain.recordTokenSetupReads(name, reads)` | null. Sets `setup_reads` to `reads` in the `permissions` object of every token not revoked with this name, keeping the other fields, in one write; a token whose `permissions` is not an object is left alone |
-| `brain.listKeysReadingSource(sourceId)` | `[{ name, member_id, federated_read }]` of the tokens not revoked, bound to a member, on the `federated` grant, written to another source and reading `sourceId`, by name in byte order. Empty while no token is bound |
+| `brain.listKeysReadingSource(sourceId)` | `[{ name, member_id, federated_read }]` of the tokens not revoked, bound to a member, on the `federated` grant, written to another source and reading `sourceId`, by name in byte order |
+| `brain.lockActiveAccessTokens(id, name)` | the whole rows, without `token_hash`, of the tokens not revoked whose id (a UUID, so any case) is `id`, or whose name is exactly `name`, oldest first (a tie by id). Exactly one of the two is given; both or neither is `invalid_argument`. It serves `lockActiveAccessTokens({ id } \| { name })`, the read `gbrain auth rescope` runs before it writes (`SELECT * ... FOR UPDATE`); the store runs one write transaction at a time, so the lock holds nothing off. The TypeScript member refuses a non-UUID id as PostgreSQL does (22P02) and makes the times Dates |
 
 ## Callers
 
@@ -44,7 +46,24 @@ engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-tra
 (`readOauthAccessTokenRows`) reads the OAuth tokens the store keeps ([oauth-tokens.md](oauth-tokens.md)), and
 `touchAccessTokenLastUsed` stamps `last_used_at` (below). The remote job principal check
 (`assertCurrentRemoteJobPrincipal` in `src/core/minions/submission-authority.ts`) reads a legacy token through
-`readJobPrincipal`, which calls `readAccessToken`.
+`readJobPrincipal`, which calls `readAccessToken`. `rescopeInTransaction` (`src/core/grants/legacy-token.ts`, behind
+`gbrain auth rescope`) calls `lockActiveAccessTokens`, then `bindCredential` for `--member` and `--attest-*`.
+
+## Member binding
+
+The members of `src/core/engine-sql/access-members.ts`, `access-control.ts` and `persistence-journal.ts` that read and
+write a token's binding are served from these records (gbrain-store `jobs::credential_binding`; the client half is in
+[oauth-clients.md](oauth-clients.md)):
+
+| Member | Store call |
+| --- | --- |
+| `insertAccessMember({ bindTokenId })` | binds the token whose id text is exactly `bindTokenId` in the member's write; no token has it: nothing is bound ([access-members.md](access-members.md)) |
+| `readCredentialBindingForUpdate(target, { readsUnscoped })` | `brain.readCredentialBinding(kind, id, readsUnscoped)`: `{ member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read }`, with `reads_unscoped` when asked; undefined for no row |
+| `writeCredentialBinding(target, binding)` | `brain.writeCredentialBinding`: the six columns in one write; no row: nothing changes |
+| `writeCredentialReadsUnscoped(target, on)` | `brain.writeCredentialReadsUnscoped`: the transaction's time, or NULL |
+| `readLiveMember('legacy_token', id)`, `readMayActFor('legacy_token', id)` | `brain.readLiveCredential`: the member and may_act_for of the token not revoked whose id text is exactly `id`, or null |
+| `readAccessCredentials({ tokenName })`, `readAccessCredentials({ memberId })` | `brain.readAccessCredentials`: the active tokens with that name, oldest first (a tie by id); or the active tokens bound to the member by name in byte order (a tie by id), then the live clients by client id in byte order. The SQL sorts with `COLLATE "C"` and the same tie-break, so an `en_US` Postgres gives the same order |
+| `readAccessTokenWriteGrant(id)` | `brain.readAccessTokenWriteGrant`: the grant columns and `revoked_at` of the token with this id, revoked or not, or null; the write re-check refuses a revoked token with PGLite's text ([journal.md](journal.md)) |
 
 ## Constraints
 
@@ -79,8 +98,9 @@ the table.
 Differences from PGLite and PostgreSQL:
 
 - `private_pages` reads as `none` for every token: a token minted with private pages loses that grant here.
-- Not kept: the attest and private columns (`member_id` is kept but no store member sets it yet), the `private_*` checks, the `trust_generation_update`
-  trigger and the secondary indexes.
+- Not kept: the `private_pages` and `private_facts` columns and their checks (so `auth rescope --private-*` stays raw
+  SQL), the `trust_generation_update` trigger and the secondary indexes.
+- `lockActiveAccessTokens` takes no row lock: the store runs one write transaction at a time.
 - `setAccessTokenMinTrust` with an id that is not a UUID changes nothing here; Postgres refuses it (22P02). The callers
   pass the id `findActiveAccessTokens` returned.
 - The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
