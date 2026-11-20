@@ -1509,3 +1509,172 @@ fn attribution_backfill_targets_the_rows_exactly_one_committed_request_proves() 
         .unwrap_err();
     assert_eq!(err.code, INVALID_ARGUMENT);
 }
+
+/// A request on `slug` settled `state` with `code` and `message`, as the consumer leaves one.
+#[allow(clippy::too_many_arguments)]
+fn settled_with(
+    store: &Store,
+    request: &str,
+    operation: &str,
+    slug: &str,
+    intent: Value,
+    state: &str,
+    code: Option<&str>,
+    message: Option<&str>,
+    detail: Value,
+) -> String {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let mut input = insert_input(store, request, slug, intent);
+    input.operation = operation.into();
+    let id = store.insert_write_request(&input).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let done: WriteCompletion = serde_json::from_value(json!({
+        "id": id, "state": state, "outcome": {}, "errorCode": code, "errorMessage": message,
+        "consumerVersion": "v-consumer", "consumerHostId": HOST, "errorDetail": detail, "resultBytes": 0,
+        "counterKeys": keys(), "intentBytes": 10, "retainedBytes": 0, "terminalReservation": 4096,
+        "probePurges": false,
+    }))
+    .unwrap();
+    store.complete_write_row(&done).unwrap().unwrap();
+    id
+}
+
+#[test]
+fn failed_writes_lists_guard_drift_and_moved_fact_refusals_less_the_recovered_ones() {
+    let dir = TempDir::new("persist-failed-writes");
+    let store = open(&dir);
+    let moved = "The fact entity changed after extraction admission.";
+    let req = |n: u8| format!("b0000000-0000-4000-8000-0000000000{n:02x}");
+    let guard = settled_with(
+        &store,
+        &req(0xb1),
+        "put_page",
+        "notes/a",
+        json!({ "slug": "notes/a" }),
+        "failed",
+        Some("writer_coordinator_required"),
+        None,
+        json!({ "origin": "pending_import" }),
+    );
+    let drift = settled_with(
+        &store,
+        &req(0xb2),
+        "put_page",
+        "notes/a",
+        json!({ "kind": "managed_sync_import" }),
+        "conflict",
+        Some("source_changed"),
+        None,
+        Value::Null,
+    );
+    let publication = settled_with(
+        &store,
+        &req(0xb3),
+        "remember",
+        "notes/a",
+        json!({}),
+        "failed",
+        Some("storage_error"),
+        Some("Publication failed (P0001): guard"),
+        Value::Null,
+    );
+    settled_with(
+        &store,
+        &req(0xb4),
+        "remember",
+        "notes/a",
+        json!({}),
+        "failed",
+        Some("storage_error"),
+        Some("disk full"),
+        Value::Null,
+    );
+    let open_fact = settled_with(
+        &store,
+        &req(0xb5),
+        "extract_facts",
+        "people/a",
+        json!({ "inputDigest": "d1", "batchKey": "k1" }),
+        "conflict",
+        Some("revision_conflict"),
+        Some(moved),
+        Value::Null,
+    );
+    let recovered = settled_with(
+        &store,
+        &req(0xb6),
+        "extract_facts",
+        "people/a",
+        json!({ "inputDigest": "d2", "batchKey": "k1" }),
+        "conflict",
+        Some("revision_conflict"),
+        Some(moved),
+        Value::Null,
+    );
+    settled_with(
+        &store,
+        &req(0xb7),
+        "extract_facts",
+        "people/a",
+        json!({ "inputDigest": "d2", "batchKey": "k2" }),
+        "committed",
+        None,
+        None,
+        Value::Null,
+    );
+    let scope = vec!["default".to_string()];
+    let replayable: Vec<String> = ["put_page", "add_timeline_entry", "remember"]
+        .map(String::from)
+        .to_vec();
+    let messages = vec![moved.to_string()];
+    let ids = |facts: Option<&[String]>, id: Option<&str>| -> Vec<String> {
+        store
+            .list_failed_write_requests(&scope, &replayable, facts, id)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(
+        ids(None, None),
+        vec![guard.clone(), drift.clone(), publication.clone()]
+    );
+    assert_eq!(
+        ids(Some(&messages), None),
+        vec![guard, drift, publication, open_fact]
+    );
+    // One request by id skips the recovery check, as the SQL's early return does.
+    assert_eq!(
+        ids(Some(&messages), Some(&recovered.to_uppercase())),
+        vec![recovered]
+    );
+    assert!(
+        store
+            .list_failed_write_requests(&["other".to_string()], &replayable, None, None)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let rows = store
+        .list_failed_write_requests(&scope, &replayable, None, None)
+        .unwrap();
+    assert_eq!(rows[0]["producer"], Value::Null);
+    assert_eq!(rows[0]["origin"], json!("pending_import"));
+    assert_eq!(rows[0]["page_id"], Value::Null);
+    assert!(
+        rows[0]["created_at"].as_str().unwrap().ends_with('Z')
+            && rows[0]["created_at"].as_str().unwrap().len() == 20
+    );
+    assert_eq!(rows[1]["producer"], json!("put_page:managed_sync_import"));
+    assert_eq!(rows[2]["producer"], Value::Null);
+    let refused = store
+        .list_failed_write_requests(&scope, &replayable, None, Some("not-a-uuid"))
+        .unwrap_err();
+    assert_eq!(refused.code, INVALID_ARGUMENT);
+}

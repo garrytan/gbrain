@@ -7,7 +7,8 @@
  * while one from a fixed build stays an unresolved defect.
  */
 import { describe, expect, test } from 'bun:test';
-import { classifyTerminal, TERMINAL_FIXED_IN, type TerminalInput } from '../src/core/persistence/terminal-classify.ts';
+import { classifyTerminal, DRIFT_REFUSAL_SQL, GUARD_REFUSAL_SQL, TERMINAL_FIXED_IN, type TerminalInput } from '../src/core/persistence/terminal-classify.ts';
+import { FAILED_WRITE_DRIFT_REFUSAL, FAILED_WRITE_GUARD_REFUSAL } from '../src/core/engine-sql/repair-plan-scans.ts';
 
 const base: TerminalInput = { source_id: 'src', slug: 'projects/acme-example', operation: 'submit_job', state: 'conflict', error_code: null, error_detail: null,
   recovery: null, blocked_reason: null, compacted: false };
@@ -31,4 +32,10 @@ describe('classifyTerminal (#6696 C10)', () => {
     expect(classifyTerminal({ ...refusal, build: '0.60.218.0' })).toMatchObject({ category: 'fence_unrenderable', historical: false, defect: true });
     expect(classifyTerminal({ ...refusal, build: '0.60.217.0' })!.action.argv).toEqual(['gbrain', 'doctor', '--only', 'fence_integrity', '--json']);
   });
+});
+
+test('the failed-writes read keeps the guard and drift refusals classifyTerminal names', () => {
+  // engine-sql writes the predicates out so it does not import this module; they must stay equal.
+  expect(FAILED_WRITE_GUARD_REFUSAL).toBe(GUARD_REFUSAL_SQL('r'));
+  expect(FAILED_WRITE_DRIFT_REFUSAL).toBe(DRIFT_REFUSAL_SQL('r'));
 });

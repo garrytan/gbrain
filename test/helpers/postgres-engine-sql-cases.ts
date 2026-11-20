@@ -755,6 +755,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listPagesByOriginPath': OOS.repairBookkeeping,
   'countSegmentedOriginPages': OOS.repairBookkeeping,
   'listProvenAttributionTargets': OOS.repairBookkeeping, 'countUnfilledAttribution': OOS.repairBookkeeping,
+  'listFailedWriteRequests': OOS.repairBookkeeping,
   'listUntiledSegmentedPages': OOS.repairBookkeeping,
   'listSourceHoldRecords': OOS.repairBookkeeping,
   'requestGitHoldRetry': OOS.repairBookkeeping,

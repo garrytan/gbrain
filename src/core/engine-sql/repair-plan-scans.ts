@@ -1,6 +1,6 @@
 /**
- * The plan reads of the `frontmatter`, `segmented-tiling` and `attribution-backfill` repairs and the source hold listing, moved here from
- * repair/frontmatter.ts, page-body/body-tiling.ts, repair/attribution-backfill.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
+ * The plan reads of the `frontmatter`, `segmented-tiling`, `attribution-backfill` and `failed-writes` repairs and the source hold listing, moved here from
+ * repair/frontmatter.ts, page-body/body-tiling.ts, repair/attribution-backfill.ts, repair/failed-writes.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
  * members. PGLite and Postgres read unscoped through executeRaw, as before. The Rust engine scans its records
  * (rust/crates/gbrain-store/src/repair_plan_scans.rs; rust/docs/store/repair-bookkeeping.md, "Repair plan scans").
  */
@@ -153,4 +153,60 @@ export async function listProvenAttributionTargets(exec: LegacyUnscopedRead, tab
 export async function countUnfilledAttribution(exec: LegacyUnscopedRead, table: AttributionTable, sourceIds: readonly string[]): Promise<number> {
   const [row] = await exec.executeRaw<{ n: number }>(attributionPhase(table).unfilled, [[...sourceIds]]);
   return Number(row?.n ?? 0);
+}
+
+/**
+ * `gbrain repair failed-writes`' candidate read. `replayable` names the operations a caller replays (a `put_page` with an
+ * owner `kind` is never one); `factsMovedMessages`, when given, adds the managed fact requests refused because their entity
+ * page moved; `id` reads one request. The refusal predicates are `GUARD_REFUSAL_SQL('r')` and `DRIFT_REFUSAL_SQL('r')`
+ * of persistence/terminal-classify.ts written out, so this module imports no persistence code
+ * (test/persistence-journal-statements.test.ts checks each copy).
+ */
+export interface FailedWriteQuery { replayable: readonly string[]; factsMovedMessages?: readonly string[]; id?: string }
+
+/** A refused request as the failed-writes preview reads it. `producer` is null for a write a caller made. */
+export interface FailedWriteRow {
+  id: string; request_id: string; sequence: string; operation: string; source_id: string; slug: string; digest: string; state: string;
+  intent: Record<string, unknown>; authority: Record<string, unknown>; created_at: string; origin: string | null; error_code: string | null;
+  page_id: string | null; producer: string | null;
+}
+
+export const FAILED_WRITE_GUARD_REFUSAL = `(r.state='failed' AND (r.error_code='writer_coordinator_required'
+  OR (r.error_code='storage_error' AND r.error_message LIKE 'Publication failed (P0001)%')))`;
+export const FAILED_WRITE_DRIFT_REFUSAL = `(r.state='conflict' AND r.error_code='source_changed')`;
+/** #7602: a managed fact request refused because its entity page moved ($3 the refusal messages). */
+const FACTS_MOVED_REFUSAL = `(r.operation='extract_facts' AND r.state='conflict' AND r.error_code='revision_conflict'
+  AND r.error_message = ANY($3::text[]))`;
+/** #7602: a refused fact request whose retained facts a later request of the same extraction committed on the same page. */
+const FACTS_RECOVERED = `EXISTS (SELECT 1 FROM persistence_requests c WHERE r.operation='extract_facts' AND c.operation='extract_facts'
+  AND c.source_id=r.source_id AND c.slug=r.slug AND c.state='committed' AND c.sequence>r.sequence
+  AND COALESCE(c.intent->>'inputDigest', c.outcome->>'input_digest')=r.intent->>'inputDigest'
+  AND COALESCE(c.intent->>'batchKey', c.outcome->>'batch_key') IS DISTINCT FROM r.intent->>'batchKey')`;
+
+export function failedWriteRequestsSql(facts: boolean, byId: boolean): string {
+  return `SELECT r.id::text, r.request_id::text, r.sequence::text, r.operation, r.source_id, r.slug, r.digest, r.state, r.intent, r.authority,
+      to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at, r.error_detail->>'origin' AS origin, r.error_code, r.page_id::text AS page_id,
+      CASE WHEN r.operation = ANY($2::text[]) AND NOT (r.operation='put_page' AND r.intent ? 'kind') THEN NULL
+        ELSE r.operation || COALESCE(':' || (r.intent->>'kind'), '') END AS producer
+    FROM persistence_requests r
+    WHERE r.source_id = ANY($1::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND (${FAILED_WRITE_GUARD_REFUSAL} OR ${FAILED_WRITE_DRIFT_REFUSAL}${facts ? ` OR ${FACTS_MOVED_REFUSAL}` : ''})
+      ${byId ? `AND r.id=$${facts ? 4 : 3}::uuid` : ''}
+    ORDER BY r.sequence`;
+}
+
+export const RECOVERED_FACT_REQUESTS_SQL = `SELECT r.id::text FROM persistence_requests r WHERE r.id = ANY($1::uuid[]) AND ${FACTS_RECOVERED}`;
+
+/**
+ * The refused requests of `sourceIds` the failed-writes preview lists, by sequence. Without `id`, a refused fact request a
+ * later request of the same extraction recovered is left out (#8707: one statement over the refused fact requests only).
+ */
+export async function listFailedWriteRequests(exec: LegacyUnscopedRead, sourceIds: readonly string[], query: FailedWriteQuery): Promise<FailedWriteRow[]> {
+  const facts = query.factsMovedMessages !== undefined;
+  const params: unknown[] = [[...sourceIds], [...query.replayable], ...(facts ? [[...query.factsMovedMessages!]] : []), ...(query.id ? [query.id] : [])];
+  const rows = await exec.executeRaw<FailedWriteRow>(failedWriteRequestsSql(facts, !!query.id), params);
+  if (query.id) return rows;
+  const factIds = rows.filter(row => row.operation === 'extract_facts').map(row => row.id);
+  if (!factIds.length) return rows;
+  const recovered = new Set((await exec.executeRaw<{ id: string }>(RECOVERED_FACT_REQUESTS_SQL, [factIds])).map(row => row.id));
+  return rows.filter(row => !recovered.has(row.id));
 }

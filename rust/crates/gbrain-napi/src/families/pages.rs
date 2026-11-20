@@ -355,6 +355,27 @@ impl Brain {
         })
     }
 
+    /// `listFailedWriteRequests(sourceIds, replayable, factsMovedMessages, id)`: resolves the
+    /// refused requests the failed-writes preview lists, by sequence.
+    #[napi]
+    pub fn list_failed_write_requests<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        replayable: Vec<String>,
+        facts_moved_messages: Option<Vec<String>>,
+        id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_failed_write_requests(
+                &source_ids,
+                &replayable,
+                facts_moved_messages.as_deref(),
+                id.as_deref(),
+            )
+        })
+    }
+
     /// `listUntiledSegmentedPages(sourceIds, slugs, limit)`: resolves `[{ id, source_id, slug,
     /// revision, body_generation, body_bytes, segment_count, source_path, n, covered, gapless }]`.
     #[napi]

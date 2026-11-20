@@ -764,6 +764,56 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the failed-writes read lists guard, drift and moved-fact refusals, without a fact request a later batch recovered', {
+    methods: ['listFailedWriteRequests', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const moved = 'The fact entity changed after extraction admission.';
+    const query = { replayable: ['put_page', 'add_timeline_entry', 'remember'] };
+    const empty = await engine.listFailedWriteRequests(['default'], { ...query, factsMovedMessages: [moved] });
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const settle = async (requestId: string, operation: string, slug: string, intent: Record<string, unknown>, state: 'failed' | 'conflict' | 'committed',
+      errorCode: string | null, errorMessage: string | null, errorDetail: Record<string, unknown> | null = null) => {
+      await engine.lockPersistenceCounters(KEYS);
+      const { id } = await engine.insertWriteRequest({ ...insertRow(incarnation, requestId), operation, slug, intent });
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state, outcome: {}, errorCode, errorMessage, consumerVersion: 'parity', consumerHostId: null, errorDetail,
+        resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 0, terminalReservation: 4096, probePurges: false,
+      });
+      return id;
+    };
+    const guard = await settle('b0000000-0000-4000-8000-0000000000c1', 'put_page', 'notes/parity-example', { slug: 'notes/parity-example' }, 'failed',
+      'writer_coordinator_required', 'refused', { origin: 'pending_import' });
+    await settle('b0000000-0000-4000-8000-0000000000c2', 'put_page', 'notes/parity-example', { kind: 'managed_sync_import' }, 'conflict', 'source_changed', 'drifted');
+    await settle('b0000000-0000-4000-8000-0000000000c3', 'remember', 'notes/parity-example', { fact: 'a' }, 'failed', 'storage_error', 'Publication failed (P0001): guard');
+    await settle('b0000000-0000-4000-8000-0000000000c4', 'remember', 'notes/parity-example', { fact: 'b' }, 'failed', 'storage_error', 'disk full');
+    await settle('b0000000-0000-4000-8000-0000000000c5', 'extract_facts', 'people/parity-example', { kind: 'managed_facts_entity', inputDigest: 'd1', batchKey: 'k1' },
+      'conflict', 'revision_conflict', moved);
+    const recovered = await settle('b0000000-0000-4000-8000-0000000000c6', 'extract_facts', 'people/parity-example',
+      { kind: 'managed_facts_entity', inputDigest: 'd2', batchKey: 'k1' }, 'conflict', 'revision_conflict', moved);
+    await settle('b0000000-0000-4000-8000-0000000000c7', 'extract_facts', 'people/parity-example', { kind: 'managed_facts_entity', inputDigest: 'd2', batchKey: 'k2' },
+      'committed', null, null);
+    const list = async (q: Parameters<BrainEngine['listFailedWriteRequests']>[1], sources = ['default']) =>
+      (await engine.listFailedWriteRequests(sources, q)).map(r => ({
+        request_id: r.request_id, operation: r.operation, slug: r.slug, state: r.state, error_code: r.error_code, origin: r.origin, producer: r.producer,
+        page_id: r.page_id, intent: r.intent, authority: r.authority, digest: r.digest, created: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.created_at),
+        id: UUID.test(r.id), sequence: /^\d+$/.test(r.sequence),
+      }));
+    const answers = { empty, plain: await list(query), facts: await list({ ...query, factsMovedMessages: [moved] }),
+      byId: (await list({ ...query, factsMovedMessages: [moved], id: recovered })).map(r => r.request_id),
+      guardById: (await list({ ...query, id: guard })).map(r => r.request_id), other: await list(query, ['other']) };
+    const row = (n: string, operation: string, slug: string, state: string, error_code: string, intent: Record<string, unknown>, producer: string | null, origin: string | null = null) =>
+      ({ request_id: `b0000000-0000-4000-8000-0000000000${n}`, operation, slug, state, error_code, origin, producer, page_id: null, intent,
+        authority: { scopes: ['write'] }, digest: 'd'.repeat(64), created: true, id: true, sequence: true });
+    const plain = [row('c1', 'put_page', 'notes/parity-example', 'failed', 'writer_coordinator_required', { slug: 'notes/parity-example' }, null, 'pending_import'),
+      row('c2', 'put_page', 'notes/parity-example', 'conflict', 'source_changed', { kind: 'managed_sync_import' }, 'put_page:managed_sync_import'),
+      row('c3', 'remember', 'notes/parity-example', 'failed', 'storage_error', { fact: 'a' }, null)];
+    expect(answers).toEqual({ empty: [], plain, facts: [...plain, row('c5', 'extract_facts', 'people/parity-example', 'conflict', 'revision_conflict',
+      { kind: 'managed_facts_entity', inputDigest: 'd1', batchKey: 'k1' }, 'extract_facts:managed_facts_entity')],
+      byId: ['b0000000-0000-4000-8000-0000000000c6'], guardById: ['b0000000-0000-4000-8000-0000000000c1'], other: [] });
+    return answers;
+  });
+
   parityTest('the effect worker claims the due effect and settles each claim under its token, a stale token changing nothing', {
     methods: ['selectClaimableEffect', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow',
       'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'readRequestEffects', 'insertPublicationEffects', 'transactionDirect',

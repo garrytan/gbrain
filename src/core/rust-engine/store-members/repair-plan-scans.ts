@@ -1,10 +1,10 @@
 /**
- * The plan reads of the frontmatter, segmented-tiling and attribution-backfill repairs and the source hold listing (BrainEngine
+ * The plan reads of the frontmatter, segmented-tiling, attribution-backfill and failed-writes repairs and the source hold listing (BrainEngine
  * listPagesByOriginPath through listSourceHoldRecords, the statements of engine-sql/repair-plan-scans.ts). The store scans
  * its page, body and checkpoint records as the SQL filters its rows (rust/crates/gbrain-store/src/repair_plan_scans.rs).
  */
 import {
-  untiledPageOf, type AttributionTable, type OriginPathPageRow, type SourceHoldQuery, type SourceHoldRecordRow, type UntiledPage, type UntiledPageQuery, type UntiledPageRow,
+  untiledPageOf, type AttributionTable, type FailedWriteQuery, type FailedWriteRow, type OriginPathPageRow, type SourceHoldQuery, type SourceHoldRecordRow, type UntiledPage, type UntiledPageQuery, type UntiledPageRow,
 } from '../../engine-sql/repair-plan-scans.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -30,3 +30,7 @@ export const listProvenAttributionTargets: StoreMember<[table: AttributionTable,
 
 export const countUnfilledAttribution: StoreMember<[table: AttributionTable, sourceIds: readonly string[]], number> = async (brain, table, sourceIds) =>
   Number(await storeCall({ member: 'countUnfilledAttribution' }, () => brain.countUnfilledAttribution(table, [...sourceIds])));
+
+export const listFailedWriteRequests: StoreMember<[sourceIds: readonly string[], query: FailedWriteQuery], FailedWriteRow[]> = async (brain, sourceIds, query) =>
+  await storeCall({ member: 'listFailedWriteRequests' }, () => brain.listFailedWriteRequests([...sourceIds], [...query.replayable],
+    query.factsMovedMessages ? [...query.factsMovedMessages] : null, query.id ?? null)) as FailedWriteRow[];

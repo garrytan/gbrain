@@ -7092,6 +7092,7 @@
         "listFactsKeyset": "none",
         "listFactsReconcileBacklog": "none",
         "listFactsSince": "none",
+        "listFailedWriteRequests": "none",
         "listFenceFactRows": "none",
         "listFenceHoldRows": "none",
         "listFenceRetireCandidates": "none",

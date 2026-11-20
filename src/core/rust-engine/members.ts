@@ -255,6 +255,7 @@ export const RUST_ENGINE_MEMBERS = {
   countSegmentedOriginPages: 'pages',
   listProvenAttributionTargets: 'pages',
   countUnfilledAttribution: 'pages',
+  listFailedWriteRequests: 'pages',
   listUntiledSegmentedPages: 'pages',
   listSourceHoldRecords: 'pages',
   // The Git sync hold writes and reads (engine-sql/git-holds.ts): hold rows are op checkpoints.

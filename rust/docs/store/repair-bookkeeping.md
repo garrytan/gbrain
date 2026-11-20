@@ -238,6 +238,27 @@ The store has no query planner, so the repair does not set `enable_nestloop` on 
 `invalid_argument`. Pinned by `test/engine-parity/persistence.test.ts` and the store test
 `persistence` (`attribution_backfill_targets_the_rows_exactly_one_committed_request_proves`).
 
+### Failed writes
+
+The plan of `gbrain repair failed-writes` and its one-request replay read the journal through
+`listFailedWriteRequests(sourceIds, { replayable, factsMovedMessages?, id? })`
+(`src/core/engine-sql/repair-plan-scans.ts`); the store answers from `repair_failed_writes.rs`.
+A row is a request of the scope's sources that is not compacted, still has its intent, and is a
+guard refusal (`failed` with `writer_coordinator_required`, or a `storage_error` whose message
+starts `Publication failed (P0001)`), a drift refusal (`conflict` with `source_changed`), or, when the caller
+passes `factsMovedMessages`, an `extract_facts` revision conflict with one of those messages. The
+caller passes its replayable operations and moved-fact messages, so the store keeps no copy of
+them. Without an `id`, a moved-fact request that a later committed `extract_facts` of the same page
+and input digest under another batch key recovered is dropped. `producer` is null for a replayable
+caller write (a `put_page` with an intent `kind` is a producer write) and `operation[:kind]`
+otherwise; `origin` is `error_detail.origin`. A bad `id` is `invalid_argument`. Rows are in
+sequence order.
+
+A seeded candidate still stops on `raw_sql` in the plan's later reads (the extraction,
+disposition and replay walks). Pinned by `test/engine-parity/persistence.test.ts` and the store
+test `persistence`
+(`failed_writes_lists_guard_drift_and_moved_fact_refusals_less_the_recovered_ones`).
+
 ## Git holds
 
 The Git sync hold rows and their summary counters belong to the hold store

@@ -815,7 +815,7 @@ src/core/repair/duplicate-facts.ts	execute_raw	5
 src/core/repair/extractor-facts.ts	execute_raw	6
 src/core/repair/fact-claim-dates.ts	execute_raw	2
 src/core/repair/facts-rehome.ts	execute_raw	3
-src/core/repair/failed-writes.ts	execute_raw	17
+src/core/repair/failed-writes.ts	execute_raw	15
 src/core/repair/fences.ts	execute_raw	2
 src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
 src/core/repair/file-drift.ts	execute_raw	3

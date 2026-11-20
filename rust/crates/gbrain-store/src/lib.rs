@@ -75,6 +75,7 @@ pub mod raw_files;
 pub mod reason_tombstones;
 pub mod relations;
 pub mod repair_attribution;
+pub mod repair_failed_writes;
 pub mod repair_plan_scans;
 pub mod repair_fence_scans;
 pub mod repair_scans;
