@@ -649,6 +649,14 @@ export const RUST_ENGINE_MEMBERS = {
   requeueMutedLoops: 'facts',
   closeThreadLoops: 'facts',
   settleMuteRecheck: 'facts',
+  // source archive (engine-sql/source-archive.ts; rust/docs/store/sources.md)
+  archiveSource: 'sources',
+  restoreArchivedSource: 'sources',
+  listArchivedSourceRows: 'sources',
+  listExpiredArchivedSources: 'sources',
+  listUnverifiedArchivedSourceIds: 'sources',
+  readSourceImpactCounts: 'sources',
+  listSourceOAuthClients: 'minion_queue',
   // entity_identities (engine-sql/entity-identities.ts): cross-source identity groups (key tag `i`,
   // rust/docs/store/entity_identities.md).
   linkEntityIdentityRow: 'entity_identities',

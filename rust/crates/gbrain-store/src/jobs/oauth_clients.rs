@@ -1,8 +1,8 @@
 //! Jobs: the `oauth_clients` table, every column of it, as the members of `src/core/engine-sql/oauth-clients.ts` and
 //! `spend-log.ts` run them (rust/docs/store/spend-log.md, rust/docs/store/oauth-clients.md).
 //!
-//! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, and the client reads the
-//! admission and the agent spend view make (`budget_cents`, `agent_clients`).
+//! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, listSourceOAuthClients,
+//! and the client reads the admission and the agent spend view make (`budget_cents`, `agent_clients`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2A (this file only):
 //! - `m 0x2A client_id -> ClientRecord`: one client, the full row (the 41 columns of the table after every migration,
@@ -607,6 +607,30 @@ impl Store {
                 .cmp(&(b.client_name.as_bytes(), b.client_id.as_bytes()))
         });
         Ok(Value::Array(clients.iter().map(|c| c.to_row()).collect()))
+    }
+
+    /// `listSourceOAuthClients(sourceId)`: every client that names the source, revoked ones
+    /// included (`deleted` is whether `deleted_at` is set), by client id in byte order. These are
+    /// the clients whose `ON DELETE RESTRICT` blocks a source delete on the SQL engines.
+    pub fn list_source_oauth_clients(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut clients: Vec<ClientRecord> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.source_id.as_deref() == Some(source_id))
+            .collect();
+        clients.sort_by(|a, b| a.client_id.as_bytes().cmp(b.client_id.as_bytes()));
+        Ok(Value::Array(
+            clients
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "client_id": c.client_id,
+                        "client_name": c.client_name,
+                        "deleted": c.deleted_at.is_some(),
+                    })
+                })
+                .collect(),
+        ))
     }
 }
 

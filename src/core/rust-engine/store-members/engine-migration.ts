@@ -17,18 +17,24 @@ export const readEngineMigrationHistory: StoreMember<[], EngineMigrationHistory>
 
 export const readMigrationRows: StoreMember<[table: MigrationTable], MigrationRows | null> = async (brain, table) => {
   if (table === 'sources') {
-    // `default` first, then by id, as the store lists them. The store keeps no commit, archive-date or
-    // frontmatter-trust columns: each reads as a fresh source row has it. The retrieval mode comes from `getSource`.
+    // `default` first, then by id, as the store lists them. The store keeps no commit or frontmatter-trust columns:
+    // each reads as a fresh source row has it. The retrieval mode comes from `getSource`, the archive times from the
+    // archive list (an archive with no times stays unverified after the move).
     const sources: SourceRecordRow[] = await storeCall({ member: 'readMigrationRows' }, () => brain.listSourceRecords());
     const modes = new Map<string, string | null>();
     for (const s of sources) {
       const detail = await storeCall({ member: 'readMigrationRows' }, () => brain.getSource(s.id)) as { contextual_retrieval_mode?: string | null } | null;
       modes.set(s.id, detail?.contextual_retrieval_mode ?? null);
     }
+    const archives = new Map<string, { archived_at: string | Date | null; archive_expires_at: string | Date | null }>();
+    const archived = await storeCall<Array<{ id: string; archived_at: string | null; archive_expires_at: string | null }>>(
+      { member: 'readMigrationRows' }, () => brain.listArchivedSourceRows());
+    for (const a of archived) archives.set(a.id, a);
     const rows = sources.map(s => ({
       id: s.id, name: s.name ?? s.id, local_path: s.local_path ?? null, last_commit: s.last_commit ?? null,
       last_sync_at: s.last_sync_at ?? null, config_json: typeof s.config === 'string' ? s.config : JSON.stringify(s.config ?? {}),
-      archived: s.archived ?? false, archived_at: null, archive_expires_at: null, contextual_retrieval_mode: modes.get(s.id) ?? null,
+      archived: s.archived ?? false, archived_at: archives.get(s.id)?.archived_at ?? null,
+      archive_expires_at: archives.get(s.id)?.archive_expires_at ?? null, contextual_retrieval_mode: modes.get(s.id) ?? null,
       trust_frontmatter_overrides: false, newest_content_at: s.newest_content_at ?? null, created_at: s.created_at,
     }));
     return { columns: [...MIGRATION_SOURCE_COLUMNS], rows };

@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { gbrainPath } from '../src/core/config.ts';
+import { listSourceOAuthClients } from '../src/core/engine-sql/source-archive.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -567,6 +568,8 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       throw Object.assign(new Error(message), { code }); // NOT the FK class
     },
     readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
+    listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
+    listExpiredArchivedSources: async () => [{ id: 'boom', incarnation: 'i', config: {}, local_path: null }],
   }) as never;
 
   test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
@@ -587,6 +590,8 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
         return []; // per-id DELETE re-checks the expiry predicate → 0 rows
       },
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
+      listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
+      listExpiredArchivedSources: async () => [{ id: 'restored-mid-sweep', incarnation: 'i', config: {}, local_path: null }],
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
     expect(purged).toEqual([]);
@@ -750,6 +755,10 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('gbrain auth revoke-client "client-2"');
   });
 
+  // The fallback ladder lives in the shared engine-sql read; these stubs fake the SQL executor under it.
+  const viaSql = (exec: { executeRaw: (sql: string) => Promise<unknown[]> }) =>
+    ({ listSourceOAuthClients: (id: string) => listSourceOAuthClients(exec as never, id) }) as any;
+
   test('degrade ladder: missing oauth_clients table → [], missing deleted_at → all referents, other errors propagate', async () => {
     // Pre-oauth brain: no oauth_clients table at all → no referents by
     // construction (isUndefinedTableError arm).
@@ -758,7 +767,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
         throw Object.assign(new Error('relation "oauth_clients" does not exist'), { code: '42P01' });
       },
     } as any;
-    expect(await clientsReferencingSource(noTable, 'x')).toEqual([]);
+    expect(await clientsReferencingSource(viaSql(noTable), 'x')).toEqual([]);
 
     // Pre-migration brain: deleted_at column missing → falls back to ALL
     // referents (the 42703-retry idiom), tagged live (deleted:false — the
@@ -771,7 +780,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
         return [{ client_id: 'c1', client_name: 'n1' }];
       },
     } as any;
-    expect(await clientsReferencingSource(noColumn, 'x')).toEqual([
+    expect(await clientsReferencingSource(viaSql(noColumn), 'x')).toEqual([
       { clientId: 'c1', clientName: 'n1', deleted: false },
     ]);
 
@@ -780,7 +789,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     const broken = {
       executeRaw: async () => { throw new Error('connection reset'); },
     } as any;
-    await expect(clientsReferencingSource(broken, 'x')).rejects.toThrow('connection reset');
+    await expect(clientsReferencingSource(viaSql(broken), 'x')).rejects.toThrow('connection reset');
   });
 
   test('missing source_id column → [] (no column ⇒ no FK ⇒ no referents)', async () => {
@@ -790,7 +799,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
         throw Object.assign(new Error('column "source_id" does not exist'), { code: '42703' });
       },
     } as any;
-    expect(await clientsReferencingSource(noSourceId, 'x')).toEqual([]);
+    expect(await clientsReferencingSource(viaSql(noSourceId), 'x')).toEqual([]);
 
     // Same brain shape must not break the purge path either. The per-source
     // sweep (chennai #4115) never queries oauth_clients at all — the FK, if
@@ -803,6 +812,8 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
         return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; // #6482: one well-formed unmanaged row
       },
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
+      listUnverifiedArchivedSourceIds: async () => [],
+      listExpiredArchivedSources: async () => [],
     } as any;
     expect(await purgeExpiredSources(purgeStub)).toEqual({ purged: [], blocked: [] });
     expect(sawOauthQuery).toBe(false);
@@ -895,6 +906,8 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
         return [{ id }];
       },
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
+      listUnverifiedArchivedSourceIds: async () => [],
+      listExpiredArchivedSources: async () => [{ id, incarnation: 'i', config: { kind: 'github', gh_managed: true }, local_path: localPath }],
     } as never;
   }
 

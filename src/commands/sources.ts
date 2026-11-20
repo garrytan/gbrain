@@ -958,11 +958,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
     // the impact check above) and for "already archived" (UPDATE matched no
     // `archived = false` row). Distinguish them: already-archived is a
     // friendly idempotent no-op, not a reasonless failure.
-    const rows = await engine.executeRaw<{ archived: boolean }>(
-      `SELECT archived FROM sources WHERE id = $1`,
-      [id],
-    );
-    if (rows[0]?.archived) {
+    if ((await engine.listArchivedSourceRows()).some((r) => r.id === id)) {
       console.log(`Source "${id}" is already archived — nothing to do.`);
       console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
       return;

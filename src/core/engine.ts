@@ -4,6 +4,7 @@ import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as LoopMutesSql from './engine-sql/loop-mutes.ts';
+import type * as SourceArchiveSql from './engine-sql/source-archive.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
@@ -4762,6 +4763,23 @@ export interface BrainEngine {
   closeThreadLoops(sourceId: string, threadId: string, closedBy: string, only: readonly string[] | null): Promise<number>;
   /** Drops the thread's re-check loops as `'unmuted'`; the number settled. */
   settleMuteRecheck(sourceId: string, threadId: string): Promise<number>;
+
+  // Source archive (engine-sql/source-archive.ts): the soft delete, restore, archive list, purge candidates, impact
+  // counts and source-holding OAuth clients of destructive-guard.ts, which still picks the managed path and shapes results.
+  /** Archives the active source now, expiring `ttlHours` later, with `config.federated` false; null when missing or already archived. */
+  archiveSource(sourceId: string, ttlHours: number): Promise<SourceArchiveSql.ArchivedSourceRow | null>;
+  /** Un-archives the archived source, clears both archive times and sets `config.federated`; whether one was restored. */
+  restoreArchivedSource(sourceId: string, federated: boolean): Promise<boolean>;
+  /** Every archived source with its page count (soft-deleted pages included), newest archive first. */
+  listArchivedSourceRows(): Promise<SourceArchiveSql.ArchivedSourceListRow[]>;
+  /** The archives past their recovery window (both times real, expiry passed), by id. */
+  listExpiredArchivedSources(): Promise<SourceArchiveSql.ExpiredArchivedSourceRow[]>;
+  /** The archives whose times are missing or at or before 1970-01-02, by id. */
+  listUnverifiedArchivedSourceIds(): Promise<string[]>;
+  /** What deleting the source removes (pages with soft-deleted ones, chunks, embeddings, files, facts), or null when missing. */
+  readSourceImpactCounts(sourceId: string): Promise<SourceArchiveSql.SourceImpactCounts | null>;
+  /** The OAuth clients that name the source, revoked ones included, by client id. */
+  listSourceOAuthClients(sourceId: string): Promise<SourceArchiveSql.SourceOAuthClientRow[]>;
 
   // Entity identities: cross-source identity groups (engine-sql/entity-identities.ts; entity-identity.ts validates first).
   /** Links the live page (sourceId, slug) into the group: re-linking moves it; canonical true demotes the old canonical in the same write. Throws the identity page-not-found error with no live page. */

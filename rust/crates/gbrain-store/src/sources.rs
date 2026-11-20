@@ -8,6 +8,11 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+mod archive;
+pub use archive::{
+    ArchivedSource, ArchivedSourceListRow, ExpiredArchivedSource, SourceImpactCounts,
+};
+
 pub const DEFAULT_SOURCE: &str = "default";
 
 /// What is stored for a source.
@@ -32,6 +37,13 @@ pub(crate) struct SourceRecord {
     /// read as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contextual_retrieval_mode: Option<String>,
+    /// When the source was archived (`sources.archived_at`), or `None` when it is active or was
+    /// archived without a time. Records written before the field existed read as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at_us: Option<i64>,
+    /// When the archive's recovery window ends (`sources.archive_expires_at`), or `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_expires_at_us: Option<i64>,
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -151,6 +163,8 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         created_at_us: env.now_micros(),
         chunker_version: None,
         contextual_retrieval_mode: None,
+        archived_at_us: None,
+        archive_expires_at_us: None,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -225,6 +239,8 @@ impl Store {
                     created_at_us: self.env.now_micros(),
                     chunker_version: None,
                     contextual_retrieval_mode: None,
+                    archived_at_us: None,
+                    archive_expires_at_us: None,
                 },
             };
             if input.name.is_some() {
@@ -260,13 +276,18 @@ impl Store {
         })
     }
 
-    /// Archives or restores a source. Returns whether the source exists.
+    /// Archives or restores a source. Archiving sets no archive time (an unverified archive);
+    /// restoring clears both times. Returns whether the source exists.
     pub fn set_source_archived(&self, id: &str, archived: bool) -> Result<bool> {
         self.write(|tx| {
             let Some(mut record) = read_source(&*tx, id)? else {
                 return Ok(false);
             };
             record.archived = archived;
+            if !archived {
+                record.archived_at_us = None;
+                record.archive_expires_at_us = None;
+            }
             put_json(tx, &source_key(id), &record)?;
             Ok(true)
         })

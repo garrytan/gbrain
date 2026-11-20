@@ -1,16 +1,10 @@
 import type { BrainEngine } from './engine.ts';
 import { opError } from './ops/contract.ts';
 import { readFix } from './ops/op-fix.ts';
+import { EXPIRED_ARCHIVE_SQL } from './engine-sql/source-archive.ts';
 
-/**
- * An archived source is purge-eligible only when both archive timestamps are real
- * and its window has elapsed. A missing or epoch timestamp (#5452) cannot prove the
- * 72h recovery window was honored, so it never reads as expired.
- */
-export const EXPIRED_ARCHIVE_SQL = `archived = true AND archived_at > '1970-01-02'::timestamptz
-  AND archive_expires_at > '1970-01-02'::timestamptz AND archive_expires_at <= now()`;
-export const UNVERIFIED_ARCHIVE_SQL = `archived = true AND (archived_at IS NULL OR archived_at <= '1970-01-02'::timestamptz
-  OR archive_expires_at IS NULL OR archive_expires_at <= '1970-01-02'::timestamptz)`;
+// The archive predicates live with the archive statements (engine-sql/source-archive.ts).
+export { EXPIRED_ARCHIVE_SQL, UNVERIFIED_ARCHIVE_SQL } from './engine-sql/source-archive.ts';
 export const unverifiedArchiveReason = (id: string) =>
   `archive timestamps are missing or invalid, so the 72h recovery window cannot be verified; run gbrain sources restore ${id}, then gbrain sources archive ${id} to restart it`;
 
