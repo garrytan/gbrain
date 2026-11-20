@@ -377,6 +377,17 @@ decides only worktree ownership, so the store does not take it. An id that is no
 the uuid cast message. `readRecoveringHeadRow` needs a worktree too, so the TypeScript member answers
 `null` without a store call.
 
+## Identity-downgrade read
+
+`brain.readIdentityDowngradeRows({ op, sourceIds })` answers `readIdentityDowngradeRows`
+(`engine-sql/sync-status-reads.ts`) from the op's checkpoint rows. A row whose fingerprint is the
+decimal id of a page reads when that page is soft-deleted at the record's `old_deleted_at` (parsed as
+`::timestamptz` parses ISO with `Z` or the Postgres text form), the record has no `disposition`, the
+page is in the record's `source_id`, and, when `sourceIds` is given, in one of them. Text that is not a
+time refuses with the cast's message. Rows order by `recorded_at`, then the fingerprint, in byte order.
+`new_slugs` lists the live pages of the old page's source at the record's `to` path, in byte order, or
+is `null` when there is none. Pages are read one at a time, once per source that an open record names.
+
 ## No-op embedding settle
 
 `settleNoopEmbeddingEffects` (`persistence/embedding-noop-settle.ts`) settles, in bulk, queued page

@@ -84,7 +84,7 @@ worktree refresh or derived generation, so each part of a read that joins those 
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
 | `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No write request exists to give a receipt. |
 | `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No managed write request exists. |
-| `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
+| `readIdentityDowngradeRows(sourceIds)` | the open `sync-identity-downgrade` records, oldest first, each with the live slugs at its new path | Served with its page join by the store (persistence.md, "Identity-downgrade read"). |
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep

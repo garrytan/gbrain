@@ -10,11 +10,16 @@
  *    live drain lease); an archived or missing source has no row. A brain with no managed write has no committed page,
  *    held push or fence, head request, recovery record, cursor, failure or identity downgrade. A managed-sync cursor
  *    reads with its failure and manifest path, the failed cursor first; an old incarnation's cursor counts as retired.
+ *    An identity-downgrade record reads while it is open (no disposition, its old page still soft-deleted at the
+ *    recorded `old_deleted_at`, in the record's source), oldest `recorded_at` first, with the live slugs of its source
+ *    at its new path (null when none); a malformed `old_deleted_at` refuses as the timestamptz cast does.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which failed `gbrain sync status`
- *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly.
+ *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly. The
+ *    Rust engine also refused readIdentityDowngradeRows once one record existed, rather than join its pages.
  *  - Why existing coverage misses it: the sync-status tests run on PGLite and Postgres only, and the pins test checks
  *    statement text, not answers.
  *  - Seam: none. Real engines; the seeded-cursor case writes its rows with `executeRaw`, so a Rust brain stops there.
+ *    The identity-downgrade records go through the harness fixture `recordIdentityDowngrade`.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -23,7 +28,7 @@ import { syncLockId } from '../../src/core/db-lock.ts';
 import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, recordIdentityDowngrade } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -144,6 +149,52 @@ describe('engine parity: sync status reads', () => {
         ],
         orphaned: ['k-orphan'],
       });
+      return result;
+    });
+
+  parityTest('identity-downgrade records read while open, oldest first, with the live slugs of their source at the new path; a malformed old_deleted_at refuses',
+    { methods: ['putPage', 'softDeletePage', 'readPageOrigin', 'readIdentityDowngradeRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      const page = (slug: string, sourceId: string, sourcePath: string) =>
+        engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, timeline: '', source_path: sourcePath }, { sourceId });
+      const gone = async (slug: string, sourceId: string) => { await page(slug, sourceId, `${slug}.md`); await engine.softDeletePage(slug, { sourceId }); };
+      for (const slug of ['notes/a', 'notes/b', 'notes/c', 'notes/d', 'notes/f']) await gone(slug, 'default');
+      await gone('notes/h', 'other');
+      await page('notes/a2', 'default', 'notes/a2.md');
+      await page('notes/h2', 'other', 'notes/h2.md');
+      await page('notes/h2-default', 'default', 'notes/h2.md');
+      const at = (day: number) => `2026-01-0${day}T00:00:00.000Z`;
+      const ids = {
+        a: await recordIdentityDowngrade(engine, backend, 'default', 'notes/a', { from: 'notes/a.md', to: 'notes/a2.md', recorded_at: at(2) }),
+        b: await recordIdentityDowngrade(engine, backend, 'default', 'notes/b', { from: 'notes/b.md', to: 'notes/never.md', recorded_at: at(1) }),
+        h: await recordIdentityDowngrade(engine, backend, 'other', 'notes/h', { from: 'notes/h.md', to: 'notes/h2.md', recorded_at: at(3) }),
+      };
+      // Closed, stale (deleted at another time), not soft-deleted, or naming another source: none of these reads.
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/c', { from: 'notes/c.md', to: 'notes/a2.md', recorded_at: at(4), disposition: { kind: 'closed', at: at(5) } });
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/d', { from: 'notes/d.md', to: 'notes/a2.md', recorded_at: at(4), old_deleted_at: '2000-01-01 00:00:00+00' });
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/a2', { from: 'notes/x.md', to: 'notes/a2.md', recorded_at: at(4), old_deleted_at: '2000-01-01 00:00:00+00' });
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/f', { from: 'notes/f.md', to: 'notes/a2.md', recorded_at: at(4), source_id: 'other' });
+      const view = (rows: Array<{ record: unknown; new_slugs: string[] | null }>) => rows.map(row => {
+        const record = (typeof row.record === 'string' ? JSON.parse(row.record) : row.record) as Record<string, unknown>;
+        return { old_slug: record.old_slug, source_id: record.source_id, to: record.to, recorded_at: record.recorded_at, new_slugs: row.new_slugs,
+          id: Object.entries(ids).find(([, id]) => id === Number(record.old_page_id))?.[0] ?? null };
+      });
+      const reads = {
+        all: view(await engine.readIdentityDowngradeRows(null)),
+        def: view(await engine.readIdentityDowngradeRows(['default'])),
+        other: view(await engine.readIdentityDowngradeRows(['other', 'missing'])),
+        none: view(await engine.readIdentityDowngradeRows([])),
+      };
+      await gone('notes/m', 'default');
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/m', { from: 'notes/m.md', to: 'notes/a2.md', recorded_at: at(6), old_deleted_at: 'garbage' });
+      const malformed = await engine.readIdentityDowngradeRows(null).then(() => 'answered',
+        (e: Error) => /invalid input syntax for type timestamp with time zone: "garbage"/.test(e.message) ? 'timestamptz refusal' : e.message);
+      const result = { ...reads, malformed };
+      const A = { old_slug: 'notes/a', source_id: 'default', to: 'notes/a2.md', recorded_at: at(2), new_slugs: ['notes/a2'], id: 'a' };
+      const B = { old_slug: 'notes/b', source_id: 'default', to: 'notes/never.md', recorded_at: at(1), new_slugs: null, id: 'b' };
+      const H = { old_slug: 'notes/h', source_id: 'other', to: 'notes/h2.md', recorded_at: at(3), new_slugs: ['notes/h2'], id: 'h' };
+      expect(result).toEqual({ all: [B, A, H], def: [B, A], other: [H], none: [], malformed: 'timestamptz refusal' });
       return result;
     });
 });

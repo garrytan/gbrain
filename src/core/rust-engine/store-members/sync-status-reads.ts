@@ -9,8 +9,8 @@
  * are read as the SQL reads them: the source row, the drain lock, the pass and withheld-delete rows, the admission
  * setting and its pinned probe, and the managed-sync cursor, failure and manifest checkpoint rows.
  *
- * An identity-downgrade record joins the pages it names, which the store does not join here; such a record is only
- * written through `executeRaw`, which this engine refuses, so none exists, and a record found refuses the read.
+ * The identity-downgrade records are read with their page join in the store (gbrain-store
+ * `persistence::identity_downgrade`; rust/docs/store/persistence.md, "Identity-downgrade read").
  * Checkpoint rows list in byte order, where the SQL orders by the database collation; they agree on ASCII keys.
  */
 import { syncLockId } from '../../db-lock.ts';
@@ -24,7 +24,7 @@ import { SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 interface CheckpointRow { fingerprint: string; completed_keys: unknown; updated_at: string }
 type JsonObject = Record<string, unknown>;
@@ -203,9 +203,7 @@ export const readSyncRecoveryProbeRow: StoreMember<[sourceId: string, opts?: Syn
   return { n: 0, request_id: null, slug: null, blocked: null };
 };
 
-/** No record exists on this engine (see the module comment); one found refuses rather than skip its page join. */
-export const readIdentityDowngradeRows: StoreMember<[sourceIds: readonly string[] | null], Array<{ record: never; new_slugs: string[] | null }>> = async (brain) => {
-  const member = 'readIdentityDowngradeRows';
-  if ((await listRows(brain, member, IDENTITY_DOWNGRADE_OP)).length > 0) refuseMember(member, 'an identity-downgrade record, whose page join the store does not serve');
-  return [];
-};
+/** The open identity-downgrade records, oldest first, each with the live slugs at its new path (null when none). */
+export const readIdentityDowngradeRows: StoreMember<[sourceIds: readonly string[] | null], Array<{ record: never; new_slugs: string[] | null }>> = async (brain, sourceIds) =>
+  await storeCall({ member: 'readIdentityDowngradeRows' },
+    () => brain.readIdentityDowngradeRows({ op: IDENTITY_DOWNGRADE_OP, sourceIds: sourceIds ? [...sourceIds] : null })) as Array<{ record: never; new_slugs: string[] | null }>;
