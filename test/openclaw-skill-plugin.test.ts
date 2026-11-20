@@ -225,7 +225,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
   });
 
   test('an openclaw call killed at its timeout says so, so the refusal names the stall', () => {
-    const hung = runOpenclawCli(['sh', '-c', 'echo started; sleep 5'], 500);
+    const hung = runOpenclawCli(['sh', '-c', 'echo started; exec sleep 5'], 500);
     expect(hung).toMatchObject({ ok: false, stdout: 'started\n' });
     expect(hung.output.split('\n').at(-1)).toBe('timed out after 0.5 s');
     expect(runOpenclawCli(['sh', '-c', 'echo done'], 5_000)).toEqual({ ok: true, output: 'done', stdout: 'done\n' });
