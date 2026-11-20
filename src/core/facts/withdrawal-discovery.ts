@@ -8,6 +8,7 @@ import { FENCE_MAX_BYTES } from '../page-body/limits.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import type { BodyRegion } from '../page-body/types.ts';
 import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import { pgliteLowerSql } from '../pg-fold.ts';
 
 export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanMs: 10_000, batch: 128, matchRows: 16_384, matchBytes: 8 * 1024 * 1024 } as const;
 export interface WithdrawalTarget { slug: string; page_id: number; revision: string }
@@ -152,7 +153,9 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     for (const row of matches) affected.add(row.id);
     if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
   };
-  const shortlist = (text: string) => `lower(${text}) LIKE ALL(k.patterns)`;
+  // PGLite's case fold on every server (the claim's norm is gbrain_fact_normalize's), so a letter glibc lowers and
+  // PGLite keeps (U+24B6) still shortlists its page.
+  const shortlist = (text: string) => `(SELECT ${pgliteLowerSql('sl.t')} LIKE ALL(k.patterns) FROM (SELECT ${text} AS t) sl)`;
   for (let after = 0; ;) {
     if (performance.now() > deadline) refuse();
     const pages = await engine.executeRaw<{ id: number; slug: string; compiled_truth: string; timeline: string }>(`SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p

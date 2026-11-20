@@ -22,6 +22,7 @@
  */
 import { overlayWithdrawalBody, withLegacyLedgerRows } from './facts/withdrawal-overlay.ts';
 import { FACT_SPACE_CLASS } from './facts/withdrawal-schema.ts';
+import { pgliteLowerSql } from './pg-fold.ts';
 import { readPageSnapshot, resolveGlobalPurges } from './page-state/snapshot.ts';
 import type { GlobalPurgeMarker, PageSnapshot, PageWithdrawal } from './page-state/types.ts';
 import { REVISION_BACKFILL_PENDING } from './page-state/types.ts';
@@ -60,9 +61,9 @@ export async function readPageSnapshotsBatch(
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(${pgliteLowerSql('line')}, '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(${pgliteLowerSql('line')}, '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
