@@ -973,6 +973,25 @@ final class Harness {
                           ACLEntry(authorizations: ["ACLAuthorizationChangeACL"], applications: [])]
         #expect(SendKeychainPolicy.trusted(macDefault, helperPath: helper))
     }
+
+    @Test func trustsTheAppBundleMacOSRecordsForTheHelper() {
+        let decrypt: Set<String> = ["ACLAuthorizationDecrypt", "ACLAuthorizationDerive", "ACLAuthorizationExportClear", "ACLAuthorizationExportWrapped",
+                                    "ACLAuthorizationMAC", "ACLAuthorizationSign"]
+        func item(_ app: String) -> [ACLEntry] {
+            [ACLEntry(authorizations: ["ACLAuthorizationEncrypt"], applications: nil),
+             ACLEntry(authorizations: decrypt, applications: [app]),
+             ACLEntry(authorizations: ["ACLAuthorizationChangeACL"], applications: [])]
+        }
+        #expect(SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/Other.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app/Contents"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app.evil.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper .app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/tmp/Applications/GBrain Helper.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app"), helperPath: "/usr/local/bin/gbrain-apple-helper"))
+    }
 }
 
 @Suite struct SendRoutingTests {
