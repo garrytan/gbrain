@@ -1,5 +1,5 @@
 /**
- * #8155 for the typed decide reads the doctor bounds (src/core/statement-deadline.ts `BOUNDED_TYPED_READS`).
+ * #8155 for the typed decide reads the doctor bounds (src/core/statement-deadline.ts `BOUNDED_TYPED_READS`).  This case also covers the timeline, notifier and writer-binding reads.
  * On master the doctor read these tables through `executeRaw` on the deadline-bound engine, which passed an
  * `AbortSignal.timeout(left)`: a socket or pooler that stopped answering after the connection was reserved had the
  * connection discarded at the deadline, so the call ended and no pool slot leaked. The moved members run through
@@ -31,6 +31,12 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listDecideMixedModelDecisions: (e) => e.listDecideMixedModelDecisions(24),
   listDecideReceiptStats: (e) => e.listDecideReceiptStats({ sinceHours: 24 }),
   listDecideCalibrations: (e) => e.listDecideCalibrations({ includeRetired: true }),
+  // The timeline-history, notifier-coverage and writer-binding reads (S2b-ns).
+  readMaxTimelineEntryId: (e) => e.readMaxTimelineEntryId(),
+  storedTimelineRowsByPageIds: (e) => e.storedTimelineRowsByPageIds([1, 2]),
+  countSegmentedTimelinePages: (e) => e.countSegmentedTimelinePages(['default'], 10),
+  notifierCoverageRecorded: (e) => e.notifierCoverageRecorded(),
+  getWorktreeBinding: (e) => e.getWorktreeBinding('default', null),
 };
 
 test('every bounded typed read has a stall case', () => {
@@ -40,7 +46,7 @@ test('every bounded typed read has a stall case', () => {
 for (const [member, call] of Object.entries(CALLS)) {
   test(`${member} stalled on its connection under the doctor deadline ends by the deadline and gives back its connection and gauge slot`, async () => {
     const counts = { discards: 0, releases: 0 };
-    const fake = makeFakeSql(stmt => (/decide_|decision_receipts/.test(stmt.text) ? never() : undefined));
+    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|timeline_entries|worktree|notifier/i.test(stmt.text) ? never() : undefined));
     const reserve = fake.sql.reserve;
     fake.sql.reserve = async () => {
       const r = await reserve();
