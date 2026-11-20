@@ -45,6 +45,7 @@ mod collapse;
 pub mod cycle;
 pub mod cycle_fence;
 pub mod doctor;
+pub mod doctor_pages;
 mod embedding;
 pub mod extractor_classify;
 mod fence;

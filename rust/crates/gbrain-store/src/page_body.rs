@@ -685,6 +685,12 @@ pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<St
     Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
 }
 
+/// The stored `truth_lead` of page `page_id`: the lead a flip published, or `None` for an inline page, a shell no
+/// flip has published, or a missing page (PGLite's NULL column).
+pub(crate) fn truth_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_body_state(read, page_id)?.and_then(|state| state.truth_lead))
+}
+
 fn is_segmented(state: Option<&BodyState>) -> bool {
     state.is_some_and(|s| s.body_storage == "segmented")
 }

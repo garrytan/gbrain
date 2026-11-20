@@ -93,13 +93,13 @@ getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	555	yes	yes	yes	serves
+putPage	pages	yes	557	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	164	yes	yes	yes	serves
+softDeletePage	pages	yes	165	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -439,7 +439,7 @@ stageManifestRows	segmented_body	yes	10	no	yes	yes	serves
 readManifest	segmented_body	yes	10	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	17	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	12	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	3	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	14	no	yes	yes	serves
@@ -769,9 +769,9 @@ countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	serves
 listUnlinkedConversationSlugs	facts_doctor	yes	3	no	yes	yes	serves
 countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
 countStaleFactEmbeddings	facts_doctor	yes	1	no	yes	yes	serves
-countSegmentedCensusPages	facts_doctor	yes	1	no	yes	yes	refuses:facts
-listFactsPageBodies	facts_doctor	yes	1	no	yes	yes	refuses:facts
-readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	refuses:facts
+countSegmentedCensusPages	facts_doctor	yes	2	no	yes	yes	serves
+listFactsPageBodies	facts_doctor	yes	2	no	yes	yes	serves
+readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	serves
 readChunkVectorColumn	embedding_catalog	yes	1	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves

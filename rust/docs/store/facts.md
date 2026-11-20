@@ -361,12 +361,10 @@ Twenty-eight members that were raw `executeRaw` statements in nine callers (`src
 `captured-facts.ts`, `facts-rehome.ts`, `src/commands/doctor/checks/fence-integrity.ts`, `facts-pages.ts`,
 `unlinked-facts.ts`, `src/core/facts/write-single.ts`, `capture-dedup.ts` and `claim-conflicts.ts`). Each runs the
 statement its caller ran, with the same text and parameters, in `src/core/engine-sql/facts-repair.ts` (15),
-`facts-doctor.ts` (3) and `facts-trust.ts` (10). Every row marked served below is implemented on Rust:
-`facts/captured.rs` ("Captured-facts and rehome repair"), `facts/session_takes.rs` ("Agent-session repair") and
-`facts/write_path.rs` ("Write-path, repair and fence-cycle reads") serve most of them. The one row not marked served
-(`countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog`) is named `facts` in
-`rust-engine/members.ts` and refuses by name with `engine_capability_missing`, so its callers stop on that refusal
-instead of the `raw_sql` refusal they stopped on before.
+`facts-doctor.ts` (3) and `facts-trust.ts` (10). Every member below is implemented on Rust:
+`facts/captured.rs` ("Captured-facts and rehome repair"), `facts/session_takes.rs` ("Agent-session repair"),
+`facts/doctor_pages.rs` ("Doctor page reads") and `facts/write_path.rs` ("Write-path, repair and fence-cycle reads")
+serve them.
 
 | Member | Reads or writes | What the statement reads or writes |
 | --- | --- | --- |
@@ -376,7 +374,7 @@ instead of the `raw_sql` refusal they stopped on before.
 | `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` (served) | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |
 | `listFenceRewriteRows`, `expireCapturedFacts`, `listExpiredFactIds` (served) | `facts` | `row_num`, `expired_at`, `context`; the expiry puts its context before the fact's own. |
 | `listPagelessEntityFacts`, `readEntityRehomeState`, `rehomeEntityFacts`, `listSourceIncarnations` (served) | `facts`, `pages`, `sources` | Live-page lookups by (source, slug), database-only facts keyed by entity, and the source `incarnation` as text. |
-| `countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog` | `pages`, catalog | `body_storage`, `source_path`, the bounded body prefix, and `to_regclass` of `facts` and `fact_relink_attempts`. |
+| `countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog` (served) | `pages`, catalog | `body_storage`, `source_path`, the bounded body prefix, and `to_regclass` of `facts` and `fact_relink_attempts`. |
 | `readFactEntitySlugById`, `readSupersessionReplacement`, `linkSupersededFact` (served) | `facts` | Two-fact join for the fence row, same-page test and validity bounds; `superseded_by` link. |
 | `listLivePageTitles`, `listPageAliasNames` (served) | `pages`, `page_aliases` | Live titles and normalized aliases; the alias read throws on a brain with no aliases table. |
 | `listCaptureDuplicateCandidates`, `computeFactFingerprints` (served) | `facts` | `gbrain_fact_fingerprint`, the member-owned-page exclusion and a numeric scan limit. |
@@ -397,6 +395,20 @@ Eight store methods serve nine members of `engine-sql/facts-repair.ts` (`readRep
 | `listPagelessEntityFacts` `{ sourceIds }` | `listPagelessEntityFacts` | Per (source, `entity_slug`) with no live page (a soft-deleted page counts as none): `{ source_id, slug, ids, fenced }`. `ids` are the database-only fact ids in id order, `null` when every fact is fence-held; `fenced` is the count of fence-held facts. By (source, slug) in byte order. |
 | `readEntityRehomeState` `{ sourceId, from, to }` | `readEntityRehomeState` | Always one object `{ from_live, to_live, ids }`, `ids` the database-only fact ids keyed under `from`, `null` when none. |
 | `rehomeEntityFacts` `{ sourceId, from, to }` | `rehomeEntityFacts` | Moves the database-only facts keyed under `from` to `to` in one write. A stint key a fact already holds on `to` refuses with `constraint_violation` (`idx_facts_ontology_stint_dedup`) and no fact moves; the TypeScript member raises it as Postgres does (see "Unique violations"). Answers null. |
+
+### Doctor page reads (`facts/doctor_pages.rs`)
+
+Three store methods, family `facts_doctor`, serve the page reads of the `gbrain doctor` checks in
+`fence-integrity.ts`, `facts-pages.ts` and `unlinked-facts.ts`.
+
+| Method | Result |
+| --- | --- |
+| `countSegmentedCensusPages` `{ sourceIds, checkedOutSourceIds }` | `{ n }`: the live markdown pages of `sourceIds` stored in segments that the census walked no file for (no `source_path`, or a source outside `checkedOutSourceIds`). An unknown key refuses. |
+| `listFactsPageBodies` | `[{ slug, source_id, segmented, body }]` of the live `type: facts` pages, by source id then slug in byte order (`COLLATE "C"`). `body` is the first 65536 code points of the inline body, or of a segmented page's published truth lead; it is null for a segmented page with no published lead. |
+| `readFactTableCatalog` | `{ facts: 'facts', attempts: 'fact_relink_attempts' }`. The store always keeps both record families, so `to_regclass` finds both. |
+
+A page is stored in segments when its body state says `segmented` (`page_body.rs`); its truth and timeline are then
+null, as `pages_body_storage_chk` requires.
 
 ### Agent-session repair (`facts/session_takes.rs`)
 

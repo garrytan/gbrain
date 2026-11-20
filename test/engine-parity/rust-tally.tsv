@@ -37,7 +37,7 @@ test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge-sites.test.ts	9	20
 test/engine-parity/facts-purge.test.ts	24	2
 test/engine-parity/facts-quoted.test.ts	4	1
-test/engine-parity/facts-repair-sites.test.ts	16	3
+test/engine-parity/facts-repair-sites.test.ts	21	0
 test/engine-parity/facts-repair.test.ts	16	1
 test/engine-parity/facts-rest-sites.test.ts	18	3
 test/engine-parity/facts-trust-owner.test.ts	6	0
