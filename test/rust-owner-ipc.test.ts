@@ -27,6 +27,7 @@ import { electOwner, type OwnerRole } from '../src/core/rust-engine/owner-ipc/el
 import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-ops.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-op.ts';
 import { importFromContent, type ImportResult } from '../src/core/import-file.ts';
@@ -359,11 +360,14 @@ describe('deadlines, cancel and permits', () => {
 describe('fair queueing across clients', () => {
   test('a client that floods the owner does not starve another client\'s single call', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-fair-'));
+    // One permit and a member that holds the permit until the test opens the gate. The queue order alone decides
+    // who runs next, so the result does not depend on how fast this machine is.
     let finished = 0;
-    // One permit and a member that takes 20 ms: the queue order decides who waits.
+    let openGate!: () => void;
+    const gate = new Promise<void>(resolve => { openGate = resolve; });
     const engine = {
       kind: 'fake', capabilities: new Set<string>(),
-      getHealth: async () => { await Bun.sleep(20); return { finished: ++finished }; },
+      getHealth: async () => { await gate; return { finished: ++finished }; },
     } as unknown as BrainEngine;
     const served = await serveOwnerEngine(engine, join(dir, 'owner.sock'), { permits: 1 });
     if (!served) throw new Error('no socket');
@@ -371,15 +375,18 @@ describe('fair queueing across clients', () => {
     const single = await clientOf(served.socketPath);
     try {
       const flooded = Array.from({ length: 20 }, () => flood.engine.getHealth());
-      await Bun.sleep(30);
-      expect(served.stats().queued).toBeGreaterThan(10);
-      const mine = (await single.engine.getHealth()) as unknown as { finished: number };
-      // Round-robin between connections: the single call runs right after the flood's running and next call, not
-      // after all twenty.
-      expect(mine.finished).toBeLessThanOrEqual(4);
+      // The first flood call holds the permit; the other nineteen wait in the flood's lane.
+      await waitFor(() => served.stats().active === 1 && served.stats().queued === 19, { label: 'flood queued' });
+      const mine = single.engine.getHealth() as unknown as Promise<{ finished: number }>;
+      await waitFor(() => served.stats().queued === 20, { label: 'single call queued' });
+      openGate();
+      // Round-robin between connections: the flood's running call finishes first, the flood's next call takes the
+      // freed permit, and the single call runs right after it. First come, first served would make it 21st.
+      expect((await mine).finished).toBe(3);
       await Promise.all(flooded);
       expect(served.stats()).toMatchObject({ active: 0, queued: 0 });
     } finally {
+      openGate();
       flood.close();
       single.close();
       await served.close();
