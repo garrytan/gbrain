@@ -836,8 +836,6 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(5);
   }
 
-  if (appleContacts) await (await import('../core/apple-contacts/person-facts.ts')).retireAllPersonFacts(engine, id);
-
   // cathedral-6 (F1): the row DELETE commits FIRST — atomically with an in-tx
   // referents re-check — and external teardown (unharden: git scaffolding /
   // cron / credential) runs only AFTER the commit. Pre-fix the teardown ran

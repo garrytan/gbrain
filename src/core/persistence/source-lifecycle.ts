@@ -167,8 +167,6 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     `Pass the canonical directory for '${input.sourceId}' (the one the command in fix reports, or its verified successor), then rerun the ${input.operation}.`,
     {fix:ownerStatusFix(input.sourceId)});
   const [before]=await engine.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
-  if(['remove','purge'].includes(input.operation)&&!input.dryRun&&before&&parseSourceConfig(before.config).kind==='apple-contacts')
-    await (await import('../apple-contacts/person-facts.ts')).retireAllPersonFacts(engine,input.sourceId);
   // #8984: idempotency is per principal, so a request_id another CLI registration admitted against an earlier incarnation
   // (the registration was replaced since) refuses too; one bound to this incarnation still resumes under the new registration.
   const [superseded]=prior?[prior]:['remove','purge'].includes(input.operation)?await engine.executeRaw<TopologyChange>(`SELECT * FROM persistence_topology_changes
@@ -183,6 +181,9 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   if(input.expectedIncarnation&&input.expectedIncarnation!==before?.incarnation) throw opError('source_changed','The source was replaced.',
     `Source '${input.sourceId}' was removed and re-added after expected_incarnation was read, so nothing was changed. Read its current incarnation with the command in fix and confirm the ${input.operation} still applies before running it again.`,
     {fix:ownerStatusFix(input.sourceId)});
+  if(!input.dryRun&&input.confirmDestructive&&(input.operation==='remove'||input.operation==='purge'&&(input.expiredOnly||before?.archived))
+    &&parseSourceConfig(before?.config).kind==='apple-contacts')
+    await (await import('../apple-contacts/person-facts.ts')).retireAllPersonFacts(engine,input.sourceId);
   // #5200 (W14 P1.4): only an operation that compares or records checkout bytes hashes the manifest (add at an existing
   // root, claim, rebind, restore; reclone hashes in topology-clone.ts). Retiring a source (archive, remove, purge) compares
   // nothing, so when every binding already carries a verified digest it skips the walk and refreshes the stored manifest's
