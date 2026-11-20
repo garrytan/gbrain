@@ -17,6 +17,8 @@ import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, A
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from './engine-sql/access-setup.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type * as ChronicleReadsSql from './engine-sql/chronicle-reads.ts';
+import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -1642,6 +1644,16 @@ export interface BrainEngine {
   insertConfigIfAbsent(key: string, value: string): Promise<void>;
   /** The stored `truth_lead` of a page by id (a segmented page's body prefix), or null. */
   readPageTruthLead(pageId: number): Promise<string | null>;
+  /** Life Chronicle ledger rollups of the automatic rows. */
+  readChronicleLedgerStats(): Promise<DoctorAccSql.ChronicleLedgerStats>;
+  /** The next page batch of a chronicle backfill scan, with whether the ledger already holds each page's content. */
+  readChronicleBackfillBatch(q: ChronicleReadsSql.ChronicleBackfillBatchQuery): Promise<ChronicleReadsSql.ChronicleBackfillPage[]>;
+  /** Queues one page into a `--max-usd` chronicle campaign; false when a guard leaves the existing row as it was. */
+  queueChronicleCampaignRow(w: ChronicleReadsSql.ChronicleCampaignRow): Promise<boolean>;
+  /** The recorded spend of a chronicle campaign's rows in USD, unrounded. */
+  readChronicleCampaignSpentUsd(campaignId: string): Promise<number>;
+  /** Recent meeting, conversation and calendar pages that no timeline entry links to an event (the advisor's coverage gap). */
+  listChronicleCoverageGapPages(): Promise<ChronicleReadsSql.ChronicleCoverageGapPage[]>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;

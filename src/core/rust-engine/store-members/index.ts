@@ -76,6 +76,8 @@ import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as chronicleLedger from './chronicle-ledger.ts';
+import * as chronicleReads from './chronicle-reads.ts';
+import * as doctorAcc from './doctor-acc.ts';
 import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
@@ -162,6 +164,10 @@ export const STORE_MEMBERS = {
   ...writeMisc,
   // The write-time chronicle ledger decision (rust/docs/store/chronicle-ledger.md).
   ...chronicleLedger,
+  // The chronicle backfill batch, campaign queue and spend, and the advisor's coverage-gap scan (same doc).
+  ...chronicleReads,
+  // The chronicle ledger rollup of the doctor and advisor reads (same doc).
+  ...doctorAcc,
   // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").
   ...worktreeClaim,
   // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).

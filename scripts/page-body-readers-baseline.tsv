@@ -81,7 +81,6 @@ src/core/brainstorm/domain-bank.ts	fetchFar	field	LEAD
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	field	LEAD	
 src/core/by-mention.ts	scanStaleMentions	sql	STREAM	
 src/core/chronicle/backfill.ts	runChronicleBackfill	field	STREAM	
-src/core/chronicle/backfill.ts	runChronicleBackfill	sql	STREAM	
 src/core/chronicle/execute.ts	executeChronicleRow	field	LEAD	
 src/core/chronicle/extract-events.ts	chronicleJudgeContext	field	LEAD	
 src/core/chronicle/ledger.ts	decideChronicle	field	LEAD	
@@ -182,6 +181,7 @@ src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
 src/core/embedding-migration-worst-case.ts	REPROJECTED_PAGE	sql	META	
 src/core/embedding-readiness.ts	countArchivedEmbeddingWork	sql	META	
+src/core/engine-sql/chronicle-reads.ts	CHRONICLE_BACKFILL_BATCH_SQL	sql	STREAM	moved from chronicle/backfill.ts runChronicleBackfill unchanged: coalesce(compiled_truth, truth_lead) reads an inline body, else the segmented page's stored lead
 src/core/engine-sql/chunk-reads.ts	countOversizedEmbedSkips	sql	META	doctor content-quality's oversized embed-skip count, moved from runContentSanity: octet_length metadata
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts

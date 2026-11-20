@@ -105,13 +105,11 @@ function clientResolvedSurface(
 
 async function readClientSurfaces(ctx: AdvisorContext): Promise<Map<string, unknown> | null> {
   try {
-    const rows = await ctx.engine.executeRaw<{ client_id: string; surface: unknown }>(
-      `SELECT client_id, surface FROM oauth_clients`,
-    );
+    const rows = await ctx.engine.listOauthClients();
     return new Map(rows.map((r) => [r.client_id, r.surface]));
   } catch {
-    // Pre-v127 brain (no surface column) or no oauth_clients table: the fit
-    // finding's fix command could not work anyway — skip check (a).
+    // No oauth_clients table: the fit finding's fix command could not work
+    // anyway — skip check (a).
     return null;
   }
 }

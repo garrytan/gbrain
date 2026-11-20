@@ -150,6 +150,11 @@ export const RUST_ENGINE_MEMBERS = {
   countRecentChronicleReservations: 'telemetry',
   insertConfigIfAbsent: 'config',
   readPageTruthLead: 'pages',
+  readChronicleLedgerStats: 'health',
+  readChronicleBackfillBatch: 'pages',
+  queueChronicleCampaignRow: 'telemetry',
+  readChronicleCampaignSpentUsd: 'telemetry',
+  listChronicleCoverageGapPages: 'pages',
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',

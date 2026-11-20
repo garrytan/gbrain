@@ -51,31 +51,14 @@ export function rowMaxAttempts(row: Pick<ChronicleLedgerRow, 'max_attempts'>): n
  */
 export async function queueCampaignRow(engine: BrainEngine,
   w: { sourceId: string; pageId: number; contentHash: string; slug: string }, stamp: ChronicleCampaignStamp): Promise<boolean> {
-  const written = await engine.executeRaw(
-    `INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
-       campaign_id, attempt_cap_usd, max_attempts, pricing_policy, campaign_max_usd)
-     VALUES ($1, $2, $3, $4, $5, 'pending', NULL, 'backfill', $6, $7::numeric, $8, $9, $10::numeric)
-     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
-       slug=EXCLUDED.slug, state='pending', reason=NULL, trigger='backfill', principal_kind=NULL, principal_id=NULL,
-       request_id=NULL, no_extract=false, next_attempt_at=NULL, attempts=0, cost_attempts='{}',
-       campaign_id=EXCLUDED.campaign_id, attempt_cap_usd=EXCLUDED.attempt_cap_usd, max_attempts=EXCLUDED.max_attempts,
-       pricing_policy=EXCLUDED.pricing_policy, campaign_max_usd=EXCLUDED.campaign_max_usd, decided_at=now(), updated_at=now()
-     WHERE NOT (c.trigger='backfill' AND c.state IN ('pending','failed') AND c.attempts < COALESCE(c.max_attempts, $11))
-       AND NOT (c.state IN ('pending','failed') AND c.attempts > 0 AND c.next_attempt_at IS NOT NULL AND c.next_attempt_at > now())
-       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
-         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
-           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
-     RETURNING page_id`,
-    [w.sourceId, w.pageId, w.contentHash, CHRONICLE_EXTRACTOR_VERSION, w.slug, stamp.campaignId, stamp.attemptCapUsd,
-      stamp.maxAttempts, CAMPAIGN_PRICING_POLICY, stamp.maxUsd, CHRONICLE_DEFAULTS.maxAttempts]);
-  return written.length > 0;
+  return engine.queueChronicleCampaignRow({ ...w, extractorVersion: CHRONICLE_EXTRACTOR_VERSION, campaignId: stamp.campaignId,
+    attemptCapUsd: stamp.attemptCapUsd, maxAttempts: stamp.maxAttempts, pricingPolicy: CAMPAIGN_PRICING_POLICY, maxUsd: stamp.maxUsd,
+    defaultMaxAttempts: CHRONICLE_DEFAULTS.maxAttempts });
 }
 
 /** Recorded spend of a campaign's rows, summed across attempts. */
 export async function campaignSpentUsd(engine: BrainEngine, campaignId: string): Promise<number> {
-  const [row] = await engine.executeRaw<{ usd: number | string | null }>(
-    'SELECT COALESCE(sum(cost_usd), 0)::float8 AS usd FROM chronicle_page_state WHERE campaign_id=$1', [campaignId]);
-  return Math.round(Number(row?.usd ?? 0) * 10_000) / 10_000;
+  return Math.round(await engine.readChronicleCampaignSpentUsd(campaignId) * 10_000) / 10_000;
 }
 
 /**

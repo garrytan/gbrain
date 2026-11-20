@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1027/1033
+# covered: 1032/1038
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 73/79
+# write_misc: 78/84
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -90,7 +90,7 @@ transaction	lifecycle	yes	122	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	135	yes	yes	yes	serves
+getPage	pages	yes	141	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
@@ -404,7 +404,7 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	19	no	yes	yes	serves
+getConfig	config	yes	20	no	yes	yes	serves
 setConfig	config	yes	32	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -936,12 +936,17 @@ writerAdminStore	write_misc	yes	3	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	4	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	1	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
-upsertChronicleRow	write_misc	yes	3	no	yes	yes	serves
-readChronicleRow	write_misc	yes	8	no	yes	yes	serves
+upsertChronicleRow	write_misc	yes	7	no	yes	yes	serves
+readChronicleRow	write_misc	yes	12	no	yes	yes	serves
 hasPendingAutoChronicleRow	write_misc	yes	1	no	yes	yes	serves
 countRecentChronicleReservations	write_misc	yes	1	no	yes	yes	serves
 insertConfigIfAbsent	write_misc	yes	1	no	yes	yes	serves
 readPageTruthLead	write_misc	yes	2	no	yes	yes	serves
+readChronicleLedgerStats	write_misc	yes	2	no	yes	yes	serves
+readChronicleBackfillBatch	write_misc	yes	3	no	yes	yes	serves
+queueChronicleCampaignRow	write_misc	yes	2	no	yes	yes	serves
+readChronicleCampaignSpentUsd	write_misc	yes	1	no	yes	yes	serves
+listChronicleCoverageGapPages	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	2	no	yes	yes	serves

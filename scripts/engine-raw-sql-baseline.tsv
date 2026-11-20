@@ -232,8 +232,6 @@ src/core/access/owner.ts	execute_raw	1
 src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
 src/core/access/token-member-status.ts	sql_template	1
-src/core/advisor/collect-chronicle.ts	execute_raw	1
-src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
@@ -271,11 +269,10 @@ src/core/by-mention.ts	execute_raw	6
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	7
-src/core/chronicle/backfill.ts	execute_raw	1
-src/core/chronicle/campaign.ts	execute_raw	3
+src/core/chronicle/campaign.ts	execute_raw	1
 src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
-src/core/chronicle/ledger-stats.ts	execute_raw	5
+src/core/chronicle/ledger-stats.ts	execute_raw	1
 src/core/chronicle/ledger.ts	execute_raw	4	the daily judge reservation (advisory lock, count, insert) and its prune stay raw; the write-time decision runs through typed engine members
 src/core/chronicle/publish.ts	execute_raw	4
 src/core/chunkers/symbol-resolver.ts	execute_raw	7

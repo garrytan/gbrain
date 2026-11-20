@@ -130,16 +130,7 @@ export const collectChronicle: AdvisorCollector = {
     try {
       const { recentDays } = await chronicleSettings(ctx.engine);
       const now = ctx.now ?? new Date();
-      const rows = await ctx.engine.executeRaw<{ type: string; effective_date: Date | string | null; effective_date_source: string | null; fm_date: string | null; fm_start: string | null }>(
-        `SELECT p.type, p.effective_date, p.effective_date_source, p.frontmatter->>'date' AS fm_date, p.frontmatter->>'start' AS fm_start
-           FROM pages p
-          WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
-            AND p.updated_at > now() - interval '30 days'
-            AND NOT EXISTS (
-              SELECT 1 FROM timeline_entries te
-              WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
-            )`,
-      );
+      const rows = await ctx.engine.listChronicleCoverageGapPages();
       const byType = new Map<string, number>();
       for (const r of rows) {
         const dated = chroniclePageDate({ effectiveDate: r.effective_date, effectiveDateSource: r.effective_date_source, frontmatter: { date: r.fm_date, start: r.fm_start } });
