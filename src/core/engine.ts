@@ -1610,6 +1610,8 @@ export interface BrainEngine {
   advanceSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
   listSourcePathPages(sourceId: string): Promise<SourcePathPageRow[]>;
+  /** The slugs of one source's live quarantined pages, in no set order (engine-sql/sources.ts). */
+  listQuarantinedSlugs(sourceId: string): Promise<string[]>;
   /** The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order (engine-sql/sources.ts). */
   readRenameIdentityRows(sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameIdentityRow[]>;
   /** The live pages of one source whose frontmatter id is in `ids` or whose title is in `titles`, in no set order (engine-sql/sources.ts). */
@@ -1724,6 +1726,10 @@ export interface BrainEngine {
   attachSourcePath(sourceId: string, localPath: string, opts?: AttachSourcePathOptions): Promise<void>;
   /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
   listLinkPageMetadata(sourceId?: string): Promise<LinkPageMetadataRow[]>;
+  /** The live pages of one source whose slug is in `slugs`, by slug. */
+  listLinkPageMetadataForSlugs(sourceId: string, slugs: readonly string[]): Promise<LinkPageMetadataRow[]>;
+  /** One source's pages (of `slugs` when given) with a body or frontmatter self `attended` link, in no set order. */
+  listAttendedOriginSlugs(sourceId: string, slugs?: readonly string[]): Promise<string[]>;
   /** A page's stored non-event timeline rows, in no particular order. */
   listStoredTimelineRows(sourceId: string, slug: string): Promise<StoredTimelineRow[]>;
   /** The live pages among `refs` still at the knowledge revision each names, in no particular order. */

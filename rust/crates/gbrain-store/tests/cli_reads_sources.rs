@@ -460,3 +460,51 @@ fn identity_reads_match_by_id_and_title_and_read_one_live_page() {
     assert_eq!(store.read_page_identity(gone).unwrap(), None);
     assert_eq!(store.read_page_identity(999_999).unwrap(), None);
 }
+
+#[test]
+fn quarantined_slugs_keep_to_live_pages_of_one_source_with_the_key_set() {
+    let dir = TempDir::new("cli-src-quarantine");
+    let store = open(&dir);
+    source(&store, "repo", Some("/w/repo"), json!({}));
+    source(&store, "other", Some("/w/other"), json!({}));
+    page_at(
+        &store,
+        "repo",
+        "notes/b",
+        None,
+        json!({"quarantine": {"reason": "junk_pattern"}}),
+    );
+    page_at(&store, "repo", "notes/a", None, json!({"quarantine": null}));
+    page_at(
+        &store,
+        "repo",
+        "notes/plain",
+        None,
+        json!({"content_flag": {"reason": "oversized"}}),
+    );
+    page_at(
+        &store,
+        "repo",
+        "notes/gone",
+        None,
+        json!({"quarantine": true}),
+    );
+    store.soft_delete_page("notes/gone", Some("repo")).unwrap();
+    page_at(
+        &store,
+        "other",
+        "notes/c",
+        None,
+        json!({"quarantine": true}),
+    );
+    assert_eq!(
+        store.list_quarantined_slugs("repo").unwrap(),
+        vec!["notes/a", "notes/b"]
+    );
+    assert_eq!(
+        store.list_quarantined_slugs("other").unwrap(),
+        vec!["notes/c"]
+    );
+    assert!(store.list_quarantined_slugs("missing").unwrap().is_empty());
+    assert!(store.list_quarantined_slugs("re\0po").unwrap().is_empty());
+}

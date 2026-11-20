@@ -5,7 +5,8 @@
  * (takes no lock) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages, insertSource creates a source and
  * advanceSourceCommit records the commit a git sync reached; listSourcePathPages, readRenameIdentityRows and
- * readLiveIdentityHolders are a git sync's page reads, and readPageSizeRows its size-state read (store side: the same
+ * readLiveIdentityHolders are a git sync's page reads, readPageSizeRows its size-state read and listQuarantinedSlugs the
+ * pages its link and timeline extraction skips (store side: the same
  * cli_reads/sources.rs, and sources.rs for advanceSourceCommit). readPageIdentity is the held-rename redecision read;
  * writeSourceSyncHeartbeat and writeSourceUpstreamObservation are the sync's heartbeat and upstream observation
  * (store side: sources.rs). readSourceLastCommit reads the commit the sync anchor last advanced to, for the resident
@@ -112,6 +113,9 @@ export const advanceSourcePurgeEpoch: StoreMember<[sourceId: string], number | n
 
 export const listSourcePathPages: StoreMember<[sourceId: string], SourcePathPageRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourcePathPages', sourceId }, () => brain.listSourcePathPages(sourceId))) as SourcePathPageRow[];
+
+export const listQuarantinedSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  (await storeCall({ member: 'listQuarantinedSlugs', sourceId }, () => brain.listQuarantinedSlugs(sourceId))) as string[];
 
 export const readRenameIdentityRows: StoreMember<[sourceId: string, paths: readonly string[], slugs: readonly string[]], RenameIdentityRow[]> = async (brain, sourceId, paths, slugs) =>
   (await storeCall({ member: 'readRenameIdentityRows', sourceId }, () => brain.readRenameIdentityRows(sourceId, [...paths], [...slugs]))) as RenameIdentityRow[];

@@ -11,6 +11,7 @@ import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
   includeArchived?: boolean;
@@ -417,6 +418,13 @@ export async function listSourcePathPages(exec: LegacyUnscopedRead, sourceId: st
     `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
     [sourceId],
   );
+}
+
+/** The slugs of one source's live quarantined pages, in no set order: the pages link and timeline extraction skips (quarantine.ts `quarantinedSlugs`). */
+export async function listQuarantinedSlugs(exec: LegacyUnscopedRead, sourceId: string): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT slug FROM pages WHERE source_id = ${sourceId} AND deleted_at IS NULL AND NOT ${trustedSql(quarantineFilterFragment('pages'))}`);
+  const rows = await exec.executeRaw<{ slug: string }>(text, params);
+  return rows.map(row => row.slug);
 }
 
 /** A live page a rename's identity check compares (`readRenameIdentityRows`). */

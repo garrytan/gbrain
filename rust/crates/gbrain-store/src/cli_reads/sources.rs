@@ -3,6 +3,7 @@
 //! Each reads one snapshot. `insertSource` is the CLI's plain source insert.
 //! `listSourcePathPages` and `readRenameIdentityRows` are the page reads of a git sync: the live
 //! pages a full sync reconciles, and the stored side a rename's identity check compares.
+//! `listQuarantinedSlugs` names the live pages its link and timeline extraction skips.
 
 use crate::cli_reads::pg_text::fm_text;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -296,6 +297,20 @@ impl Store {
             }
         })?;
         Ok(rows)
+    }
+
+    /// `listQuarantinedSlugs(sourceId)`: the slugs of one source's live pages whose frontmatter has a
+    /// `quarantine` key (any value, JSON null included, as the SQL `?` test reads it), in slug
+    /// order. The SQL engines return them in no set order.
+    pub fn list_quarantined_slugs(&self, source_id: &str) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut slugs = Vec::new();
+        scan_live_origins(&*read, source_id, &mut |page| {
+            if page.frontmatter.contains_key("quarantine") {
+                slugs.push(page.slug);
+            }
+        })?;
+        Ok(slugs)
     }
 
     /// `readRenameIdentityRows(sourceId, paths, slugs)`: the live pages of one source whose

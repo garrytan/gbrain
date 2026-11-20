@@ -147,6 +147,16 @@ impl Brain {
         self.run(env, move |s| s.list_source_path_pages(&source_id))
     }
 
+    /// `listQuarantinedSlugs(sourceId)`: the slugs of the source's live quarantined pages.
+    #[napi]
+    pub fn list_quarantined_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_quarantined_slugs(&source_id))
+    }
+
     /// `readRenameIdentityRows(sourceId, paths, slugs)`: the source's live pages a rename's
     /// identity check compares.
     #[napi]

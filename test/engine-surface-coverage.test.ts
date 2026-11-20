@@ -103,7 +103,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
   'listAllPageRefs', 'listAllSources', 'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'listSourceLocalPaths', 'countRepoBoundSources', 'listNotifierHostSourceRows', 'listLocalPathSources', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'listStaleSyncSourceIds', 'listSourceIds', 'readSourceRow', 'lockSourceRow', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'countSourcePages', 'insertSource', 'listPrefixSampledPages', 'listCorpusSample',
-  'advanceSourceCommit', 'listSourcePathPages', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageSizeRows', 'holdPageEmbedding', 'advanceSourcePurgeEpoch', 'readPageIdentity', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation',
+  'advanceSourceCommit', 'listSourcePathPages', 'listQuarantinedSlugs', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageSizeRows', 'holdPageEmbedding', 'advanceSourcePurgeEpoch', 'readPageIdentity', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation',
   'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
@@ -136,7 +136,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listAccessPolicySourceIds', 'setLocalStatementTimeout',
   // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
-  'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
+  'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'listStoredTimelineRows',
   'filterPagesAtRevision',
   // Wanted-link writes (engine-sql/wanted-links.ts; covered by test/engine-parity/wanted-links.test.ts)
   'lockRegisteredSourceIds', 'replaceWantedLinkRows',

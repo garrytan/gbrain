@@ -181,6 +181,17 @@ fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTr
     })
 }
 
+fn link_page_metadata_row(p: PageRecord) -> LinkPageMetadataRow {
+    LinkPageMetadataRow {
+        aliases: p.frontmatter.get("aliases").cloned().unwrap_or(Value::Null),
+        slug: p.slug,
+        source_id: p.source_id,
+        page_type: p.page_type,
+        title: p.title,
+        knowledge_revision: p.knowledge_revision,
+    }
+}
+
 fn live(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none()
 }
@@ -370,17 +381,28 @@ impl Store {
             .filter(|p| live(p) && source_id.is_none_or(|s| p.source_id == s))
             .collect();
         pages.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
-        Ok(pages
-            .into_iter()
-            .map(|p| LinkPageMetadataRow {
-                aliases: p.frontmatter.get("aliases").cloned().unwrap_or(Value::Null),
-                slug: p.slug,
-                source_id: p.source_id,
-                page_type: p.page_type,
-                title: p.title,
-                knowledge_revision: p.knowledge_revision,
-            })
-            .collect())
+        Ok(pages.into_iter().map(link_page_metadata_row).collect())
+    }
+
+    /// The live pages of `source_id` whose slug is in `slugs`, by slug (byte order); a slug given
+    /// twice reads once. A sync's link extraction loads only its changed pages and their link
+    /// endpoints with it.
+    pub fn read_link_page_metadata_for_slugs(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+    ) -> Result<Vec<LinkPageMetadataRow>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+        let mut rows = Vec::new();
+        for slug in wanted {
+            if let Some(page) = read_page(&*read, source_id, slug)?
+                && live(&page)
+            {
+                rows.push(link_page_metadata_row(page));
+            }
+        }
+        Ok(rows)
     }
 
     /// The stored timeline rows of one page (deleted or not) that no event page projects, by id.

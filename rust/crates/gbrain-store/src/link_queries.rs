@@ -15,7 +15,8 @@
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
 //! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes; listAttendedOriginSlugs (the attendance origins a sync's link
+//! extraction reconciles).
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -890,6 +891,47 @@ struct FanoutNode {
 }
 
 impl Store {
+    /// `listAttendedOriginSlugs(sourceId, slugs?)`: the slugs of `source_id`'s pages (soft-deleted
+    /// ones too, as the SQL reads them; only those in `slugs` when given) that authored an
+    /// `attended` link to themselves from the `markdown`, `wikilink-resolved` or `frontmatter`
+    /// producer, in slug order. The SQL engines return them in no set order.
+    pub fn list_attended_origin_slugs(
+        &self,
+        source_id: &str,
+        slugs: Option<&[String]>,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let pages: Vec<PageRecord> = match slugs {
+            Some(slugs) => {
+                let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+                let mut pages = Vec::new();
+                for slug in wanted {
+                    pages.extend(read_page(&*read, source_id, slug)?);
+                }
+                pages
+            }
+            None => all_pages(&*read)?
+                .into_iter()
+                .filter(|p| p.source_id == source_id)
+                .collect(),
+        };
+        let mut out = BTreeSet::new();
+        for page in pages {
+            let attended = origin_links(&*read, page.id)?.iter().any(|l| {
+                l.link_type == "attended"
+                    && l.to_page_id == page.id
+                    && matches!(
+                        l.link_source.as_deref(),
+                        Some("markdown" | "wikilink-resolved" | "frontmatter")
+                    )
+            });
+            if attended {
+                out.insert(page.slug);
+            }
+        }
+        Ok(out.into_iter().collect())
+    }
+
     /// `replaceDerivedLinks` and `replaceDerivedLinksBatch`: every origin in order, in one write
     /// transaction; any failure rolls every origin back. Returns `[{ created, removed }]`.
     pub fn replace_derived_links(&self, items: &[DerivedItem]) -> Result<Vec<Value>> {

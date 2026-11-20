@@ -2130,6 +2130,7 @@ export class PostgresEngine implements BrainEngine {
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }) { return sourcesImpl.countSourcePages(unscopedExecutor(this.engineSql, 'sources: source commands counted pages unscoped through executeRaw'), sourceId, opts); }
   insertSource(row: sourcesImpl.SourceInsert) { return sourcesImpl.insertSource(this.engineSql, row); }
   advanceSourcePurgeEpoch(sourceId: string) { return sourcesImpl.advanceSourcePurgeEpoch(this.engineSql, sourceId); }
+  listQuarantinedSlugs(sourceId: string) { return sourcesImpl.listQuarantinedSlugs(unscopedExecutor(this.engineSql, 'sources: extraction read it unscoped through executeRaw'), sourceId); }
   advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null) { return sourcesImpl.advanceSourceCommit(this.engineSql, sourceId, commit, newestContentAt); }
   async countRepoBoundSources(): Promise<number> {
     return this.preparationRead(exec => sourcesImpl.countRepoBoundSources(unscopedExecutor(exec, 'sources: unscoped on master (the readiness sync probe read it through executeRaw)')));
@@ -2303,6 +2304,8 @@ export class PostgresEngine implements BrainEngine {
   listOwnerProposalRows(requestId: string) { return writeMiscImpl.listOwnerProposalRows(this.writeMiscReads, requestId); }
   attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return writeMiscImpl.attachSourcePath(this.engineSql, sourceId, localPath, opts); }
   listLinkPageMetadata(sourceId?: string) { return cliReadsImpl.listLinkPageMetadata(this.cliReads, sourceId); }
+  listLinkPageMetadataForSlugs(sourceId: string, slugs: readonly string[]) { return cliReadsImpl.listLinkPageMetadataForSlugs(this.cliReads, sourceId, slugs); }
+  listAttendedOriginSlugs(sourceId: string, slugs?: readonly string[]) { return cliReadsImpl.listAttendedOriginSlugs(this.cliReads, sourceId, slugs); }
   listStoredTimelineRows(sourceId: string, slug: string) { return cliReadsImpl.listStoredTimelineRows(this.cliReads, sourceId, slug); }
   filterPagesAtRevision(refs: readonly PageAtRevisionRef[]) { return cliReadsImpl.filterPagesAtRevision(this.cliReads, refs); }
 

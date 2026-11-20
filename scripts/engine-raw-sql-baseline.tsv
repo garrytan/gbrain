@@ -658,7 +658,6 @@ src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
-src/core/quarantine.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1
 src/core/questions/freshness.ts	execute_raw	3
 src/core/questions/pages.ts	execute_raw	1
