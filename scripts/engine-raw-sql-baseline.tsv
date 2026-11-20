@@ -420,7 +420,7 @@ src/core/facts/withdrawal-discovery.ts	execute_raw	8
 src/core/facts/withdrawal.ts	execute_raw	8
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	1
-src/core/feedback/store.ts	execute_raw	19
+src/core/feedback/store.ts	execute_raw	8
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9
 src/core/fence-repair/census.ts	execute_raw	6
@@ -468,7 +468,6 @@ src/core/grants/shared-exposure.ts	execute_raw	1
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
-src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
@@ -805,7 +804,7 @@ src/core/questions/pages.ts	execute_raw	1
 src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
-src/core/questions/store.ts	execute_raw	7
+src/core/questions/store.ts	execute_raw	5
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/accepted-takes.ts	execute_raw	4
