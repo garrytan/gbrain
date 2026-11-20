@@ -107,12 +107,12 @@ final class WriteHarness {
                                         body: body(batch, by: "enrich", changes: changes)), grants: grants))
     }
 
-    func owner(_ batch: String, _ changes: [[String: Any]], key: Curve25519.Signing.PrivateKey = ownerPrivate, nonce: String? = nil, skew: Int = 0) -> (Int, [String: Any]) {
+    func owner(_ batch: String, _ changes: [[String: Any]], signer: Curve25519.Signing.PrivateKey = ownerPrivate, nonce: String? = nil, skew: Int = 0) -> (Int, [String: Any]) {
         let payload = body(batch, by: "owner", changes: changes)
         let ts = Int(clock.timeIntervalSince1970) + skew
         let n = nonce ?? UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let message = SendSignature.canonical(timestamp: ts, nonce: n, idempotencyKey: batch, body: payload, route: ContactsWriter.route)
-        let sig = Base64URL.encode(Array(try! key.signature(for: Data(message.utf8))))
+        let sig = Base64URL.encode(Array(try! signer.signature(for: Data(message.utf8))))
         let header = "GBrain-Sign key=owner-box,ts=\(ts),nonce=\(n),sig=\(sig)"
         return reply(writer.handle(HTTPRequest(method: "POST", path: ContactsWriter.route, query: [:], headers: ["authorization": header], body: payload), grants: grants))
     }
@@ -170,7 +170,7 @@ func statuses(_ reply: (Int, [String: Any])) -> [String] {
         let h = WriteHarness()
         h.store.cards = ["a": card("a", "alice", org: "Old Example")]
         let change: [[String: Any]] = [["key": "key-k-set-a-org", "op": "set", "id": "a", "field": "organization", "value": "New Example", "expect": ["organization": "Old Example"]]]
-        #expect(h.owner("batch-sig-1", change, key: Curve25519.Signing.PrivateKey()).0 == 401)
+        #expect(h.owner("batch-sig-1", change, signer: Curve25519.Signing.PrivateKey()).0 == 401)
         #expect(h.owner("batch-sig-2", change, skew: 120).0 == 401)
         let nonce = String(repeating: "ab", count: 16)
         #expect(statuses(h.owner("batch-sig-3", change, nonce: nonce)) == ["applied"])

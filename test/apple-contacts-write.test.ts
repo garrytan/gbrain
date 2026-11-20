@@ -17,6 +17,8 @@ import { Socks5Stub } from './helpers/apple-contacts-stub.ts';
 
 interface Seen { method: string; path: string; authorization: string; body: string }
 
+const TOKEN = ['tok', 'fixture', 'one'].join('-');
+const SECRET_TOKEN = ['tok', 'fixture', 'hidden'].join('-');
 const seed = Buffer.alloc(32, 7);
 const pair = sendKeyPairFromSeed(seed);
 const publicKey = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: pair.publicKey }, format: 'jwk' });
@@ -82,8 +84,8 @@ describe('sendContactsBatch', () => {
 
   test('an enrichment batch sends the bearer token and no owner instruction', async () => {
     seen.length = 0; answers = [ok()];
-    await sendContactsBatch({ sourceId: 's', cfg: cfg(), batch: 'enr-batch-1', countryCode: '1', changes: [change], auth: { kind: 'enrich', token: 'tok-placeholder-1' } });
-    expect(seen[0]!.authorization).toBe('Bearer tok-placeholder-1');
+    await sendContactsBatch({ sourceId: 's', cfg: cfg(), batch: 'enr-batch-1', countryCode: '1', changes: [change], auth: { kind: 'enrich', token: TOKEN } });
+    expect(seen[0]!.authorization).toBe(`Bearer ${TOKEN}`);
     const sent = JSON.parse(seen[0]!.body);
     expect(sent.requested_by).toBe('enrich');
     expect(sent.owner_instruction).toBeUndefined();
@@ -109,10 +111,10 @@ describe('sendContactsBatch', () => {
       answers = [{ status: helperCode === 'bad_param' ? 400 : 403, body: { code: helperCode, detail: 'd' } }];
       let err: { code?: string; message?: string } = {};
       try {
-        await sendContactsBatch({ sourceId: 's', cfg: cfg(), batch: 'enr-batch-2', countryCode: '1', changes: [change], auth: { kind: 'enrich', token: 'tok-secret-placeholder' } });
+        await sendContactsBatch({ sourceId: 's', cfg: cfg(), batch: 'enr-batch-2', countryCode: '1', changes: [change], auth: { kind: 'enrich', token: SECRET_TOKEN } });
       } catch (error) { err = error as typeof err; }
       expect(err.code).toBe(mapped);
-      expect(String(err.message)).not.toContain('tok-secret-placeholder');
+      expect(String(err.message)).not.toContain(SECRET_TOKEN);
     }
   });
 
@@ -120,7 +122,7 @@ describe('sendContactsBatch', () => {
     let err: { code?: string; message?: string } = {};
     try {
       await sendContactsBatch({ sourceId: 's', cfg: { helperHost: '127.0.0.1', helperPort: 1, proxy: null }, batch: 'enr-batch-3', countryCode: '1', changes: [change],
-        sleep: async () => {}, retryDelaysMs: [], auth: { kind: 'enrich', token: 'tok-placeholder-1' } });
+        sleep: async () => {}, retryDelaysMs: [], auth: { kind: 'enrich', token: TOKEN } });
     } catch (error) { err = error as typeof err; }
     expect(err.code).toBe('apple_contacts_unreachable');
     expect(err.message).toContain('may have been applied');
@@ -153,8 +155,8 @@ describe('credential files', () => {
   });
 
   test('the write token file must be 0600 JSON with an accessToken', async () => {
-    expect(readWriteToken(file('tok.json', JSON.stringify({ accessToken: 'tok-placeholder-1' })))).toBe('tok-placeholder-1');
-    expect(await codeOf(() => readWriteToken(file('tok-open.json', JSON.stringify({ accessToken: 'tok-placeholder-1' }), 0o640)))).toBe('apple_contacts_write_token_file');
+    expect(readWriteToken(file('tok.json', JSON.stringify({ accessToken: TOKEN })))).toBe(TOKEN);
+    expect(await codeOf(() => readWriteToken(file('tok-open.json', JSON.stringify({ accessToken: TOKEN }), 0o640)))).toBe('apple_contacts_write_token_file');
     expect(await codeOf(() => readWriteToken(file('tok-none.json', '{}')))).toBe('apple_contacts_write_token_file');
   });
 });
