@@ -17,6 +17,7 @@
  *    the backend switch. Generated values (serial ids, incarnations, revisions, timestamps) are compared by shape or by
  *    a relation, never by value; reads with no ORDER BY are sorted before they are compared.
  */
+import { randomUUID } from 'node:crypto';
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -28,6 +29,18 @@ const { parityTest } = parityArms(testBackends());
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CLOCK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const HOST = '00000000-0000-4000-8000-00000000000a';
+
+/** A writer binding for `sourceId` through the claim's store, at `incarnation` or the source's current one. */
+async function bindWriter(engine: BrainEngine, sourceId: string, incarnation?: string): Promise<void> {
+  await engine.claimWorktreeBinding(async store => {
+    const source = await store.lockSource(sourceId);
+    const id = randomUUID();
+    await store.insertWorktree({ id, ownerHostId: HOST, ownerEpoch: 1, topologyGeneration: 1, state: 'draining', manifest: {} });
+    await store.insertSourceBinding({ sourceId, incarnation: incarnation ?? source!.incarnation, worktreeId: id, relativePath: '', topologyGeneration: 1 });
+    await store.insertHostBinding({ worktreeId: id, hostId: HOST, localPath: `/var/tmp/l11-${sourceId}`, coordinationPath: `/var/tmp/l11-${sourceId}-coord`, gitDurability: 'enabled' });
+  });
+}
 
 async function note(engine: BrainEngine, slug: string, sourceId = 'default', frontmatter: Record<string, unknown> = {}) {
   return engine.putPage(slug, { type: 'note', title: slug.toUpperCase(), compiled_truth: `body of ${slug}`, frontmatter }, { sourceId });
@@ -82,6 +95,20 @@ describe('engine parity: CLI import reads', () => {
       expect(out.work).toEqual({ id: 'work', archived: false, config: { kind: 'storage', keep: 2 }, incarnation: true, local_path: '/var/tmp/l11-work', claimed: false, company_receipt: false, modes: [false] });
       expect(out.gone).toEqual({ id: 'gone', archived: true, config: {}, incarnation: true, local_path: null, claimed: false, company_receipt: false, modes: [false] });
       expect(out.unknown).toEqual({ id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] });
+      return out;
+    });
+
+  // A claimed source must route as claimed on every arm: classic sync refuses it while managed persistence is off
+  // (persistence/sync-authority.ts). A binding at an incarnation the source has moved past does not claim it.
+  parityTest('readSyncDispatchRow reads a writer binding at the current incarnation as claimed, and one at another incarnation as not',
+    { methods: ['readSyncDispatchRow', 'claimWorktreeBinding'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/l11-work');
+      await createSource(engine, backend, 'stale', { canonical: 'git' });
+      await bindWriter(engine, 'work');
+      await bindWriter(engine, 'stale', randomUUID());
+      const claimed = async (id: string) => (await engine.readSyncDispatchRow(id))?.claimed;
+      const out = { work: await claimed('work'), stale: await claimed('stale') };
+      expect(out).toEqual({ work: true, stale: false });
       return out;
     });
 

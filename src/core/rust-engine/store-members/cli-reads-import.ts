@@ -22,17 +22,19 @@ export const readSourceIncarnation: StoreMember<[sourceId: string], SourceIncarn
   storeCall({ member: 'readSourceIncarnation', sourceId }, () => brain.readSourceIncarnation(sourceId));
 
 /**
- * The sync routing row from the store's own source reads. The store keeps no writer bindings (isSourceClaimed is false)
- * and one unmanaged brain (readManagedModeRows answers `enabled: false`), so `claimed` is false and `modes` is [false].
+ * The sync routing row from the store's own source reads. `claimed` is the store's isSourceClaimed (a writer binding at
+ * the source's current incarnation). The store is one unmanaged brain (readManagedModeRows answers `enabled: false`), so
+ * `modes` is [false].
  */
 export const readSyncDispatchRow: StoreMember<[sourceId: string], SyncDispatchRow> = async (brain, sourceId) => {
   const member = 'readSyncDispatchRow';
   const source: SourceStateRow | null = await storeCall({ member, sourceId }, () => brain.readSourceState(sourceId));
   if (!source) return { id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] };
+  const claimed: boolean = await storeCall({ member, sourceId }, () => brain.isSourceClaimed(sourceId));
   const receipt: boolean = await storeCall({ member, sourceId }, () => brain.hasCompanyBrainReceipt(sourceId));
   return {
     id: sourceId, archived: source.archived, config: source.config, incarnation: String(source.incarnation),
-    local_path: source.local_path, claimed: false, company_receipt: receipt, modes: [false],
+    local_path: source.local_path, claimed, company_receipt: receipt, modes: [false],
   };
 };
 

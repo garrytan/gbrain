@@ -903,7 +903,7 @@ readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
-readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
+readSyncDispatchRow	cli_reads_import	yes	2	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
@@ -924,7 +924,7 @@ readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	3	no	yes	yes	serves
-claimWorktreeBinding	write_misc	yes	4	no	yes	yes	serves
+claimWorktreeBinding	write_misc	yes	5	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
