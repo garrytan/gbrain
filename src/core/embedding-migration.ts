@@ -21,7 +21,7 @@ import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
 import { countStaleFactEmbeddings } from './facts/embedding-identity.ts';
 import { prepareEmbeddingProjections } from './embedding-readiness.ts';
 import { assertRetainedEmbeddingRebuildability } from './embedding-migration-retention.ts';
-import { withMigrationLeaseTransaction, type MigrationLeaseAssert } from './embedding-migration-budget.ts';
+import { withMigrationLeaseBeforeEffect, withMigrationLeaseTransaction, type MigrationLeaseAssert } from './embedding-migration-budget.ts';
 import { annIndexValidity, canonicalChunkAnnIndex, mergeDeferredAnnIndexes, parseDeferredAnnIndexes, type DeferredAnnIndex } from './embedding-ann-build.ts';
 import { SMOKE_QUERY_CHUNK_UNITS, SMOKE_QUERY_TITLE_UNITS } from './embedding-migration-worst-case.ts';
 
@@ -115,7 +115,7 @@ const ifNotExists = (def: string) => def.replace(/^CREATE (UNIQUE )?INDEX /, 'CR
  * IF NOT EXISTS on CREATE INDEX makes the operation safe to re-run during
  * `--resume`.
  */
-export async function runSchemaTransition(engine: BrainEngine, targetDim: number, assertOwned?: (tx: BrainEngine) => Promise<void>): Promise<DeferredAnnIndex[]> {
+export async function runSchemaTransition(engine: BrainEngine, targetDim: number, assertOwned?: MigrationLeaseAssert): Promise<DeferredAnnIndex[]> {
   // Sink-side guard: targetDim is interpolated into DDL below. Every current
   // caller validates upstream, but a future programmatic caller passing an
   // unvalidated value must fail HERE, not become SQL in an admin DDL path
@@ -124,8 +124,11 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
     throw new Error(`runSchemaTransition: targetDim must be a positive integer, got ${String(targetDim)}`);
   }
   const deferred = await engine.transaction(async (tx) => {
-    await assertOwned?.(tx);
+    // #6587: the census can run for minutes. Check the lease without holding
+    // its rows so the heartbeat can refresh them, then lock them before the DDL.
+    await assertOwned?.(tx, { rowLock: false });
     await assertRetainedEmbeddingRebuildability(tx, targetDim);
+    await assertOwned?.(tx);
     // #4252: capture every index the DROP COLUMN below will cascade-drop.
     // pg_depend holds the exact column→index dependency edges the cascade
     // follows, so this also catches indexes that reference the column only
@@ -1333,11 +1336,12 @@ export async function applyEmbeddingMigration(
     });
 
     // 5. File plane + gateway (the embed pipeline reads file/env, not DB).
-    if (opts.persistConfig) await engine.transaction(async tx => {
-      await opts.assertOwned?.(tx);
-      await assertRetainedEmbeddingRebuildability(tx, plan.to_dims, plan.to_model, plan);
-      await opts.persistConfig!(plan.to_model, plan.to_dims, tx);
-    });
+    // persistConfig writes outside the transaction, so ownership is locked in
+    // before it, after the census (#6587: not before, or the census blocks the
+    // heartbeat's lease refresh).
+    if (opts.persistConfig) await withMigrationLeaseBeforeEffect(engine, opts.assertOwned,
+      tx => assertRetainedEmbeddingRebuildability(tx, plan.to_dims, plan.to_model, plan),
+      tx => Promise.resolve(opts.persistConfig!(plan.to_model, plan.to_dims, tx)));
 
     return {
       status: 'applied',

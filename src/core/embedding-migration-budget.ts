@@ -90,6 +90,23 @@ export async function withMigrationLeaseTransaction<T>(engine: BrainEngine, asse
   }
 }
 
+/**
+ * #6587 for work that ends in a side effect: a slow `check` (the retained-vector census) runs with the
+ * lease checked but not row-locked, so the 15 s heartbeat can refresh it meanwhile; the lease rows are
+ * then locked `FOR SHARE` and `effect` runs only if the migration still owns them. Use this instead of
+ * `withMigrationLeaseTransaction` when `effect` reaches outside the transaction (a config file write),
+ * where a check after the effect would come too late.
+ */
+export async function withMigrationLeaseBeforeEffect<T>(engine: BrainEngine, assertOwned: MigrationLeaseAssert | undefined,
+  check: (tx: BrainEngine) => Promise<unknown>, effect: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return engine.transaction(async tx => {
+    await assertOwned?.(tx, { rowLock: false });
+    await check(tx);
+    await assertOwned?.(tx);
+    return effect(tx);
+  });
+}
+
 type MigrationBudget = NonNullable<MigrationState['budget']>;
 
 function budgetIsValid(budget: MigrationBudget): boolean {
