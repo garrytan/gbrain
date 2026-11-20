@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, seedRustPageOrigin, seedRustPageUpdatedAt, TEST_SEEDS_CAPABILITY, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, seedRustBeliefLifetimes, seedRustPageOrigin, seedRustPageUpdatedAt, TEST_SEEDS_CAPABILITY, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -284,6 +284,16 @@ export async function seedPageOrigin(engine: BrainEngine, backend: ParityBackend
     default:
       return assertNever(backend);
   }
+}
+
+/**
+ * Fixture: the belief ledger's page lifetimes for the source's pages `slugs` (every page the source holds, on the SQL arms). The SQL arms
+ * run `enableBeliefLedger`, which baselines every page and mints each one's lifetime; its writes are `executeRaw`, which the Rust
+ * engine refuses, so the Rust arm uses the test-only seed member `seedBeliefPageLifetimes` (an addon built with GBRAIN_RUST_TEST_SEEDS=1).
+ */
+export async function seedBeliefLifetimes(engine: BrainEngine, backend: ParityBackend, sourceId: string, slugs: readonly string[]): Promise<void> {
+  if (backend === 'rust') await seedRustBeliefLifetimes(engine, sourceId, slugs);
+  else await enableBeliefLedger(engine, sourceId);
 }
 
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */

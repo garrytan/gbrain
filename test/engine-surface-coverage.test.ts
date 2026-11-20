@@ -146,6 +146,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues', 'readOpCheckpointValues', 'readCycleListingInstant', 'listSourceChangedPagesAfter',
   // Phantom-redirect root-page walk (engine-sql/collate-phantom-redirect.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'listRootPageSlugsAfter',
+  // Belief ledger orphan lifetime read (engine-sql/collate-belief-reads.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
+  'listOrphanLifetimes',
   // Propose-takes failure tombstones (engine-sql/collate-take-proposals.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'recordFailureTombstone', 'listFailureTombstones',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)

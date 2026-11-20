@@ -1309,6 +1309,14 @@ SELECT source_id, type FROM pairs`],
     case: { method: 'listPagesNamingReader', variant: 'live', run: e => e.listPagesNamingReader('member:alice-example', { live: true }) },
     texts: [`SELECT slug, source_id FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`],
+    from: 'src/core/belief/coverage-report.ts:310 orphanLifetimes, at e6f777a30f (the moved statement binds its limit as $3 instead of splicing the number)',
+    case: { method: 'listOrphanLifetimes', variant: 'default', run: e => e.listOrphanLifetimes('default', 2, false) },
+    texts: [`SELECT slug, page_lifetime, reason, count(*) OVER ()::int AS total FROM (
+      SELECT l.slug, l.page_lifetime::text AS page_lifetime, 'no_page' AS reason FROM belief_page_lifetimes l JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
+      WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
+      UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
+      WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
+    ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT $3`],
   },
   {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',

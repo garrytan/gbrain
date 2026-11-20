@@ -1066,6 +1066,7 @@ export const RUST_ENGINE_MEMBERS = {
   countUnscannedTrustRows: 'facts',
   readBeliefHistoryRows: 'belief_ledger',
   listVisibleBeliefLifetimes: 'belief_ledger',
+  listOrphanLifetimes: 'belief_ledger',
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
   listPageRefsByIds: 'pages',

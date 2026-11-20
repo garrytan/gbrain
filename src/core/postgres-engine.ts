@@ -218,6 +218,7 @@ import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as collateCommandReadsImpl from './engine-sql/collate-command-reads.ts';
 import * as collateCycleWindowImpl from './engine-sql/collate-cycle-window.ts';
 import * as collateIdentityDowngradesImpl from './engine-sql/collate-identity-downgrades.ts';
+import * as collateBeliefReadsImpl from './engine-sql/collate-belief-reads.ts';
 import * as collatePhantomRedirectImpl from './engine-sql/collate-phantom-redirect.ts';
 import * as collateTakeProposalsImpl from './engine-sql/collate-take-proposals.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
@@ -1553,6 +1554,7 @@ export class PostgresEngine implements BrainEngine {
   writeOpCheckpointValues(op: string, fingerprint: string, values: readonly unknown[]) { return collateIdentityDowngradesImpl.writeOpCheckpointValues(this.executeRaw.bind(this), op, fingerprint, values); }
   readOpCheckpointValues(op: string, fingerprint: string) { return collateIdentityDowngradesImpl.readOpCheckpointValues(this.executeRaw.bind(this), op, fingerprint); }
   listRootPageSlugsAfter(sourceId: string, after: string, exclude: readonly string[], limit: number) { return collatePhantomRedirectImpl.listRootPageSlugsAfter(this.executeRaw.bind(this), sourceId, after, exclude, limit); }
+  listOrphanLifetimes(sourceId: string, limit: number, deep: boolean) { return collateBeliefReadsImpl.listOrphanLifetimes(this.executeRaw.bind(this), sourceId, limit, deep); }
   recordFailureTombstone(input: collateTakeProposalsImpl.FailureTombstoneInput) { return collateTakeProposalsImpl.recordFailureTombstone(this.executeRaw.bind(this), input); }
   listFailureTombstones(sourceId: string, claimPrefix: string) { return collateTakeProposalsImpl.listFailureTombstones(this.executeRaw.bind(this), sourceId, claimPrefix); }
   readCycleListingInstant() { return collateCycleWindowImpl.readCycleListingInstant(this.executeRaw.bind(this)); }

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 988/996
+# covered: 989/997
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -64,6 +64,7 @@
 # collate_command_reads: 2/2
 # collate_identity_downgrades: 5/5
 # collate_cycle_window: 2/2
+# collate_belief_reads: 1/1
 # collate_phantom_redirect: 1/1
 # collate_take_proposals: 2/2
 # write_misc: 65/71
@@ -89,7 +90,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	100	no	yes	yes	serves
+transaction	lifecycle	yes	99	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -101,7 +102,7 @@ putPage	pages	yes	556	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
-deletePages	pages	yes	2	yes	yes	yes	serves
+deletePages	pages	yes	3	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	152	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
@@ -819,7 +820,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	53	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	52	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -895,6 +896,7 @@ writeOpCheckpointValues	collate_identity_downgrades	yes	2	no	yes	yes	serves
 readOpCheckpointValues	collate_identity_downgrades	yes	1	no	yes	yes	serves
 readCycleListingInstant	collate_cycle_window	yes	1	no	yes	yes	serves
 listSourceChangedPagesAfter	collate_cycle_window	yes	1	no	yes	yes	serves
+listOrphanLifetimes	collate_belief_reads	yes	1	no	yes	yes	serves
 listRootPageSlugsAfter	collate_phantom_redirect	yes	1	no	yes	yes	serves
 recordFailureTombstone	collate_take_proposals	yes	1	no	yes	yes	serves
 listFailureTombstones	collate_take_proposals	yes	1	no	yes	yes	serves

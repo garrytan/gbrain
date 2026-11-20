@@ -10,6 +10,7 @@ mod cli_reads_import;
 mod cli_reads_ops;
 mod cli_reads_search_pages;
 mod cli_sources;
+mod collate_belief_reads;
 mod collate_command_reads;
 mod collate_cycle_window;
 mod collate_identity_downgrades;

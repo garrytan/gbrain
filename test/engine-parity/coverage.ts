@@ -227,6 +227,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // collate_identity_downgrades: the identity-downgrade record reads and the checkpoint value rows; collate_cycle_window: the cycle window's instant and page window
   collate_identity_downgrades: ['readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues', 'readOpCheckpointValues'],
   collate_cycle_window: ['readCycleListingInstant', 'listSourceChangedPagesAfter'],
+  // collate_belief_reads: the belief ledger's orphan lifetime read
+  collate_belief_reads: ['listOrphanLifetimes'],
   // collate_phantom_redirect: the phantom-redirect pass's root-page walk
   collate_phantom_redirect: ['listRootPageSlugsAfter'],
   // collate_take_proposals: the propose_takes failure tombstones (take_proposals rows)

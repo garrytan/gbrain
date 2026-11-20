@@ -4132,6 +4132,8 @@ export interface BrainEngine {
   readOpCheckpointValues(op: string, fingerprint: string): Promise<unknown[] | null>;
   /** The phantom-redirect pass's window: live root-page slugs of the source after `after` (bytewise), skipping `exclude`, in byte order, at most `limit` (engine-sql/collate-phantom-redirect.ts). */
   listRootPageSlugsAfter(sourceId: string, after: string, exclude: readonly string[], limit: number): Promise<string[]>;
+  /** The belief ledger's integrity finding: open lifetimes with no page at their slug, and (`deep`) events naming a lifetime that does not exist, by slug and lifetime bytes, at most `limit`, with the total (engine-sql/collate-belief-reads.ts). */
+  listOrphanLifetimes(sourceId: string, limit: number, deep: boolean): Promise<import('./engine-sql/collate-belief-reads.ts').OrphanLifetimeSamples>;
   /** Records a propose_takes failure tombstone (a `rejected` take_proposals row); true when it inserted, false when the claim was already recorded for the page, content hash and prompt version (engine-sql/collate-take-proposals.ts). */
   recordFailureTombstone(input: import('./engine-sql/collate-take-proposals.ts').FailureTombstoneInput): Promise<boolean>;
   /** A source's unacted `rejected` proposals whose claim text starts with `claimPrefix`, by page slug bytes. */

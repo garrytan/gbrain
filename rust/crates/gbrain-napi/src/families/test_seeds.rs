@@ -38,4 +38,18 @@ impl Brain {
             s.seed_page_origin(&source_id, &slug, source_path.as_deref(), deleted_at_us)
         })
     }
+
+    /// `seedBeliefPageLifetimes(sourceId, slugs)`: one open lifetime for each of the source's pages
+    /// named, as `enableBeliefLedger` mints them; resolves the slugs it minted for.
+    #[napi]
+    pub fn seed_belief_page_lifetimes<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.seed_belief_page_lifetimes(&source_id, &slugs)
+        })
+    }
 }

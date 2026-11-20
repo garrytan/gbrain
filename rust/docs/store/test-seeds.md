@@ -4,13 +4,14 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Some parity cases need a page state that PGLite and Postgres reach with a raw `UPDATE pages SET ...` and that no
 `BrainEngine` member writes: a shared `updated_at` (several pages written in one instant, so the slug breaks a tie) and a
-soft-deleted page carrying a file path. The store has no writer for either. Two seed methods give a Rust brain the same
-page. They are not part of the engine and not part of the shipped addon.
+soft-deleted page carrying a file path. A third state is the belief ledger's page lifetimes, which `enableBeliefLedger` mints
+on the SQL engines. The store has no writer for any of them. Three seed methods give a Rust brain the same state. They are not part of the engine and not part of the shipped addon.
 
 | JS | Does |
 | --- | --- |
 | `brain.seedPageUpdatedAt(sourceId, slug, updatedAtMicros)` | sets the page's `updated_at` |
 | `brain.seedPageOrigin(sourceId, slug, sourcePath, deletedAtMicros)` | sets the page's `source_path` and `deleted_at` (`null` is SQL NULL) |
+| `brain.seedBeliefPageLifetimes(sourceId, slugs)` | mints one open belief page lifetime for each named page that has none ([collate-belief-reads.md](collate-belief-reads.md)) |
 
 ## Where they live
 

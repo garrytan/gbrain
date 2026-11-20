@@ -105,8 +105,8 @@ export function isoToMicros(iso: string): number {
 
 /**
  * TEST-ONLY seed members of the Rust arm: two raw page-column updates no BrainEngine member makes (a shared `updated_at`,
- * and a soft-deleted page that carries a file path). They exist only on an addon built with the `test-seeds` cargo
- * feature (`GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`); the shipped addon has neither (rust/docs/store/test-seeds.md).
+ * and a soft-deleted page that carries a file path), and the belief ledger's page lifetimes (`seedBeliefPageLifetimes`). They exist only on an addon built with the `test-seeds` cargo
+ * feature (`GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`); the shipped addon has none of them (rust/docs/store/test-seeds.md).
  */
 /**
  * The capability a case names when it seeds through a test-only member and the addon was built without the `test-seeds`
@@ -128,6 +128,11 @@ export async function seedRustPageUpdatedAt(engine: unknown, sourceId: string, s
 
 export async function seedRustPageOrigin(engine: unknown, sourceId: string, slug: string, sourcePath: string | null, deletedAtIso: string | null): Promise<void> {
   await (seedMember(engine, 'seedPageOrigin') as (s: string, l: string, p: string | null, d: number | null) => Promise<void>)(sourceId, slug, sourcePath, deletedAtIso === null ? null : isoToMicros(deletedAtIso));
+}
+
+/** Test-only: one open belief page lifetime for each named page of the source, as `enableBeliefLedger` mints them (`seedBeliefPageLifetimes`). */
+export async function seedRustBeliefLifetimes(engine: unknown, sourceId: string, slugs: readonly string[]): Promise<void> {
+  await (seedMember(engine, 'seedBeliefPageLifetimes') as (s: string, l: string[]) => Promise<void>)(sourceId, [...slugs]);
 }
 
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }

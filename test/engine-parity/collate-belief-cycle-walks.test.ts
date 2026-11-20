@@ -16,8 +16,10 @@
  *  - Seam: pages are written through the engine. The shared updated_at that slug breaks (listSourceChangedPages) is set by
  *    the harness: SQL on PGLite and Postgres, the test-only seed seedPageUpdatedAt on the Rust arm (an addon built with
  *    GBRAIN_RUST_TEST_SEEDS=1). The window cursor is stamped through updateSourceConfig. Harness-only SQL changes a title
- *    behind the ledger (drift), deletes a page row (an orphan lifetime) and inserts failure tombstones. The window answers
- *    from typed members, so the Rust arm answers it; the other readers here run raw SQL, so the Rust arm stops on raw_sql.
+ *    behind the ledger (drift). The orphan lifetime case deletes its pages through deletePages and takes its lifetimes from
+ *    enableBeliefLedger on the SQL arms and from the test-only seed seedBeliefPageLifetimes on the Rust arm (an addon built with
+ *    GBRAIN_RUST_TEST_SEEDS=1; the default addon stops on test_seeds). The window answers from typed members, so the Rust arm
+ *    answers it; the baseline and drift readers still run raw SQL, so the Rust arm stops on raw_sql.
  */
 import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -30,7 +32,7 @@ import { failureTombstoneText, listFailedProposals } from '../../src/core/cycle/
 import { listSourceChangedPages, sourceWindow } from '../../src/core/cycle/source-window.ts';
 import { PHANTOM_REDIRECT_CURSOR_OP, runPhantomRedirectPass } from '../../src/core/cycle/phantom-redirect.ts';
 import { rotationAfter } from '../../src/core/repair/rotation.ts';
-import { parityArms, stampUpdatedAtExact } from './harness.ts';
+import { parityArms, seedBeliefLifetimes, stampUpdatedAtExact } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { BYTE_SLUGS, byteOrder, MIXED_SLUGS } from '../helpers/byte-order.ts';
@@ -62,13 +64,14 @@ describe('belief walks and cycle listings take pages by byte', () => {
     expect(scan.drifted.map(d => d.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('orphanLifetimes samples by byte', { methods: ['putPage', 'executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('orphanLifetimes samples by byte', { methods: ['putPage', 'deletePages', 'listOrphanLifetimes'], testSeeds: true }, async (engine, backend) => {
     await put(engine, MIXED_SLUGS);
-    await enableBeliefLedger(engine, 'default');
-    await engine.executeRaw(`DELETE FROM pages WHERE source_id = 'default' AND slug = ANY($1::text[])`, [[...MIXED_SLUGS]]);
+    await seedBeliefLifetimes(engine, backend, 'default', MIXED_SLUGS);
+    await engine.deletePages([...MIXED_SLUGS], { sourceId: 'default' });
     const orphans = await orphanLifetimes(engine, 'default', 2);
     expect(orphans.count).toBe(3);
     expect(orphans.samples.map(s => s.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
+    expect(orphans.samples.every(s => s.reason === 'no_page')).toBe(true);
   });
 
   parityTest('listFailedProposals lists pages by byte', { methods: ['recordFailureTombstone', 'listFailureTombstones'] }, async (engine) => {
