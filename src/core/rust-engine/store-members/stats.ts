@@ -24,6 +24,7 @@ import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, requireTextColumn, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 import { getConfig, listConfigKeys } from './config.ts';
 import { countStalePagesForExtraction } from './extraction.ts';
 import { listAllSources } from './sources.ts';
@@ -219,8 +220,9 @@ interface StoreAnomalies {
 
 export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> = async (brain, opts) => {
   // PGLite reads only excludePrivate of the read scope here: minTrust, suppressFlagged and requireSafeChunks change nothing.
-  const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma'],
+  const o = takeOptions('findAnomalies', opts, ['sourceId', 'sourceIds', 'since', 'lookback_days', 'sigma', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
+  const excludePrivate = storePagePolicy('findAnomalies', o.excludePrivate);
   const sigma = (o.sigma as number | undefined) ?? 3.0;
   const lookbackDays = Math.max(1, (o.lookback_days as number | undefined) ?? 30);
   const sinceIso = (o.since as string | undefined) ?? new Date().toISOString().slice(0, 10);
@@ -235,6 +237,7 @@ export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> 
     baselineStartUs: baselineStart.getTime() * 1000,
     sinceUs: sinceDate.getTime() * 1000,
     sinceEndUs: sinceEnd.getTime() * 1000,
+    excludePrivate: excludePrivate ?? null,
   }));
   const days = baselineDays(baselineStart, sinceDate);
   const baseline: CohortDayRow[] = [];

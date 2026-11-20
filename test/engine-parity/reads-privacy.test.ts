@@ -368,8 +368,6 @@ describe('the Rust arm serves each member and returns exactly the pages PGLite l
     if (!rust) return;
     const engine = rust.engine;
     const calls: Array<[string, () => Promise<unknown>]> = [
-      ['getRecentSalience', () => engine.getRecentSalience({ excludePrivate: true } as never)],
-      ['findAnomalies', () => engine.findAnomalies({ excludePrivate: true } as never)],
       ['getTags', () => engine.getTags('notes/open', { excludePrivate: true })],
     ];
     for (const [member, call] of calls) {

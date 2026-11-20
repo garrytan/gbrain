@@ -71,6 +71,67 @@ async function remember(
   return ids;
 }
 
+
+/**
+ * The private-provenance fixture: one page per rule of `privateProvenanceFilterUnderPolicy('facts')`
+ * (src/core/search/private-visibility.ts), and one fence row per page, each named after its page, so a read under
+ * `excludePrivate` names which rules hid which rows. Rows `entity:*` judge the entity page and the holding page.
+ */
+const PRIVACY_ENTITY = 'people/subject-example';
+const PRIVACY_PAGES: Array<[string, string, Record<string, unknown>]> = [
+  ['notes/open', 'note', {}],
+  ['notes/private', 'note', { visibility: 'private' }],
+  ['notes/readers', 'note', { readable_by: ['alice-example'] }],
+  ['notes/access-alias', 'note', { access: '\u00a0Restricted\u3000' }],
+  ['notes/access-plain', 'note', { access: 'team' }],
+  ['notes/alias-with-visibility', 'note', { confidentiality: 'secret', visibility: 'world' }],
+  ['notes/pinned', 'note', { pinned_question: true, visibility: 'world' }],
+  ['atoms/no-visibility', 'atom', {}],
+  ['atoms/origin-private', 'atom', { visibility: 'world', source_slug: 'notes/private' }],
+  ['atoms/origin-readers', 'atom', { visibility: 'world', source_slug: 'notes/readers' }],
+  ['atoms/origin-open', 'atom', { visibility: 'world', source_slug: 'notes/open' }],
+  ['concepts/private-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+  ['concepts/readers-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+  ['concepts/open-input', 'concept', { visibility: 'world', synthesized_by: 'dream' }],
+  ['concepts/plain', 'concept', {}],
+  ['notes/lineage-md', 'note', { derived_from: 'notes/private.md' }],
+  ['notes/lineage-readers', 'note', { derived_from: ['notes/open', 'notes/readers'] }],
+  ['notes/lineage-open', 'note', { derived_from: ['notes/open.md', 'notes/none'] }],
+  ['events/chronicle-missing', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'meetings/none' } }],
+  ['events/chronicle-private', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/private' } }],
+  ['events/chronicle-open', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/open' } }],
+  ['events/plain', 'event', { event: { depth: 'meetings/none' } }],
+  ['people/private-entity', 'person', { visibility: 'private' }],
+  ['people/readers-entity', 'person', { readable_by: ['alice-example'] }],
+  ['team/memory/unattributed', 'note', { visibility: 'private' }],
+];
+
+async function privacyFixture(engine: BrainEngine) {
+  for (const [slug, type, frontmatter] of PRIVACY_PAGES) {
+    await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+  }
+  await engine.addLink('concepts/private-input', 'atoms/no-visibility', '', 'synthesized_from', 'concept-provenance');
+  await engine.addLink('concepts/readers-input', 'notes/readers', '', 'synthesized_from', 'concept-provenance');
+  await engine.addLink('concepts/open-input', 'notes/open', '', 'synthesized_from', 'concept-provenance');
+  await engine.addLink('concepts/open-input', 'notes/private', '', 'mentions', 'manual');
+  const pageRows = [...PRIVACY_PAGES.map(([slug]) => slug), 'notes/no-page'].map((slug, i) => ({
+    fact: `page:${slug}`, entity_slug: PRIVACY_ENTITY, source_markdown_slug: slug, row_num: i + 1,
+  }));
+  const entityRows = [
+    { fact: 'entity:private', entity_slug: 'people/private-entity', source_markdown_slug: 'notes/open', row_num: 101 },
+    { fact: 'entity:readers', entity_slug: 'people/readers-entity', source_markdown_slug: 'notes/open', row_num: 102 },
+    { fact: 'entity:open', entity_slug: 'notes/open', source_markdown_slug: 'notes/open', row_num: 103 },
+    { fact: 'entity:held-private', entity_slug: 'people/no-page', source_markdown_slug: 'team/memory/unattributed', row_num: 104 },
+    { fact: 'entity:unheld', entity_slug: null, source_markdown_slug: 'team/memory/unattributed', row_num: 105 },
+  ];
+  const rows = [...pageRows, ...entityRows].map((r) => ({
+    ...r, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', source_session: 'sess-privacy',
+    valid_from: at('2026-03-01T00:00:00Z'), claim_metric: 'arr', claim_value: r.row_num,
+    dimension: `dim-${r.row_num}`, value: r.fact,
+  }));
+  await engine.insertFacts(rows as never, { source_id: SRC });
+}
+
 describe('engine parity: facts', () => {
   parityTest(
     'insertFact stores defaults and every supplied field; listFactsByEntity reads it back',
@@ -788,4 +849,383 @@ describe('engine parity: facts', () => {
       };
     },
   );
+  parityTest(
+    'findCandidateDuplicates (keyword arm) orders by ts_rank_cd then newest, stems and drops audit, inactive, speaker and member rows',
+    { methods: ['insertFact', 'insertFacts', 'expireFact', 'findCandidateDuplicates'] },
+    async (engine) => {
+      const ent = 'people/vic-example';
+      const ids = await remember(engine, ent, [
+        { fact: 'Vic trains for the Berlin marathon every spring' },
+        { fact: 'Vic ran the marathon' },
+        { fact: 'Vic likes Berlin' },
+        { fact: 'Vic marathon marathon marathon' },
+        { fact: 'Vic visited a Zürich café' },
+        { fact: 'Vic marathon audit checkpoint', source: 'cli:extract-conversation-facts:terminal:v2' },
+        { fact: 'Vic marathon expired' },
+        { fact: 'Vic marathon lapsed', valid_from: at('2025-01-01T00:00:00Z'), valid_until: at('2025-02-01T00:00:00Z') },
+        { fact: 'Vic marathon said by the assistant', attributed_to: 'assistant' },
+        { fact: 'Vic marathon said by the user', attributed_to: 'user' },
+        { fact: 'Cooking notes with no shared words' },
+      ]);
+      await engine.expireFact(ids.get('Vic marathon expired')!);
+      const onPage = (page: string, n: number, fact: string) => ({
+        row_num: n, source_markdown_slug: page, fact, entity_slug: ent, source: 'fence', valid_from: at('2026-03-01T00:00:00Z'),
+      });
+      await engine.insertFacts([onPage('memory/members/vic-example', 1, 'Vic marathon member note')], { source_id: SRC });
+      await engine.insertFacts([onPage('memory/scope', 1, 'Vic marathon scope note')], { source_id: SRC });
+      await engine.insertFacts([onPage('notes/vic', 1, 'Vic marathon on a notes page'), onPage('notes/vic', 2, 'Vic Berlin on a notes page')], { source_id: SRC });
+      await remember(engine, 'people/other-example', [{ fact: 'Vic marathon on another entity' }]);
+      const q = async (text: string, opts: Parameters<BrainEngine['findCandidateDuplicates']>[3] = {}) =>
+        texts(await engine.findCandidateDuplicates(SRC, ent, text, { arm: 'keyword', k: 20, ...opts }));
+      const full = await q('Vic Berlin marathon training');
+      const k3 = await q('Vic Berlin marathon training', { k: 3 });
+      const defaultK = texts(await engine.findCandidateDuplicates(SRC, ent, 'Vic Berlin marathon training', { arm: 'keyword' }));
+      const byUser = await q('marathon', { attributedTo: 'user' });
+      const byAssistant = await q('marathon', { attributedTo: 'assistant' });
+      const noMembers = await q('marathon', { excludeMemberPages: true });
+      const onlyPage = await q('marathon Berlin', { onlyPage: 'notes/vic' });
+      const stemmed = await q('marathons trained');
+      const punctuation = await q('BERLIN!!! — marathon?');
+      const accented = await q('Zürich café');
+      const unaccented = await q('zurich cafe');
+      const noModel = await q('marathon', { embedding: basisEmbedding(0) });
+      const otherEntity = texts(await engine.findCandidateDuplicates(SRC, 'people/nobody', 'marathon', { arm: 'keyword' }));
+      expect(full).not.toContain('Vic marathon audit checkpoint');
+      expect(full).not.toContain('Vic marathon expired');
+      expect(full).not.toContain('Vic marathon lapsed');
+      expect(full).not.toContain('Cooking notes with no shared words');
+      expect(full).not.toContain('Vic marathon on another entity');
+      expect(k3).toEqual(full.slice(0, 3));
+      expect(defaultK).toEqual(full.slice(0, 5));
+      expect(byUser).not.toContain('Vic marathon said by the assistant');
+      expect(byAssistant).not.toContain('Vic marathon said by the user');
+      expect(noMembers).not.toContain('Vic marathon member note');
+      expect(noMembers).not.toContain('Vic marathon scope note');
+      expect(sorted(onlyPage)).toEqual(['Vic Berlin on a notes page', 'Vic marathon on a notes page']);
+      expect(stemmed).toContain('Vic trains for the Berlin marathon every spring');
+      expect(accented).toEqual(['Vic visited a Zürich café']);
+      expect(noModel).toEqual([]);
+      expect(otherEntity).toEqual([]);
+      return { full, k3, defaultK, byUser, byAssistant, noMembers, onlyPage, stemmed, punctuation, accented, unaccented, noModel, otherEntity };
+    },
+  );
+
+  /** A 1536-wide vector: `head` in the first slots, zero elsewhere. */
+  const vec = (...head: number[]) => {
+    const v = new Float32Array(1536);
+    head.forEach((x, i) => { v[i] = x; });
+    return v;
+  };
+  const vectorView = (r: FactRow) => ({
+    fact: r.fact,
+    head: r.embedding ? Array.from(r.embedding.slice(0, 6)) : null,
+    dims: r.embedding ? r.embedding.length : null,
+    model: r.embedding_model ?? null,
+    hash: r.embedded_text_hash ?? null,
+    embedded: r.embedded_at instanceof Date,
+  });
+  const messageOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => (e instanceof Error ? e.message : String(e)));
+
+  parityTest(
+    'insertFact and insertFacts store a vector rounded to halfvec, with the model and text hash only when a model is named',
+    { methods: ['insertFact', 'insertFacts', 'listFactsByEntity'] },
+    async (engine) => {
+      const ent = 'people/wren-example';
+      await remember(engine, ent, [
+        { fact: 'w-model', embedding: vec(0.1, 1 / 3, 0.7, 1e-5, 3e-8, -65519), embedding_model: 'm1' },
+        { fact: 'w-no-model', embedding: vec(0.5, 0.25) },
+        { fact: 'w-empty-model', embedding: vec(0.2), embedding_model: '' },
+        { fact: 'w-model-no-vector', embedding_model: 'm1' },
+        { fact: 'w-plain' },
+      ]);
+      await engine.insertFacts([
+        { row_num: 1, source_markdown_slug: ent, fact: 'w-fence-model', entity_slug: ent, source: 'fence', embedding: vec(0.6, 0.8), embedding_model: 'm1' },
+        { row_num: 2, source_markdown_slug: ent, fact: 'w-fence-no-model', entity_slug: ent, source: 'fence', embedding: vec(0.3) },
+      ], { source_id: SRC });
+      const rows = sorted((await engine.listFactsByEntity(SRC, ent, { limit: 50 })).map(vectorView), (r) => r.fact);
+      const byFact = new Map(rows.map((r) => [r.fact, r]));
+      expect(byFact.get('w-model')).toEqual({
+        fact: 'w-model', head: [0.0999755859375, 0.333251953125, 0.7001953125, 0.000010013580322265625, 5.960464477539063e-8, -65504],
+        dims: 1536, model: 'm1', hash: '91a02c860e5d683d07d5f56055e9fa8d', embedded: true,
+      });
+      expect(byFact.get('w-no-model')).toMatchObject({ model: null, hash: null, embedded: true, dims: 1536 });
+      expect(byFact.get('w-empty-model')).toMatchObject({ model: '', hash: null, embedded: true });
+      expect(byFact.get('w-model-no-vector')).toMatchObject({ head: null, model: null, hash: null, embedded: false });
+      expect(byFact.get('w-plain')).toMatchObject({ head: null, model: null, hash: null, embedded: false });
+      expect(byFact.get('w-fence-model')).toMatchObject({ model: 'm1', embedded: true });
+      expect(byFact.get('w-fence-no-model')).toMatchObject({ model: null, hash: null, embedded: true });
+      return rows;
+    },
+  );
+
+  parityTest(
+    'insertFact refuses a vector of the wrong width, a NaN, an empty vector and a value past the halfvec range',
+    { methods: ['insertFact', 'insertFacts', 'listFactsByEntity'] },
+    async (engine) => {
+      const ent = 'people/xan-example';
+      // Each input must be refused and leave no row. The refusal text names the type the engine cast the
+      // literal to (Postgres casts to the column's halfvec, PGLite to vector: engine-sql/facts.ts), so it
+      // is not compared.
+      const refusedLeavingNoRow = async (attempt: Promise<unknown>) => {
+        const refused = await attempt.then(() => false, () => true);
+        const saved = (await engine.listFactsByEntity(SRC, ent)).length;
+        return { refused, saved };
+      };
+      const one = (embedding: Float32Array) =>
+        refusedLeavingNoRow(engine.insertFact({ fact: 'x-bad', entity_slug: ent, source: 'mcp:remember', embedding, embedding_model: 'm1' }, { source_id: SRC }));
+      const narrow = await one(new Float32Array([0.1, 0.2, 0.3]));
+      const nan = await one(vec(0.1, Number.NaN));
+      const empty = await one(new Float32Array(0));
+      const huge = await one(vec(70000));
+      const big = await one(vec(1e6));
+      const edge = await one(vec(65520));
+      const batch = await refusedLeavingNoRow(engine.insertFacts(
+        [{ row_num: 1, source_markdown_slug: ent, fact: 'x-fence', entity_slug: ent, source: 'fence', embedding: new Float32Array([1, 2]), embedding_model: 'm1' }],
+        { source_id: SRC },
+      ));
+      const outcomes = { narrow, nan, empty, huge, big, edge, batch };
+      for (const o of Object.values(outcomes)) expect(o).toEqual({ refused: true, saved: 0 });
+      return outcomes;
+    },
+  );
+
+  parityTest(
+    'findCandidateDuplicates (embedding arm) orders by halfvec cosine distance and skips rows with no model, another model, another width or an audit source',
+    { methods: ['insertFact', 'findCandidateDuplicates'] },
+    async (engine) => {
+      const ent = 'people/yara-example';
+      await remember(engine, ent, [
+        { fact: 'y-far', embedding: vec(0.1, 1 / 3, 0.7), embedding_model: 'm1' },
+        { fact: 'y-near', embedding: vec(0.3, 0.25, 0.05), embedding_model: 'm1' },
+        { fact: 'y-mid', embedding: vec(0.2, 0.5, 0.1), embedding_model: 'm1' },
+        { fact: 'y-opposite', embedding: vec(-0.3, -0.2, -0.1), embedding_model: 'm1' },
+        { fact: 'y-no-model', embedding: vec(0.3, 0.2, 0.1) },
+        { fact: 'y-other-model', embedding: vec(0.3, 0.2, 0.1), embedding_model: 'm2' },
+        { fact: 'y-audit', embedding: vec(0.3, 0.2, 0.1), embedding_model: 'm1', source: 'cli:extract-conversation-facts:terminal:v2' },
+        { fact: 'y-said-by-assistant', embedding: vec(0.3, 0.2, 0.11), embedding_model: 'm1', attributed_to: 'assistant' },
+        { fact: 'y-plain' },
+      ]);
+      const q = vec(0.3, 0.2, 0.1);
+      const dup = (opts: Parameters<BrainEngine['findCandidateDuplicates']>[3]) =>
+        engine.findCandidateDuplicates(SRC, ent, 'whatever', opts).then(texts);
+      const all = await dup({ embedding: q, embeddingModel: 'm1', k: 20 });
+      const top2 = await dup({ embedding: q, embeddingModel: 'm1', k: 2 });
+      const byUser = await dup({ embedding: q, embeddingModel: 'm1', k: 20, attributedTo: 'user' });
+      const otherModel = await dup({ embedding: q, embeddingModel: 'm2' });
+      const narrow = await dup({ embedding: new Float32Array([0.3, 0.2, 0.1]), embeddingModel: 'm1' });
+      const emptyModel = await dup({ embedding: q, embeddingModel: '' });
+      const tooBig = await messageOf(dup({ embedding: vec(70000), embeddingModel: 'm1' }));
+      expect(all).toEqual(['y-said-by-assistant', 'y-near', 'y-mid', 'y-far', 'y-opposite']);
+      expect(top2).toEqual(['y-said-by-assistant', 'y-near']);
+      expect(byUser).toEqual(['y-near', 'y-mid', 'y-far', 'y-opposite']);
+      expect(otherModel).toEqual(['y-other-model']);
+      expect(narrow).toEqual([]);
+      expect(emptyModel).toEqual([]);
+      expect(tooBig).not.toBe('ok');
+      return { all, top2, byUser, otherModel, narrow, emptyModel, tooBig };
+    },
+  );
+
+  parityTest(
+    'findCandidateDuplicates (keyword arm) with an embedding keeps only rows whose vector is comparable, in keyword order',
+    { methods: ['insertFact', 'findCandidateDuplicates'] },
+    async (engine) => {
+      const ent = 'people/zed-example';
+      await remember(engine, ent, [
+        { fact: 'Zed runs the harbor ferry', embedding: vec(1), embedding_model: 'm1' },
+        { fact: 'Zed fixed the harbor ferry engine', embedding: vec(0, 1), embedding_model: 'm1' },
+        { fact: 'Zed harbor ferry with another model', embedding: vec(1), embedding_model: 'm2' },
+        { fact: 'Zed harbor ferry with no vector' },
+        { fact: 'Zed harbor ferry with no model', embedding: vec(1) },
+      ]);
+      const kw = (opts: Parameters<BrainEngine['findCandidateDuplicates']>[3]) =>
+        engine.findCandidateDuplicates(SRC, ent, 'harbor ferry', { arm: 'keyword', ...opts }).then(texts);
+      const plain = await kw({});
+      const m1 = await kw({ embedding: vec(0.5), embeddingModel: 'm1' });
+      const m2 = await kw({ embedding: vec(0.5), embeddingModel: 'm2' });
+      const narrow = await kw({ embedding: new Float32Array([1, 2]), embeddingModel: 'm1' });
+      expect(plain).toHaveLength(5);
+      expect(sorted(m1)).toEqual(['Zed fixed the harbor ferry engine', 'Zed runs the harbor ferry']);
+      expect(m2).toEqual(['Zed harbor ferry with another model']);
+      expect(narrow).toEqual([]);
+      return { plain, m1, m2, narrow };
+    },
+  );
+
+  parityTest(
+    'findTrajectory returns a point\'s vector only when it comes from the brain\'s embedding model and the text is current',
+    { methods: ['setConfig', 'insertFact', 'findTrajectory'] },
+    async (engine) => {
+      const ent = 'companies/willow-example';
+      await engine.setConfig('embedding_model', 'm-traj');
+      await remember(engine, ent, [
+        { fact: 'ARR 1m', claim_metric: 'arr', claim_value: 1e6, valid_from: at('2026-01-01T00:00:00Z'), embedding: vec(0.1, 0.7), embedding_model: 'm-traj' },
+        { fact: 'ARR 2m', claim_metric: 'arr', claim_value: 2e6, valid_from: at('2026-02-01T00:00:00Z'), embedding: vec(0.4), embedding_model: 'other' },
+        { fact: 'ARR 3m', claim_metric: 'arr', claim_value: 3e6, valid_from: at('2026-03-01T00:00:00Z'), embedding: vec(0.4) },
+        { fact: 'ARR 4m', claim_metric: 'arr', claim_value: 4e6, valid_from: at('2026-04-01T00:00:00Z') },
+      ]);
+      const points = (await engine.findTrajectory({ entitySlug: ent, remote: false })).map((p) => ({
+        text: p.text, head: p.embedding ? Array.from(p.embedding.slice(0, 3)) : null, dims: p.embedding ? p.embedding.length : null,
+      }));
+      expect(points).toEqual([
+        { text: 'ARR 1m', head: [0.0999755859375, 0.7001953125, 0], dims: 1536 },
+        { text: 'ARR 2m', head: null, dims: null },
+        { text: 'ARR 3m', head: null, dims: null },
+        { text: 'ARR 4m', head: null, dims: null },
+      ]);
+      return points;
+    },
+  );
+
+  parityTest(
+    'excludePrivate hides facts whose provenance, entity or holding page the private-provenance policy hides',
+    { methods: ['putPage', 'addLink', 'insertFacts', 'listFactsByEntity', 'listFactsSince', 'listFactsBySession'] },
+    async (engine) => {
+      await privacyFixture(engine);
+      const since = at('2020-01-01T00:00:00Z');
+      const all = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500 })));
+      const kept = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500, excludePrivate: true })));
+      const byEntity = sorted(texts(await engine.listFactsByEntity(SRC, PRIVACY_ENTITY, { limit: 500, excludePrivate: true })));
+      const bySession = sorted(texts(await engine.listFactsBySession(SRC, 'sess-privacy', { limit: 500, excludePrivate: true })));
+      const off = sorted(texts(await engine.listFactsByEntity(SRC, PRIVACY_ENTITY, { limit: 500, excludePrivate: false })));
+      expect(all).toHaveLength(31);
+      expect(kept).toEqual(sorted([
+        'page:notes/open', 'page:notes/access-plain', 'page:notes/alias-with-visibility', 'page:atoms/origin-open',
+        'page:concepts/open-input', 'page:concepts/plain', 'page:notes/lineage-open', 'page:events/chronicle-open',
+        'page:events/plain', 'page:notes/no-page', 'entity:open',
+      ]));
+      expect(byEntity).toEqual(kept.filter((t) => t.startsWith('page:')));
+      expect(bySession).toEqual(kept);
+      return { all, kept, byEntity, bySession, off };
+    },
+  );
+
+  parityTest(
+    'listSupersessions and findTrajectory apply the private-provenance policy under excludePrivate',
+    { methods: ['putPage', 'addLink', 'insertFacts', 'listSupersessions', 'findTrajectory'] },
+    async (engine) => {
+      await privacyFixture(engine);
+      await engine.insertFacts([
+        { fact: 'old:private', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/private', row_num: 201, superseded_by_row: 202, kind: 'fact', source: 'fence' },
+        { fact: 'new:private', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/private', row_num: 202, kind: 'fact', source: 'fence' },
+        { fact: 'old:open', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/open', row_num: 203, superseded_by_row: 204, kind: 'fact', source: 'fence' },
+        { fact: 'new:open', entity_slug: PRIVACY_ENTITY, source_markdown_slug: 'notes/open', row_num: 204, kind: 'fact', source: 'fence' },
+      ] as never, { source_id: SRC });
+      const supersessions = sorted(texts(await engine.listSupersessions(SRC)));
+      const supersessionsKept = sorted(texts(await engine.listSupersessions(SRC, { excludePrivate: true })));
+      const points = async (excludePrivate: boolean) =>
+        sorted((await engine.findTrajectory({ entitySlug: PRIVACY_ENTITY, remote: false, excludePrivate })).map((p) => p.text));
+      const trajectory = await points(false);
+      const trajectoryKept = await points(true);
+      expect(supersessionsKept).toEqual(['old:open']);
+      expect(trajectoryKept.length).toBeLessThan(trajectory.length);
+      expect(trajectoryKept).toContain('page:notes/open');
+      expect(trajectoryKept).not.toContain('page:notes/private');
+      return { supersessions, supersessionsKept, trajectory, trajectoryKept };
+    },
+  );
+
+  parityTest(
+    'excludePrivate follows the rename history to a private origin after a later rename drops the alias (#8920)',
+    { methods: ['putPage', 'updateSlug', 'insertFacts', 'listFactsSince'] },
+    async (engine) => {
+      await putRenamePages(engine, [
+        ['notes/origin', 'note', { visibility: 'private' }],
+        ['notes/stand-in', 'note', {}],
+        ['atoms/moved-origin', 'atom', { visibility: 'world', source_slug: 'notes/origin' }],
+        ['atoms/open-origin', 'atom', { visibility: 'world', source_slug: 'notes/stand-in' }],
+      ]);
+      expect(await engine.updateSlug('notes/origin', 'notes/moved')).toBe(1);
+      // A world page renamed onto the old slug drops the alias notes/origin -> notes/moved; only the
+      // rename history still says the atom's origin moved to the private page.
+      expect(await engine.updateSlug('notes/stand-in', 'notes/origin')).toBe(1);
+      return renameFacts(engine, ['atoms/moved-origin', 'atoms/open-origin'], ['page:atoms/open-origin']);
+    },
+  );
+
+  parityTest(
+    'excludePrivate follows a slug alias from a renamed page to its restricted page',
+    { methods: ['putPage', 'updateSlug', 'insertFacts', 'listFactsSince'] },
+    async (engine) => {
+      await putRenamePages(engine, [
+        ['notes/b-old', 'note', { readable_by: ['alice-example'] }],
+        ['notes/c-old', 'note', {}],
+        ['atoms/aliased-origin', 'atom', { visibility: 'world', source_slug: 'notes/b-old' }],
+        ['notes/aliased-lineage', 'note', { derived_from: 'notes/b-old' }],
+        ['events/aliased-chronicle', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/b-old' } }],
+        ['atoms/open-alias', 'atom', { visibility: 'world', source_slug: 'notes/c-old' }],
+      ]);
+      expect(await engine.updateSlug('notes/b-old', 'notes/b-new')).toBe(1);
+      expect(await engine.updateSlug('notes/c-old', 'notes/c-new')).toBe(1);
+      // A new open page at the old slug: the alias, not the page now there, names the restricted page.
+      await putRenamePages(engine, [['notes/b-old', 'note', {}]]);
+      return renameFacts(
+        engine,
+        ['atoms/aliased-origin', 'notes/aliased-lineage', 'events/aliased-chronicle', 'atoms/open-alias', 'notes/b-old'],
+        ['page:atoms/open-alias', 'page:notes/b-old'],
+      );
+    },
+  );
+
+  parityTest(
+    'deletePages drops the aliases and rename history of a purged page, so excludePrivate stops following them',
+    { methods: ['putPage', 'updateSlug', 'setPageAliases', 'resolveAliases', 'deletePages', 'insertFacts', 'listFactsSince'] },
+    (engine) => purgedAliasCase(engine, () => engine.deletePages(['notes/p'], { sourceId: SRC })),
+  );
+
+  parityTest(
+    'purgeDeletedPages drops the aliases and rename history of a purged page, so excludePrivate stops following them',
+    { methods: ['putPage', 'updateSlug', 'setPageAliases', 'resolveAliases', 'softDeletePage', 'purgeDeletedPages', 'insertFacts', 'listFactsSince'] },
+    (engine) => purgedAliasCase(engine, async () => {
+      await engine.softDeletePage('notes/p');
+      // purgeDeletedPages(0) takes tombstones strictly older than the statement clock; let the clock move past it.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return (await engine.purgeDeletedPages(0)).slugs;
+    }),
+  );
 });
+
+// A purge drops the page aliases of a purged slug, the slug aliases that resolve to it and the rename rows that end at it
+// (scrubPurgedSlugStores, src/core/persistence/purge-slug-stores.ts). A private page then created at the purged slug is
+// no longer the origin of an atom that named the page's old slug; the same rows of a page not purged stay.
+async function purgedAliasCase(engine: BrainEngine, purge: () => Promise<string[]>) {
+  await putRenamePages(engine, [
+    ['notes/old-p', 'note', { visibility: 'private' }],
+    ['notes/old-q', 'note', { visibility: 'private' }],
+    ['atoms/purged-origin', 'atom', { visibility: 'world', source_slug: 'notes/old-p' }],
+    ['atoms/kept-origin', 'atom', { visibility: 'world', source_slug: 'notes/old-q' }],
+  ]);
+  expect(await engine.updateSlug('notes/old-p', 'notes/p')).toBe(1);
+  expect(await engine.updateSlug('notes/old-q', 'notes/q')).toBe(1);
+  await engine.setPageAliases('notes/p', SRC, ['purged alias']);
+  await engine.setPageAliases('notes/q', SRC, ['kept alias']);
+  const purged = await purge();
+  expect(purged).toEqual(['notes/p']);
+  await putRenamePages(engine, [['notes/p', 'note', { visibility: 'private' }]]);
+  const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) =>
+    Object.fromEntries([...m.entries()].sort(([x], [y]) => (x < y ? -1 : 1)).map(([k, v]) => [k, sorted(v.map((r) => `${r.source_id}:${r.slug}`))]));
+  const aliases = flat(await engine.resolveAliases(['purged alias', 'kept alias'], { sourceId: SRC }));
+  expect(aliases).toEqual({ 'kept alias': ['default:notes/q'] });
+  const facts = await renameFacts(engine, ['atoms/purged-origin', 'atoms/kept-origin'], ['page:atoms/purged-origin']);
+  return { purged, aliases, ...facts };
+}
+
+async function putRenamePages(engine: BrainEngine, pages: Array<[string, string, Record<string, unknown>]>) {
+  for (const [slug, type, frontmatter] of pages) {
+    await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+  }
+}
+
+/** One fence row per holding page, then the rows `excludePrivate` keeps, which must be `expectKept`. */
+async function renameFacts(engine: BrainEngine, holders: string[], expectKept: string[]) {
+  await engine.insertFacts(holders.map((slug, i) => ({
+    fact: `page:${slug}`, entity_slug: PRIVACY_ENTITY, source_markdown_slug: slug, row_num: i + 1, kind: 'fact',
+    visibility: 'world', source: 'fence', valid_from: at('2026-03-01T00:00:00Z'),
+  })) as never, { source_id: SRC });
+  const since = at('2020-01-01T00:00:00Z');
+  const all = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500 })));
+  const kept = sorted(texts(await engine.listFactsSince(SRC, since, { limit: 500, excludePrivate: true })));
+  expect(all).toEqual(sorted(holders.map((slug) => `page:${slug}`)));
+  expect(kept).toEqual(sorted(expectKept));
+  return { all, kept };
+}

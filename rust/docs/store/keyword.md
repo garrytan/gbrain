@@ -69,8 +69,7 @@ deleted is itself owner-only lineage (strict form), it marks that page and each 
 good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
 only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
 store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
-engine serves no source delete, `deletePages` or `purgeDeletedPages` yet (they refuse with `engine_capability_missing`),
-so `deletePage` is the one path that deletes an owner-only page here.
+engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
 
 The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
 SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
@@ -121,7 +120,9 @@ PostgreSQL walks a tsquery recursively and calls `check_stack_depth()`, so a que
 facts OR builder recurse the same way, once per item, and the stack of the thread that calls them is not ours to size.
 
 - A query with more than 1,024 items runs those walks on a scoped thread with a 256 MiB stack (address space is reserved,
-  not committed). Smaller queries run in place.
+  not committed). Smaller queries run in place. A search starts that thread once for its whole walk over the
+  candidates (the page search, each title attempt, the facts keyword arm), not once per candidate, and a walk that is
+  already on the deep thread runs in place.
 - A query is refused with `invalid_argument` ("stack depth limit exceeded: a tsquery holds at most 131072 items") when
   the parser holds more than 131,072 items, counted before stopword cleanup. Repeated stopwords count, because a
   stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in
@@ -225,6 +226,10 @@ no strict rows past the offset, the any-word retry (`buildOrFallbackWebsearchQue
 the rest tagged `keyword_relaxed`. Every attempt ORs in the given-name variants (`titleNameVariants`). The store runs a
 list of attempts over one read (`searchTitlesAttempts`); the rows sort by exact title (`lower(btrim(title, ' "''' ||
 chr(160)))` against `normalizeAlias(query)`), then `ts_rank_cd(vector, q) × source factor`, then page id.
+Each row carries one representative chunk: a text chunk of the page's live body, as `title-statement.ts` reads it
+with `chunkGenerationFilter` (a staged chunk, a chunk of a retired occurrence that a deferred retire left, and an
+inline chunk left on a segmented page are never shown), compiled truth first (only compiled truth for `detail` low),
+then the lowest chunk index. A page with no such chunk gives `chunk_id` 0 and an empty `chunk_text`.
 
 The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last wrote:
 
