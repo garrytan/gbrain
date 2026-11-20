@@ -27,6 +27,8 @@ const { parityTest } = parityArms(testBackends());
 
 const SRC = 'doomed';
 const KEEP = 'keeper';
+const JOURNAL_REQUEST = 'b0000000-0000-4000-8000-0000000000b9';
+const JOURNAL_WRITER = 'd0000000-0000-4000-8000-0000000000d9';
 const note = (title: string, body: string) => ({ type: 'note' as const, title, compiled_truth: body, frontmatter: {} });
 
 /** Run `gbrain sources <args>` and return what it printed and how it exited. */
@@ -121,6 +123,58 @@ describe('engine parity: source delete', () => {
       const removed = await cli(engine, ['remove', SRC, '--confirm-destructive']);
       const after = await observeSource(engine, SRC);
       return { removed, after };
+    });
+
+  // The write journal is not keyed by the source. On Postgres and PGLite, persistence_requests and
+  // persistence_topology_changes carry source_id with no foreign key to sources, and persistence_effects references
+  // persistence_requests, so a source delete leaves all three. The Rust store keeps them under the d keyspace (request,
+  // d 0x03 topology, d 0x05/0x06 effects), which its source delete does not touch. Receipts of the old source stay
+  // readable by (writer, request id), and a same-id source gets a new incarnation, so the old rows never read as its own.
+  parityTest('a source delete keeps the write journal: the request, its effects and the lifecycle receipt that name the source',
+    { methods: ['readSourceMembership', 'insertWriteRequest', 'insertPublicationEffects', 'insertTopologyChange', 'deleteSourceRecord',
+      'readWriteRequestById', 'readRequestEffects', 'readTopologyChange', 'findTopologyChanges'], timeout: 120_000 },
+    async (engine, backend) => {
+      await seedDoomed(engine, backend);
+      const incarnation = (await engine.readSourceMembership(SRC))!.incarnation;
+      const keys = ['principal:local_cli:parity-writer', 'brain'];
+      await engine.lockPersistenceCounters(keys);
+      const request = await engine.insertWriteRequest({
+        principalKind: 'local_cli', principalId: 'parity-writer', requestId: JOURNAL_REQUEST, operation: 'put_page', sourceId: SRC,
+        sourceIncarnation: incarnation, pageId: null, slug: 'notes/a', worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64),
+        intent: { kind: 'put_page', slug: 'notes/a' }, authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096,
+        targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null,
+        state: 'queued', deferredRefreshId: null,
+      });
+      const queued = await engine.transactionDirect(async (tx) => {
+        await tx.declarePersistence();
+        return tx.insertPublicationEffects({ requestId: request.id, revision: 'e0000000-0000-4000-8000-0000000000e1', sourceId: SRC,
+          sourceIncarnation: incarnation, worktreeId: null, effects: [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }] });
+      });
+      await engine.insertTopologyChange({
+        principalId: JOURNAL_WRITER, requestId: JOURNAL_REQUEST, digest: 'e'.repeat(64), operation: 'claim', sourceId: SRC,
+        sourceIncarnation: incarnation, worktreeIds: [], state: 'committed', terminalBytes: 4096, outcome: { operation: 'claim', source_id: SRC },
+      });
+      const journal = async () => {
+        const row = await engine.readWriteRequestById(request.id);
+        const receipt = await engine.readTopologyChange(JOURNAL_WRITER, JOURNAL_REQUEST);
+        return {
+          request: row && { source: row.source_id, oldIncarnation: row.source_incarnation === incarnation, state: row.state },
+          effects: (await engine.readRequestEffects(request.id)).map((e) => `${e.kind}:${e.state}`),
+          receipt: receipt && { source: receipt.source_id, oldIncarnation: receipt.source_incarnation === incarnation, operation: receipt.operation, state: receipt.state },
+          found: (await engine.findTopologyChanges(JOURNAL_WRITER, [JOURNAL_REQUEST])).map((r) => r.request_id),
+        };
+      };
+      const before = await journal();
+      expect(before.request).not.toBeNull();
+      expect(before.receipt).not.toBeNull();
+      expect(before.effects.length).toBeGreaterThan(0);
+      expect(before.found).toEqual([JOURNAL_REQUEST]);
+      const removed = await engine.deleteSourceRecord(SRC);
+      const after = await journal();
+      expect(after).toEqual(before);
+      await engine.insertSource({ id: SRC, name: SRC, local_path: null, config: {} });
+      const reborn = (await engine.readSourceMembership(SRC))!.incarnation;
+      return { queued, removed, before, after, newIncarnation: reborn !== incarnation, source: await engine.getSource(SRC).then((s) => s?.id ?? null) };
     });
 
   parityTest('the sources_remove op deletes the source and its pages and returns what it removed',
