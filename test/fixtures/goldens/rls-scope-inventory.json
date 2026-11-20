@@ -2827,6 +2827,17 @@
         ],
         "flagOnScopes": []
       },
+      "listChainAnchors#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChatChannelCensus#hide-private": {
         "flagOffLanes": [
           "pool"
@@ -4673,6 +4684,28 @@
         "flagOnScopes": []
       },
       "probeNoopEmbeddingSettle#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "probeTargetRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "probeTargetRows#no manifest": {
         "flagOffLanes": [
           "pool"
         ],
@@ -8245,6 +8278,7 @@
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
         "listCardRows": "none",
+        "listChainAnchors": "none",
         "listChatChannelCensus": "none",
         "listChunklessPagesWithContent": "direct",
         "listClientsReferencingSource": "none",
@@ -8516,6 +8550,7 @@
         "probeIdleWork": "none",
         "probeLiveConsumerRows": "none",
         "probeNoopEmbeddingSettle": "none",
+        "probeTargetRows": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
         "pruneDecideReceipts": "none",
