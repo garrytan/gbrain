@@ -10,3 +10,4 @@
 - On the Rust engine a sync that reuses stored chunk vectors no longer stops on the safe-chunk check. A page chunked before the safe-fence chunker reads as having no reusable chunks, as on PGLite and Postgres.
 - On the Rust engine `gbrain sources status` now counts each source's live pages, chunks and embedded chunks instead of stopping with an unsupported-SQL error. PGLite and Postgres run the same SQL as before.
 - On the Rust engine a sync now extracts links and timeline entries as PGLite and Postgres do. Before, the extraction stopped on an unsupported-SQL error when it read the old slugs of renamed pages, and the sync told you to run `gbrain extract --stale` afterwards.
+- On the Rust engine the sync notifier now reads each source's last synced commit. A request to sync a commit the source already reached is no longer counted as due, and `gbrain sources status` reads when each source first became due instead of stopping with an unsupported-SQL error.

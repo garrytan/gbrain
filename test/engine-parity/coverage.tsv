@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 786/792
+# covered: 787/793
 # lifecycle: 9/9
 # pages: 50/50
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 74/74
+# persistence_journal: 75/75
 # entity_reads: 15/15
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -106,7 +106,7 @@ updateSourceConfig	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	8	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
-listNotifierHostSourceRows	pages	yes	2	no	yes	yes	serves
+listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 readPlainSyncSource	pages	yes	2	no	yes	yes	serves
 readOwnerOnlySourcesPresent	pages	yes	1	no	yes	yes	serves
@@ -125,7 +125,7 @@ writeReasonPurgeTombstones	pages	yes	3	no	yes	yes	serves
 listSourcePathPages	pages	yes	1	no	yes	yes	serves
 readRenameIdentityRows	pages	yes	1	no	yes	yes	serves
 readLiveIdentityHolders	pages	yes	1	no	yes	yes	serves
-advanceSourceCommit	pages	yes	1	no	yes	yes	serves
+advanceSourceCommit	pages	yes	2	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	3	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpLastRetrieved	pages	yes	2	no	yes	yes	serves
@@ -384,20 +384,21 @@ claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
 readNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
 holdsNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
 releaseNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
-readNotifierSources	persistence_journal	yes	1	no	yes	yes	serves
-writeNotifierState	persistence_journal	yes	2	no	yes	yes	serves
-writeNotifierCoverage	persistence_journal	yes	3	no	yes	yes	serves
+readNotifierSources	persistence_journal	yes	2	no	yes	yes	serves
+writeNotifierState	persistence_journal	yes	3	no	yes	yes	serves
+writeNotifierCoverage	persistence_journal	yes	4	no	yes	yes	serves
 recordNotifierSyncerHost	persistence_journal	yes	1	no	yes	yes	serves
-readNotifierStatusRows	persistence_journal	yes	3	no	yes	yes	serves
+readNotifierStatusRows	persistence_journal	yes	4	no	yes	yes	serves
 hasNotifierCoverage	persistence_journal	yes	2	no	yes	yes	serves
-upsertWantedMarker	persistence_journal	yes	3	no	yes	yes	serves
+upsertWantedMarker	persistence_journal	yes	4	no	yes	yes	serves
 attachWantedMarkerJob	persistence_journal	yes	1	no	yes	yes	serves
 readWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
-readDueWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
-pruneSatisfiedWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
+readDueWantedMarkers	persistence_journal	yes	3	no	yes	yes	serves
+pruneSatisfiedWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
 clearWantedMarker	persistence_journal	yes	1	no	yes	yes	serves
-settleFreshnessMarker	persistence_journal	yes	1	no	yes	yes	serves
+settleFreshnessMarker	persistence_journal	yes	2	no	yes	yes	serves
 listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
+readFirstDue	persistence_journal	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	5	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	2	no	yes	yes	serves

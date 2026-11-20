@@ -4,11 +4,12 @@
  * per-source state and coverage rows (readNotifierSources, writeNotifierState, writeNotifierCoverage,
  * recordNotifierSyncerHost), the freshness status rows (readNotifierStatusRows, hasNotifierCoverage) and the wanted
  * markers (upsertWantedMarker, attachWantedMarkerJob, readWantedMarkers, readDueWantedMarkers,
- * pruneSatisfiedWantedMarkers, clearWantedMarker, settleFreshnessMarker, listSourceWantedMarkers).
+ * pruneSatisfiedWantedMarkers, clearWantedMarker, settleFreshnessMarker, listSourceWantedMarkers) and the first due
+ * time sources status reads (readFirstDue).
  *
  * The store keeps the lease row with Postgres's fencing rule, one notifier row per source and one marker row per source
- * and intent. It keeps no managed worktree bindings and no source `last_commit`, so every source row reads `bound` false
- * and those fields null, and a freshness marker that names a head stays due until a run clears it by generation.
+ * and intent. It keeps no managed worktree bindings, so every source row reads `bound` false and the binding fields
+ * null; a marker term that compares with `last_commit` reads the commit the source's last git sync stored.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Commit notifier").
  */
@@ -16,6 +17,7 @@ import {
   toNotifierSourceRow, toNotifierStatusRow, toPendingWantedMarker, toWantedMarker,
   type Coverage, type MarkerIntent, type NotifierHostSourceRow, type NotifierLeaseClaim, type NotifierLeaseClaimInput, type NotifierLeaseHolder,
   type NotifierSourceRow, type NotifierStatusRow, type PendingWantedMarker, type StatePatch, type WantedMarker, type WantedMarkerInput,
+  type FirstDueRow,
 } from '../../engine-sql/notifier.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -121,3 +123,7 @@ export const settleFreshnessMarker: StoreMember<[sourceId: string, generation: n
 /** The source's markers as the sync status notifier block lists them. */
 export const listSourceWantedMarkers: StoreMember<[sourceId: string], PendingWantedMarker[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourceWantedMarkers' }, () => brain.listSourceWantedMarkers(sourceId)) as Rows).map(toPendingWantedMarker);
+
+/** Per existing source: the notifier's observed head and first due time, current incarnation only. */
+export const readFirstDue: StoreMember<[sourceIds: string[]], FirstDueRow[]> = async (brain, sourceIds) =>
+  (await storeCall({ member: 'readFirstDue' }, () => brain.readFirstDue(sourceIds))) as FirstDueRow[];

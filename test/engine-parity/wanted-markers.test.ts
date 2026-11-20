@@ -19,7 +19,9 @@
  *  - Why existing coverage misses it: the notifier's marker tests run PGLite or Postgres only, or the in-memory store
  *    (test/helpers/notifier-memory-store.ts); test/rust-engine-store.test.ts pinned the refusal on Rust.
  *  - Seam: none. Real engines, typed members and the real readNotifierBlock. Timestamps are compared as "set" and
- *    "ordered", never by value. Every source keeps last_commit null, which is all the Rust store can hold.
+ *    "ordered", never by value. The first cases keep last_commit null; the last stores one through advanceSourceCommit,
+ *    which the Rust store once ignored here (every marker read as due, the prune deleted nothing), and reads
+ *    readFirstDue, which `gbrain sources status` needs.
  */
 import { describe, expect } from 'bun:test';
 import type { WantedMarker } from '../../src/core/engine-sql/notifier.ts';
@@ -147,6 +149,57 @@ describe('engine parity: commit notifier wanted markers', () => {
       staleSettle: ['alpha/freshness'], settled: [],
       afterPrune: ['alpha/freshness', 'alpha/pull', 'alpha/full'],
       left: ['alpha/freshness', 'alpha/full'],
+    });
+    return observed;
+  });
+
+  parityTest('with a stored last_commit a marker naming it is not due, the prune and settle clear it, and readFirstDue reads the earlier due time', {
+    methods: ['advanceSourceCommit', 'upsertWantedMarker', 'readDueWantedMarkers', 'pruneSatisfiedWantedMarkers', 'settleFreshnessMarker',
+      'readNotifierStatusRows', 'listNotifierHostSourceRows', 'writeNotifierState', 'writeNotifierCoverage', 'readNotifierSources', 'readFirstDue'],
+  }, async (engine, backend) => {
+    for (const id of ['alpha', 'beta', 'gamma']) await createSource(engine, backend, id, {}, `/srv/brain/${id}`);
+    await engine.advanceSourceCommit('alpha', 'c1', null);
+    const ms = (v: unknown) => v === null || v === undefined ? null : (v instanceof Date ? v : new Date(String(v))).getTime();
+    // alpha: a due notifier row with an observed head, and a freshness marker naming the reached commit (not due).
+    await engine.writeNotifierState('alpha', { state: 'due', firstDue: 'keep' });
+    await engine.writeNotifierCoverage('alpha', { head: 'c2', mode: 'poll', ownerHostId: 'host-a', ownerKind: 'serve', ownerPid: 1 });
+    await tick();
+    await upsertMarker(engine, { sourceId: 'alpha', intent: 'freshness', wantedHead: 'c1', requestedBy: 'notifier' });
+    // beta: an idle notifier row (its due time does not count) and a freshness marker naming no head (due).
+    await engine.writeNotifierState('beta', { state: 'idle', firstDue: 'clear' });
+    const betaMarker = await upsertMarker(engine, { sourceId: 'beta', intent: 'freshness', wantedHead: null, requestedBy: 'notifier' });
+    const alphaRow = (await engine.readNotifierSources(['alpha']))[0]!;
+    const due = new Map((await engine.readFirstDue(['gamma', 'alpha', 'beta', 'missing'])).map(r => [r.source_id, r]));
+    // Each time is compared with this backend's own row or marker time, so the arms compare which time was read, not clocks.
+    const own: Record<string, number | null> = { alpha: ms(alphaRow.first_due_at), beta: ms(betaMarker.first_due_at), gamma: null };
+    const firstDue = Object.fromEntries([...due.keys()].sort().map(id => [id, { observed_head: due.get(id)!.observed_head, first_due_at: ms(due.get(id)!.first_due_at) === own[id] ? 'expected' : ms(due.get(id)!.first_due_at) }]));
+    const dueMarkers = order(await engine.readDueWantedMarkers(['alpha', 'beta']));
+    const status = (await engine.readNotifierStatusRows(['alpha'])).map(r => [r.id, r.last_commit, Number(r.due_markers)]);
+    const host = (await engine.listNotifierHostSourceRows()).map(r => [r.id, r.last_commit]);
+    // The prune deletes the freshness and pull markers that name the reached commit; a full marker stays.
+    await upsertMarker(engine, { sourceId: 'alpha', intent: 'pull', wantedHead: 'c1', requestedBy: 'webhook' });
+    await upsertMarker(engine, { sourceId: 'alpha', intent: 'full', wantedHead: 'c1', requestedBy: 'sync_trigger' });
+    await engine.pruneSatisfiedWantedMarkers(['alpha']);
+    const afterPrune = order(await readMarkers(engine, ['alpha']));
+    // A freshness marker naming another head settles when the source reached the checkout head the drainer saw.
+    const other = await upsertMarker(engine, { sourceId: 'alpha', intent: 'freshness', wantedHead: 'c9', requestedBy: 'notifier' });
+    await engine.settleFreshnessMarker('alpha', other.generation, 'c8');
+    const unsettled = order(await readMarkers(engine, ['alpha']));
+    await engine.settleFreshnessMarker('alpha', other.generation, 'c1');
+    const settled = order(await readMarkers(engine, ['alpha']));
+    const observed = { firstDue, dueMarkers, status, host, afterPrune, unsettled, settled };
+    expect(observed).toEqual({
+      firstDue: {
+        alpha: { observed_head: 'c2', first_due_at: 'expected' },
+        beta: { observed_head: null, first_due_at: 'expected' },
+        gamma: { observed_head: null, first_due_at: 'expected' },
+      },
+      dueMarkers: ['beta/freshness'],
+      status: [['alpha', 'c1', 0]],
+      host: [['alpha', 'c1'], ['beta', null], ['default', null], ['gamma', null]],
+      afterPrune: ['alpha/full'],
+      unsettled: ['alpha/full', 'alpha/freshness'],
+      settled: ['alpha/full'],
     });
     return observed;
   });

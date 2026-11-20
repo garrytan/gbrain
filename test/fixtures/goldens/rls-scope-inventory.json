@@ -3958,6 +3958,17 @@
         ],
         "flagOnScopes": []
       },
+      "readFirstDue#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readFolderAccess#no-readers": {
         "flagOffLanes": [
           "pool"
@@ -6406,6 +6417,7 @@
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "readFieldUsageSamples": "none",
+        "readFirstDue": "none",
         "readFolderAccess": "none",
         "readGitHoldRecords": "none",
         "readGitHoldReportInputs": "none",

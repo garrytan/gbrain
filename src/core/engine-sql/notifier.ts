@@ -378,6 +378,25 @@ export async function settleFreshnessMarker(exec: RawExec, sourceId: string, gen
              OR ($3::text IS NOT NULL AND s.last_commit = $3::text))`, [sourceId, generation, checkoutHead]);
 }
 
+/** One source's persisted first due time (`readFirstDue`): the notifier row's observed head and due time. */
+export interface FirstDueRow { source_id: string; observed_head: string | null; first_due_at: unknown }
+
+/**
+ * Per source of `sourceIds` that exists: the notifier row's observed head, and the earlier of its first_due_at (when
+ * the row is not idle) and the oldest due freshness marker's, both of the source's current incarnation only.
+ * sync-pending.ts readFirstDue sent this statement through `executeRaw`; the SQL text is its, unchanged.
+ */
+export async function readFirstDue(exec: RawExec, sourceIds: string[]): Promise<FirstDueRow[]> {
+  return exec.executeRaw<FirstDueRow>(
+    `SELECT s.id AS source_id, n.observed_head,
+              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
+                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
+                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
+         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+        WHERE s.id = ANY($1::text[])`, [sourceIds]);
+}
+
 /** The source's markers as the sync status notifier block lists them, oldest first_due_at first. */
 export async function listSourceWantedMarkers(exec: RawExec, sourceId: string): Promise<PendingWantedMarker[]> {
   const rows = await exec.executeRaw<Record<string, unknown>>(

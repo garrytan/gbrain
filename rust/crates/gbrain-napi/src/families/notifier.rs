@@ -213,6 +213,19 @@ impl Brain {
         })
     }
 
+    /// `readFirstDue(sourceIds)`: per source, the notifier's observed head and first due time.
+    #[napi]
+    pub fn read_first_due<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<String> = required(source_ids, "readFirstDue sourceIds")?;
+            s.read_first_due(&ids)
+        })
+    }
+
     /// `pruneSatisfiedWantedMarkers(sourceIds)`: deletes the markers whose head the source reached.
     #[napi]
     pub fn prune_satisfied_wanted_markers<'env>(

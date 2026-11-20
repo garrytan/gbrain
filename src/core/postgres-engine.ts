@@ -1477,6 +1477,7 @@ export class PostgresEngine implements BrainEngine {
   async listSourceWantedMarkers(sourceId: string): Promise<notifierImpl.PendingWantedMarker[]> {
     return notifierImpl.listSourceWantedMarkers(this.autocommitSql, sourceId);
   }
+  async readFirstDue(sourceIds: string[]): Promise<notifierImpl.FirstDueRow[]> { return notifierImpl.readFirstDue(this.autocommitSql, sourceIds); }
 
   async listSourceLocalPaths(): Promise<string[]> {
     return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));

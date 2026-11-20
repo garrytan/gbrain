@@ -649,6 +649,7 @@ export const RUST_ENGINE_MEMBERS = {
   clearWantedMarker: 'persistence_journal',
   settleFreshnessMarker: 'persistence_journal',
   listSourceWantedMarkers: 'persistence_journal',
+  readFirstDue: 'persistence_journal',
   completeHousekeepingTurn: 'persistence_journal',
   readReceiptBudget: 'persistence_journal',
   listCompactableReceipts: 'persistence_journal',

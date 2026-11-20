@@ -959,6 +959,17 @@ const PINS: Pin[] = [
     case: { method: 'listSlugAliases', variant: 'default', run: e => e.listSlugAliases('default') },
     texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
   },
+  {
+    from: 'src/core/sync-pending.ts:106 readFirstDue (at 4e39797ed0)',
+    case: { method: 'readFirstDue', variant: 'default', run: e => e.readFirstDue(['default']) },
+    texts: [`SELECT s.id AS source_id, n.observed_head,
+              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
+                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
+                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
+         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+        WHERE s.id = ANY($1::text[])`],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
