@@ -85,6 +85,17 @@ function deleteFloor(sourceId: string, why: string, held = false): OperationErro
 const stopsRun = (error: unknown) => runScoped(error) || error instanceof AppleContactsShapeDriftError
   || (error instanceof OperationError && error.code.startsWith('apple_contacts_'));
 
+/** The snapshot's delete floor, checked before anything is written. */
+async function checkSnapshotFloor(sourceId: string, owned: number, live: number, deletes: number): Promise<void> {
+  if (owned === 0) return;
+  if (live === 0) throw deleteFloor(sourceId, `the snapshot holds no contact with an email or a phone while the source owns ${owned} contact(s).`);
+  if (deletes >= owned) throw deleteFloor(sourceId, `the snapshot would delete every one of the ${owned} contacts the source owns.`);
+  const { massReconcileAllowed } = await import('../../commands/sync.ts');
+  if (deletes > owned * APPLE_CONTACTS_DELETE_FLOOR && !massReconcileAllowed()) {
+    throw deleteFloor(sourceId, `the snapshot would delete ${deletes} of the ${owned} contacts the source owns (more than ${APPLE_CONTACTS_DELETE_FLOOR * 100}%).`);
+  }
+}
+
 export async function runAppleContactsSync(engine: BrainEngine, sourceId: string, cfg: AppleContactsSourceConfig, opts: SyncOpts, deps: AppleContactsSyncDeps = {}): Promise<SyncResult> {
   if ((opts as SyncOpts & { resetCheckpoint?: boolean }).resetCheckpoint) {
     throw new OperationError('invalid_params', '--reset-checkpoint does not apply to an Apple Contacts source.',
@@ -245,12 +256,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     const blank = new Set(upserts.filter(i => !renderAppleContactPage(appleContactRender(i.contact), false, cfg.contactsDir)).map(i => i.id));
     const deletes = new Set([...items.values()].filter(i => (i.op === 'delete' || blank.has(i.id)) && owned.has(i.id)).map(i => i.id));
     if (meta.full) for (const id of owned) if (!items.has(id) || items.get(id)!.op === 'delete') deletes.add(id);
-    if (owned.size > 0 && upserts.length === blank.size) throw deleteFloor(sourceId, `the snapshot holds no contact with an email or a phone while the source owns ${owned.size} contact(s).`);
-    if (owned.size > 0 && deletes.size >= owned.size) throw deleteFloor(sourceId, `the snapshot would delete every one of the ${owned.size} contacts the source owns.`);
-    const { massReconcileAllowed } = await import('../../commands/sync.ts');
-    if (owned.size > 0 && deletes.size > owned.size * APPLE_CONTACTS_DELETE_FLOOR && !massReconcileAllowed()) {
-      throw deleteFloor(sourceId, `the snapshot would delete ${deletes.size} of the ${owned.size} contacts the source owns (more than ${APPLE_CONTACTS_DELETE_FLOOR * 100}%).`);
-    }
+    await checkSnapshotFloor(sourceId, owned.size, upserts.length - blank.size, deletes.size);
     if (!meta.full) log(`[apple-contacts] ${sourceId}: the snapshot did not end with full:true; nothing is deleted for being absent and no person-page fact is retired`);
     for (const change of upserts) pending.delete(change.id);
     for (const change of upserts) {
