@@ -645,7 +645,7 @@ src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
-src/core/persistence/memory-prepare.ts	execute_raw	3
+src/core/persistence/memory-prepare.ts	execute_raw	2
 src/core/persistence/memory-proposals.ts	execute_raw	13
 src/core/persistence/mirror-read-only.ts	execute_raw	3
 src/core/persistence/moved-pages.ts	execute_raw	7

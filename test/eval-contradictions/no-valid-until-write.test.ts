@@ -96,7 +96,6 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/persistence/canonical-projections.ts',
   'src/core/persistence/facts-prepare.ts', // #7214: a published supersession closes the retired interval (supersededValidUntil)
   'src/core/persistence/loop-fact-retirement.ts',
-  'src/core/persistence/memory-prepare.ts', // #7214: remember (replaces or cosine) closes the retired interval (supersededValidUntil)
   'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',

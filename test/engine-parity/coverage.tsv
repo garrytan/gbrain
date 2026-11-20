@@ -901,7 +901,7 @@ readMemberPageWithdrawal	facts_trust	yes	2	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
 readReplacementTarget	facts_trust	yes	4	no	yes	yes	serves
 readPairFactRow	facts_trust	yes	2	no	yes	yes	serves
-expireSupersededFact	facts_trust	yes	3	no	yes	yes	serves
+expireSupersededFact	facts_trust	yes	4	no	yes	yes	serves
 restoreSupersededFact	facts_trust	yes	2	no	yes	yes	serves
 readFactForForget	facts_trust	yes	3	no	yes	yes	serves
 expireFactSuperseded	facts_trust	yes	3	no	yes	yes	serves

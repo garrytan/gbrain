@@ -207,8 +207,8 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       id = inserted.id;
     }
     if (status === 'superseded') {
-      await tx.executeRaw(`UPDATE facts SET expired_at=now(),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until)
-      WHERE id=$1 AND source_id=$2 AND expired_at IS NULL`, [decision.candidate!.id, row.source_id, id, retiredUntil]);
+      // retiredUntil is set for a superseded status, so the member ends the old fact there, as the statement it replaced did.
+      await tx.expireSupersededFact({ oldId: Number(decision.candidate!.id), sourceId: row.source_id, newId: id, until: retiredUntil!.toISOString() });
       noteBelief({ kind: 'superseded', oldId: Number(decision.candidate!.id), newId: id });
     }
     const contestedBy = contestedOld ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: contestedOld.id,

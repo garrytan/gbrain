@@ -8,9 +8,10 @@
  *    new one active; a remember that names a replaced fact answers target_superseded, one that names a fact that is gone
  *    answers not_found, one that changes the visibility answers replaces_visibility_mismatch, each saving nothing. The answers
  *    and the rows are equal on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
- *    GBRAIN_TEST_RUST_ARM=1), except that a Rust brain stops the first case at the raw statement that ends the old fact.
+ *    GBRAIN_TEST_RUST_ARM=1), the Rust arm included: both cases run whole there.
  *  - Regression: readReplacementTarget and readFactVisibility refused on a Rust brain, so every remember that replaces a fact
- *    stopped before it read its target. The refusal case now runs whole on Rust.
+ *    stopped before it read its target; then the publication ended the old fact with a raw UPDATE (memory-prepare.ts),
+ *    which a Rust brain refuses, so the write never finished (`unavailable`). It now runs through expireSupersededFact.
  *  - Why existing coverage misses it: test/engine-parity/remember-whole.test.ts remembers claims that replace nothing, and
  *    test/engine-parity/remember-members.test.ts drives the members one by one.
  *  - Seam: none. The remember handler runs whole on the arm's engine with the persistence consumer it starts; the holding page
@@ -50,9 +51,8 @@ async function remember(ctx: OperationContext, fact: string, extra: R = {}): Pro
   } catch (e) {
     const err = e as { code?: string; message: string };
     // An engine refusal reaches the caller with its frozen wire code; turn it back into the typed refusal so the
-    // harness counts the case as stopped there. `unavailable` is a write the consumer could not finish: the raw statement
-    // that ends a replaced fact (src/core/persistence/memory-prepare.ts), which a Rust brain refuses (raw_sql).
-    if (err.code === 'unavailable') throw Object.assign(new Error(err.message), { code: 'engine_capability_missing', reason: 'raw_sql' });
+    // harness counts the case as stopped there. A write the consumer could not finish (`unavailable`) is not turned
+    // back: no statement on this path is raw SQL any more, so a Rust brain that cannot finish it fails the case.
     if ((e as { reason?: unknown }).reason !== undefined && err.code !== 'invalid_params') {
       throw Object.assign(new Error(err.message), { code: 'engine_capability_missing', reason: (e as { reason?: unknown }).reason });
     }
@@ -76,10 +76,9 @@ function ctxFor(engine: BrainEngine): OperationContext {
 }
 
 describe('engine parity: a whole remember that replaces an earlier fact', () => {
-  // The persistence consumer ends the old fact with a raw statement (src/core/persistence/memory-prepare.ts), which a Rust
-  // brain refuses (raw_sql), so on the Rust arm this case stops there; the reads before it are served.
+  // The persistence consumer ends the old fact through expireSupersededFact, so on the Rust arm this case runs whole.
   parityTest('remember with replaces saves the new claim, ends the old fact and links it to the new one', {
-    methods: ['readReplacementTarget', 'readFactVisibility', 'listFactsForPage', 'getPage'],
+    methods: ['readReplacementTarget', 'readFactVisibility', 'expireSupersededFact', 'listFactsForPage', 'getPage'],
     timeout: 180_000,
   }, async (engine) => {
     opened.push(engine);
