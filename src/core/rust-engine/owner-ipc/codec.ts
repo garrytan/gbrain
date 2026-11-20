@@ -11,6 +11,7 @@
  * turns a void callback into a callback id, the owner refuses the rest).
  */
 import { OperationError } from '../../ops/contract.ts';
+import { guardedBodySite, guardSegmentedBody, type SegmentedBodyField } from '../../page-body/page-shape.ts';
 import { ReadDeadlineError } from '../../read-deadline.ts';
 import { StatementDeadlineError } from '../../statement-deadline.ts';
 
@@ -154,6 +155,9 @@ export function encodeValue(value: unknown, opts: EncodeOptions = {}, path = 'va
     let tagged = false;
     for (const key of Object.keys(object)) {
       if (key === '$t') tagged = true;
+      // A segmented page's body fields are getters that throw page_body_segmented: send the guard, never call it.
+      const guard = guardedBodySite(Object.getOwnPropertyDescriptor(object, key)?.get);
+      if (guard !== undefined) { setOwn(out, key, { $t: 'guard', site: guard }); continue; }
       setOwn(out, key, encodeValue((object as Record<string, unknown>)[key], opts, `${path}.${key}`, seen));
     }
     return tagged ? { $t: 'obj', v: out } : out;
@@ -206,9 +210,20 @@ function decodeTagged(wire: { [key: string]: Wire }, opts: DecodeOptions): unkno
   }
 }
 
+const GUARDED_FIELDS: ReadonlySet<string> = new Set<SegmentedBodyField>(['compiled_truth', 'timeline', 'content']);
+
 function decodePlain(wire: { [key: string]: Wire }, opts: DecodeOptions): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(wire)) setOwn(out, key, decodeValue(wire[key], opts));
+  const guards: Array<[SegmentedBodyField, string]> = [];
+  for (const key of Object.keys(wire)) {
+    const value = wire[key];
+    const isGuard = value !== null && typeof value === 'object' && !Array.isArray(value) && value.$t === 'guard'
+      && typeof value.site === 'string' && GUARDED_FIELDS.has(key);
+    if (isGuard) guards.push([key as SegmentedBodyField, String((value as { site: Wire }).site)]);
+    setOwn(out, key, isGuard ? undefined : decodeValue(value, opts));
+  }
+  // The guarded body fields throw page_body_segmented again, in the place they held (slug and source read at throw time).
+  for (const [field, site] of guards) guardSegmentedBody(out, site, [field]);
   return out;
 }
 
