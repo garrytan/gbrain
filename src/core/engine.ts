@@ -20,7 +20,7 @@ import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRo
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia, JobPrincipalKind } from './engine-sql/access-control.ts';
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from './engine-sql/access-setup.ts';
-import type { FactsFencePagesQuery, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
+import type { FactsFencePagesQuery, SweepPageRefRow, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
@@ -4230,6 +4230,8 @@ export interface BrainEngine {
   listSweepStalePages(q: SweepStalePagesQuery): Promise<SweepStalePageRow[]>;
   /** Of the sweep's deferred segmented `slugs`, those still recent and stale. */
   listSweepDeferredPages(q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]>;
+  /** The live pages of any source whose slug is in `slugs` (the links pass's refs), in no set order. */
+  listPageRefsForSlugs(slugs: readonly string[]): Promise<SweepPageRefRow[]>;
   /**
    * The open pages of `sources` less each excluded prefix (access/open-pages.ts): live pages the empty-identity
    * member-access floor admits, grouped by source, top-level folder, type and whether the privacy part admits them.

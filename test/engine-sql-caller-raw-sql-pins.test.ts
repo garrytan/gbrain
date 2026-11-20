@@ -856,6 +856,12 @@ const PINS: Pin[] = [
         AND slug = ANY($3::text[])`],
   },
   {
+    from: 'src/core/link-reconciliation.ts:442 lookupRefsForSlugs (the links and timeline pass\'s page refs, at 932324b281)',
+    case: { method: 'listPageRefsForSlugs', variant: 'default', run: e => e.listPageRefsForSlugs(['a', 'b']) },
+    texts: [`SELECT slug, source_id, type, knowledge_revision FROM pages
+        WHERE deleted_at IS NULL AND slug IN ($1, $2)`],
+  },
+  {
     from: 'src/core/access/open-pages.ts:187 openPages (the open-page count, rendered in the pinned access context)',
     case: { method: 'countOpenPages', variant: 'default', run: e => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }]) },
     texts: () => [`SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,

@@ -50,6 +50,13 @@ pub struct SweepDeferredPagesSpec {
     pub slugs: Vec<String>,
 }
 
+/// `listPageRefsForSlugs({ slugs })`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageRefsForSlugsSpec {
+    pub slugs: Vec<String>,
+}
+
 /// `$n::timestamptz` of an ISO string; `invalid_argument` for any other shape.
 fn since_us(op: &str, text: &str) -> Result<i64> {
     parse_iso(text).ok_or_else(|| {
@@ -157,5 +164,35 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `listPageRefsForSlugs`: the live pages of any source whose slug is in `slugs`, by source then slug:
+    /// `{ slug, source_id, type, knowledge_revision }`.
+    pub fn list_page_refs_for_slugs(&self, spec: &PageRefsForSlugsSpec) -> Result<Vec<Value>> {
+        let op = "listPageRefsForSlugs";
+        for slug in &spec.slugs {
+            no_nul(op, &[("slug", slug)])?;
+        }
+        if spec.slugs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: HashSet<&str> = spec.slugs.iter().map(String::as_str).collect();
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none() && wanted.contains(p.slug.as_str()))
+            .collect();
+        pages.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
+        Ok(pages
+            .into_iter()
+            .map(|p| {
+                json!({
+                    "slug": p.slug,
+                    "source_id": p.source_id,
+                    "type": p.page_type,
+                    "knowledge_revision": p.knowledge_revision,
+                })
+            })
+            .collect())
     }
 }

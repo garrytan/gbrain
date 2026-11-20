@@ -3397,6 +3397,17 @@
         ],
         "flagOnScopes": []
       },
+      "listPageRefsForSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPages#default": {
         "flagOffLanes": [
           "pool"
@@ -8219,6 +8230,7 @@
         "listOwnerRecoveryHeads": "none",
         "listPageContentHashes": "none",
         "listPageRefsByIds": "none",
+        "listPageRefsForSlugs": "none",
         "listPageStatusByRef": "none",
         "listPageTypePairs": "none",
         "listPages": "direct",

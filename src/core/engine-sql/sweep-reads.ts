@@ -27,6 +27,9 @@ export interface SweepDeferredPagesQuery { sourceId: string; since: string; slug
  */
 export interface SweepStalePageRow { slug: string; read_at: string; updated_at_iso: string; body_storage: string | null; body_bytes: number | null }
 
+/** A live page found by slug (`listPageRefsForSlugs`): its source, type and knowledge revision. */
+export interface SweepPageRefRow { slug: string; source_id: string; type: string; knowledge_revision: string }
+
 /** A deferred segmented page that is still stale: its slug and `updated_at` in full-µs UTC. */
 export interface SweepDeferredPageRow { slug: string; updated_at_iso: string }
 
@@ -92,4 +95,19 @@ export async function listSweepStalePages(exec: SweepReadsExec, q: SweepStalePag
 export async function listSweepDeferredPages(exec: SweepReadsExec, q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]> {
   if (q.slugs.length === 0) return [];
   return exec.executeRaw<SweepDeferredPageRow>(SWEEP_DEFERRED_PAGES_SQL, [q.sourceId, q.since, [...q.slugs]]);
+}
+
+/**
+ * The links and timeline pass's page refs: the live pages of any source whose slug is in `slugs`, in no set order. The
+ * slugs go 200 to a statement (the text link-reconciliation.ts lookupRefsForSlugs ran at 932324b281).
+ */
+export async function listPageRefsForSlugs(exec: SweepReadsExec, slugs: readonly string[]): Promise<SweepPageRefRow[]> {
+  const out: SweepPageRefRow[] = [];
+  for (let i = 0; i < slugs.length; i += 200) {
+    const chunk = slugs.slice(i, i + 200);
+    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
+    out.push(...await exec.executeRaw<SweepPageRefRow>(`SELECT slug, source_id, type, knowledge_revision FROM pages
+        WHERE deleted_at IS NULL AND slug IN (${placeholders})`, chunk));
+  }
+  return out;
 }

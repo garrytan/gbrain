@@ -15,11 +15,11 @@
  *    fence also reads the purge tombstones (facts/purge-overlay.ts), a different path from the sweep. The sweep is the
  *    real runMaintenanceSweep.
  *
- * Known stop on Rust: past these reads the sweep still reaches raw SQL. Pass 1 stops in the held-fact move
- * (cycle/extract-facts.ts moveHeldFacts -> facts/held-fact-move.ts planHeldMoves), pass 2 in the link-ref lookup
- * (link-reconciliation.ts lookupRefsForSlugs). The sweep catches each refusal and skips the pass, so on Rust the case
- * pins the exact skip list and then ends on the refusal it caught: the harness counts it stopped, and the pin fails as
- * soon as either pass runs, so the list must shrink with the fix.
+ * Known stop on Rust: past these reads pass 1 still reaches raw SQL, in the held-fact move
+ * (cycle/extract-facts.ts moveHeldFacts -> facts/held-fact-move.ts planHeldMoves). The sweep catches the refusal and
+ * skips the pass, so on Rust the first case pins the exact skip list and then ends on the refusal it caught: the
+ * harness counts it stopped, and the pin fails as soon as pass 1 runs, so the list must shrink with the fix. Pass 2
+ * (links and timeline) runs on every arm; the second case holds it equal.
  */
 import { describe, expect } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -46,7 +46,7 @@ const FENCED_BODY = [
 const FENCED_TIMELINE = '- **2025-02-03** | joined [[companies/widget-co]] as an advisor';
 
 /** The passes the sweep still skips on Rust, each on a raw-SQL refusal it caught (see the known stop above). */
-const RUST_KNOWN_STOP = ['facts_fence_error', 'links_timeline_error'];
+const RUST_KNOWN_STOP = ['facts_fence_error'];
 
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
@@ -130,6 +130,39 @@ describe('engine parity: maintenance sweep reads', () => {
       expect(timelineTotal).toBeGreaterThan(0);
       expect(stored['people/grace-example']?.links.some(l => l.startsWith('companies/widget-co|'))).toBe(true);
       return { links, timeline, facts, linkTotal, timelineTotal, stored };
+    },
+  );
+
+  // The links and timeline pass alone: no page holds a facts fence, so pass 1 reads its scan and stops. Every arm must
+  // extract the same links and timeline entries and skip nothing with an error reason (the bench reads these counts).
+  parityTest(
+    'sweep --once after import extracts every link and timeline entry through the links and timeline pass, with no error skip',
+    { methods: ['listSweepStalePages', 'getLinks', 'getTimeline'], timeout: 120_000 },
+    async (engine) => {
+      const pages = fixturePages();
+      await importAll(engine, pages);
+
+      const skipped = new Map<string, number>();
+      let links = 0, timeline = 0, sweeps = 0;
+      for (; sweeps < 10; sweeps++) {
+        const report = await runMaintenanceSweep(engine, { budgetMs: 60_000, batchLimit: 8 });
+        for (const s of report.skipped) skipped.set(s.reason, (skipped.get(s.reason) ?? 0) + s.count);
+        links += report.linksExtracted; timeline += report.timelineExtracted;
+        if (report.linksExtracted === 0 && report.timelineExtracted === 0) break;
+      }
+      expect([...skipped.keys()].filter(reason => reason.endsWith('_error')).sort()).toEqual([]);
+
+      const stored: Record<string, { links: string[]; timeline: string[] }> = {};
+      for (const { slug } of pages) {
+        const outbound = (await engine.getLinks(slug)).map(l => `${l.to_slug}|${l.link_type}`).sort();
+        const entries = (await engine.getTimeline(slug)).map(t => `${String(t.date).slice(0, 10)}|${t.summary}`).sort();
+        if (outbound.length > 0 || entries.length > 0) stored[slug] = { links: outbound, timeline: entries };
+      }
+      const linkTotal = Object.values(stored).reduce((n, s) => n + s.links.length, 0);
+      const timelineTotal = Object.values(stored).reduce((n, s) => n + s.timeline.length, 0);
+      expect(linkTotal).toBeGreaterThan(0);
+      expect(timelineTotal).toBeGreaterThan(0);
+      return { links, timeline, linkTotal, timelineTotal, sweeps, stored };
     },
   );
 });
