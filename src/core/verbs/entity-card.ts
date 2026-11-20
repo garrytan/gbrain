@@ -35,16 +35,14 @@ import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { isIdentityEntity, slugify } from '../entities/resolve.ts';
-import { nameVariantsEnabled, readPossibleDuplicates, resolveNameVariant, type PossibleDuplicate } from './entity-variants.ts';
+import { lookupReadFailed, nameVariantsEnabled, readPossibleDuplicates, resolveNameVariant, type PossibleDuplicate } from './entity-variants.ts';
 import { readTextMentions, type TextMentions } from './entity-text-mentions.ts';
 import type { NameMatchKind } from '../entities/name-variants.ts';
 import { exactMatchPreference } from '../entities/exact-match-preference.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { DegradedStageEntry, Link, SearchResult } from '../types.ts';
-import { isTimeoutError, pushDegraded } from '../search/hybrid/degraded.ts';
-import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { NewerMentions } from '../mentions/newer-mentions.ts';
 import { linkableTypesFor, loadLinkableTypes, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
@@ -314,17 +312,6 @@ export type EntityCandidates =
   | { kind: 'miss'; suggestions: EntitySuggestion[]; ambiguous?: true }
   | { kind: 'withheld' };
 
-/**
- * A lookup read failed: the arm contributes nothing, and `degraded` says so (a miss is then not proof the entity is
- * absent). The Rust engine's typed capability refusal is not a database failure and ends the call; the raw error text goes
- * to stderr only, never onto the wire.
- */
-function lookupReadFailed(err: unknown, degraded: DegradedStageEntry[] | undefined): void {
-  rethrowCapabilityRefusal(err);
-  warnOncePerProcess('entity-lookup-failed', `[gbrain] entity lookup read failed (reported as degraded): ${err instanceof Error ? err.message : String(err)}`);
-  if (degraded) pushDegraded(degraded, 'entity_lookup_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
-}
-
 /** Resolve a trimmed, non-empty name to its candidates. A failed read is reported through `opts.degraded`, never as a miss. */
 export async function selectEntityCandidates(
   engine: BrainEngine,
@@ -434,7 +421,7 @@ export async function selectEntityCandidates(
     const variants = opts.variants && await nameVariantsEnabled(engine)
       ? await resolveNameVariant<CardPageRow>(engine, sourceId, trimmed, {
         selectColumns: CARD_ROW_COLUMNS, privatePredicate, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' })
+        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '', degraded: opts.degraded })
       : { matches: [] };
     const variantSuggestions = (matches: typeof variants.matches): EntitySuggestion[] => matches.map(m => ({
       slug: m.row.slug, title: m.row.title ?? m.row.slug, create_safety: 'exists', source_id: sourceId }));

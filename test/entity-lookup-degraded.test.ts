@@ -96,6 +96,38 @@ describe('arm 2 (exact title / slug) read fails', () => {
   });
 });
 
+describe('the name-variant arm read fails', () => {
+  // "Alice Exampel" matches no page by alias, title or slug; only the variant arm (a one-letter surname typo) finds Alice Example.
+  test('variants on, the precision arms miss, the variant read throws: found:false carries the marker', async () => {
+    const res = await card(entityLookupFault(engine, { variants: () => new Error(FAULT_MESSAGE) }), 'Alice Exampel', true);
+    expect(res.found).toBe(false);
+    expect(res.degraded).toEqual([{ stage: 'entity_lookup_failed', reason: 'provider_error' }]);
+  });
+
+  test('a variant read statement timeout is reason timeout', async () => {
+    const res = await card(entityLookupFault(engine, { variants: () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }) }), 'Alice Exampel', true);
+    expect(res.degraded).toEqual([{ stage: 'entity_lookup_failed', reason: 'timeout' }]);
+  });
+
+  test('MCP: the miss is marked degraded', async () => {
+    const out = await mcp(entityLookupFault(engine, { variants: () => new Error(FAULT_MESSAGE) }), { name: 'Alice Exampel' });
+    expect(JSON.parse(out.content[0]!.text).found).toBe(false);
+    expect(stampOf(out)).toContain('entity_lookup_failed');
+  });
+
+  test('healthy variant read: the same name resolves as a variant and carries no marker', async () => {
+    const res = await card(engine, 'Alice Exampel', true);
+    expect(res.found).toBe(true);
+    expect(res.card?.match?.kind).toBe('typo');
+    expect(res.degraded).toBeUndefined();
+  });
+
+  test('the typed capability refusal ends the call', async () => {
+    const refusal = Object.assign(new Error('executeRaw is not served by this engine'), { code: 'engine_capability_missing', reason: 'raw_sql' });
+    await expect(card(entityLookupFault(engine, { variants: () => refusal }), 'Alice Exampel', true)).rejects.toBe(refusal);
+  });
+});
+
 describe('the alias arm and the alias hydrate read', () => {
   beforeEach(async () => {
     await engine.setPageAliases('people/alice-example', 'default', ['ally']);

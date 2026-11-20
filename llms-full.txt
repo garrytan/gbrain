@@ -7838,7 +7838,7 @@ most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
 `create_safety` hints. A miss is an answer only when every lookup read ran: when
-a page-lookup read fails (the alias, exact title / slug or alias-hydrate read),
+a page-lookup read fails (the alias, exact title / slug, alias-hydrate or name-variant read),
 the call still answers (`found: false` with whatever the other reads found, or
 the best hit they found) and is marked degraded with the stage
 `entity_lookup_failed` (reason `timeout` or `provider_error`) in

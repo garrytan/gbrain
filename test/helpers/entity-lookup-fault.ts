@@ -16,9 +16,12 @@ export interface EntityLookupFault {
   aliases?: () => Error;
   /** The read that hydrates alias-resolved slugs arm 2 did not fetch. */
   hydrate?: () => Error;
+  /** The name-variant arm's candidate read over `pages` (`probe_hits`). */
+  variants?: () => Error;
 }
 
 const ARM2 = /lower\(title\) = \$2/;
+const VARIANTS = /probe_hits/;
 const HYDRATE = /AND slug = ANY\(\$2::text\[\]\)/;
 
 export function entityLookupFault(engine: BrainEngine, fault: EntityLookupFault): BrainEngine {
@@ -28,6 +31,7 @@ export function entityLookupFault(engine: BrainEngine, fault: EntityLookupFault)
         return async (sql: string, params?: unknown[]) => {
           if (fault.arm2 && ARM2.test(sql)) throw fault.arm2();
           if (fault.hydrate && HYDRATE.test(sql)) throw fault.hydrate();
+          if (fault.variants && VARIANTS.test(sql)) throw fault.variants();
           return target.executeRaw(sql, params);
         };
       }
