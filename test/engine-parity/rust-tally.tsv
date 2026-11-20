@@ -97,7 +97,7 @@ test/engine-parity/retrieval-coverage.test.ts	12	1
 test/engine-parity/search-reads.test.ts	15	1
 test/engine-parity/search.test.ts	17	2
 test/engine-parity/segmented-body.test.ts	17	0
-test/engine-parity/session-state-cap.test.ts	11	0
+test/engine-parity/session-state-cap.test.ts	13	0
 test/engine-parity/session-state.test.ts	7	0
 test/engine-parity/shared-skill-members.test.ts	10	1
 test/engine-parity/source-last-commit.test.ts	1	0
