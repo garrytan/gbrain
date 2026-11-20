@@ -642,6 +642,8 @@ export const RUST_ENGINE_MEMBERS = {
   readHeldPageRows: 'persistence_journal',
   readHeldCoverageRows: 'persistence_journal',
   listFenceHoldRows: 'persistence_journal',
+  readReasonPurgeTombstones: 'facts',
+  readSourcePurgeEpoch: 'facts',
   hasPersistenceTable: 'persistence_journal',
   listManagedRootBindings: 'persistence_journal',
   readGraduationGateRow: 'persistence_journal',

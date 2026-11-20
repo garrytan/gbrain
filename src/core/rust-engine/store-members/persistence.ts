@@ -19,6 +19,7 @@ import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persist
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { ReasonPurgeTombstone } from '../../engine-sql/sync-reason-reads.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
@@ -71,6 +72,13 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
 
 /** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
 export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
+
+/** The store keeps no change reasons and purges none, so no (commit, path) is tombstoned. */
+export const readReasonPurgeTombstones: StoreMember<[sourceId: string], ReasonPurgeTombstone[]> = async () => [];
+
+/** The store purges no facts, so a known source's purge epoch stays 0; an unknown source has none (null). */
+export const readSourcePurgeEpoch: StoreMember<[sourceId: string], string | number | null> = async (brain, sourceId) =>
+  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.getSource(sourceId))) ? 0 : null;
 
 
 /** The request a principal admitted under `requestId`, or null. */

@@ -124,6 +124,7 @@ import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.t
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
 import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
+import type { ReasonPurgeTombstone } from './engine-sql/sync-reason-reads.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
@@ -3635,6 +3636,10 @@ export interface BrainEngine {
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
   /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
+  /** Every purged change reason's (commit, path) of one source; a sync import never stamps them again (SQL in engine-sql/sync-reason-reads.ts). */
+  readReasonPurgeTombstones(sourceId: string): Promise<ReasonPurgeTombstone[]>;
+  /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
+  readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */

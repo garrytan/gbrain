@@ -36,6 +36,16 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
+    from: 'src/core/reason-trailers.ts:151 scanSyncReasons',
+    case: { method: 'readReasonPurgeTombstones', variant: 'default', run: e => e.readReasonPurgeTombstones('default') },
+    texts: ['SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/reason-trailers.ts:262 cachedSyncReasonScan',
+    case: { method: 'readSourcePurgeEpoch', variant: 'default', run: e => e.readSourcePurgeEpoch('default') },
+    texts: ['SELECT purge_epoch FROM sources WHERE id = $1'],
+  },
+  {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary',
     case: { method: 'listAppliedPolicyRevisions', variant: 'default', run: e => e.listAppliedPolicyRevisions() },
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
