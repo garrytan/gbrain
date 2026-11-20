@@ -139,7 +139,7 @@ src/commands/extract-mentions-explain.ts	execute_raw	6
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
-src/commands/extract.ts	execute_raw	3
+src/commands/extract.ts	execute_raw	2
 src/commands/files.ts	execute_raw	4
 src/commands/files.ts	sql_template	4
 src/commands/frontmatter-install-hook.ts	execute_raw	3
