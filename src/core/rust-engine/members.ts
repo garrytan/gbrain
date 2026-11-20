@@ -608,6 +608,18 @@ export const RUST_ENGINE_MEMBERS = {
   listTrustColumns: 'health',
   listTrustClaimTargets: 'sources',
   countClaimLiftedRows: 'pages',
+  listFenceCensusSources: 'sources',
+  readFencePassHorizon: 'health',
+  listFenceCensusPagesById: 'pages',
+  listFenceCensusPagesUpdated: 'pages',
+  listLiveFencePageIds: 'pages',
+  readFenceScanRecord: 'persistence_journal',
+  writeFenceScanRecord: 'persistence_journal',
+  upsertFenceCandidatePart: 'persistence_journal',
+  clearFenceCandidateParts: 'persistence_journal',
+  readFenceTrendRecords: 'persistence_journal',
+  countSegmentedFencePages: 'pages',
+  readBudgetLedgerDay: 'persistence_journal',
 
   // facts: relink attempts (engine-sql/fact-relink-attempts.ts)
   upsertFactRelinkAttempt: 'facts',

@@ -15,8 +15,18 @@ fn an_empty_brain_reports_the_schema_version_and_nothing_else() {
     assert_eq!(store.get_config("version").unwrap().as_deref(), Some("319"));
     assert_eq!(DEFAULT_SCHEMA_VERSION, 319);
     assert_eq!(store.info().schema_version, 319);
+    // A fresh brain also holds the two keys migrations v226 and v227 write on an empty PGLite or Postgres brain: the trust
+    // backfill is done and the write gate's scan baseline is at zero (rust/docs/store/cli-reads-doctor-facts-trust.md).
     let all = store.get_all_config().unwrap();
-    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(
+        all.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "trust.backfill_completed_at",
+            "version",
+            "write_gate.scan_baseline"
+        ],
+        "{all:?}"
+    );
     assert_eq!(store.get_config("missing").unwrap(), None);
     assert_eq!(store.unset_config("missing").unwrap(), 0);
     assert_eq!(
@@ -88,7 +98,7 @@ fn prefix_listing_is_literal_sorted_and_getall_has_everything() {
         "_ is not a wildcard"
     );
     let all = store.get_all_config().unwrap();
-    assert_eq!(all.len(), 6);
+    assert_eq!(all.len(), 8);
     assert_eq!(all["other"], "4");
     let keys: Vec<_> = all.keys().cloned().collect();
     let mut sorted = keys.clone();

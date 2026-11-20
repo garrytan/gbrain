@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1196/1203
+# covered: 1208/1215
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -55,6 +55,7 @@
 # doctor_sync: 3/3
 # doctor_brain: 7/7
 # doctor_terminal: 4/4
+# doctor_fence_census: 12/12
 # doctor_facts_trust: 7/7
 # doctor_sources: 6/6
 # fact_relink_attempts: 3/3
@@ -102,13 +103,13 @@ getPage	pages	yes	117	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	577	yes	yes	yes	serves
+putPage	pages	yes	579	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	182	yes	yes	yes	serves
+softDeletePage	pages	yes	183	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -385,7 +386,7 @@ stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	18	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	9	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	3	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	9	no	yes	yes	serves
@@ -961,7 +962,7 @@ readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
 readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
 listBeliefCoveredSources	doctor_reads_acc	yes	1	no	yes	yes	serves
 listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
-listFenceCandidateRecords	doctor_checkpoints	yes	1	no	yes	yes	serves
+listFenceCandidateRecords	doctor_checkpoints	yes	3	no	yes	yes	serves
 listDerivedOriginParks	doctor_checkpoints	yes	1	no	yes	yes	serves
 listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves
 readSoakCounterRows	doctor_checkpoints	yes	1	no	yes	yes	serves
@@ -992,6 +993,18 @@ readTerminalFailureGroups	doctor_terminal	yes	2	no	yes	yes	serves
 listTerminalFailureBatch	doctor_terminal	yes	2	no	yes	yes	serves
 listOpenPassCheckpointBlockers	doctor_terminal	yes	1	no	yes	yes	serves
 listWorktreeBlockerRequests	doctor_terminal	yes	1	no	yes	yes	serves
+listFenceCensusSources	doctor_fence_census	yes	3	no	yes	yes	serves
+readFencePassHorizon	doctor_fence_census	yes	1	no	yes	yes	serves
+listFenceCensusPagesById	doctor_fence_census	yes	1	no	yes	yes	serves
+listFenceCensusPagesUpdated	doctor_fence_census	yes	1	no	yes	yes	serves
+listLiveFencePageIds	doctor_fence_census	yes	1	no	yes	yes	serves
+readFenceScanRecord	doctor_fence_census	yes	1	no	yes	yes	serves
+writeFenceScanRecord	doctor_fence_census	yes	1	no	yes	yes	serves
+upsertFenceCandidatePart	doctor_fence_census	yes	2	no	yes	yes	serves
+clearFenceCandidateParts	doctor_fence_census	yes	1	no	yes	yes	serves
+readFenceTrendRecords	doctor_fence_census	yes	1	no	yes	yes	serves
+countSegmentedFencePages	doctor_fence_census	yes	1	no	yes	yes	serves
+readBudgetLedgerDay	doctor_fence_census	yes	1	no	yes	yes	serves
 countConversationPipelinePages	doctor_facts_trust	yes	1	no	yes	yes	serves
 listPersistentWriterContention	doctor_facts_trust	yes	1	no	yes	yes	serves
 countRowTrustTiers	doctor_facts_trust	yes	1	no	yes	yes	serves

@@ -38,6 +38,8 @@ import type * as DoctorTerminalSql from './engine-sql/doctor-terminal.ts';
 import type * as DoctorBrainSql from './engine-sql/doctor-brain.ts';
 import type * as DoctorSyncSql from './engine-sql/doctor-sync.ts';
 import type * as DoctorFactsTrustSql from './engine-sql/doctor-facts-trust.ts';
+import type * as FenceCensusSql from './engine-sql/fence-census.ts';
+import type { FileFinding, PageFinding, ScanRecord } from './fence-repair/census-store.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -5413,4 +5415,17 @@ export interface BrainEngine {
   listTrustColumns(): Promise<DoctorFactsTrustSql.TrustColumnRow[]>;
   listTrustClaimTargets(mode: DoctorFactsTrustSql.TrustClaimTargetMode, sourceIds?: readonly string[]): Promise<DoctorFactsTrustSql.TrustClaimTargetRow[]>;
   countClaimLiftedRows(table: DoctorFactsTrustSql.ClaimLiftTable): Promise<number>;
+  // Fence census reads and writes (engine-sql/fence-census.ts).
+  listFenceCensusSources(sourceIds: readonly string[] | null): Promise<FenceCensusSql.FenceCensusSource[]>;
+  readFencePassHorizon(graceMs: number): Promise<string>;
+  listFenceCensusPagesById(sourceId: string, afterId: number, limit: number): Promise<FenceCensusSql.FenceCensusPage[]>;
+  listFenceCensusPagesUpdated(sourceId: string, lower: string, after: { at: string; id: number } | null, limit: number): Promise<FenceCensusSql.FenceCensusPage[]>;
+  listLiveFencePageIds(pageIds: readonly number[]): Promise<number[]>;
+  readFenceScanRecord(op: string, fingerprint: string): Promise<ScanRecord | null>;
+  writeFenceScanRecord(op: string, fingerprint: string, record: ScanRecord): Promise<void>;
+  upsertFenceCandidatePart(op: string, fingerprint: string, ids: { sourceId: string; incarnation: string; key: string }, part: 'page' | 'file', finding: PageFinding | FileFinding): Promise<void>;
+  clearFenceCandidateParts(op: string, fingerprints: readonly string[], part: 'page' | 'file'): Promise<void>;
+  readFenceTrendRecords(op: string, sourceIds: readonly string[], fromDay: string): Promise<FenceCensusSql.FenceTrendRecord[]>;
+  countSegmentedFencePages(sourceIds: readonly string[], walkedSourceIds: readonly string[]): Promise<number>;
+  readBudgetLedgerDay(scope: string, resolver: string, day: string): Promise<FenceCensusSql.BudgetLedgerDayRow | null>;
 }

@@ -476,25 +476,21 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyRust: [],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
-      // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
-      // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // provenance_stamp_drift warns with the refusal of listDriftLiveRows, which refuses on a populated brain and names
+      // the missing write-request attribution in its parenthesis.
+      // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
+      // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
+      // readRawProvenanceGaps counts the gaps in the store.
+      // extract_atoms_backlog, retrieval_reflex_health and text_projection_readiness are gone from this list: the backlog,
+      // projection-queue and reflex reads are served, so those checks report what PGLite reports (doctor-search, slices
+      // 17, 20 and 21). sync_failures is gone as well: the managed-sync failure and orphan reads are served (doctor-sync,
+      // slice 22). trust_scan, trust_tiers and trust_sources_unclaimed are gone too: the takes count is served, and a
+      // fresh Rust brain marks the trust backfill done, as PGLite's migration does.
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
       // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
-      // provenance_stamp_drift warns the same way: listDriftLiveRows refuses on a populated brain and names the
-      // missing write-request attribution in its parenthesis.
-      // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
-      // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
-      // readRawProvenanceGaps counts the gaps in the store.
-      // retrieval_reflex_health is gone from this list: its reads are served (doctor-search, slice 17), so it reports
-      // ok with the same no-socket message as PGLite. text_projection_readiness is gone as well: readProjectionBacklog
-      // counts the projection queue in the store (doctor-search, slice 20). extract_atoms_backlog is gone too:
-      // countAtomExtractionBacklog counts the backlog in the store (doctor-search, slice 21). sync_failures is gone
-      // as well: the managed-sync failure and orphan reads are served (doctor-sync, slice 22).
-      // trust_tiers and trust_sources_unclaimed warn here: their reads are served, but a fresh Rust brain does not mark the
-      // trust backfill done yet, so both report it missing where PGLite passes.
-      untypedWarnings: ['provenance_stamp_drift', 'trust_scan', 'trust_sources_unclaimed', 'trust_tiers'],
+      untypedWarnings: ['provenance_stamp_drift'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path

@@ -23,8 +23,6 @@ The census state is `op_checkpoints` rows in the store's housekeeping key space 
 
 - `readFenceTrendRecords` returns `[]`: the trend rows (`fence-trend`) are written by `recordSyncRunTrend`, `recordWriteTrend` and
   `recordPublicationFenceTrend`, which stay on `executeRaw` (the managed-sync and write paths, which a Rust brain does not run).
-- `listGitSourceHoldRecords` returns `[]`: sync holds are written only by the managed-sync pass. `readGitSourceHolds` (the sync path) keeps
-  its raw read, now built from the same constant; the census reads through the typed `readGitSourceHoldsTyped`.
 - `readBudgetLedgerDay` returns null: `budget_ledger` has no Rust writer, so the fence repair has spent nothing.
 
 ## Differences from PGLite and Postgres

@@ -365,3 +365,26 @@ fn legacy_unknown_rows_count_per_source_within_the_ceilings_and_scope() {
         Vec::<Value>::new()
     );
 }
+
+#[test]
+fn a_fresh_brain_starts_with_the_trust_backfill_done_and_the_write_gate_scan_baseline_at_zero() {
+    let s = brain("trust-baseline");
+    let text = s.get_config("write_gate.scan_baseline").unwrap().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        json!({ "detector_version": 2,
+                "until": { "facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0 } })
+    );
+    // v226 marks the backfill complete on an empty brain, at the store's clock in millisecond ISO form.
+    assert_eq!(
+        s.get_config("trust.backfill_completed_at")
+            .unwrap()
+            .as_deref(),
+        Some("2027-01-15T08:00:00.000Z")
+    );
+    // A page written now is above the baseline ceiling, so it is not legacy.
+    put(&s, "legacy/a", "note");
+    let spec: LegacyUnknownSpec = args(json!({ "ceilings": {
+        "pages": 0, "facts": 0, "takes": 0, "timeline_entries": 0 } }));
+    assert!(s.count_legacy_unknown_by_source(&spec).unwrap().is_empty());
+}

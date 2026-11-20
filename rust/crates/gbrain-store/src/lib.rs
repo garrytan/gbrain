@@ -340,12 +340,27 @@ pub(crate) struct StoredFormat {
 }
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the
+/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the trust backfill
+/// completion and the write-gate scan baseline (what migrations v226 and v227 write on an empty brain), the
 /// `default` source and the shared-skill catalog token secret.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
+    )?;
+    // Migration v226 marks the trust backfill complete on an empty brain (`trust.backfill_completed_at`, millisecond ISO
+    // text), so doctor `trust_tiers` does not ask a fresh brain to run it. A caller's `initial_config` row of the same
+    // key wins.
+    let now = env::iso(env.now_micros());
+    tx.put(
+        &keys::text(keys::CONFIG, &["trust.backfill_completed_at"]),
+        format!("{}Z", &now[..now.len() - 4]).as_bytes(),
+    )?;
+    // Migration v227: no row is older than the write gate, so the legacy trust scan and `trust claim-sources` have
+    // nothing to cover (`write_gate.scan_baseline`).
+    tx.put(
+        &keys::text(keys::CONFIG, &["write_gate.scan_baseline"]),
+        br#"{"detector_version":2,"until":{"facts":0,"pages":0,"takes":0,"timeline_entries":0}}"#,
     )?;
     for (key, value) in &options.initial_config {
         if key.is_empty() || key == "version" {
