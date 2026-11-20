@@ -295,3 +295,76 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     }, 240_000);
   }
 });
+
+/**
+ * Setup writes on a Rust brain, asserted on their own. The suite above treats a refused `import` as a reason to
+ * switch to the mirror brain, so a Rust brain that cannot import at all still passes it; and nothing ran
+ * `sources add` on a Rust brain.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ * 1. Protects: `gbrain import <dir>` and `gbrain sources add <id> --path <dir>` on a Rust brain succeed and print
+ *    the JSON PGLite prints (the first two commands a new Rust brain runs).
+ * 2. Fails when: either command ends in a refusal (today `engine_capability_missing`, member=executeRaw
+ *    capability=raw_sql: the source resolver, managed-mode and sources-ops reads are raw SQL) or answers
+ *    differently from PGLite.
+ * 3. Existing coverage: the suite above records a refused import as state `refused` and moves on; no test runs
+ *    `sources add` on a Rust brain.
+ * 4. Seams: none. Real CLI, the addon `bun run rust:build` writes, skipped without it like the suite above.
+ * Each test gets its own PGLite/Rust pair: after `sources add`, import routes into the sole non-default source,
+ * so one brain cannot hold both checks.
+ */
+describe.skipIf(!HAVE_ADDON)('setup writes succeed on a Rust brain as on a PGLite brain', () => {
+  let setupRoot = '';
+  const pairBrain = (backend: Backend, name: string): Brain => {
+    const home = join(setupRoot, name, 'home');
+    const db = join(setupRoot, name, 'db');
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: backend, database_path: db }));
+    return { backend, home, db };
+  };
+  const shape = (run: Run, brain: Brain) => {
+    const json = parseJson(run.stdout);
+    return { exitCode: run.exitCode, refused: refusedMember(run), json: normalize(json === undefined ? `${run.stdout}\n${run.stderr}` : json, pathsOf(brain)) };
+  };
+
+  beforeAll(() => {
+    setupRoot = mkdtempSync(join(tmpdir(), 'gb-rust-cli-setup-'));
+    root = setupRoot; // cli() runs in root and pathsOf() maps it
+  });
+  afterAll(() => {
+    if (setupRoot) rmSync(setupRoot, { recursive: true, force: true });
+  });
+
+  test('import <fixture> --no-embed --json', async () => {
+    const pg = pairBrain('pglite', 'import-pglite');
+    const rust = pairBrain('rust', 'import-rust');
+    const args = ['import', FIXTURE, '--no-embed', '--json'];
+    const [pgRun, rustRun] = await Promise.all([cli(pg, args), cli(rust, args)]);
+    expect({ exitCode: pgRun.exitCode, refused: refusedMember(pgRun) }).toEqual({ exitCode: 0, refused: null });
+    const got = shape(rustRun, rust);
+    const want = shape(pgRun, pg);
+    expect({ exitCode: got.exitCode, refused: got.refused }).toEqual({ exitCode: 0, refused: null });
+    if (!same(got.json, want.json)) expect(got.json).toEqual(want.json);
+  }, 240_000);
+
+  test('sources add <id> --path <dir> --json, then sources list --json', async () => {
+    const notes = join(setupRoot, 'notes-src');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'note-one.md'), '---\ntitle: Note one\n---\n\nA plain note.\n');
+    const pg = pairBrain('pglite', 'sources-pglite');
+    const rust = pairBrain('rust', 'sources-rust');
+    const add = ['sources', 'add', 'notes', '--path', notes, '--json'];
+    const [pgAdd, rustAdd] = await Promise.all([cli(pg, add), cli(rust, add)]);
+    expect({ exitCode: pgAdd.exitCode, refused: refusedMember(pgAdd) }).toEqual({ exitCode: 0, refused: null });
+    const got = shape(rustAdd, rust);
+    const want = shape(pgAdd, pg);
+    expect({ exitCode: got.exitCode, refused: got.refused }).toEqual({ exitCode: 0, refused: null });
+    if (!same(got.json, want.json)) expect(got.json).toEqual(want.json);
+    const list = ['sources', 'list', '--json'];
+    const [pgList, rustList] = await Promise.all([cli(pg, list), cli(rust, list)]);
+    const gotList = shape(rustList, rust);
+    const wantList = shape(pgList, pg);
+    expect(wantList.exitCode).toBe(0);
+    if (!same(gotList, wantList)) expect(gotList).toEqual(wantList);
+  }, 240_000);
+});

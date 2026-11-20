@@ -19,6 +19,7 @@ import { describe, test as testRaw, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 // PGLite cold start + initSchema in the subprocess runs ~5–20s on loaded
 // machines; the 5s bun default (bunfig timeout is ignored by bun) is too tight.
@@ -34,7 +35,7 @@ const PRESERVED_URL = 'postgresql://gbrain:gbrain@127.0.0.1:9/gbrain_preserved';
 
 async function runCli(
   args: string[],
-  opts: { gbrainHome: string; cwd: string },
+  opts: { gbrainHome: string; cwd: string; env?: Record<string, string> },
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const { spawn } = await import('child_process');
   return new Promise((resolve) => {
@@ -45,6 +46,7 @@ async function runCli(
         PATH: process.env.PATH,
         HOME: process.env.HOME,
         GBRAIN_HOME: opts.gbrainHome,
+        ...opts.env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: opts.cwd,
@@ -139,6 +141,71 @@ describe('#3753 — --force re-init preserves a configured postgres engine', () 
       const cfg = readConfig(home);
       expect(cfg.engine).toBe('postgres');
       expect(cfg.database_url).toBe(PRESERVED_URL);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/**
+ * The same preservation for a configured Rust engine (`engine: 'rust'`, the opt-in store at `database_path`).
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ * 1. Protects: `gbrain init` and `gbrain init --non-interactive` with no engine flag on a brain whose config says
+ *    `engine: 'rust'` keep that engine and store path; they never write a PGLite brain over it.
+ * 2. Fails when: init routes a Rust config into the PGLite default branch (src/commands/init.ts, the
+ *    `isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)` routing), which rewrites config.json to
+ *    engine=pglite at GBRAIN_HOME/.gbrain/brain.pglite and orphans the Rust store; or when --non-interactive
+ *    takes the Postgres branch and stops with "--non-interactive requires --url".
+ * 3. Existing coverage: the #3753 cases above seed only a postgres config, and only with --force; no init test
+ *    seeds a Rust config.
+ * 4. Seams: none. Real CLI subprocess, hermetic GBRAIN_HOME. The repo's built addon is passed when it exists;
+ *    the assertions are on config.json and the PGLite file, so they hold with or without it.
+ * The exit code is left unasserted: whether a re-init on a Rust brain opens the store or only reports it is a
+ * product decision the fix makes.
+ */
+describe('init with no engine flag preserves a configured rust engine', () => {
+  const target = detectAddonTarget();
+  const addon = target ? join(REPO_ROOT, 'rust', 'target', 'addon', `gbrain_engine.${target}.node`) : '';
+  const env: Record<string, string> = addon && existsSync(addon) ? { GBRAIN_RUST_ENGINE_ADDON: addon } : {};
+
+  function makeRustHome(): { home: string; cwd: string; store: string; cleanup: () => void } {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-init-preserve-rust-home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'gbrain-init-preserve-rust-cwd-'));
+    const store = join(home, 'rust-store');
+    mkdirSync(join(home, '.gbrain'));
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'rust', database_path: store }, null, 2));
+    return {
+      home,
+      cwd,
+      store,
+      cleanup: () => {
+        rmSync(home, { recursive: true, force: true });
+        rmSync(cwd, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test('plain init: rust config survives (not rewritten to pglite)', async () => {
+    const { home, cwd, store, cleanup } = makeRustHome();
+    try {
+      await runCli(['init'], { gbrainHome: home, cwd, env });
+      const cfg = readConfig(home);
+      expect({ engine: cfg.engine, database_path: cfg.database_path }).toEqual({ engine: 'rust', database_path: store });
+      expect(existsSync(join(home, '.gbrain', 'brain.pglite'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('init --non-interactive: does not demand a Postgres URL, rust config survives', async () => {
+    const { home, cwd, store, cleanup } = makeRustHome();
+    try {
+      const r = await runCli(['init', '--non-interactive'], { gbrainHome: home, cwd, env });
+      expect(r.stderr).not.toMatch(/--non-interactive requires --url/);
+      const cfg = readConfig(home);
+      expect({ engine: cfg.engine, database_path: cfg.database_path }).toEqual({ engine: 'rust', database_path: store });
+      expect(existsSync(join(home, '.gbrain', 'brain.pglite'))).toBe(false);
     } finally {
       cleanup();
     }
