@@ -177,12 +177,26 @@ export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, 
  * derivation-private (private, privacy alias, readable_by, folder rule), missing or quarantined (factPagesOpenSql, the
  * same pages `gbrain repair open-facts` refuses to open), and that has a page to check: never an unpaged or
  * transcript-lane fact (unpagedFactSql), conversation archive included. FALSE outside such a grant. Source ids passed
- * isValidSourceId, so they embed as literals.
+ * isValidSourceId, so they embed as literals. GST-2979: a held row (a restatement with a visibility proposal) is admitted
+ * only when the grant also reads every copy its proposals name, and a copy that is itself a held row counts only when the
+ * grant reads it by this same rule (the hold chain, followed to its end), so no fact read hands a grant text the page
+ * overlay holds from it (fence-overlay.ts heldRowSql uses this same predicate).
  */
 export function grantedPrivateFactSql(alias: string): string {
   const sources = privateFactSources();
   if (!sources.length) return 'FALSE';
-  return `(${alias}.visibility = 'private' AND ${alias}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(alias)}, false) AND ${factPagesOpenSql(alias)})`;
+  const opens = (a: string) => `(${a}.visibility = 'private' AND ${a}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(a)}, false) AND ${factPagesOpenSql(a)})`;
+  const holds = (p: string) => `${p}.related_table = 'facts' AND ${p}.action IN ('supersede_fact', 'confirm') AND ${p}.before_state->'visibility' IS NOT NULL`;
+  return `(${opens(alias)} AND ${alias}.id NOT IN (WITH RECURSIVE held_refused(id) AS (
+      SELECT held_prop.related_id FROM trust_proposals held_prop
+        LEFT JOIN facts held_copy ON held_prop.target_table = 'facts' AND held_copy.id = held_prop.target_id
+        WHERE ${holds('held_prop')} AND (held_copy.id IS NULL OR NOT (${memberFactAdmitSql('held_copy')} OR ${opens('held_copy')}))
+      UNION
+      SELECT held_next.related_id FROM held_refused
+        JOIN trust_proposals held_next ON held_next.target_table = 'facts' AND held_next.target_id = held_refused.id
+        JOIN facts held_via ON held_via.id = held_refused.id
+        WHERE ${holds('held_next')} AND NOT ${memberFactAdmitSql('held_via')})
+    SELECT id FROM held_refused WHERE id IS NOT NULL))`;
 }
 
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql and grantedPrivateFactSql. */
