@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 783/789
+# covered: 785/791
 # lifecycle: 9/9
 # pages: 50/50
 # search: 7/7
@@ -28,7 +28,7 @@
 # facts: 15/15
 # segmented_body: 15/15
 # versions: 3/3
-# stats_ingest: 7/7
+# stats_ingest: 9/9
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
@@ -81,17 +81,17 @@ transaction	lifecycle	yes	60	no	yes	yes	serves
 transactionDirect	lifecycle	yes	2	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	97	yes	yes	yes	serves
+getPage	pages	yes	98	yes	yes	yes	serves
 readPageSnapshot	pages	yes	30	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	421	yes	yes	yes	serves
+putPage	pages	yes	425	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	128	yes	yes	yes	serves
+softDeletePage	pages	yes	129	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -121,7 +121,7 @@ insertSource	pages	yes	1	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
 holdPageEmbedding	pages	yes	1	no	yes	yes	serves
 readReasonPurgeTombstones	pages	yes	2	no	yes	yes	serves
-writeReasonPurgeTombstones	pages	yes	2	no	yes	yes	serves
+writeReasonPurgeTombstones	pages	yes	3	no	yes	yes	serves
 listSourcePathPages	pages	yes	1	no	yes	yes	serves
 readRenameIdentityRows	pages	yes	1	no	yes	yes	serves
 readLiveIdentityHolders	pages	yes	1	no	yes	yes	serves
@@ -195,9 +195,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	27	yes	yes	yes	serves
-sealChunks	chunks	yes	50	no	yes	yes	serves
-getChunks	chunks	yes	28	yes	yes	yes	serves
+upsertChunks	chunks	yes	28	yes	yes	yes	serves
+sealChunks	chunks	yes	51	no	yes	yes	serves
+getChunks	chunks	yes	29	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
 getChunkWindows	chunks	yes	4	no	yes	yes	serves
 countStaleChunks	chunks	yes	5	no	yes	yes	serves
@@ -212,7 +212,7 @@ readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
-setChunkerVersion	chunks	yes	12	no	yes	yes	serves
+setChunkerVersion	chunks	yes	13	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
@@ -342,11 +342,13 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	20	no	yes	yes	serves
-getVersions	versions	yes	10	no	yes	yes	serves
+createVersion	versions	yes	22	no	yes	yes	serves
+getVersions	versions	yes	11	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 countBrainLivePages	stats_ingest	yes	2	no	yes	yes	serves
+countLivePagesBySource	stats_ingest	yes	1	no	yes	yes	serves
+countChunksBySource	stats_ingest	yes	1	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
@@ -664,7 +666,7 @@ listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	3	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	6	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	7	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	2	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves

@@ -2058,6 +2058,8 @@ export class PostgresEngine implements BrainEngine {
     return healthImpl.countOnboardSignal(this.searchRead, signal, entityTypes, opts);
   }
   async countBrainLivePages() { return healthImpl.countBrainLivePages(this.searchRead); }
+  async countLivePagesBySource() { return healthImpl.countLivePagesBySource(this.searchRead); }
+  async countChunksBySource(column: string) { return healthImpl.countChunksBySource(this.searchRead, column); }
   async readBrainMaturity() { return healthImpl.readBrainMaturity(this.searchRead); }
   private get linkRead() { return unscopedExecutor(this.engineSql, 'link reads: master engine.executeRaw, unscoped'); }
   inboundLinkCoverage(opts?: { sourceIds?: string[] }) { return linkReadsImpl.inboundLinkCoverage(this.linkRead, opts); }

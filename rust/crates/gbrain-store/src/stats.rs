@@ -1,8 +1,9 @@
 //! Brain statistics, health and the ingest log: the reads behind `getStats`, `getHealth`,
 //! `listEnrichCandidates` and `findAnomalies`, and the `ingest_log` table of the PGLite engine.
 //!
-//! Members: getStats, getHealth, countOnboardSignal, logIngest, getIngestLog,
-//! listEnrichCandidates, findAnomalies.
+//! Members: getStats, getHealth, countOnboardSignal, countBrainLivePages, countLivePagesBySource,
+//! countChunksBySource, readBrainMaturity, logIngest, getIngestLog, listEnrichCandidates,
+//! findAnomalies.
 //!
 //! Keys: an ingest log row lives at `n <created_at> <id>`, both 8 bytes big-endian. `created_at`
 //! is the row's microsecond timestamp with the sign bit flipped (so the byte order is the
@@ -474,6 +475,30 @@ impl Store {
     pub fn count_brain_live_pages(&self) -> Result<u64> {
         let read = self.read()?;
         Ok(all_pages(&*read)?.iter().filter(|p| live(p)).count() as u64)
+    }
+
+    /// `countLivePagesBySource` and `countChunksBySource` (`engine-sql/health.ts`): one row per
+    /// source that has a live page, in source id byte order, with its live pages, the chunks of
+    /// those pages and how many of the chunks have a stored vector. `gbrain sources status` reads
+    /// it. Soft-deleted pages and their chunks do not count.
+    pub fn live_counts_by_source(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut counts: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
+        for page in all_pages(&*read)?.iter().filter(|p| live(p)) {
+            let chunks = read_chunks(&*read, page.id)?;
+            let row = counts.entry(page.source_id.clone()).or_default();
+            row.0 += 1;
+            row.1 += chunks.len() as u64;
+            row.2 += chunks.iter().filter(|c| c.embed.has_vector()).count() as u64;
+        }
+        Ok(Value::Array(
+            counts
+                .into_iter()
+                .map(|(source_id, (pages, chunks, embedded))| {
+                    json!({ "source_id": source_id, "pages": pages, "chunks": chunks, "embedded": embedded })
+                })
+                .collect(),
+        ))
     }
 
     /// `readBrainMaturity` (`engine-sql/health.ts`): live pages and unexpired facts in every

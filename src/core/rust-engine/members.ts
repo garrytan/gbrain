@@ -484,6 +484,8 @@ export const RUST_ENGINE_MEMBERS = {
   // health
   countOnboardSignal: 'health',
   countBrainLivePages: 'health',
+  countLivePagesBySource: 'health',
+  countChunksBySource: 'health',
   readBrainMaturity: 'health',
   getStats: 'health',
   getHealth: 'health',

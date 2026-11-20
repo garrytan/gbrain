@@ -1655,6 +1655,10 @@ export interface BrainEngine {
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
   /** Live pages brain-wide, or null when unreadable (backup coverage; SQL in engine-sql/health.ts). */
   countBrainLivePages(): Promise<number | null>;
+  /** Live pages per source, one row per source that has any (`gbrain sources status`; SQL in engine-sql/health.ts). */
+  countLivePagesBySource(): Promise<import('./engine-sql/health.ts').LivePagesBySourceRow[]>;
+  /** Chunks of live pages per source and those embedded in `column`, the active embedding column (`gbrain sources status`; SQL in engine-sql/health.ts). */
+  countChunksBySource(column: string): Promise<import('./engine-sql/health.ts').ChunksBySourceRow[]>;
   /** Live pages, active facts and the earliest source or page timestamp, brain-wide (backup coverage; engine-sql/health.ts). */
   readBrainMaturity(): Promise<BrainMaturityRow | null>;
   /** Graph counts and endpoint reads of doctor, orphans, graph-query, the entity card, link preparation and search (SQL and contracts in engine-sql/link-reads.ts). */

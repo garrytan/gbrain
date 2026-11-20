@@ -935,6 +935,25 @@ const PINS: Pin[] = [
     texts: [`SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
       WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY 1, 2`],
   },
+  {
+    from: 'src/core/source-health.ts:384 pageCountsBySource (at cd882f06e6)',
+    case: { method: 'countLivePagesBySource', variant: 'default', run: e => e.countLivePagesBySource() },
+    texts: [`SELECT source_id, COUNT(*)::int AS n
+       FROM pages
+      WHERE deleted_at IS NULL
+      GROUP BY source_id`],
+  },
+  {
+    from: 'src/core/source-health.ts:403 chunkCountsBySource (at cd882f06e6)',
+    case: { method: 'countChunksBySource', variant: 'default', run: e => e.countChunksBySource('embedding') },
+    texts: [`SELECT p.source_id,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE c."embedding" IS NOT NULL)::int AS embedded
+       FROM content_chunks c
+       JOIN pages p ON p.id = c.page_id
+      WHERE p.deleted_at IS NULL
+      GROUP BY p.source_id`],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
