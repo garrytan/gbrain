@@ -21,6 +21,7 @@ test/engine-parity/embedding-install.test.ts	3	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-reads.test.ts	9	0
 test/engine-parity/extraction.test.ts	6	0
+test/engine-parity/fact-purge-commit.test.ts	0	1
 test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-purge-sites.test.ts	0	8
 test/engine-parity/fact-relink-attempts.test.ts	3	0
@@ -32,7 +33,7 @@ test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge-sites.test.ts	4	20
 test/engine-parity/facts-purge.test.ts	23	2
 test/engine-parity/facts-repair-sites.test.ts	0	14
-test/engine-parity/facts-repair.test.ts	14	2
+test/engine-parity/facts-repair.test.ts	16	1
 test/engine-parity/facts-rest-sites.test.ts	0	19
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	10	0
@@ -84,12 +85,14 @@ test/engine-parity/restriction-flag-reads.test.ts	3	0
 test/engine-parity/retrieval-coverage.test.ts	12	1
 test/engine-parity/search-reads.test.ts	16	0
 test/engine-parity/search.test.ts	20	0
-test/engine-parity/segmented-body.test.ts	16	0
+test/engine-parity/segmented-body.test.ts	17	0
 test/engine-parity/source-resolver-reads.test.ts	11	0
 test/engine-parity/spend-log.test.ts	10	0
 test/engine-parity/stats-vectors.test.ts	2	0
 test/engine-parity/stats.test.ts	7	0
 test/engine-parity/sync-aliases.test.ts	10	0
+test/engine-parity/take-purge-ledger.test.ts	2	0
+test/engine-parity/take-purge-overlay.test.ts	2	0
 test/engine-parity/takes.test.ts	25	1
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
