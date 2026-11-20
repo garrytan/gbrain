@@ -10,7 +10,7 @@ import { isWriteCapacityWait } from './admission-retry.ts';
 import { readBackgroundPauseShare, resolveAdmissionOrigin } from './admission-origin.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { linkStreamSlugs } from './page-purge.ts';
+import { linkStreamSlugs, redactExpiredPageJournal } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
 import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
@@ -54,6 +54,7 @@ import { keptReason, readHeldConcepts, type RebuildKept } from './concept-rebuil
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import { maintenanceTransaction } from './attribution.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { DreamWriteDeferralPass, pendingRequestId, writeStatusCommand, DREAM_WRITE_DEFERRED_CODE } from '../cycle/dream-write-deferral.ts';
@@ -193,6 +194,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
     try {
       const publicationId = randomUUID(), report = { appended: 0 };
       const deleted = await maintenanceTransaction(engine, async tx => {
+        await declarePersistenceProtocol(tx);
         const slugs = [...new Set([row.slug, ...await linkStreamSlugs(tx, row.source_id, row.id)])].sort();
         await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
         return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
@@ -207,6 +209,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
               await scrubPurgedNameStores(tx, row.source_id, [row.slug]);
               await scrubPurgedSlugStores(tx, row.source_id, [row.slug], { secretOccurrences: secrets.map(o => o.id) });
               await scrubPurgedSlugHolds(tx, row.source_id, [{ slug: row.slug, deletedAt: gone[0].deleted_at }]);
+              await redactExpiredPageJournal(tx, row.source_id, [row.slug]);
             }
             return gone.length > 0;
           });
@@ -481,6 +484,7 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
     const exclude = [...recorded.exclude, ...kept.map(row => row.id), ...owed, ...rederive];
     const reparked = [...recorded.reparked];
     const result = await maintenanceTransaction(engine, async tx => {
+      await declarePersistenceProtocol(tx);
       const unlisted = opts.only ? (await tx.executeRaw<{ id: number; source_id: string; slug: string }>(
         `SELECT id, source_id, slug FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`,
         [String(Math.max(0, Math.floor(olderThanHours)))])).filter(page => !opts.only!(page)).map(page => Number(page.id)) : [];
@@ -490,7 +494,11 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
         [String(Math.max(0, Math.floor(olderThanHours)))]);
       // GST-2689: the recheck parks, in this transaction, each origin a page written after the carry still depends on; the delete's hold skips it.
       reparked.push(...await parkUncarriedInPurge(tx, expiring.map(page => Number(page.id)).filter(id => !skip.has(id))));
-      return tx.purgeDeletedPages(olderThanHours, excludeIds.length ? { excludeIds } : undefined);
+      const purged = await tx.purgeDeletedPages(olderThanHours, excludeIds.length ? { excludeIds } : undefined);
+      const bySource = new Map<string, string[]>();
+      for (const page of purged.pages ?? []) bySource.set(page.source_id, [...bySource.get(page.source_id) ?? [], page.slug]);
+      for (const [sourceId, slugs] of bySource) await redactExpiredPageJournal(tx, sourceId, slugs);
+      return purged;
     });
     const owner = await purgeOwedPages(engine, config, olderThanHours, owed, opts.only);
     reparked.push(...owner.reparked);
