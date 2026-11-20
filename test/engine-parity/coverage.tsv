@@ -53,7 +53,7 @@ getPage	pages	yes	40	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	157	yes	yes	yes	serves
+putPage	pages	yes	158	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -247,7 +247,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	10	no	yes	yes	serves
+setConfig	config	yes	11	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -271,7 +271,7 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	4	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	serves
