@@ -582,7 +582,7 @@ public final class ContactsWriter {
                     results.append(ChangeResult(key: change.key, op: change.op, status: "replayed", id: previous.id, reason: nil))
                     continue
                 }
-                let kind = change.op == "create" ? 0 : ["delete", "merge"].contains(change.op) ? 1 : ["set", "remove_value", "group_remove"].contains(change.op) ? 2 : -1
+                let kind = change.op == "create" ? 0 : ["delete", "merge"].contains(change.op) ? 1 : ["fill", "set", "add_value", "remove_value", "group_add", "group_remove"].contains(change.op) ? 2 : -1
                 let over = (kind == 0 && quota.newCards >= limits.newCards) || (kind == 1 && quota.deletes >= limits.deletes) || (kind == 2 && quota.edits >= limits.edits)
                 if over {
                     stopped = "quota"
@@ -751,6 +751,18 @@ public final class ContactsWriter {
             case "merge":
                 guard let keep = try target(change.id), let gone = try target(change.from, image: true), keep.card.id != gone.card.id else { return skip(change, "card_missing") }
                 guard keep.writable, gone.writable else { return skip(change, "card_linked") }
+                var uncarried: [String] = []
+                func carry<T: Equatable>(_ name: String, _ path: KeyPath<FullCard, T>, _ empty: T) {
+                    if gone.card[keyPath: path] != empty && gone.card[keyPath: path] != keep.card[keyPath: path] { uncarried.append(name) }
+                }
+                carry("name_prefix", \.namePrefix, ""); carry("middle_name", \.middleName, ""); carry("previous_family_name", \.previousFamilyName, "")
+                carry("name_suffix", \.nameSuffix, ""); carry("phonetic_given_name", \.phoneticGivenName, ""); carry("phonetic_middle_name", \.phoneticMiddleName, "")
+                carry("phonetic_family_name", \.phoneticFamilyName, ""); carry("phonetic_organization_name", \.phoneticOrganizationName, ""); carry("department", \.department, "")
+                carry("urls", \.urls, []); carry("postal_addresses", \.postal, []); carry("dates", \.dates, []); carry("relations", \.relations, [])
+                carry("social_profiles", \.social, []); carry("instant_messages", \.instantMessages, []); carry("birthday", \.birthday, nil); carry("photo", \.imageData, nil)
+                guard uncarried.isEmpty else {
+                    return skip(change, "bad_change: merge can't carry the other card's " + uncarried.joined(separator: ", ") + "; nothing was changed (this helper can't read notes, so a note on that card isn't checked)")
+                }
                 func sub(_ op: String, _ edit: CardEdit, field: String? = nil, value: String? = nil, label: String? = nil, group: String? = nil, prior: String? = nil,
                          before: FullCard? = nil, check: @escaping (FullCard?) -> Bool) throws {
                     let what = [op, field ?? "", value ?? "", group ?? ""].joined(separator: "\u{0}")

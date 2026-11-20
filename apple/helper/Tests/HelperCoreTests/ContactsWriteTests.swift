@@ -319,6 +319,28 @@ func statuses(_ reply: (Int, [String: Any])) -> [String] {
         #expect(h.store.cards["b"] == nil && h.store.cards["a"]!.phones.count == 1)
     }
 
+    @Test func aMergeRefusesWhenTheOtherCardHoldsFieldsItCannotCarry() throws {
+        let h = WriteHarness()
+        var b = card("b", "alice", phone: "555-010-0199")
+        b.postal = [Labeled(label: "home", value: PostalValue())]
+        b.postal[0].value.city = "Example City"
+        b.urls = [Labeled(label: "home", value: "https://example.invalid")]
+        h.store.cards = ["a": card("a", "alice"), "b": b]
+        let before = h.store.cards
+        let r = statuses(h.owner("batch-merge-4", [["key": "key-k-merge-lossy", "op": "merge", "id": "a", "from": "b"]]))
+        #expect(r.count == 1 && r[0].hasPrefix("skipped:bad_change: merge can't carry the other card's urls, postal_addresses"))
+        #expect(h.store.cards == before)
+    }
+
+    @Test func additiveEditsCountAgainstTheDailyEditLimit() {
+        let h = WriteHarness()
+        h.policy = ContactsWritePolicy(enabled: true, ownerKeys: h.policy.ownerKeys, limits: ContactsWriteLimits(newCards: 50, deletes: 25, edits: 1))
+        h.store.cards = ["a": card("a", "alice"), "b": card("b", "bob")]
+        #expect(statuses(h.enrich("batch-qe-1", [["key": "key-k-qe-1", "op": "fill", "id": "a", "field": "job_title", "value": "x"],
+                                                  ["key": "key-k-qe-2", "op": "fill", "id": "b", "field": "job_title", "value": "y"]])) == ["applied", "quota"])
+        #expect(h.store.cards["b"]!.jobTitle == "")
+    }
+
     @Test func theKillSwitchAndTheDailyExportComeFirst() throws {
         let h = WriteHarness()
         h.store.cards = ["a": card("a", "alice")]
