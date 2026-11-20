@@ -949,6 +949,49 @@ mod tests {
     }
 
     #[test]
+    fn a_source_delete_drops_its_holds_their_dedupe_entries_and_receipts_only() {
+        let s = store();
+        let doomed = s.upsert_write_gate_hold(hold("fp-1")).unwrap();
+        let other = s
+            .upsert_write_gate_hold(HoldInput {
+                source_id: "kept".into(),
+                ..hold("fp-1")
+            })
+            .unwrap();
+        let id = doomed.to_string();
+        let kept_id = other.to_string();
+        s.upsert_write_gate_receipt(receipt("write_gate_holds", &id, fields("h1", "flag")))
+            .unwrap();
+        s.upsert_write_gate_receipt(receipt("write_gate_holds", &kept_id, fields("h1", "flag")))
+            .unwrap();
+        s.upsert_write_gate_receipt(receipt("facts", &id, fields("h1", "flag")))
+            .unwrap();
+
+        s.write(|tx| remove_source_holds(tx, "default")).unwrap();
+
+        assert_eq!(
+            ids(&s.list_write_gate_hold_rows(&opts("held")).unwrap()),
+            vec![other]
+        );
+        let read = s.read().unwrap();
+        assert!(
+            receipts_of(&*read, "write_gate_holds", &id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            receipts_of(&*read, "write_gate_holds", &kept_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(receipts_of(&*read, "facts", &id).unwrap().len(), 1);
+        drop(read);
+        // The dedupe entry went with the hold: the same key opens a new hold.
+        assert_ne!(s.upsert_write_gate_hold(hold("fp-1")).unwrap(), doomed);
+    }
+
+    #[test]
     fn a_receipt_with_the_same_key_is_refreshed_and_listed_first() {
         let s = store();
         let a = s

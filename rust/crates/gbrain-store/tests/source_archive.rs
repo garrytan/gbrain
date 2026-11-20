@@ -1,5 +1,5 @@
 //! Source archive (`archiveSource`, `restoreArchivedSource`, `listArchivedSourceRows`,
-//! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds`, `readSourceImpactCounts`) and
+//! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds`, `readSourceDeleteImpact`) and
 //! the source's OAuth clients (`listSourceOAuthClients`) and the source delete
 //! (`deleteSourceRecord`), on a clock the test moves.
 
@@ -123,7 +123,7 @@ fn an_archive_expires_only_once_its_window_has_passed() {
 }
 
 #[test]
-fn impact_counts_cover_pages_with_deleted_ones_and_a_missing_source_is_none() {
+fn the_delete_impact_covers_pages_with_deleted_ones_and_a_missing_source_is_none() {
     let b = brain("archive-impact");
     b.insert_source("wiki", "Wiki", None, &Map::new()).unwrap();
     page(&b, "wiki", "notes/one");
@@ -140,12 +140,15 @@ fn impact_counts_cover_pages_with_deleted_ones_and_a_missing_source_is_none() {
         .unwrap();
         b.upsert_file(&spec).unwrap();
     }
-    let counts = b.read_source_impact_counts("wiki").unwrap().unwrap();
-    assert_eq!(counts.name.as_deref(), Some("Wiki"));
+    let counts = b.read_source_delete_impact("wiki").unwrap().unwrap();
+    assert_eq!(
+        (counts.id.as_str(), counts.name.as_deref()),
+        ("wiki", Some("Wiki"))
+    );
     assert_eq!(counts.pages, 2);
     // Only the source's own files count.
     assert_eq!((counts.embeddings, counts.files, counts.facts), (0, 2, 0));
-    assert_eq!(b.read_source_impact_counts("nope").unwrap(), None);
+    assert_eq!(b.read_source_delete_impact("nope").unwrap(), None);
 }
 
 #[test]

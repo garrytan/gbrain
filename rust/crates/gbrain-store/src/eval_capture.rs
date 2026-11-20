@@ -693,6 +693,31 @@ mod tests {
     }
 
     #[test]
+    fn a_source_delete_strips_every_slug_no_other_covered_source_holds() {
+        let (_dir, store) = open();
+        source(&store, "gone");
+        source(&store, "other");
+        for slug in ["a", "b"] {
+            put(&store, "gone", slug);
+        }
+        put(&store, "other", "b");
+        put(&store, "default", "c");
+        let both = log(&store, &["a", "b"], &["gone", "other"]);
+        let not_gone = log(&store, &["b", "c"], &["other", "default"]);
+        store
+            .write(|tx| {
+                for slug in ["a", "b"] {
+                    let page = crate::pages::read_page(&*tx, "gone", slug)?.unwrap();
+                    crate::pages::remove_page(tx, &page)?;
+                }
+                remove_source_retrieved_slugs(tx, "gone")
+            })
+            .unwrap();
+        assert_eq!(slugs_of(&store, both), vec!["b"]);
+        assert_eq!(slugs_of(&store, not_gone), vec!["b", "c"]);
+    }
+
+    #[test]
     fn strips_purged_slugs_keeps_order_and_spares_other_sources() {
         let (_dir, store) = open();
         source(&store, "other");

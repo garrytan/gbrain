@@ -157,6 +157,8 @@ export const RUST_ENGINE_MEMBERS = {
   lockSourceRow: 'sources',
   countSourcePages: 'sources',
   insertSource: 'sources',
+  deleteSourceRecord: 'sources',
+  readSourceDeleteImpact: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',
@@ -688,9 +690,7 @@ export const RUST_ENGINE_MEMBERS = {
   listArchivedSourceRows: 'sources',
   listExpiredArchivedSources: 'sources',
   listUnverifiedArchivedSourceIds: 'sources',
-  readSourceImpactCounts: 'sources',
   listSourceOAuthClients: 'minion_queue',
-  deleteSourceRecord: 'sources',
   // entity_identities (engine-sql/entity-identities.ts): cross-source identity groups (key tag `i`,
   // rust/docs/store/entity_identities.md).
   linkEntityIdentityRow: 'entity_identities',

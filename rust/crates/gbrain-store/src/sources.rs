@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 mod archive;
 pub use archive::{
-    ArchivedSource, ArchivedSourceListRow, ExpiredArchivedSource, SourceImpactCounts,
+    ArchivedSource, ArchivedSourceListRow, ExpiredArchivedSource, SourceDeleteImpact,
 };
 
 pub const DEFAULT_SOURCE: &str = "default";

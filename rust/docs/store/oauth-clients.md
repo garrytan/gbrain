@@ -63,6 +63,7 @@ Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds
 Differences from PGLite and PostgreSQL:
 
 - The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
-- Not kept: the `trust_generation_update` trigger, the two secondary indexes (`idx_oauth_clients_source_id`,
-  `idx_oauth_clients_federated_read`) and the `ON DELETE RESTRICT` of `sources` (the foreign key is checked on a client write
-  only, so removing a source a client names is not refused here).
+- Not kept: the `trust_generation_update` trigger and the two secondary indexes (`idx_oauth_clients_source_id`,
+  `idx_oauth_clients_federated_read`). The `ON DELETE RESTRICT` of `source_id` and the `ON DELETE SET NULL` of
+  `bound_source_id` are kept by the store's source delete ([sources.md](sources.md)); the TypeScript member maps the
+  refusal to SQLSTATE 23503 with `oauth_clients_source_id_fkey`.

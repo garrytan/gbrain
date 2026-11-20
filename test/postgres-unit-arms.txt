@@ -258,6 +258,7 @@ test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts
+test/engine-parity/source-delete.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts

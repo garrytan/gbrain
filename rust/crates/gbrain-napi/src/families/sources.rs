@@ -1,7 +1,7 @@
 //! Sources: list, read, upsert, patch config, archive; and the source archive members
 //! (`gbrain_store::sources` archive): `archiveSource`, `restoreArchivedSource`,
 //! `listArchivedSourceRows`, `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds` and
-//! `readSourceImpactCounts`.
+//! `readSourceDeleteImpact`.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -150,14 +150,14 @@ impl Brain {
         self.run(env, move |s| s.list_unverified_archived_source_ids())
     }
 
-    /// `readSourceImpactCounts(id)`: `{ name, pages, chunks, embeddings, files, facts }`, or null.
+    /// `readSourceDeleteImpact(id)`: `{ id, name, pages, chunks, embeddings, files, facts }`, or null.
     #[napi]
-    pub fn read_source_impact_counts<'env>(
+    pub fn read_source_delete_impact<'env>(
         &self,
         env: &'env Env,
         id: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_source_impact_counts(&id))
+        self.run(env, move |s| s.read_source_delete_impact(&id))
     }
 
     /// `deleteSourceRecord(id, expiredArchiveOnly)`: whether the source was deleted with its pages

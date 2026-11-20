@@ -592,6 +592,28 @@
         ],
         "flagOnScopes": []
       },
+      "deleteSourceRecord#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "deleteSourceRecord#expiredArchiveOnly": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "discoverOntologyDimensions#default": {
         "flagOffLanes": [
           "pool"
@@ -4349,6 +4371,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSourceDeleteImpact#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceMembership#default": {
         "flagOffLanes": [
           "pool"
@@ -6504,7 +6537,7 @@
         "readSegmentedPageHead": "none",
         "readSegmentedVersionBodyBytes": "none",
         "readSourceChunkerVersion": "none",
-        "readSourceImpactCounts": "none",
+        "readSourceDeleteImpact": "none",
         "readSourceIncarnation": "none",
         "readSourceJobCounts": "none",
         "readSourceLocalPath": "none",

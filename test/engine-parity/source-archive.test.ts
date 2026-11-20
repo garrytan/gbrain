@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — source archive: the soft delete of `gbrain sources archive`, its restore, the archived-source
  * list, the purge sweep's candidate reads, the impact preview counts, the OAuth clients that hold a source and the
- * source delete (engine-sql/source-archive.ts, source-delete.ts).
+ * source delete (engine-sql/source-archive.ts; the delete and its preview in engine-sql/sources.ts, source-delete.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `softDeleteSource` archives an active source with both archive times 72 hours apart and federation off,
@@ -64,7 +64,7 @@ describe('engine parity: source archive', () => {
   parityTest(
     'archiving keeps both times 72 hours apart and turns federation off; restore clears them and sets federation',
     { methods: [
-      'archiveSource', 'restoreArchivedSource', 'listArchivedSourceRows', 'readSourceImpactCounts', 'listSourceOAuthClients',
+      'archiveSource', 'restoreArchivedSource', 'listArchivedSourceRows', 'readSourceDeleteImpact', 'listSourceOAuthClients',
       'countSourcePages', 'putPage', 'softDeletePage', 'upsertChunks', 'insertOauthClient', 'getSource', 'upsertFile',
     ] },
     async (engine, backend) => {
@@ -87,7 +87,7 @@ describe('engine parity: source archive', () => {
       const impact = await assessDestructiveImpact(engine, 'wiki');
       const clients = await engine.listSourceOAuthClients('wiki');
       const missing = [await assessDestructiveImpact(engine, 'nope'), await engine.listSourceOAuthClients('nope')];
-      const counts = [await engine.readSourceImpactCounts('wiki'), await engine.readSourceImpactCounts('nope')];
+      const counts = [await engine.readSourceDeleteImpact('wiki'), await engine.readSourceDeleteImpact('nope')];
       const archived = shape(await softDeleteSource(engine, 'wiki'));
       const again = await softDeleteSource(engine, 'wiki');
       const absent = await softDeleteSource(engine, 'nope');
@@ -220,7 +220,7 @@ describe('engine parity: source archive', () => {
       return {
         result, archived: (await engine.listArchivedSourceRows()).map(r => r.id),
         pages: await engine.countSourcePages('held', { includeDeleted: true }),
-        direct: await engine.deleteSourceRecord('held', true).then(() => 'deleted', (e: { code?: string }) => e.code),
+        direct: await engine.deleteSourceRecord('held', { expiredArchiveOnly: true }).then(() => 'deleted', (e: { code?: string }) => e.code),
       };
     },
   );

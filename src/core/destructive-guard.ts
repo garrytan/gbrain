@@ -89,11 +89,11 @@ export const CONFIRM_THRESHOLD_PAGES = 1;
  * (ON DELETE RESTRICT — these rows BLOCK a hard delete of the source).
  * PHYSICAL semantics: soft-deleted rows (admin revoke does UPDATE SET
  * deleted_at) still hold the FK, so they are returned too, tagged
- * `deleted: true`, and the guidance splits per row. Pre-migration brains
- * without the deleted_at column fall back to all referents (same
- * 42703-retry idiom as oauth-provider.ts) tagged live; brains without
- * the oauth_clients table — or without the source_id column (no column
- * ⇒ no FK ⇒ no referents) — have no referents by construction.
+ * `deleted: true`, and the guidance splits per row, by client_id in byte
+ * order. Pre-migration brains without the deleted_at column tag every
+ * referent live; brains without the oauth_clients table — or without the
+ * source_id column (no column ⇒ no FK ⇒ no referents) — have no referents
+ * by construction.
  */
 export async function clientsReferencingSource(
   engine: BrainEngine,
@@ -154,7 +154,7 @@ export async function assessDestructiveImpact(
   // Source name and the counts: pages (soft-deleted included), chunks, chunks with a vector, storage files (0 where
   // the brain has no `files` table, as on PGLite) and hot-memory facts (cathedral-6: a revoked agent's workspace can
   // hold facts with zero pages; 0 on a brain from before the facts table).
-  const counts = await engine.readSourceImpactCounts(sourceId);
+  const counts = await engine.readSourceDeleteImpact(sourceId);
   if (!counts) return null;
   const src = { name: counts.name };
   const { pages: pageCount, chunks: chunkCount, embeddings: embeddingCount, files: fileCount, facts: factCount } = counts;

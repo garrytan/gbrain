@@ -72,7 +72,7 @@ import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-s
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceIncarnationListRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceIncarnationListRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow } from './engine-sql/repair-bookkeeping.ts';
 import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget } from './engine-sql/managed-sync-orphans.ts';
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
@@ -1458,6 +1458,15 @@ export interface BrainEngine {
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
   insertSource(row: SourceInsert): Promise<void>;
+  /**
+   * Deletes the source (only an expired archive when `expiredArchiveOnly`) with its pages and every row that names it
+   * outside a foreign key (binding, managed-sync cursors, write gate holds with their receipts, eval candidate slugs);
+   * `stranded` counts the pages when the pages would not cascade, and then nothing is deleted. A RESTRICT foreign key
+   * (an OAuth client of the source, revoked or not) fails it with 23503. Wrapped by `deleteSourceRow` (engine-sql/sources.ts).
+   */
+  deleteSourceRecord(sourceId: string, opts?: { expiredArchiveOnly?: boolean }): Promise<SourceDeleteResult>;
+  /** The id, name and page/chunk/embedding/file/fact counts a source delete would remove, or null (engine-sql/sources.ts). */
+  readSourceDeleteImpact(sourceId: string): Promise<SourceDeleteImpact | null>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */
@@ -4841,17 +4850,8 @@ export interface BrainEngine {
   listExpiredArchivedSources(): Promise<SourceArchiveSql.ExpiredArchivedSourceRow[]>;
   /** The archives whose times are missing or at or before 1970-01-02, by id. */
   listUnverifiedArchivedSourceIds(): Promise<string[]>;
-  /** What deleting the source removes (pages with soft-deleted ones, chunks, embeddings, files, facts), or null when missing. */
-  readSourceImpactCounts(sourceId: string): Promise<SourceArchiveSql.SourceImpactCounts | null>;
   /** The OAuth clients that name the source, revoked ones included, by client id. */
   listSourceOAuthClients(sourceId: string): Promise<SourceArchiveSql.SourceOAuthClientRow[]>;
-  /**
-   * Deletes the source (only an expired archive when `expiredArchiveOnly`) with its pages and every row that names it
-   * outside a foreign key (binding, managed-sync cursors, write gate holds with their receipts, eval candidate slugs);
-   * `stranded` counts the pages when the pages would not cascade, and then nothing is deleted. A RESTRICT foreign key
-   * (an OAuth client of the source, revoked or not) fails it with 23503. source-delete.ts `deleteSourceRow` wraps it.
-   */
-  deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean): Promise<SourceArchiveSql.SourceDeleteResult>;
 
   // Entity identities: cross-source identity groups (engine-sql/entity-identities.ts; entity-identity.ts validates first).
   /** Links the live page (sourceId, slug) into the group: re-linking moves it; canonical true demotes the old canonical in the same write. Throws the identity page-not-found error with no live page. */
