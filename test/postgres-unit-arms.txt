@@ -91,6 +91,10 @@ test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
 test/concept-purge-rebuild-9653.test.ts
+test/concept-rebuild-holds-managed-9653.test.ts
+test/concept-rebuild-holds-unmanaged-9653.test.ts
+test/concept-rebuild-purge-9653.test.ts
+test/concept-rebuild-races-9653.test.ts
 test/concept-rename-history-gst2687.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts

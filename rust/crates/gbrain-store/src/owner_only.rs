@@ -45,8 +45,9 @@ pub enum OwnerOnlyForm {
     Off,
     /// `gbrain_owner_only_lineage(table, id)` behind its guard (the strict read of the marks).
     Fn,
-    /// `ANY_OWNER_ONLY_SQL`: any owner-only source hides every row. It reads sources only: no mark
-    /// is read in a brain below v320.
+    /// The closed form (`CLOSED_SQL`): any owner-only source, or SQL's held flag (the brain has held
+    /// owner-only data), hides every row. The store's held flag is a mark (`any_marked`), as for the
+    /// lineage guard.
     #[default]
     Closed,
 }
@@ -81,7 +82,7 @@ pub(crate) fn fact_owner_only(
 ) -> Result<bool> {
     match form {
         OwnerOnlyForm::Off => Ok(false),
-        OwnerOnlyForm::Closed => any_owner_only(read),
+        OwnerOnlyForm::Closed => Ok(any_owner_only(read)? || any_marked(read)?),
         OwnerOnlyForm::Fn => source_owner_only(read, source_id),
     }
 }
@@ -145,18 +146,18 @@ impl OwnerOnlySources {
     ) -> Result<bool> {
         match form {
             OwnerOnlyForm::Off => Ok(false),
-            OwnerOnlyForm::Closed => Ok(!self.ids.is_empty()),
+            OwnerOnlyForm::Closed => Ok(self.guarded()),
             OwnerOnlyForm::Fn => Ok(self.guarded() && self.lineage_strict(read, page)?),
         }
     }
 
     /// `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact held in an
-    /// owner-only source is hidden, or every fact is while the brain holds an owner-only source
-    /// (the closed form). The store marks no fact rows and keeps no `derivation_inputs`.
+    /// owner-only source is hidden, or every fact is while the brain holds an owner-only source or a
+    /// mark (the closed form). The store marks no fact rows and keeps no `derivation_inputs`.
     pub(crate) fn fact_hidden(&self, form: OwnerOnlyForm, source_id: &str) -> bool {
         match form {
             OwnerOnlyForm::Off => false,
-            OwnerOnlyForm::Closed => !self.ids.is_empty(),
+            OwnerOnlyForm::Closed => self.guarded(),
             OwnerOnlyForm::Fn => self.holds(source_id),
         }
     }

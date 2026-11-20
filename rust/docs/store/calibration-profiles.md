@@ -32,6 +32,10 @@ Differences from PGLite:
 
 - The newest-row tie-break `id DESC` and the `id` as text are new in the shared SQL, so all engines agree; the old
   statements left ties to the planner.
+- A NaN or infinite `REAL` value is native-only input, and the store refuses it with `invalid_argument` on both a write
+  (`insertCalibrationProfile`) and a read (`isCalibrationProfileUnchanged`, whose `brier`, `accuracy` and `partialRate`
+  are `REAL` parameters). PGLite and Postgres accept a `real` NaN, and `NaN IS NOT DISTINCT FROM NaN` is true there, so
+  this refusal is a deliberate divergence.
 
 Gaps:
 

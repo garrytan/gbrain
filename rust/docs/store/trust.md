@@ -57,8 +57,8 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
 hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting a source removes its rows (the table's
-`ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename does not move them; the rename callers call
-`moveFactWithdrawalSubject`.
+`ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename (`updateSlug`) moves them in the same write
+(`move_subject_in`, the same move `moveFactWithdrawalSubject` makes).
 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
@@ -128,8 +128,11 @@ Rust guesses and gaps (1x parity):
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
 the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
-request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
-`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
+request, the single-fact prepare, the repair and review lanes), and the meta-hook watermark. The `facts` insert guard
+`gbrain_preserve_fact_withdrawal` is built: every fact write (`write_fact`) saves a row that is not expired and matches a
+withdrawal of its claim as expired at the earliest such withdrawal, with `valid_until` no later than it
+(`facts::purge::earliest_withdrawal`; a member-page row matches only its page's withdrawals, an unbacked name key any
+subject but an owned memory page).
 
 Rust guesses and gaps (1x parity):
 
@@ -165,7 +168,7 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `upsertPageWriteGateReceipt` | `upsert_page_write_gate_receipt`: the same on the live page `(source, slug)`; none when the page is missing or soft-deleted | `INSERT … SELECT 'pages', p.id::text … WHERE p.deleted_at IS NULL` |
 | `deleteStalePageWriteGateReceipts` | `delete_stale_page_write_gate_receipts`: removes the page's receipts (live or soft-deleted page) whose hash differs | `DELETE … USING pages p … content_hash IS DISTINCT FROM $3` |
 | `listWriteGateReceiptsFor` | `list_write_gate_receipts_for`: sorted by `last_seen_at` then id, both descending, cut to `limit` | `ORDER BY last_seen_at DESC, id DESC LIMIT $3` |
-| `deleteStaleWriteGateReceipts` | `delete_stale_write_gate_receipts`: removes receipts older than the cutoff, except those on a hold still `held` | `DELETE … make_interval(days => $1) AND NOT (… h.status = 'held')` |
+| `deleteStaleWriteGateReceipts` | `delete_stale_write_gate_receipts`: removes receipts older than the cutoff, except those on a hold still `held`; a retention whose cutoff is past the timestamp range is `invalid_argument` and deletes nothing | `DELETE … make_interval(days => $1) AND NOT (… h.status = 'held')` |
 | `upsertWriteGateHold` | `upsert_write_gate_hold`: a known key reopens the hold (status `held`, decision cleared, `seen_count` + 1), keeps its id and kind | `INSERT … ON CONFLICT (source_id, slug, fingerprint, detector_version) DO UPDATE` |
 | `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |

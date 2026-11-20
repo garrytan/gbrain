@@ -224,3 +224,17 @@ fn a_same_stint_key_is_a_noop_and_a_backdated_repeat_is_stored_live() {
         .unwrap();
     assert_eq!(at[0]["source"], "meetings/c");
 }
+
+#[test]
+fn a_confidence_floor_is_compared_as_the_stored_real() {
+    let b = brain("ontology-floor-real");
+    merge(&b, json!({ "confidence": 0.7 }));
+    let rows = b
+        .get_ontology(&query(json!({ "minConfidence": 0.7 })))
+        .unwrap();
+    assert_eq!(values(&rows), [("role", "founder")], "{rows:?}");
+    let rows = b
+        .get_ontology(&query(json!({ "minConfidence": 0.71 })))
+        .unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
+}

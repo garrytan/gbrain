@@ -740,7 +740,6 @@ src/core/persistence/protocol.ts	module_collection	1	W6: per-engine state, or ma
 src/core/persistence/publication-deadline.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/publication-deadline.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/publication-timing.ts	process_env	1	W6: settings plane out of the core
-src/core/persistence/concept-rebuild.ts	load_config	1	#9653: the rebuild's retention purge goes through the coordinator with the same config as purge-deleted.ts
 src/core/persistence/purge-deleted.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/put-page-screen.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/reconcile-audit.ts	fs_import	1	W5: repo-less persistence for hosts
@@ -930,6 +929,7 @@ src/core/rust-engine/owned-brains.ts	fs_import	1	Rust owned brains: realpath of 
 src/core/rust-engine/owned-brains.ts	module_collection	1	Rust owned brains: the stores this process owns, as pglite-lock.ts keeps its held locks; W6: per-engine state
 src/core/rust-engine/owner-ipc/client.ts	module_collection	2	Rust owner IPC: WeakMaps keyed by engine object (its owner connection) and by grouper function (its countPagesBy table); entries die with the engine or the call; stays until engine state moves per engine (W6)
 src/core/rust-engine/owner-ipc/election.ts	fs_import	1	Rust owner IPC: creates the parent directory of the owner lock (beside the store directory); filesystem boundary moves to the local app (W7)
+src/core/rust-engine/owner-ipc/protocol.ts	fs_import	1	Rust owner IPC: resolves symlinks in the store path (realpath) so every alias of one brain names one owner lock and socket, as pglite-lock.ts does; filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/server.ts	fs_import	1	Rust owner IPC: removes only a stale socket file and sets 0600 on the owner socket, like persistence/ipc.ts; filesystem boundary moves to the local app (W7)
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)

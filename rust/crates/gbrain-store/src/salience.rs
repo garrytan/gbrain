@@ -350,6 +350,11 @@ impl Store {
             {
                 continue;
             }
+            if let Some(policy) = &opts.exclude_private
+                && owner_only.page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             let rec = if restricted {
                 None
             } else {

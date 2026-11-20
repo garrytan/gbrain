@@ -71,4 +71,21 @@ describe('scripts/spec/tlc.sh config selection', () => {
     expect(r.javaCalls).toHaveLength(1);
     expect(r.javaCalls[0]).toContain('-lncheck final');
   });
+
+  it('keeps a million states in memory before TLC spills its queue to disk, with or without TLC_JAVA_OPTS', () => {
+    for (const env of [{}, { TLC_JAVA_OPTS: '-Xmx2g' }] as Record<string, string>[]) {
+      const r = runTlc('bufsize', ['drain-lease', 'DrainLease.cfg'], env);
+      expect(r.status).toBe(0);
+      expect(r.javaCalls).toHaveLength(1);
+      expect(r.javaCalls[0]).toContain('-Dtlc2.tool.queue.DiskStateQueue.BufSize=1048576');
+    }
+  });
+
+  it('lets a BufSize in TLC_JAVA_OPTS win, since java keeps the last -D for a property', () => {
+    const r = runTlc('bufsize-override', ['drain-lease', 'DrainLease.cfg'], { TLC_JAVA_OPTS: '-Dtlc2.tool.queue.DiskStateQueue.BufSize=4096' });
+    expect(r.status).toBe(0);
+    expect(r.javaCalls).toHaveLength(1);
+    const sizes = [...r.javaCalls[0].matchAll(/-Dtlc2\.tool\.queue\.DiskStateQueue\.BufSize=(\d+)/g)].map(m => m[1]);
+    expect(sizes.at(-1)).toBe('4096');
+  });
 });

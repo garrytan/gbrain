@@ -49,7 +49,7 @@ import {
   remoteProvenanceFloorSql,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
-import { ANY_OWNER_ONLY_SQL, ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
@@ -80,12 +80,15 @@ export type StoreOwnerOnlyForm = 'fn' | 'closed' | 'off';
 
 /**
  * The form of the owner-only test in a rendered policy whose row alias is `alias` (`pages` for a page policy, `facts`
- * for a fact policy): the v320 function call, the closed test, or none. The same text never holds two forms (one
+ * for a fact policy): the v320 function call or its v328 form with the login's read mode (`fn`: the store has no login
+ * whose reads row security narrows, so it always reads the exact lineage), the closed test (any owner-only source, or
+ * the flag that the brain has held owner-only data), or none. The same text never holds two forms (one
  * schema version renders both conjuncts), so the first match decides.
  */
 export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts', alias: string): StoreOwnerOnlyForm {
-  if (sql.includes(table === 'pages' ? ownerOnlyPageSql(alias, 'fn') : ownerOnlyFactSql(alias, 'fn'))) return 'fn';
-  return sql.includes(ANY_OWNER_ONLY_SQL) ? 'closed' : 'off';
+  const rowSql = table === 'pages' ? ownerOnlyPageSql : ownerOnlyFactSql;
+  if (sql.includes(rowSql(alias, 'fn')) || sql.includes(rowSql(alias, 'mode'))) return 'fn';
+  return sql.includes(rowSql(alias, 'closed')) ? 'closed' : 'off';
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */

@@ -19,6 +19,9 @@ import { stageBatchBytes, STAGE_BATCH_BYTES } from '../src/core/page-body/limits
 import { CODES } from '../src/core/error-registry.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
+import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 /** A store that opens and closes and does nothing else: the lifecycle tests need no real brain. */
 class FakeBrain {
@@ -217,6 +220,46 @@ describe('openRustEngine', () => {
     expect(engine.connected).toBe(true);
     await engine.disconnect();
   });
+
+  // The election opens the store before the owner socket listens, so no client call reaches an owner whose store is
+  // still opening. When the open then fails, or a disconnect abandons it, the owner role is given up and the lock is
+  // free for the next owner.
+  for (const outcome of ['fails', 'is abandoned'] as const) {
+    test(`no client reaches the owner while the open is pending, and the owner role is given up when the open ${outcome}`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-early-'));
+      const db = join(dir, 'brain.rust');
+      const gate = deferredAddon();
+      const engine = openRustEngine({ addon: gate.addon, databasePath: db });
+      const config = { engine: 'pglite', database_path: db } as const;
+      const settled = engine.connect(config).then(() => 'resolved', (error: { code?: string }) => error.code ?? 'rejected');
+      let close = () => {};
+      try {
+        await gate.opening();
+        const early = await connectOwner(ownerSocketPath(db), { timeoutMs: 500 }).then(
+          (conn) => { close = installOwnerClient({ kind: 'rust', capabilities: new Set<string>() } as unknown as BrainEngine, conn); return 'connected'; },
+          () => 'refused',
+        );
+        expect(early).toBe('refused');
+        const timeout = Bun.sleep(3_000).then(() => 'hung');
+        let disconnected: Promise<void> = Promise.resolve();
+        if (outcome === 'fails') gate.failOpen();
+        else { disconnected = engine.disconnect(); gate.finishOpen(); }
+        expect(await Promise.race([settled, timeout])).not.toBe('hung');
+        expect(await Promise.race([disconnected.then(() => 'done'), timeout])).toBe('done');
+        expect(await settled).not.toBe('resolved');
+        expect(engine.connected).toBe(false);
+        expect(engine.ownerRole).toBeNull();
+        // The lock was given up: the next connect becomes the owner again.
+        gate.finishOpenNow();
+        await engine.connect(config);
+        expect(engine.ownerRole).toBe('owner');
+        await engine.disconnect();
+      } finally {
+        close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 30_000);
+  }
 
   test('a partial or unknown outcome says what may have been written', () => {
     expect(capabilityMissing('raw_sql', 'x', 'partial').detail).toContain('written=partial');

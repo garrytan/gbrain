@@ -7,7 +7,7 @@
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
 import type { BrainEngine } from '../engine.ts';
-import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { ownerOnlyTakeAllowedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
@@ -84,13 +84,13 @@ export interface McpResolvedSpec {
   sourceIds: readonly string[] | null;
   /** The holders the caller may read; null is every holder. */
   holders: readonly string[] | null;
-  /** Hide the pages the caller may not read (the private-provenance policy). */
+  /** Hide the pages the caller may not read (the private-provenance policy), and takes made from owner-only data. */
   excludePrivate: boolean;
 }
 
 /** Resolved takes whose `resolved_by` carries the MCP server stamp, in the caller's source and holder scope. */
 export async function countMcpResolvedTakes(tx: Raw, spec: McpResolvedSpec): Promise<number> {
-  const privacy = spec.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('p'))}` : sqlFragment``;
+  const privacy = spec.excludePrivate ? sqlFragment` AND ${trustedSql(`${privatePagesFilterForCaller('p')}${ownerOnlyTakeAllowedSql('t')}`)}` : sqlFragment``;
   const sources = spec.sourceIds ? sqlFragment` AND p.source_id = ANY(${[...spec.sourceIds]}::text[])` : sqlFragment``;
   const holders = spec.holders ? sqlFragment` AND t.holder = ANY(${[...spec.holders]}::text[])` : sqlFragment``;
   const { text, params } = renderFragment(sqlFragment`SELECT count(*)::text AS n FROM takes t JOIN pages p ON p.id = t.page_id
