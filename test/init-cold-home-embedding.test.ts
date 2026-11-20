@@ -72,7 +72,8 @@ describe('cold-home re-init over an embedded PGLite brain', () => {
     const doctor = await runCli(['doctor', '--only', 'embedding_plane_disagreement', '--json'], home);
     const check = doctorCheck(doctor.stdout);
     expect(check).toMatchObject({ status: 'warn', details: { model: 'voyage:voyage-4', dimensions: 1024, vector_tables: ['content_chunks'] } });
-    expect(check.fix.argv).toEqual(['gbrain', 'init', '--force', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--path', db]);
+    // The CLI render pins the brain the call acted on (src/core/fix-routing.ts).
+    expect(check.fix.argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--brain', 'host']);
   }, 150_000);
 
   test('a keyless re-init from a cold home keeps the database identity instead of writing embedding_disabled', async () => {

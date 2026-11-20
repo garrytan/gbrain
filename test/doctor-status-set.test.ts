@@ -194,7 +194,7 @@ describe('keyless brain: capability checks are information, not warnings (E2)', 
       for (const name of ['embeddings', 'embedding_provider', 'embed_staleness', 'fact_take_vectors']) {
         expect(byName.get(name), name).toMatchObject({ status: 'ok', severity: 'info', readiness_state: 'disabled_by_choice' });
       }
-      expect(byName.get('embeddings')!.fix).toMatchObject({ argv: expect.arrayContaining(['gbrain', 'init', '--force', '--embedding-model']) });
+      expect(byName.get('embeddings')!.fix).toMatchObject({ argv: expect.arrayContaining(['gbrain', 'embeddings', 'enable', '--embedding-model']) });
       expect(byName.get('embedding_provider')!.message).not.toMatch(/migrate embeddings/);
       expect(byName.get('takes_count')).toMatchObject({ status: 'ok', severity: 'info', fix: { consent: ['paid'] } });
       expect(byName.get('cycle_freshness')!.status).toBe('ok');

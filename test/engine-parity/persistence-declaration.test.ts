@@ -204,9 +204,8 @@ describe('engine parity: persistence declaration', () => {
     return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
   });
 
-  parityTest('a skill bundle write refuses on an engine without managed persistence, naming that capability', {
+  parityTest('a skill bundle write before shared-skill activation refuses as an unactivated shared-skill owner on every engine', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
-    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
@@ -217,12 +216,8 @@ describe('engine parity: persistence declaration', () => {
     const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
       sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
       callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
-    // An engine without the capability refuses the bundle by name, not as a shared-skill owner that is not yet activated.
-    if (!engine.capabilities.has('managed_persistence')) {
-      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
-      throw refusal;
-    }
-    // An engine with it checks the shared-skill owner; none was activated, so nothing is accepted.
+    // Every engine checks the shared-skill owner (a Rust brain activates and publishes skills itself,
+    // shared-skills/rust-publication.ts); none was activated, so nothing is accepted.
     expect(refusal?.code).toBe('writer_not_quiesced');
     return { code: refusal?.code, message: refusal?.message };
   });

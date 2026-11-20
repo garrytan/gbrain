@@ -170,6 +170,7 @@ test/engine-parity/facts.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/first-due.test.ts
+test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
@@ -223,6 +224,7 @@ test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
+test/engine-parity/shared-skill-members.test.ts
 test/engine-parity/source-last-commit.test.ts
 test/engine-parity/source-order-callers.test.ts
 test/engine-parity/source-resolver-reads.test.ts
@@ -254,6 +256,7 @@ test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/wanted-markers.test.ts
+test/engine-parity/whoami-embedding-fix.test.ts
 test/engine-parity/write-attribution.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
@@ -791,6 +794,12 @@ test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
 test/rust-derived-generations.test.ts
 test/rust-fence-generations.test.ts
+test/rust-generation-fence-evidence.test.ts
+test/rust-generation-fence-restore.test.ts
+test/rust-generation-managed.test.ts
+test/rust-generation-publish.test.ts
+test/rust-generation-repair.test.ts
+test/rust-generation-scrub.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

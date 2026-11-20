@@ -19,8 +19,8 @@
  *    the result shows it (a second member for the count, a removed member for the email and kind writes, a taken
  *    email, an unknown member id).
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and no parity
- *    case wrote a member. The end-to-end cases run the commands (addMember, disable, enable, set --email, kind) and
- *    read back through getMember, listMembers and readAudiencePrincipals on every arm.
+ *    case wrote a member. The end-to-end cases run the commands (addMember, disable, enable, set --email, kind,
+ *    labelled-only) and read back through getMember, listMembers and readAudiencePrincipals on every arm.
  *    The credential binding members (gbrain access member add --bind-token, gbrain auth rescope --member) lock and
  *    write access_tokens and oauth_clients rows; the Rust store keeps no credentials, so there they stop on
  *    engine_capability_missing (test/rust-engine-store.test.ts pins that nothing is written first).
@@ -32,6 +32,7 @@ import { parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
+import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { addMember, disableMember, enableMember, getMember, listMembers, memberByEmail, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -282,6 +283,38 @@ describe('access member commands, end to end', () => {
       kind: { changed: true, kind: 'audience' },
       unknown: null,
       list: [['alice-example', 'enabled', 'person', null, ['team-a']], ['bob-example', 'enabled', 'audience', null, ['team-a', 'team-b']]],
+    });
+    return out;
+  });
+
+  parityTest('gbrain access member labelled-only sets and clears the grant, and refuses the owner, a removed member and a remote caller', {
+    methods: ['insertAccessMember', 'readAccessMembers', 'setAccessMemberLabelledOnly', 'tombstoneAccessMember'],
+  }, async (engine) => {
+    await addMember(engine, 'alice-example');
+    await addMember(engine, 'bob-example');
+    await addMember(engine, 'carol-example');
+    await engine.tombstoneAccessMember('carol-example');
+    await engine.setConfig('access.owner_member', 'bob-example');
+    const flag = (r: { changed: boolean; member: MemberRecord }) => ({ changed: r.changed, labelled_only: r.member.labelled_only });
+    const out = {
+      remote: await opRefusal(() => setMemberLabelledOnly(engine, 'alice-example', true, { remote: true })),
+      on: flag(await setMemberLabelledOnly(engine, 'alice-example', true, { remote: false })),
+      again: flag(await setMemberLabelledOnly(engine, 'alice-example', true, { remote: false })),
+      owner: await opRefusal(() => setMemberLabelledOnly(engine, 'bob-example', true, { remote: false })),
+      removed: await opRefusal(() => setMemberLabelledOnly(engine, 'carol-example', true, { remote: false })),
+      afterOn: (await listMembers(engine)).map(m => [m.id, m.labelled_only]),
+      off: flag(await setMemberLabelledOnly(engine, 'alice-example', false, { remote: false })),
+      afterOff: (await listMembers(engine)).map(m => [m.id, m.labelled_only]),
+    };
+    expect(out).toEqual({
+      remote: { code: 'permission_denied', reason: null },
+      on: { changed: true, labelled_only: true },
+      again: { changed: false, labelled_only: true },
+      owner: { code: 'access_labelled_only_owner', reason: null },
+      removed: { code: 'access_member_id_retired', reason: null },
+      afterOn: [['alice-example', true], ['bob-example', false]],
+      off: { changed: true, labelled_only: false },
+      afterOff: [['alice-example', false], ['bob-example', false]],
     });
     return out;
   });

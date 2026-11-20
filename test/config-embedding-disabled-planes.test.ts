@@ -40,7 +40,7 @@ describe('embedding_disabled and schema_pack config planes', () => {
 
   test('a keyless embed names the one enablement command', async () => {
     const run = await cli(['embed', '--stale']);
-    expect(run.stderr).toContain('Turn on semantic search (pages and facts are kept): gbrain init --force --embedding-model');
+    expect(run.stderr).toContain('Turn on semantic search (pages and facts are kept): gbrain embeddings enable --embedding-model');
     expect(run.stderr).not.toContain('set embedding_model via gbrain config');
   }, 60_000);
 

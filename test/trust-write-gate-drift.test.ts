@@ -61,7 +61,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/purged-page-facts.ts': 'owner repair behind a preview hash: only sets expired_at and clears row_num on existing fact rows (lifecycle); writes no new text',
   'src/core/repair/purged-change-reasons.ts': 'owner repair behind a preview hash: only sets matched page_versions.change_reason values to [purged] (redaction); writes no new text',
   'src/core/repair/unwithdrawn-facts.ts': 'owner repair behind a preview hash: puts back an existing fact row\'s own ledger before-state (lifecycle and row number); no new text',
-  'src/core/generations/fence-evidence.ts': 'renumbers a kept existing fact row inside the gated fence projection or reconcile; no new text',
   'src/core/repair/secret-spans.ts': 'owner repair behind a preview hash: replaces only the credential spans the secret scanner finds in a page\'s stored copies with <REDACTED:rule> markers (no new text)',
   'src/core/repair/redacted-facts.ts': 'owner repair behind a preview hash: puts back into existing fact rows the words a stored source page proves; fenced rows publish through put_page, which runs the gate',
   'src/core/repair/facts-rehome.ts': 'owner repair moving existing facts onto their entity page (placement)',

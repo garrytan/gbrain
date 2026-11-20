@@ -24,7 +24,9 @@
  *    in access-policy.test.ts; rust/docs/store/access_rules.md). The Rust store keeps no skillpacks, chronicle state,
  *    access tokens, notifier state, source synopsis modes, writer bindings or memory proposals, so those cases compare
  *    the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). The access member
- *    fixtures here write raw SQL, which a Rust brain refuses; access-members.test.ts covers Rust through the typed writes.
+ *    fixtures write through the typed member writers (insertAccessMember, setAccessMemberDisabled,
+ *    setAccessMemberLabelledOnly, tombstoneAccessMember), which every engine serves. Fixtures for tokens and clients
+ *    still write raw SQL, which a Rust brain refuses, so those cases stop on the raw_sql refusal.
  *    It keeps op checkpoints (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes;
  *    keys compare sorted, since the store lists them in path order and the SQL engines in no stated order.
  */
@@ -54,6 +56,15 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import type { AccessTokenInsert } from '../../src/core/engine-sql/access-tokens.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+/** Seeds one access member through the typed writers every engine serves; a removed member loses its groups and email. */
+async function seedMember(engine: BrainEngine, id: string, opts: {
+  kind?: 'person' | 'audience'; displayName?: string; email?: string; groups?: string[]; disabled?: boolean; removed?: boolean;
+} = {}): Promise<void> {
+  await engine.insertAccessMember({ id, displayName: opts.displayName ?? null, email: opts.email ?? null, kind: opts.kind ?? 'person', groups: opts.groups ?? [], bindTokenId: null });
+  if (opts.disabled) await engine.setAccessMemberDisabled(id, true);
+  if (opts.removed) await engine.tombstoneAccessMember(id);
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -794,21 +805,13 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: only enabled, untombstoned members answer, each with its own groups only, and only existing groups;
-  // a member id never matches as a group or a group id as a member. The fixture writes raw SQL, which a Rust brain
-  // refuses, so the write stops on the raw_sql refusal; access-members.test.ts covers Rust through the typed writes.
-  parityTest('readAudiencePrincipals answers only enabled members with their own groups and only existing groups', { methods: ['readAudiencePrincipals'] }, async (engine, backend) => {
-    const write = await engine.executeRaw(
-      `INSERT INTO access_members (id, disabled_at, tombstoned_at) VALUES
-         ('alice-example', NULL, NULL), ('bob-example', now(), NULL), ('carol-example', NULL, now()), ('dave-example', NULL, NULL)`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readAudiencePrincipals(['alice-example'], ['team-a'])).toEqual({ members: [], groups: [] });
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c')`);
-    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
-      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'dave-example'), ('team-a', 'bob-example')`);
+  // a member id never matches as a group or a group id as a member. The fixture writes through the typed member
+  // writers, so every arm runs it.
+  parityTest('readAudiencePrincipals answers only enabled members with their own groups and only existing groups', { methods: ['readAudiencePrincipals', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember'] }, async (engine) => {
+    await seedMember(engine, 'alice-example', { groups: ['team-b', 'team-a'] });
+    await seedMember(engine, 'bob-example', { groups: ['team-a'], disabled: true });
+    await seedMember(engine, 'carol-example', { removed: true });
+    await seedMember(engine, 'dave-example', { groups: ['team-c'] });
     const rows = await engine.readAudiencePrincipals(['alice-example', 'bob-example', 'carol-example', 'nobody-example', 'team-a'], ['team-a', 'alice-example', 'team-z']);
     const view = { members: [...rows.members].sort((a, b) => a.id.localeCompare(b.id)), groups: [...rows.groups].sort() };
     expect(view).toEqual({ members: [{ id: 'alice-example', groups: ['team-a', 'team-b'] }], groups: ['team-a'] });
@@ -830,22 +833,13 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a removed (tombstoned) member is filtered out of the list in the statement unless asked for; each row
   // carries only its own groups; an id matches exactly one member, never a group id, another case or an injected
-  // predicate. The fixture writes raw SQL, which a Rust
-  // brain refuses, so the write stops on the raw_sql refusal; access-members.test.ts covers Rust through the typed writes.
-  parityTest('readAccessMembers lists live members with their own groups, removed ones only when asked, and matches ids exactly', { methods: ['readAccessMembers'] }, async (engine, backend) => {
-    const write = await engine.executeRaw(
-      `INSERT INTO access_members (id, display_name, email, kind, labelled_only, disabled_at, tombstoned_at) VALUES
-         ('alice-example', 'Alice', 'alice@example.com', 'audience', true, NULL, NULL), ('bob-example', NULL, NULL, 'person', false, now(), NULL),
-         ('carol-example', NULL, NULL, 'person', false, NULL, now()), ('dave-example', NULL, NULL, 'person', false, NULL, NULL)`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readAccessMembers({ includeRemoved: true })).toEqual([]);
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw(`INSERT INTO access_groups (id) VALUES ('team-a'), ('team-b'), ('team-c')`);
-    await engine.executeRaw(`INSERT INTO access_group_members (group_id, member_id) VALUES
-      ('team-b', 'alice-example'), ('team-a', 'alice-example'), ('team-c', 'carol-example'), ('team-a', 'bob-example')`);
+  // predicate. The fixture writes through the typed member writers, so every arm runs it; a removed member's groups
+  // are dropped by its removal. The labelled-only flag is read in the next case.
+  parityTest('readAccessMembers lists live members with their own groups, removed ones only when asked, and matches ids exactly', { methods: ['readAccessMembers', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember'] }, async (engine) => {
+    await seedMember(engine, 'alice-example', { displayName: 'Alice', email: 'alice@example.com', kind: 'audience', groups: ['team-b', 'team-a'] });
+    await seedMember(engine, 'bob-example', { groups: ['team-a'], disabled: true });
+    await seedMember(engine, 'carol-example', { groups: ['team-c'], removed: true });
+    await seedMember(engine, 'dave-example');
     const view = (rows: Awaited<ReturnType<BrainEngine['readAccessMembers']>>) => rows.map(r => ({
       id: r.id, display_name: r.display_name, email: r.email, kind: r.kind, labelled_only: r.labelled_only,
       disabled: r.disabled_at != null, removed: r.tombstoned_at != null, created: r.created_at != null, groups: r.groups,
@@ -853,8 +847,8 @@ describe('engine parity: write misc', () => {
     const live = view(await engine.readAccessMembers({ includeRemoved: false }));
     const all = view(await engine.readAccessMembers({ includeRemoved: true }));
     expect(live.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['dave-example', []]]);
-    expect(all.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['carol-example', ['team-c']], ['dave-example', []]]);
-    expect(live[0]).toEqual({ id: 'alice-example', display_name: 'Alice', email: 'alice@example.com', kind: 'audience', labelled_only: true, disabled: false, removed: false, created: true, groups: ['team-a', 'team-b'] });
+    expect(all.map(r => [r.id, r.groups])).toEqual([['alice-example', ['team-a', 'team-b']], ['bob-example', ['team-a']], ['carol-example', []], ['dave-example', []]]);
+    expect(live[0]).toEqual({ id: 'alice-example', display_name: 'Alice', email: 'alice@example.com', kind: 'audience', labelled_only: false, disabled: false, removed: false, created: true, groups: ['team-a', 'team-b'] });
     expect(live[1]!.disabled).toBe(true);
     const byId = {
       removed: view(await engine.readAccessMembers({ id: 'carol-example' })).map(r => [r.id, r.removed, r.groups]),
@@ -863,7 +857,7 @@ describe('engine parity: write misc', () => {
       injected: await engine.readAccessMembers({ id: "x' OR '1'='1" }),
       unknown: await engine.readAccessMembers({ id: 'nobody-example' }),
     };
-    expect(byId).toEqual({ removed: [['carol-example', true, ['team-c']]], group: [], otherCase: [], injected: [], unknown: [] });
+    expect(byId).toEqual({ removed: [['carol-example', true, []]], group: [], otherCase: [], injected: [], unknown: [] });
     // An email matches only the member that declares exactly it; never the whole list, another case or another member.
     const byEmail = {
       declared: (await engine.readAccessMembers({ email: 'alice@example.com' })).map(r => [r.id, r.groups]),
@@ -872,6 +866,17 @@ describe('engine parity: write misc', () => {
     };
     expect(byEmail).toEqual({ declared: [['alice-example', ['team-a', 'team-b']]], otherCase: [], undeclared: [] });
     return { live, all, byId, byEmail };
+  });
+
+  // The flag is set through setAccessMemberLabelledOnly, the writer `gbrain access member labelled-only` calls
+  // (src/core/access/labelled-only.ts), so every arm compares the same answer.
+  parityTest('readAccessMembers reads a labelled-only grant on its own member only', { methods: ['readAccessMembers', 'insertAccessMember', 'setAccessMemberLabelledOnly'] }, async (engine) => {
+    await seedMember(engine, 'alice-example');
+    await seedMember(engine, 'bob-example');
+    await engine.setAccessMemberLabelledOnly('alice-example', true);
+    const flags = (await engine.readAccessMembers({ includeRemoved: true })).map(r => [r.id, r.labelled_only]);
+    expect(flags).toEqual([['alice-example', true], ['bob-example', false]]);
+    return flags;
   });
 
   parityTest('readAccessCredentials finds no token by name and no credential bound to a member on a brain with none', { methods: ['readAccessCredentials'] }, async (engine) => {
@@ -991,19 +996,13 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: only enabled, untombstoned members of kind audience answer; a person, a disabled audience member and a
-  // removed one never do. The fixture writes raw SQL, which a Rust
-  // brain refuses, so the write stops on the raw_sql refusal; access-members.test.ts covers Rust through the typed writes.
-  parityTest('listAudienceAccessMembers lists only enabled, untombstoned audience members, by id', { methods: ['listAudienceAccessMembers'] }, async (engine, backend) => {
-    const write = await engine.executeRaw(
-      `INSERT INTO access_members (id, kind, disabled_at, tombstoned_at) VALUES
-         ('zed-example', 'audience', NULL, NULL), ('bob-example', 'audience', now(), NULL), ('carol-example', 'audience', NULL, now()),
-         ('dave-example', 'person', NULL, NULL), ('alice-example', 'audience', NULL, NULL)`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.listAudienceAccessMembers()).toEqual([]);
-      throw write;
-    }
-    expect(write).toBeNull();
+  // removed one never do. The fixture writes through the typed member writers, so every arm runs it.
+  parityTest('listAudienceAccessMembers lists only enabled, untombstoned audience members, by id', { methods: ['listAudienceAccessMembers', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember'] }, async (engine) => {
+    await seedMember(engine, 'zed-example', { kind: 'audience' });
+    await seedMember(engine, 'bob-example', { kind: 'audience', disabled: true });
+    await seedMember(engine, 'carol-example', { kind: 'audience', removed: true });
+    await seedMember(engine, 'dave-example');
+    await seedMember(engine, 'alice-example', { kind: 'audience' });
     const ids = await engine.listAudienceAccessMembers();
     expect(ids).toEqual(['alice-example', 'zed-example']);
     return ids;
