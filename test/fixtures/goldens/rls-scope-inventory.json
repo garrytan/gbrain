@@ -8050,6 +8050,7 @@
         "listFreshExtractionOutcomes": "none",
         "listGatedMirrorRequests": "none",
         "listGenerationOrphanCandidates": "none",
+        "listGitImageHoldCounts": "none",
         "listGitPushHoldRows": "none",
         "listGuestSourceIds": "none",
         "listGuestSourceRows": "none",

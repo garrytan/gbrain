@@ -14,12 +14,14 @@ use crate::aliases::alias_row_targets;
 use crate::chunks::read_chunks;
 use crate::error::Result;
 use crate::facts::like;
+use crate::get_json;
 use crate::kv::KvRead;
 use crate::link_queries::retrieval_coverage::served;
 use crate::page_body::segmented_reference;
 use crate::pages::{PageRecord, all_pages, read_page};
+use crate::persistence::{HousekeepingRow, turn_key};
 use crate::raw_files::raw_rows_of;
-use crate::sources::read_source;
+use crate::sources::{all_sources, read_source};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,6 +36,8 @@ fn live_pages(read: &dyn KvRead) -> Result<Vec<PageRecord>> {
 const TRUNCATED_BODY_ROWS: usize = 101;
 /// Pages the recent-body sample reads (`RECENT_PAGE_SAMPLE`).
 const RECENT_PAGE_SAMPLE: usize = 1000;
+/// The `op` of the per-source hold summary (`GIT_HOLD_SUMMARY_OP`, `src/core/engine-sql/persistence-journal.ts`).
+const GIT_HOLD_SUMMARY_OP: &str = "sync-hold-summary";
 
 /// `length(raw_data.data ->> 'content')` when the row has a `content` key holding a text over 1000 characters with an
 /// H2/H3 heading: `rd.data ? 'content' AND length(..) > 1000 AND (..) ~ '(^|\n)##+ '`.
@@ -225,5 +229,40 @@ impl Store {
             n += 1;
         }
         Ok(n)
+    }
+
+    /// `listGitImageHoldCounts(sourceIds)`: per source among `sourceIds`, the `images` count of the
+    /// `sync-hold-summary` checkpoint of its current incarnation (`completed_keys[0].images`), the sources with a
+    /// positive count only, by source id. Rows: `{source_id, images}`. The checkpoint is read in the housekeeping key
+    /// space (`d 0x02 <op> 0x00 <source id>:<incarnation>`), the home of every `op_checkpoints` row this store keeps.
+    /// No writer of that op exists yet, so the answer is empty until one is added.
+    pub fn list_git_image_hold_counts(&self, source_ids: Vec<String>) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for source in all_sources(&*read)? {
+            if !source_ids.contains(&source.id) {
+                continue;
+            }
+            let key = turn_key(
+                GIT_HOLD_SUMMARY_OP,
+                &format!("{}:{}", source.id, source.incarnation),
+            )?;
+            let Some(row) = get_json::<HousekeepingRow>(&*read, &key)? else {
+                continue;
+            };
+            let images = row
+                .completed_keys
+                .get(0)
+                .and_then(|v| v.get("images"))
+                .map_or(0, |v| match v {
+                    Value::Number(n) => n.as_i64().unwrap_or(0),
+                    Value::String(t) => t.trim().parse().unwrap_or(0),
+                    _ => 0,
+                });
+            if images > 0 {
+                rows.push(json!({ "source_id": source.id, "images": images }));
+            }
+        }
+        Ok(rows)
     }
 }

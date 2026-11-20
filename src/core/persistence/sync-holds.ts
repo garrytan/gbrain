@@ -557,12 +557,9 @@ export async function readGitHold(engine: Exec, sourceId: string, incarnation: s
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
-export async function readGitImageHoldCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, number>> {
+export async function readGitImageHoldCounts(engine: Pick<BrainEngine, 'listGitImageHoldCounts'>, sourceIds: string[]): Promise<Map<string, number>> {
   if (!sourceIds.length) return new Map();
-  const rows = await engine.executeRaw<{ source_id: string; images: number | string }>(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
-    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
-    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
-  return new Map(rows.map(row => [row.source_id, Number(row.images)]));
+  return new Map((await engine.listGitImageHoldCounts(sourceIds)).map(row => [row.source_id, row.images]));
 }
 
 /** Outstanding holds of the source's current incarnation (one indexed read). */

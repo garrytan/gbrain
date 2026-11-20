@@ -17,11 +17,12 @@ import { MANAGED_SYNC_PASS_OP } from '../persistence/sync-pass-row.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
 /** The op of a source's held-file summary row (sync-holds.ts re-exports it). */
-export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
+export { GIT_HOLD_SUMMARY_OP };
 
 /** Creates missing counter rows; takes no lock on existing ones. Keys sorted. */
 export const ENSURE_COUNTERS_SQL = 'INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING';

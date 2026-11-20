@@ -22,6 +22,7 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
 | `listRecentPageBodies(sourceIds)` | `{compiled_truth, timeline}` of the 1000 newest live pages (by id, newest first), in the sources when given | served | `link_resolution_opportunity` |
 | `countSegmentedRecentPages(sourceIds)` | how many of those 1000 pages are segmented | served | `link_resolution_opportunity` |
 | `countPagesHiddenByPrefix(pattern, sourceIds)` | live pages with a chunk, served by search (sealed text, source not archived, no `quarantine` or `pinned_question` key), whose slug matches the escaped `LIKE` pattern, in the sources when given | served | `hidden_by_search_policy` |
+| `listGitImageHoldCounts(sourceIds)` | per source in the list, the `images` count of its current incarnation's `sync-hold-summary` checkpoint (`completed_keys[0].images`); sources with none, or a count of 0, are not listed | empty-no-writer | `image_embedding_coverage` (and the held-files check) |
 
 ## How each read follows the SQL
 
@@ -39,3 +40,7 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
   call per prefix (the answers are the same, the round trips are not). `served` is the store's own test of the text
   projection seal (`link_queries/retrieval_coverage.rs`). The `LIKE` pattern is `crate::facts::like`, with `\` as
   the escape.
+- `listGitImageHoldCounts` reads the checkpoint in the housekeeping key space (`d 0x02 <op> 0x00 <source id>:<incarnation>`),
+  where this store keeps every `op_checkpoints` row. Nothing writes the `sync-hold-summary` op on a Rust brain yet, so
+  the answer is empty (as a PGLite brain with no held images answers), and a summary of an earlier incarnation of a
+  source is never counted. When a writer for that op lands, this read serves its rows with no change.
