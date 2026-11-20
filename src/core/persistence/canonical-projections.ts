@@ -3,7 +3,7 @@ import { isQuarantined } from '../quarantine.ts';
 import type { ParsedPage } from '../import-file.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, isLegacySecondCell, type ParsedFact } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
 import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
@@ -630,17 +630,16 @@ export function compileCanonicalProjections(page: ParsedPage, slug: string, sour
 // explicit cell of the same row on a revision-bound edit can retain that stored precision.
 function unchangedSecondCells(prior: PageSnapshot | null, incoming: ParsedFact[], writer: ProjectionWriter) {
   const matches = new Map<number, { start: boolean; end: boolean }>();
-  const wholeSecond = (cell?: string) => !!cell && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(cell);
   if (writer !== 'editing' || !prior || prior.page.deleted_at || prior.page.body_storage === 'segmented' ||
-      !incoming.some(cell => wholeSecond(cell.validFrom) || wholeSecond(cell.validUntil))) return matches;
+      !incoming.some(cell => isLegacySecondCell(cell.validFrom) || isLegacySecondCell(cell.validUntil))) return matches;
   const previous = scanCanonicalFences(prior.page);
   if (previous.defects.length) return matches;
   const cells = new Map(previous.facts.map(cell => [cell.rowNum, cell]));
   for (const cell of incoming) {
     const old = cells.get(cell.rowNum);
     if (!old || old.claim !== cell.claim || old.visibility !== cell.visibility) continue;
-    const start = wholeSecond(cell.validFrom) && old.validFrom === cell.validFrom;
-    const end = wholeSecond(cell.validUntil) && old.validUntil === cell.validUntil && old.active === cell.active;
+    const start = isLegacySecondCell(cell.validFrom) && old.validFrom === cell.validFrom;
+    const end = isLegacySecondCell(cell.validUntil) && old.validUntil === cell.validUntil && old.active === cell.active;
     if (start || end) matches.set(cell.rowNum, { start, end });
   }
   return matches;

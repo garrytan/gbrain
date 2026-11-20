@@ -510,6 +510,11 @@ export function formatFenceDate(d: Date): string {
   return iso.replace(/\.000Z$/, 'Z');
 }
 
+/** A timestamp shape that older remember writers also used for fractional instants. */
+export function isLegacySecondCell(value: string | undefined): boolean {
+  return value !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value);
+}
+
 function formatConfidence(c: number): string {
   if (Number.isInteger(c)) return c.toFixed(1);
   return String(parseFloat(c.toFixed(2)));

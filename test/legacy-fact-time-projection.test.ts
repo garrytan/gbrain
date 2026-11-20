@@ -6,8 +6,13 @@
  */
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
@@ -67,4 +72,51 @@ for (const backend of testBackends()) test(`[${backend}] an unrelated edit prese
     expect((await rows())[2]).toEqual(before[2]);
     await put(text().replace(start + '.000Z', start + '.123Z'));
     expect(Date.parse((await rows())[0]!.value.valid_from)).toBe(Date.parse(start + '.123Z'));
+    // This row was imported with put_page and has no creation receipt from remember.
+    // A legacy-shaped cell alone must not authorize keeping an unrelated fractional value.
+    await put(text().replace(start + '.123Z', start + 'Z'));
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(
+      "UPDATE facts SET valid_from=$1::timestamptz WHERE source_id='default' AND source_markdown_slug=$2 AND row_num=1",
+      [start + '.789Z', slug]));
+    await runExtractFacts(engine, { sourceId: 'default', slugs: [slug], deferEmbedding: true });
+    expect(Date.parse((await rows())[0]!.value.valid_from)).toBe(Date.parse(start + 'Z'));
+  }, { databaseUrl: backend === 'postgres' ? requirePostgresTestDatabase() : undefined }), 120_000);
+
+for (const backend of testBackends()) test(`[${backend}] managed fence reconciliation verifies an exact remember receipt before retaining a legacy second`, () =>
+  managedBrain(async ({ engine, root }) => {
+    const member = 'sample', memberSlug = 'memory/members/sample';
+    const precise = start + '.273Z', legacy = start + 'Z';
+    const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+    await addMember(engine, member);
+    const client = await provider.registerClientManual('example-client', ['client_credentials'], 'read write', [], 'default');
+    await bindCredential(engine, { kind: 'client', id: client.clientId }, { member });
+    const token = await provider.exchangeClientCredentials(client.clientId, client.clientSecret ?? '');
+    const auth = await provider.verifyAccessToken(token.access_token);
+    const result = await dispatchToolCall(engine, 'remember', { request_id: randomUUID(), fact: 'The sample uses cobalt paper', provenance: 'test fixture', valid_from: precise },
+      { remote: true, transport: 'http', sourceId: 'default', auth });
+    expect(JSON.parse(result.content[0]!.text).status).toBe('inserted');
+    await settleManagedGitEffects(engine);
+    const file = join(root, memberSlug + '.md');
+    const row = async () => (await engine.executeRaw<{ data: { id: number; valid_from: string } }>(
+      'SELECT to_jsonb(f) AS data FROM facts f WHERE source_id=$1 AND source_markdown_slug=$2', ['default', memberSlug]))[0]!.data;
+    // Represent bytes that an older release wrote to its canonical page and cache. The fact and receipt stay native.
+    const replaceCell = async (oldValue: string, newValue: string) => {
+      const before = readFileSync(file, 'utf8');
+      expect(before).toContain(oldValue);
+      writeFileSync(file, before.replace(oldValue, newValue));
+      await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(
+        'UPDATE pages SET compiled_truth=replace(compiled_truth,$1,$2) WHERE source_id=$3 AND slug=$4', [oldValue,newValue,'default',memberSlug]));
+    };
+    await replaceCell(precise, legacy);
+    const original = await row();
+    expect(Date.parse(original.valid_from)).toBe(Date.parse(precise));
+    const reconcile = () => runExtractFacts(engine, { sourceId: 'default', slugs: [memberSlug], deferEmbedding: true });
+    expect((await reconcile()).factsUpdated).toBe(0);
+    expect(await row()).toEqual(original);
+
+    // An explicit .000 is authoritative, even when creation and row previously agreed on a fraction.
+    await replaceCell(legacy, start + '.000Z');
+    expect((await reconcile()).factsUpdated).toBe(1);
+    expect(Date.parse((await row()).valid_from)).toBe(Date.parse(legacy));
+    expect((await row()).id).toBe(original.id);
   }, { databaseUrl: backend === 'postgres' ? requirePostgresTestDatabase() : undefined }), 120_000);
