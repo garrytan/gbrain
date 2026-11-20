@@ -259,13 +259,14 @@ src/core/backfill-skips.ts	execute_raw	2
 src/core/backup/coverage.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
-src/core/belief/append.ts	execute_raw	7
+src/core/belief/append.ts	execute_raw	8	the tombstone check also matches a purge stored under a claim's pre-v330 Postgres fingerprint (ember ruling 2); the belief ledger reads raw SQL throughout until its area is converted
 src/core/belief/backfill.ts	execute_raw	8
 src/core/belief/changes.ts	execute_raw	2
 src/core/belief/coverage-report.ts	execute_raw	13
 src/core/belief/coverage.ts	execute_raw	5
 src/core/belief/identity.ts	execute_raw	2
 src/core/belief/ledger.ts	execute_raw	1
+src/core/belief/legacy-fingerprint.ts	execute_raw	1	pre-v330 Postgres fingerprint aliases (ember ruling 2): a claim whose old locale fold left a character the new fold removes keeps its recorded belief history; the Rust store never held such a fingerprint, and the belief ledger reads raw SQL throughout until its area is converted
 src/core/belief/lifetimes.ts	execute_raw	6
 src/core/belief/page-at-time.ts	execute_raw	8
 src/core/belief/preimages.ts	execute_raw	2
@@ -394,6 +395,7 @@ src/core/entity-identity.ts	execute_raw	6
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
 src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
+src/core/export-snapshot.ts	execute_raw	1	aliases a withdrawal or purge stored under a fence claim's pre-v330 Postgres fingerprint (ember ruling 3); runs only on an engine with raw_sql, since the Rust store never held such a fingerprint
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1
