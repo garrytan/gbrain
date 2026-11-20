@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1012/1018
+# covered: 1013/1019
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 63/69
+# write_misc: 64/70
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -404,8 +404,8 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	17	no	yes	yes	serves
-setConfig	config	yes	30	no	yes	yes	serves
+getConfig	config	yes	18	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -923,10 +923,11 @@ readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	4	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	7	no	yes	yes	serves
-readWriterAdminState	write_misc	yes	3	no	yes	yes	serves
-writerAdminStore	write_misc	yes	2	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	5	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	8	no	yes	yes	serves
+readWriterAdminState	write_misc	yes	4	no	yes	yes	serves
+readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
+writerAdminStore	write_misc	yes	3	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves

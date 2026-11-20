@@ -88,6 +88,7 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
+import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1595,8 +1596,10 @@ export interface BrainEngine {
    * is its SHA-256 (persistence/admin-intent.ts). `lock` holds the topology until the transaction commits.
    */
   readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string>;
+  /** A worktree's recorded manifest, read before a transfer accept's transaction; null when it has none or is missing. */
+  readWorktreeManifest(worktreeId: string): Promise<StoredWorktreeManifest | null>;
   /**
-   * The writer-admin store for writer lock and unlock and transfer prepare and cancel (engine-sql/writer-admin.ts).
+   * The writer-admin store for writer lock and unlock and transfer prepare, accept and cancel (engine-sql/writer-admin.ts).
    * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.
    * `writerAdminTransaction(engine, body)` opens the transaction and the store.
    */

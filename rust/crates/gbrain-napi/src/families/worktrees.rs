@@ -74,7 +74,7 @@ impl Brain {
         self.run(env, move |s| s.prepared_transfer_worktree())
     }
 
-    /// One worktree's `{ owner_host_id, owner_epoch, state }`, or null.
+    /// One worktree's `{ owner_host_id, owner_epoch, state, manifest }`, or null.
     #[napi]
     pub fn read_worktree_owner<'env>(
         &self,
@@ -82,6 +82,65 @@ impl Brain {
         id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_worktree_owner(&id))
+    }
+
+    /// `readWorktreeManifest(id)`: the worktree's manifest, or null.
+    #[napi]
+    pub fn read_worktree_manifest<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_worktree_manifest(&id))
+    }
+
+    /// Records the accepting host's paths for a worktree, keeping its Git durability.
+    #[napi]
+    pub fn upsert_host_binding<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.upsert_host_binding(&required(input, "upsertHostBinding input")?)
+        })
+    }
+
+    /// Gives a worktree to `hostId` at the next epoch, `active`.
+    #[napi]
+    pub fn accept_worktree_owner<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.accept_worktree_owner(&id, &host_id))
+    }
+
+    /// The content receipt rows a transfer accept or a set-path rebind may move.
+    #[napi]
+    pub fn content_receipt_rows<'env>(
+        &self,
+        env: &'env Env,
+        worktree_ids: Vec<String>,
+        host_id: String,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.content_receipt_rows(&worktree_ids, &host_id, source_ids.as_deref())
+        })
+    }
+
+    /// Sets config `key` to `value` only while it holds `expected`; whether it was set.
+    #[napi]
+    pub fn swap_config_value<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        value: String,
+        expected: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.swap_config_value(&key, &value, &expected))
     }
 
     /// Whether a publication on the worktree is still running or recovering.

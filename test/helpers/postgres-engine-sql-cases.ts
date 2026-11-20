@@ -820,6 +820,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'worktreeClaimStore': OOS.worktreeClaim,
   'readWriterAdminState': OOS.writerAdmin,
   'writerAdminStore': OOS.writerAdmin,
+  'readWorktreeManifest': OOS.writerAdmin,
   'hasExtractedEvents': OOS.writeMisc,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,

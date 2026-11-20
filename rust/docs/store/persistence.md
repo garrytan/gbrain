@@ -437,9 +437,14 @@ store keeps the three rows and refuses what the tables' keys, foreign keys and C
 | `brain.listHostRootBindings(hostId)` | one row per source bound under a worktree `hostId` binds, `topology_generation` as text | the first half of `listManagedRootBindings` |
 | `brain.writerAdminStateText()` | the writer topology document as jsonb text, from one snapshot: see "Writer admin state" below | `readWriterAdminState` (`WRITER_ADMIN_STATE_SQL`) |
 | `brain.preparedTransferWorktree()` | the first worktree id, in key order, that is `draining` with a manifest; `null` when none is | the writer lock's prepared-transfer check |
-| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state, manifest }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.readWorktreeManifest(id)` | the worktree's manifest; `null` when it has none or is absent | `readWorktreeManifest`, the accept's read before its transaction |
 | `brain.worktreePublicationPending(id)` | whether a request on the worktree is `running` or `recovering` or holds a recovery record, or an effect on it holds one | the transfer's pending-publication check |
 | `brain.markWorktreeDraining(id, manifest)`, `brain.reactivateWorktree(id)` | the worktree is `draining` with the manifest plus `prepared_at` (now, jsonb `timestamptz` text); `active` with no manifest. A missing worktree changes nothing; a manifest that is not an object is `invalid_argument` | the transfer prepare and cancel `UPDATE`s |
+| `brain.upsertHostBinding(row)` | the host binding has the row's paths; an existing binding keeps its Git durability, a new one has none. `constraint_violation` for an unknown worktree | the accept's `INSERT … ON CONFLICT DO UPDATE` |
+| `brain.contentReceiptRows(worktreeIds, hostId, sourceIds)` | one row per source bound to one of the worktrees (only `sourceIds` when not null) at its current, unarchived incarnation, with a binding on `hostId` and a `shared_skills.content.v1.<source>.<incarnation>` config row: `{ source_id, incarnation, relative_path, local_path, brain_id, key, value }`, source ids in byte order; none for a brain without an id | the content-receipt join of `rebindContentReceipts` |
+| `brain.swapConfigValue(key, value, expected)` | sets the config row only while it holds `expected`; whether it did | the receipt's compare-and-set `UPDATE config` |
+| `brain.acceptWorktreeOwner(id, hostId)` | `hostId` owns the worktree at the next epoch, `active`, heartbeat now; the manifest is kept. A missing worktree changes nothing | the accept's `UPDATE persistence_worktrees` |
 
 A source binding has no foreign key to its source, as on Postgres: a removed or re-created source
 leaves its binding, and the readers compare incarnations. Rows are not deleted on this engine yet: no
@@ -451,8 +456,11 @@ rebind or source purge runs here.
 `src/core/engine-sql/writer-admin.ts`; `writerAdminTransaction(engine, body)` there opens
 `engine.transaction` and gives the body the transaction's `writerAdminStore()`. `persistence/admin-intent.ts` hashes the state text for a
 reviewed `--expected-state` check (`writerAdminState`, `assertWriterAdminState`). The writer lock
-(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare and cancel
-(`ownership.ts`) run as a `writerAdminTransaction` body over that store. On this
+(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare, accept and cancel
+(`ownership.ts`) run as a `writerAdminTransaction` body over that store. An accept reads the
+prepared manifest with `readWorktreeManifest` before its transaction, and rebinds the content
+receipts through the store's `contentReceiptRows` and `swapConfigValue`
+(`shared-skills/receipt-root.ts`). On this
 engine the store's calls run on the transaction's store handle (`store-members/writer-admin.ts`).
 `lockBrain` and `{ lock: true }` do nothing: the store runs one write transaction at a time, so a
 state read in a transaction holds until it commits. `now()` is this process's clock in the SQL

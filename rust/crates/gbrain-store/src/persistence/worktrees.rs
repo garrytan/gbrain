@@ -22,12 +22,15 @@
 //!
 //! The writer admin members (`src/core/engine-sql/writer-admin.ts`) read and change the same rows:
 //! `writer_admin_state_text` is the topology document `--expected-state` hashes, and a writer
-//! transfer's prepare and cancel move one worktree between `active` and `draining`.
+//! transfer's prepare and cancel move one worktree between `active` and `draining`. An accept
+//! records the successor's host binding, rebinds the sources' content receipts
+//! (`content_receipt_rows` and `swap_config_value`) and gives the worktree to the successor at
+//! the next epoch.
 
 use super::effects::all_effects;
 use super::{all_requests, extra_is_null, uuid_param, violation};
 use crate::cli_reads::pg_text::jsonb_text;
-use crate::config::read_config;
+use crate::config::{config_key, read_config};
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
 use crate::facts::jsonb_time;
@@ -576,7 +579,8 @@ pub(crate) fn prepared_transfer_worktree_in(read: &dyn KvRead) -> Result<Option<
         .map(|w| w.id))
 }
 
-/// The `lockWorktree(id)` read: `{ owner_host_id, owner_epoch (text), state }`, or None.
+/// The `lockWorktree(id)` read: `{ owner_host_id, owner_epoch (text), state, manifest }`, or
+/// None.
 pub(crate) fn worktree_owner_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
     let id = uuid_param(id, "worktreeId")?;
     Ok(read_worktree_record(read, &id)?.map(|w| {
@@ -584,8 +588,15 @@ pub(crate) fn worktree_owner_in(read: &dyn KvRead, id: &str) -> Result<Option<Va
             "owner_host_id": w.owner_host_id,
             "owner_epoch": w.owner_epoch.to_string(),
             "state": w.state,
+            "manifest": w.manifest,
         })
     }))
+}
+
+/// `readWorktreeManifest(id)`: the worktree's manifest, or None when it has none or is missing.
+pub(crate) fn worktree_manifest_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
+    let id = uuid_param(id, "worktreeId")?;
+    Ok(read_worktree_record(read, &id)?.and_then(|w| w.manifest))
 }
 
 /// `publicationPending(worktreeId)`: a request on the worktree that is running, recovering or
@@ -645,6 +656,130 @@ pub(crate) fn reactivate_worktree_in(tx: &mut dyn KvWrite, id: &str) -> Result<(
     put_json(tx, &worktree_key(&id), &w)
 }
 
+/// `upsertHostBinding(row)`: the accepting host's paths for the worktree. An existing binding
+/// keeps its Git durability; a new one has none. Refuses an unknown worktree, as the foreign key
+/// does.
+pub(crate) fn upsert_host_binding_in(
+    tx: &mut dyn KvWrite,
+    input: &HostBindingInsert,
+) -> Result<()> {
+    let worktree_id = uuid_param(&input.worktree_id, "worktreeId")?;
+    let host_id = uuid_param(&input.host_id, "hostId")?;
+    if read_worktree_record(&*tx, &worktree_id)?.is_none() {
+        return Err(violation(format!("worktree {worktree_id} does not exist")));
+    }
+    let git_durability =
+        read_host_record(&*tx, &worktree_id, &host_id)?.and_then(|h| h.git_durability);
+    let record = HostBindingRecord {
+        local_path: input.local_path.clone(),
+        coordination_path: input.coordination_path.clone(),
+        worktree_id,
+        host_id,
+        git_durability,
+    };
+    put_json(
+        tx,
+        &host_binding_key(&record.worktree_id, &record.host_id),
+        &record,
+    )
+}
+
+/// `acceptWorktreeOwner(id, hostId)`: `hostId` owns the worktree at the next epoch, `active`,
+/// heartbeat now; the manifest is kept. A missing worktree changes nothing.
+pub(crate) fn accept_worktree_owner_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    id: &str,
+    host_id: &str,
+) -> Result<()> {
+    let id = uuid_param(id, "worktreeId")?;
+    let host_id = uuid_param(host_id, "hostId")?;
+    let Some(mut w) = read_worktree_record(&*tx, &id)? else {
+        return Ok(());
+    };
+    w.owner_host_id = Some(host_id);
+    w.owner_epoch += 1;
+    w.state = "active".into();
+    w.heartbeat_at_us = Some(env.now_micros());
+    put_json(tx, &worktree_key(&id), &w)
+}
+
+/// `contentReceiptRows(worktreeIds, hostId, sourceIds)`: for each source bound to one of
+/// `worktree_ids` (only `source_ids` when given) at its current, unarchived incarnation, with a
+/// host binding on `host_id` and a content receipt config row, `{ source_id, incarnation,
+/// relative_path, local_path, brain_id, key, value }`; source ids in byte order. A brain without
+/// an id has none.
+pub(crate) fn content_receipt_rows_in(
+    read: &dyn KvRead,
+    brain_id: &str,
+    worktree_ids: &[String],
+    host_id: &str,
+    source_ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let worktrees = worktree_ids
+        .iter()
+        .map(|w| uuid_param(w, "worktreeIds"))
+        .collect::<Result<Vec<_>>>()?;
+    if brain_id.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sources = all_sources(read)?;
+    let mut bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    bindings.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
+    let mut out = Vec::new();
+    for b in &bindings {
+        if !worktrees.contains(&b.worktree_id)
+            || source_ids.is_some_and(|ids| !ids.contains(&b.source_id))
+        {
+            continue;
+        }
+        let current = sources.iter().any(|s| {
+            s.id == b.source_id
+                && !s.archived
+                && s.incarnation.eq_ignore_ascii_case(&b.source_incarnation)
+        });
+        if !current {
+            continue;
+        }
+        let Some(h) = read_host_record(read, &b.worktree_id, &host)? else {
+            continue;
+        };
+        let key = format!(
+            "shared_skills.content.v1.{}.{}",
+            b.source_id, b.source_incarnation
+        );
+        let Some(value) = read_config(read, &key)? else {
+            continue;
+        };
+        out.push(json!({
+            "source_id": b.source_id,
+            "incarnation": b.source_incarnation,
+            "relative_path": b.relative_path,
+            "local_path": h.local_path,
+            "brain_id": brain_id,
+            "key": key,
+            "value": value,
+        }));
+    }
+    Ok(out)
+}
+
+/// `swapConfigValue(key, value, expected)`: sets config `key` to `value` only while it holds
+/// `expected`; whether it was set.
+pub(crate) fn swap_config_value_in(
+    tx: &mut dyn KvWrite,
+    key: &str,
+    value: &str,
+    expected: &str,
+) -> Result<bool> {
+    if read_config(&*tx, key)?.as_deref() != Some(expected) {
+        return Ok(false);
+    }
+    tx.put(&config_key(key)?, value.as_bytes())?;
+    Ok(true)
+}
+
 impl Store {
     /// `readWriterAdminState()`: the writer topology as jsonb text.
     pub fn writer_admin_state_text(&self) -> Result<String> {
@@ -656,9 +791,45 @@ impl Store {
         prepared_transfer_worktree_in(&*self.read()?)
     }
 
-    /// One worktree's `{ owner_host_id, owner_epoch, state }`, or None.
+    /// One worktree's `{ owner_host_id, owner_epoch, state, manifest }`, or None.
     pub fn read_worktree_owner(&self, id: &str) -> Result<Option<Value>> {
         worktree_owner_in(&*self.read()?, id)
+    }
+
+    /// One worktree's manifest, or None.
+    pub fn read_worktree_manifest(&self, id: &str) -> Result<Option<Value>> {
+        worktree_manifest_in(&*self.read()?, id)
+    }
+
+    /// Records the accepting host's paths for a worktree, keeping its Git durability.
+    pub fn upsert_host_binding(&self, input: &HostBindingInsert) -> Result<()> {
+        self.write(|tx| upsert_host_binding_in(tx, input))
+    }
+
+    /// Gives a worktree to `host_id` at the next epoch, `active`.
+    pub fn accept_worktree_owner(&self, id: &str, host_id: &str) -> Result<()> {
+        self.write(|tx| accept_worktree_owner_in(tx, &*self.env, id, host_id))
+    }
+
+    /// The content receipt rows a transfer accept or a set-path rebind may move.
+    pub fn content_receipt_rows(
+        &self,
+        worktree_ids: &[String],
+        host_id: &str,
+        source_ids: Option<&[String]>,
+    ) -> Result<Vec<Value>> {
+        content_receipt_rows_in(
+            &*self.read()?,
+            self.brain_id(),
+            worktree_ids,
+            host_id,
+            source_ids,
+        )
+    }
+
+    /// Sets config `key` to `value` only while it holds `expected`; whether it was set.
+    pub fn swap_config_value(&self, key: &str, value: &str, expected: &str) -> Result<bool> {
+        self.write(|tx| swap_config_value_in(tx, key, value, expected))
     }
 
     /// Whether a publication on the worktree is still running or recovering.

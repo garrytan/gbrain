@@ -207,6 +207,7 @@ export const RUST_ENGINE_MEMBERS = {
   // Writer administration (the reviewed --expected-state digest, the operator lock, transfer prepare and cancel).
   readWriterAdminState: 'persistence_journal',
   writerAdminStore: 'persistence_journal',
+  readWorktreeManifest: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
