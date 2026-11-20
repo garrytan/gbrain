@@ -2,11 +2,11 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-Four tables the decide loop keeps: `decide_proposals` (supersede proposals the conflict sweep leaves for the owner), `decide_review_proposals` (the review lane's proposals), `decide_review_queue` (the review lane's work queue) and `decide_sweep_deferred` (the conflict sweep's retry table). Store: `gbrain-store/src/eval_capture/decide_proposals.rs`. Binding: `gbrain-napi/src/families/decide_proposals.rs`. This landing carries the native store and binding with cargo tests; the SQL twin (`engine-sql/decide-proposals.ts`), the TypeScript member and the parity test arrive in a later landing, and nothing in TypeScript calls these members yet.
+Four tables the decide loop keeps: `decide_proposals` (supersede proposals the conflict sweep leaves for the owner), `decide_review_proposals` (the review lane's proposals), `decide_review_queue` (the review lane's work queue) and `decide_sweep_deferred` (the conflict sweep's retry table). Store: `gbrain-store/src/eval_capture/decide_proposals.rs`. Binding: `gbrain-napi/src/families/decide_proposals.rs`. TypeScript members: `src/core/rust-engine/store-members/decide-proposals.ts`. The shared SQL module for PGLite and Postgres is `engine-sql/decide-proposals.ts`; `src/core/ai/decide/proposals-store.ts` and `review-lane.ts` call these engine members. Parity test: `test/engine-parity/decide-proposals.test.ts`.
 
 ## Capability
 
-All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served; in this landing only the five eval-capture members are registered, so these 16 join them when their TypeScript members land.
+All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served. All of them are registered: these 16, the 20 decide-store members (`decide-store.md`) and the five eval-capture members, so the capability is reported.
 
 ## Members
 

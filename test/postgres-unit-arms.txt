@@ -141,6 +141,8 @@ test/engine-parity/chunks.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/decide-proposals.test.ts
+test/engine-parity/decide-store.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
