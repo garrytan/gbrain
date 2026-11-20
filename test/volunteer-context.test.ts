@@ -412,21 +412,14 @@ describe('volunteer_context op (contract surface)', () => {
     expect(Number(rows[0].turn)).toBe(7);
   });
 
-  test('event-log failure never fails the op (failing engine injected for the INSERT)', async () => {
+  test('event-log failure never fails the op (failing engine injected for the insert)', async () => {
     _resetPendingVolunteerEventWritesForTests();
     await seed('people/alice-example', 'Alice Example', 'Founder.');
     const op = operationsByName.volunteer_context;
-    // Wrap the engine: reads pass through, INSERTs into the events table throw.
+    // Wrap the engine: reads pass through, the typed event insert throws.
     const failingEngine = new Proxy(engine, {
       get(target, prop, receiver) {
-        if (prop === 'executeRaw') {
-          return (sql: string, params: unknown[]) => {
-            if (/INSERT INTO context_volunteer_events/.test(sql)) {
-              return Promise.reject(new Error('telemetry db down'));
-            }
-            return target.executeRaw(sql, params);
-          };
-        }
+        if (prop === 'insertVolunteerEvents') return () => Promise.reject(new Error('telemetry db down'));
         return Reflect.get(target, prop, receiver);
       },
     });
@@ -526,7 +519,7 @@ describe('volunteer-events sink — timeout branch (long-lived process safety)',
     } = await import('../src/core/context/volunteer-events.ts');
     _resetPendingVolunteerEventWritesForTests();
     const hangingEngine = {
-      executeRaw: () => new Promise(() => { /* never settles */ }),
+      insertVolunteerEvents: () => new Promise(() => { /* never settles */ }),
     } as never;
     logVolunteerEventsFireAndForget(hangingEngine, [
       { source_id: 'default', slug: 'people/x', confidence: 0.9, match_arm: 'alias', rationale: 'r', channel: 'watch' },

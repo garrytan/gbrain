@@ -336,3 +336,167 @@ export async function readFeedbackStatus(tx: Raw): Promise<FeedbackStatusData> {
   const highest = await tx.executeRaw<{ source_id: string; slug: string; weight: number | string }>(RETRIEVAL_FEEDBACK_SQL.statusHighest);
   return { counts: counts ?? {}, lowest, highest };
 }
+
+/** One volunteered page: the row `insertVolunteerEvents` writes when its page still exists. */
+export interface VolunteerEventInsert {
+  source_id: string;
+  slug: string;
+  confidence: number;
+  match_arm: string;
+  rationale: string;
+  channel: string;
+  session_id?: string | null;
+  turn?: number | null;
+}
+
+/** One match arm and channel of the usage read: how many pages it volunteered and how many were retrieved afterwards. */
+export interface VolunteerArmUsage {
+  match_arm: string;
+  channel: string;
+  volunteered: number;
+  used: number;
+}
+
+/**
+ * The statements of src/core/context/volunteer-events.ts and volunteer.ts. The insert is one statement over parallel
+ * arrays (it was composed from the row count), with the page-exists probe it ran under the feedback writers' key-share
+ * lock (#9068).
+ */
+export const VOLUNTEER_SQL = {
+  insert: `INSERT INTO context_volunteer_events
+       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     SELECT v.* FROM unnest($1::text[], $2::text[], $3::float8[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[])
+       AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`,
+  usage: `SELECT e.match_arm, e.channel,
+              count(*)::text AS volunteered,
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
+         FROM context_volunteer_events e
+         LEFT JOIN pages p
+           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
+        WHERE e.source_id = ANY($1::text[])
+          AND e.volunteered_at > now() - ($2 || ' days')::interval
+        GROUP BY e.match_arm, e.channel
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`,
+} as const;
+
+/** Logs the volunteered pages whose page row still exists; the rest are dropped. */
+export async function insertVolunteerEvents(tx: Raw, rows: VolunteerEventInsert[]): Promise<void> {
+  if (rows.length === 0) return;
+  await tx.executeRaw(VOLUNTEER_SQL.insert, [
+    rows.map(r => r.source_id), rows.map(r => r.slug), rows.map(r => r.confidence), rows.map(r => r.match_arm),
+    rows.map(r => r.rationale), rows.map(r => r.channel), rows.map(r => r.session_id ?? null), rows.map(r => r.turn ?? null),
+  ]);
+}
+
+/** The volunteered and used counts per match arm and channel over the last `days` days, by byte of arm then channel. */
+export async function readVolunteerUsage(tx: Raw, sourceIds: string[], days: number): Promise<VolunteerArmUsage[]> {
+  const rows = await tx.executeRaw<{ match_arm: string; channel: string; volunteered: string | number; used: string | number }>(
+    VOLUNTEER_SQL.usage, [sourceIds, String(days)]);
+  return rows.map(r => ({ match_arm: r.match_arm, channel: r.channel, volunteered: Number(r.volunteered), used: Number(r.used) }));
+}
+
+/** One automatic or backfill decision of the chronicle ledger: the row `upsertChronicleRow` writes (a pending or skipped row). */
+export interface ChronicleRowUpsert {
+  sourceId: string;
+  pageId: number;
+  contentHash: string;
+  extractorVersion: number;
+  slug: string;
+  state: string;
+  reason: string | null;
+  trigger: string;
+  principalKind: string | null;
+  principalId: string | null;
+  requestId: string | null;
+  noExtract: boolean;
+  /** An ISO instant, or null. */
+  nextAttemptAt: string | null;
+}
+
+/** The page an automatic judge call is reserved for. */
+export interface ChronicleJudgeKey {
+  sourceId: string;
+  pageId: number;
+  contentHash: string;
+}
+
+/** The rows `readChronicleLedger` returns, before src/core/chronicle/ledger-stats.ts shapes them (counts as the database types them). */
+export interface ChronicleLedgerSections {
+  counts: { pending: number; extracted: number; failed: number; skipped: number; known_usd: number | null; unpriced: number; incomplete: number };
+  reasons: Array<{ state: string; reason: string; n: number }>;
+  calls: number;
+  principals: Array<{ principal: string; calls: number }>;
+}
+
+/** The statements of src/core/chronicle/ledger.ts (the decision upsert, the judge slot) and ledger-stats.ts (the rollup), as they ran. */
+export const CHRONICLE_LEDGER_SQL = {
+  upsert: `INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
+       principal_kind, principal_id, request_id, no_extract, next_attempt_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
+     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
+       slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
+       principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
+       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
+       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
+     WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
+       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
+         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
+           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
+     RETURNING page_id`,
+  lock: "SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
+  count: "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+  reserve: 'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
+  counts: `SELECT
+         count(*) FILTER (WHERE state = 'pending')::int AS pending,
+         count(*) FILTER (WHERE state = 'extracted' AND updated_at > now() - interval '7 days')::int AS extracted,
+         count(*) FILTER (WHERE state = 'failed' AND updated_at > now() - interval '7 days')::int AS failed,
+         count(*) FILTER (WHERE state = 'skipped' AND updated_at > now() - interval '7 days')::int AS skipped,
+         sum(cost_usd) FILTER (WHERE NOT unpriced AND updated_at > now() - interval '7 days')::float8 AS known_usd,
+         count(*) FILTER (WHERE unpriced AND state IN ('extracted','failed') AND updated_at > now() - interval '7 days')::int AS unpriced,
+         count(*) FILTER (WHERE NOT unpriced AND cost_usd IS NULL AND state IN ('extracted','failed') AND attempts > 0
+           AND updated_at > now() - interval '7 days')::int AS incomplete
+       FROM chronicle_page_state WHERE trigger = 'auto'`,
+  reasons: `SELECT state, reason, count(*)::int AS n FROM chronicle_page_state
+       WHERE trigger = 'auto' AND state IN ('skipped','failed') AND reason IS NOT NULL AND updated_at > now() - interval '7 days'
+       GROUP BY state, reason ORDER BY n DESC, reason COLLATE "C"`,
+  calls: "SELECT count(*)::int AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+  principals: `SELECT (coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '')) COLLATE "C" AS principal, count(*)::int AS calls
+       FROM chronicle_judge_reservations r
+       LEFT JOIN chronicle_page_state l ON l.source_id = r.source_id AND l.page_id = r.page_id
+         AND l.content_hash = r.content_hash AND l.trigger = 'auto'
+       WHERE r.reserved_at > now() - interval '24 hours'
+       GROUP BY 1 ORDER BY calls DESC, principal LIMIT 5`,
+} as const;
+
+/** Records a decision; false when the guards leave the existing row as it was (see ledger.ts upsertChronicleRow). */
+export async function upsertChronicleRow(tx: Raw, w: ChronicleRowUpsert): Promise<boolean> {
+  const written = await tx.executeRaw(CHRONICLE_LEDGER_SQL.upsert,
+    [w.sourceId, w.pageId, w.contentHash, w.extractorVersion, w.slug, w.state, w.reason, w.trigger,
+      w.principalKind, w.principalId, w.requestId, w.noExtract, w.nextAttemptAt]);
+  return written.length > 0;
+}
+
+/** Takes one automatic judge slot under the daily limit, serialized by an advisory lock; false when the limit is used up. */
+export async function reserveChronicleJudgeSlot(tx: Pick<BrainEngine, 'transaction'>, limit: number, key: ChronicleJudgeKey): Promise<boolean> {
+  return tx.transaction(async (inner) => {
+    await inner.executeRaw(CHRONICLE_LEDGER_SQL.lock);
+    const [row] = await inner.executeRaw<{ n: number | string }>(CHRONICLE_LEDGER_SQL.count);
+    if (Number(row?.n ?? 0) >= limit) return false;
+    await inner.executeRaw(CHRONICLE_LEDGER_SQL.reserve, [key.sourceId, key.pageId, key.contentHash]);
+    return true;
+  });
+}
+
+/** The automatic rows' counts, skip and failure reasons, 24-hour judge calls and the five busiest principals. */
+export async function readChronicleLedger(tx: Raw): Promise<ChronicleLedgerSections> {
+  const [counts] = await tx.executeRaw<ChronicleLedgerSections['counts']>(CHRONICLE_LEDGER_SQL.counts);
+  const reasons = await tx.executeRaw<ChronicleLedgerSections['reasons'][number]>(CHRONICLE_LEDGER_SQL.reasons);
+  const [calls] = await tx.executeRaw<{ n: number }>(CHRONICLE_LEDGER_SQL.calls);
+  const principals = await tx.executeRaw<ChronicleLedgerSections['principals'][number]>(CHRONICLE_LEDGER_SQL.principals);
+  return {
+    counts: counts ?? { pending: 0, extracted: 0, failed: 0, skipped: 0, known_usd: null, unpriced: 0, incomplete: 0 },
+    reasons, calls: Number(calls?.n ?? 0), principals,
+  };
+}

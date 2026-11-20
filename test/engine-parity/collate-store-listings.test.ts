@@ -191,13 +191,11 @@ describe('store listings come out by byte', () => {
     }
   });
 
-  parityTest('volunteerUsageStats lists arms and channels by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const arm of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ('default', 'p', 0.5, $1, 'op')`, [arm]);
-    }
-    for (const channel of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ('default', 'p', 0.5, 'z-arm', $1)`, [channel]);
-    }
+  parityTest('volunteerUsageStats lists arms and channels by byte', { methods: ['putPage', 'insertVolunteerEvents'] }, async (engine) => {
+    await engine.putPage('p', page('p'));
+    const event = (match_arm: string, channel: string) =>
+      ({ source_id: 'default', slug: 'p', confidence: 0.5, match_arm, rationale: '', channel, session_id: null, turn: null });
+    await engine.insertVolunteerEvents([...MIXED_SLUGS.map(arm => event(arm, 'op')), ...MIXED_SLUGS.map(channel => event('z-arm', channel))]);
     const stats = await volunteerUsageStats(engine, ['default']);
     expect(stats.by_arm.map(r => [r.match_arm, r.channel])).toEqual(byteRows([...MIXED_SLUGS.map(arm => [arm, 'op']), ...MIXED_SLUGS.map(channel => ['z-arm', channel])]));
   });
@@ -206,19 +204,21 @@ describe('store listings come out by byte', () => {
   async function seedLedger(engine: BrainEngine) {
     for (const key of MIXED_SLUGS) {
       await engine.putPage(`notes/${key}`, { type: 'note', title: key, compiled_truth: key, timeline: '' });
-      await engine.executeRaw(
-        `INSERT INTO chronicle_page_state (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger, principal_kind, principal_id)
-         SELECT 'default', id, 'h', 1, slug, 'skipped', $1, 'auto', 'client', $1 FROM pages WHERE slug = $2 AND source_id = 'default'`, [key, `notes/${key}`]);
-      await engine.executeRaw(`INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) SELECT 'default', id, 'h' FROM pages WHERE slug = $1 AND source_id = 'default'`, [`notes/${key}`]);
+      const page = await engine.getPage(`notes/${key}`);
+      await engine.upsertChronicleRow({
+        sourceId: 'default', pageId: page!.id, contentHash: 'h', extractorVersion: 1, slug: page!.slug, state: 'skipped', reason: key,
+        trigger: 'auto', principalKind: 'client', principalId: key, requestId: null, noExtract: false, nextAttemptAt: null,
+      });
+      await engine.reserveChronicleJudgeSlot(1000, { sourceId: 'default', pageId: page!.id, contentHash: 'h' });
     }
   }
 
-  parityTest('readChronicleLedgerStats lists principals by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readChronicleLedgerStats lists principals by byte', { methods: ['putPage', 'getPage', 'upsertChronicleRow', 'reserveChronicleJudgeSlot', 'readChronicleLedger'] }, async (engine) => {
     await seedLedger(engine);
     expect((await readChronicleLedgerStats(engine)).principals24h.map(p => p.principal)).toEqual(BYTE_SLUGS.map(key => `client:${key}`));
   });
 
-  parityTest('readChronicleLedgerStats lists reasons by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readChronicleLedgerStats lists reasons by byte', { methods: ['putPage', 'getPage', 'upsertChronicleRow', 'reserveChronicleJudgeSlot', 'readChronicleLedger'] }, async (engine) => {
     await seedLedger(engine);
     expect(Object.keys((await readChronicleLedgerStats(engine)).last7d.reasons)).toEqual([...BYTE_SLUGS]);
   });

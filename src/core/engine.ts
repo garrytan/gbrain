@@ -97,7 +97,7 @@ import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
-import type { AppliedRatingRow, FeedbackStatusData, OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch, SourceClientReferentRow } from './engine-sql/collate-store-reads.ts';
+import type { AppliedRatingRow, FeedbackStatusData, OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch, SourceClientReferentRow, ChronicleJudgeKey, ChronicleLedgerSections, ChronicleRowUpsert, VolunteerArmUsage, VolunteerEventInsert } from './engine-sql/collate-store-reads.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
@@ -4623,6 +4623,16 @@ export interface BrainEngine {
   applyRetrievalRatings(args: RetrievalRatingBatch): Promise<AppliedRatingRow[]>;
   /** The feedback counts and the ten lowest and highest page weights, ties by byte of source and key. */
   readFeedbackStatus(): Promise<FeedbackStatusData>;
+  /** Logs volunteered pages; a row whose page row is gone is dropped. */
+  insertVolunteerEvents(rows: VolunteerEventInsert[]): Promise<void>;
+  /** The volunteered and used counts per match arm and channel over the last days days, by byte of arm then channel. */
+  readVolunteerUsage(sourceIds: string[], days: number): Promise<VolunteerArmUsage[]>;
+  /** Records one chronicle ledger decision; false when its guards leave the existing row as it was. */
+  upsertChronicleRow(w: ChronicleRowUpsert): Promise<boolean>;
+  /** Takes one automatic chronicle judge slot under the 24-hour limit; false when the limit is used up. */
+  reserveChronicleJudgeSlot(limit: number, key: ChronicleJudgeKey): Promise<boolean>;
+  /** The automatic ledger rows' counts, skip and failure reasons, 24-hour judge calls and the five busiest principals. */
+  readChronicleLedger(): Promise<ChronicleLedgerSections>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

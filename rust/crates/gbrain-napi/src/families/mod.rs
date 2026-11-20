@@ -53,6 +53,7 @@ mod write_trust;
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;
 mod aliases;
+mod chronicle_ledger;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
@@ -95,4 +96,5 @@ mod transactions;
 mod trust_tier_reads;
 mod type_page_reads;
 mod vectors;
+mod volunteer_events;
 mod wanted_links;

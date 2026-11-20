@@ -147,7 +147,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'reserveClientSpend', 'reserveGroupSpend', 'readGroupSpendTotals', 'settleSpendWithLog', 'insertSpendLog', 'sumClientSpendSince',
     'readClientBudgetUsd', 'insertOauthClient', 'updateOauthClientBudget', 'readAgentClientSpend',
     // oauth_clients rows (engine-sql/oauth-clients.ts)
-    'readOauthClient', 'listOauthClients', 'patchOauthClient', 'listClientsReferencingSource', 'readOwnerCredentials', 'insertPinnedQuestion', 'readPinnedQuestion', 'listPinnedQuestions', 'insertRetrievalEvents', 'readRetrievalEvent', 'applyRetrievalRatings', 'readFeedbackStatus',
+    'readOauthClient', 'listOauthClients', 'patchOauthClient', 'listClientsReferencingSource', 'readOwnerCredentials', 'insertPinnedQuestion', 'readPinnedQuestion', 'listPinnedQuestions', 'insertRetrievalEvents', 'readRetrievalEvent', 'applyRetrievalRatings', 'readFeedbackStatus', 'insertVolunteerEvents', 'readVolunteerUsage', 'upsertChronicleRow', 'reserveChronicleJudgeSlot', 'readChronicleLedger',
     // access_tokens rows (engine-sql/access-tokens.ts)
     'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust',
     // credential reads and the scoped client registration (engine-sql/access-credentials.ts)

@@ -15,15 +15,16 @@ import {
 import { logDeliveredReflexPointers, type ReflexPointer } from '../src/core/context/retrieval-reflex.ts';
 import type { VolunteeredPage } from '../src/core/context/volunteer.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { VolunteerEventInsert } from '../src/core/engine-sql/collate-store-reads.ts';
 
 interface CapturedInsert { sql: string; params: unknown[] }
 
 function stubEngine(captured: CapturedInsert[], fail = false): BrainEngine {
   return {
-    executeRaw: async (sql: string, params: unknown[]) => {
+    // The rows flatten to the parameters the old composed INSERT bound, so the assertions read them the same way.
+    insertVolunteerEvents: async (rows: VolunteerEventInsert[]) => {
       if (fail) throw new Error('insert exploded');
-      captured.push({ sql, params });
-      return [];
+      captured.push({ sql: 'insertVolunteerEvents', params: rows.flatMap(r => [r.source_id, r.slug, r.confidence, r.match_arm, r.rationale, r.channel, r.session_id ?? null, r.turn ?? null]) });
     },
   } as unknown as BrainEngine;
 }
@@ -109,9 +110,8 @@ describe('logTurnContextDeliveryFireAndForget — the shipped serve wiring', () 
 describe('logDeliveredReflexPointers — ambient reflex channel', () => {
   test('registers its write before returning so an immediate CLI drain cannot miss it', async () => {
     const engine = {
-      executeRaw: async () => {
+      insertVolunteerEvents: async () => {
         await Promise.resolve();
-        return [];
       },
     } as unknown as BrainEngine;
 

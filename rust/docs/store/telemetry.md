@@ -24,6 +24,11 @@ Keys: every record starts with the family tag `a` (`keys::TELEMETRY`) and the ta
   (`keys::TELEMETRY_CHAT_USAGE`, a reviewed key reservation). Key order is `created_at` order, ties by id; the id
   comes from the `next_chat_usage_id` counter.
 
+- `a 0x0C <id BE8>` holds one volunteered-page event and `a 0x0D` the id counter
+  ([volunteer-events.md](volunteer-events.md)).
+- `a 0x0E <source> 0x00 <page id BE8> <hash> 0x00 <version BE4>` holds one chronicle ledger row, `a 0x0F <id BE8>` one judge
+  reservation and `a 0x10` the reservation id counter ([chronicle-ledger.md](chronicle-ledger.md)).
+
 The retrieval feedback sub-tags (`0x04` to `0x08`) are served by `retrieval_feedback.rs`
 ([retrieval-feedback.md](retrieval-feedback.md)). The budget ledger sub-tags have no records yet. No table has a page
 column, so page deletes never touch them.

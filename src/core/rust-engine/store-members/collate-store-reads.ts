@@ -33,3 +33,18 @@ export const applyRetrievalRatings: Member<'applyRetrievalRatings'> = (brain, ar
 
 export const readFeedbackStatus: Member<'readFeedbackStatus'> = (brain) =>
   storeCall({ member: 'readFeedbackStatus' }, () => brain.readFeedbackStatus()) as Promise<Awaited<ReturnType<BrainEngine['readFeedbackStatus']>>>;
+
+export const insertVolunteerEvents: Member<'insertVolunteerEvents'> = (brain, rows) =>
+  storeCall({ member: 'insertVolunteerEvents' }, () => brain.insertVolunteerEvents(rows)) as Promise<Awaited<ReturnType<BrainEngine['insertVolunteerEvents']>>>;
+
+export const readVolunteerUsage: Member<'readVolunteerUsage'> = (brain, sourceIds, days) =>
+  storeCall({ member: 'readVolunteerUsage' }, () => brain.readVolunteerUsage(sourceIds, days)) as Promise<Awaited<ReturnType<BrainEngine['readVolunteerUsage']>>>;
+
+export const upsertChronicleRow: Member<'upsertChronicleRow'> = (brain, w) =>
+  storeCall({ member: 'upsertChronicleRow' }, () => brain.upsertChronicleRow(w)) as Promise<Awaited<ReturnType<BrainEngine['upsertChronicleRow']>>>;
+
+export const reserveChronicleJudgeSlot: Member<'reserveChronicleJudgeSlot'> = (brain, limit, key) =>
+  storeCall({ member: 'reserveChronicleJudgeSlot' }, () => brain.reserveChronicleJudgeSlot(limit, key)) as Promise<Awaited<ReturnType<BrainEngine['reserveChronicleJudgeSlot']>>>;
+
+export const readChronicleLedger: Member<'readChronicleLedger'> = (brain) =>
+  storeCall({ member: 'readChronicleLedger' }, () => brain.readChronicleLedger()) as Promise<Awaited<ReturnType<BrainEngine['readChronicleLedger']>>>;

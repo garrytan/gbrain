@@ -1057,6 +1057,71 @@ SELECT source_id, type FROM pairs`],
     from: 'src/core/facts/facts-home.ts:136 scanFactsHome, at dded7edc51',
     case: { method: 'readPageFileOrigin', variant: 'default', run: e => e.readPageFileOrigin('default', 'notes/a') },
     texts: [`SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
+    from: 'src/core/context/volunteer-events.ts:178 insertVolunteerEvents, at dded7edc51: the old text was composed from the row count (VALUES tuples with $n::type casts); this is its one fixed statement over parallel arrays, with the same page-exists probe and columns',
+    case: { method: 'insertVolunteerEvents', variant: 'default', run: e => e.insertVolunteerEvents([{ source_id: 'default', slug: 'p', confidence: 0.5, match_arm: 'a', rationale: 'r', channel: 'op', session_id: null, turn: null }]) },
+    texts: [`INSERT INTO context_volunteer_events
+       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     SELECT v.* FROM unnest($1::text[], $2::text[], $3::float8[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[])
+       AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:134 upsertChronicleRow, at dded7edc51',
+    case: { method: 'upsertChronicleRow', variant: 'default', run: e => e.upsertChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', state: 'skipped', reason: 'r', trigger: 'auto', principalKind: null, principalId: null, requestId: null, noExtract: false, nextAttemptAt: null }) },
+    texts: [`INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
+       principal_kind, principal_id, request_id, no_extract, next_attempt_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
+     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
+       slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
+       principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
+       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
+       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
+     WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
+       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
+         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
+           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
+     RETURNING page_id`],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:94 reserveChronicleSlot (advisory lock, count, insert), at dded7edc51',
+    case: { method: 'reserveChronicleJudgeSlot', variant: 'default', run: e => e.reserveChronicleJudgeSlot(10, { sourceId: 'default', pageId: 1, contentHash: 'h' }) },
+    texts: [`SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))`, `SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'`, `INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)`],
+  },
+  {
+    from: 'src/core/chronicle/ledger-stats.ts:29 readChronicleLedgerStats (counts, reasons, 24-hour calls, principals), at dded7edc51',
+    case: { method: 'readChronicleLedger', variant: 'default', run: e => e.readChronicleLedger() },
+    texts: [`SELECT
+         count(*) FILTER (WHERE state = 'pending')::int AS pending,
+         count(*) FILTER (WHERE state = 'extracted' AND updated_at > now() - interval '7 days')::int AS extracted,
+         count(*) FILTER (WHERE state = 'failed' AND updated_at > now() - interval '7 days')::int AS failed,
+         count(*) FILTER (WHERE state = 'skipped' AND updated_at > now() - interval '7 days')::int AS skipped,
+         sum(cost_usd) FILTER (WHERE NOT unpriced AND updated_at > now() - interval '7 days')::float8 AS known_usd,
+         count(*) FILTER (WHERE unpriced AND state IN ('extracted','failed') AND updated_at > now() - interval '7 days')::int AS unpriced,
+         count(*) FILTER (WHERE NOT unpriced AND cost_usd IS NULL AND state IN ('extracted','failed') AND attempts > 0
+           AND updated_at > now() - interval '7 days')::int AS incomplete
+       FROM chronicle_page_state WHERE trigger = 'auto'`, `SELECT state, reason, count(*)::int AS n FROM chronicle_page_state
+       WHERE trigger = 'auto' AND state IN ('skipped','failed') AND reason IS NOT NULL AND updated_at > now() - interval '7 days'
+       GROUP BY state, reason ORDER BY n DESC, reason COLLATE "C"`, `SELECT count(*)::int AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'`, `SELECT (coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '')) COLLATE "C" AS principal, count(*)::int AS calls
+       FROM chronicle_judge_reservations r
+       LEFT JOIN chronicle_page_state l ON l.source_id = r.source_id AND l.page_id = r.page_id
+         AND l.content_hash = r.content_hash AND l.trigger = 'auto'
+       WHERE r.reserved_at > now() - interval '24 hours'
+       GROUP BY 1 ORDER BY calls DESC, principal LIMIT 5`],
+  },
+  {
+    from: 'src/core/context/volunteer.ts:366 volunteerUsageStats, at dded7edc51',
+    case: { method: 'readVolunteerUsage', variant: 'default', run: e => e.readVolunteerUsage(['default'], 30) },
+    texts: [`SELECT e.match_arm, e.channel,
+              count(*)::text AS volunteered,
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
+         FROM context_volunteer_events e
+         LEFT JOIN pages p
+           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
+        WHERE e.source_id = ANY($1::text[])
+          AND e.volunteered_at > now() - ($2 || ' days')::interval
+        GROUP BY e.match_arm, e.channel
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',

@@ -4167,6 +4167,11 @@ export class PostgresEngine implements BrainEngine {
   async readRetrievalEvent(id: string) { return collateStoreReads.readRetrievalEvent(this, id); }
   async applyRetrievalRatings(args: collateStoreReads.RetrievalRatingBatch) { return collateStoreReads.applyRetrievalRatings(this, args); }
   async readFeedbackStatus() { return collateStoreReads.readFeedbackStatus(this); }
+  async insertVolunteerEvents(rows: collateStoreReads.VolunteerEventInsert[]) { return collateStoreReads.insertVolunteerEvents(this, rows); }
+  async readVolunteerUsage(sourceIds: string[], days: number) { return collateStoreReads.readVolunteerUsage(this, sourceIds, days); }
+  async upsertChronicleRow(w: collateStoreReads.ChronicleRowUpsert) { return collateStoreReads.upsertChronicleRow(this, w); }
+  async reserveChronicleJudgeSlot(limit: number, key: collateStoreReads.ChronicleJudgeKey) { return collateStoreReads.reserveChronicleJudgeSlot(this, limit, key); }
+  async readChronicleLedger() { return collateStoreReads.readChronicleLedger(this); }
   async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }
