@@ -104,6 +104,7 @@ import * as doctorPages from './doctor-pages.ts';
 import * as doctorSearch from './doctor-search.ts';
 import * as doctorAcc from './doctor-acc.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
+import * as doctorTerminal from './doctor-terminal.ts';
 import * as doctorBrain from './doctor-brain.ts';
 import * as doctorSync from './doctor-sync.ts';
 import * as doctorSources from './doctor-sources.ts';
@@ -188,6 +189,8 @@ export const STORE_MEMBERS = {
   ...doctorAcc,
   // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
   ...doctorCheckpoints,
+  // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-terminal.md).
+  ...doctorTerminal,
   // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw (rust/docs/store/cli-reads-doctor-brain.md).
   ...doctorBrain,
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-sync.md).
