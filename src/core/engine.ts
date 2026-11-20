@@ -1,6 +1,7 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type * as DerivationTrustSql from './engine-sql/derivation-trust.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
@@ -3400,6 +3401,17 @@ export interface BrainEngine {
   listRestatedPrivateCopies(opts: { sourceId: string; claim: string; entity: string | null; writer: import('./trust/tier.ts').TrustTier }): Promise<Array<{ id: number; visibility: string; trust_tier: string }>>;
   /** How many facts carry taint inputs in their write origin, and how many of those are external_untrusted. */
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
+  /** Lowers the rows of `ids` whose stored tier ranks above `tier` to `tier` and `origin`, never raising; resolves the ids lowered (trust/taint.ts). */
+  lowerTrustTier(table: import('./trust/tier.ts').TaintTable, ids: readonly number[], tier: import('./trust/tier.ts').TrustTier,
+    origin: import('./trust/tier.ts').WriteOrigin | null): Promise<number[]>;
+  /** How many take, timeline or page rows carry taint inputs in their write origin, and how many of those are external_untrusted. */
+  countDerivedRowTaint(table: DerivationTrustSql.DerivedTaintTable): Promise<{ derived: number; external: number }>;
+  /** Records an input edge (`derivation_inputs`) from the derived row to each input; an edge already recorded is kept. */
+  insertDerivationInputs(derived: DerivationTrustSql.DerivedRowKey, inputs: readonly DerivationTrustSql.DerivationEdgeRef[]): Promise<void>;
+  /** One hop of the derived-row walk: the distinct rows derived from any of `frontier`, by table then id, at most `limit`. */
+  listDerivationDependents(frontier: readonly DerivationTrustSql.DerivationEdgeRef[], limit: number): Promise<DerivationTrustSql.DerivationDependentRow[]>;
+  /** One fixed frontmatter stamp: the retirement stamp on soft-deleted pages, or an atom generation's `source_hash` on its live atoms. */
+  stampPageFrontmatter(stamp: DerivationTrustSql.PageFrontmatterStamp): Promise<void>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

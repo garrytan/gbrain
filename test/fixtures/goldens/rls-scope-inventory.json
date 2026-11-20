@@ -346,6 +346,17 @@
         ],
         "flagOnScopes": []
       },
+      "countDerivedRowTaint#takes": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countGenerationAttempt#default": {
         "flagOffLanes": [
           "tx"
@@ -2401,6 +2412,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "listDerivationDependents#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listEffectRecoveries#after": {
         "flagOffLanes": [
@@ -5724,6 +5746,7 @@
         "countDeadDreamSubmissionRows": "none",
         "countDefaultSourceSplit": "none",
         "countDerivedFactTaint": "none",
+        "countDerivedRowTaint": "none",
         "countEmbeddingHeldPages": "none",
         "countEntityPages": "none",
         "countFactEmbeddingCoverage": "none",
@@ -5918,6 +5941,7 @@
         "holdSchemaMigrationLock": "none",
         "inboundLinkCoverage": "none",
         "initSchema": "none",
+        "insertDerivationInputs": "none",
         "insertFact": "none",
         "insertFactWithdrawal": "none",
         "insertFacts": "none",
@@ -5967,6 +5991,7 @@
         "listCorePageRows": "none",
         "listCorpusSample": "direct",
         "listDeadFactsAbsorbJobsByKeys": "none",
+        "listDerivationDependents": "none",
         "listDueWakeWatches": "none",
         "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
@@ -6126,6 +6151,7 @@
         "logIngest": "none",
         "logMcpRequest": "none",
         "loopFactDrift": "none",
+        "lowerTrustTier": "none",
         "markGenerationActivated": "none",
         "markJobWatchdogSuspect": "none",
         "markPagesAttendanceBlocked": "none",
@@ -6400,6 +6426,7 @@
         "stageSegmentTexts": "none",
         "staleLinkRelationshipKeys": "none",
         "stampEffectClaim": "none",
+        "stampPageFrontmatter": "none",
         "stampPageIngest": "none",
         "stampWorktreeHeartbeats": "none",
         "stampWriteClaim": "none",

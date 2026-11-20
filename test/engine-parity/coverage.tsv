@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 751/751
+# covered: 756/756
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -49,6 +49,7 @@
 # facts_repair: 10/10
 # facts_trust: 8/8
 # trust_tier_reads: 13/13
+# derivation_trust: 5/5
 # raw_sql: 4/4
 # code_edges: 9/9
 # eval_capture: 5/5
@@ -74,22 +75,22 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	82	no	yes	yes	serves
+transaction	lifecycle	yes	85	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	104	yes	yes	yes	serves
+getPage	pages	yes	107	yes	yes	yes	serves
 readPageSnapshot	pages	yes	28	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	405	yes	yes	yes	serves
+putPage	pages	yes	408	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	116	yes	yes	yes	serves
-softDeletePages	pages	yes	1	yes	yes	yes	serves
+softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	9	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
 listPages	pages	yes	8	yes	yes	yes	serves
@@ -337,8 +338,8 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	20	no	yes	yes	serves
-getVersions	versions	yes	9	no	yes	yes	serves
+createVersion	versions	yes	22	no	yes	yes	serves
+getVersions	versions	yes	10	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
@@ -416,8 +417,8 @@ moveKeptFactRows	persistence_journal	yes	1	no	yes	yes	serves
 readGenerationFenceBlocks	persistence_journal	yes	3	no	yes	yes	serves
 listOwnedGenerationItems	persistence_journal	yes	2	no	yes	yes	serves
 readLiveGenerationId	persistence_journal	yes	1	no	yes	yes	serves
-readGenerationPageRows	persistence_journal	yes	2	no	yes	yes	serves
-readAtomOriginInput	persistence_journal	yes	1	no	yes	yes	serves
+readGenerationPageRows	persistence_journal	yes	3	no	yes	yes	serves
+readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	3	no	yes	yes	serves
@@ -677,7 +678,7 @@ readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
 listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
 listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
 listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
-countDerivedFactTaint	facts_trust	yes	1	no	yes	yes	refuses:facts
+countDerivedFactTaint	facts_trust	yes	2	no	yes	yes	serves
 listCorePageRows	trust_tier_reads	yes	2	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
@@ -691,6 +692,11 @@ listAmendmentsNotApplied	trust_tier_reads	yes	2	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
+lowerTrustTier	derivation_trust	yes	2	no	yes	yes	serves
+countDerivedRowTaint	derivation_trust	yes	1	no	yes	yes	serves
+insertDerivationInputs	derivation_trust	yes	2	no	yes	yes	serves
+listDerivationDependents	derivation_trust	yes	2	no	yes	yes	serves
+stampPageFrontmatter	derivation_trust	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	2	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
@@ -741,8 +747,8 @@ hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
-readPageTrustRows	cli_reads_import	yes	9	no	yes	yes	serves
-readRowTrustRows	cli_reads_import	yes	3	no	yes	yes	serves
+readPageTrustRows	cli_reads_import	yes	12	no	yes	yes	serves
+readRowTrustRows	cli_reads_import	yes	4	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves

@@ -30,15 +30,14 @@ function refKey(ref: DerivationRef): { table: string; id: string } {
  * transaction that writes `row`. `sourceId` scopes the edges for cleanup when
  * a source is purged.
  */
-export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef & { sourceId?: string | null },
+export async function recordDerivationInputs(tx: Pick<BrainEngine, 'insertDerivationInputs'>, row: DerivationRef & { sourceId?: string | null },
   inputs: readonly DerivationRef[]): Promise<void> {
   if (!inputs.length) return;
   const derived = refKey(row);
   if (inputs.length > DERIVATION_EDGE_LIMIT) throw new RangeError(`A derivation records at most ${DERIVATION_EDGE_LIMIT} inputs.`);
   const edges = inputs.map(refKey);
-  await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
-    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
-    ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
+  await tx.insertDerivationInputs({ table: derived.table, id: derived.id, sourceId: row.sourceId ?? null },
+    edges.map(e => ({ input_table: e.table, input_id: e.id })));
 }
 
 export interface DerivedRow { table: string; id: string; depth: number }
@@ -48,17 +47,14 @@ export interface DerivedRow { table: string; id: string; depth: number }
  * `limit` rows and `maxDepth` hops. `truncated` is true when a bound stopped
  * the walk; the caller reports the remainder as unverified.
  */
-export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly DerivationRef[],
+export async function derivedRowsFrom(engine: Pick<BrainEngine, 'listDerivationDependents'>, inputs: readonly DerivationRef[],
   opts: { limit?: number; maxDepth?: number } = {}): Promise<{ rows: DerivedRow[]; truncated: boolean }> {
   const limit = opts.limit ?? 1_000, maxDepth = opts.maxDepth ?? 8;
   const seen = new Set(inputs.map(i => `${i.table}:${i.id}`));
   const rows: DerivedRow[] = [];
   let frontier = inputs.map(refKey);
   for (let depth = 1; frontier.length && depth <= maxDepth; depth++) {
-    const next = await engine.executeRaw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
-      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
-        ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit + 1]);
+    const next = await engine.listDerivationDependents(frontier.map(f => ({ input_table: f.table, input_id: f.id })), limit + 1);
     frontier = [];
     for (const r of next) {
       const key = `${r.derived_table}:${r.derived_id}`;

@@ -202,6 +202,8 @@ import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
 import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
+import * as derivationTrustImpl from './engine-sql/derivation-trust.ts';
+import type { TaintTable, TrustTier, WriteOrigin } from './trust/tier.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts } from './engine-sql/graph-rank.ts';
@@ -1593,6 +1595,11 @@ export class PGLiteEngine implements BrainEngine {
   listLexicalContestCandidates(opts: Parameters<typeof factsTrustImpl.listLexicalContestCandidates>[1]) { return factsTrustImpl.listLexicalContestCandidates(this.rawRead, opts); }
   listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.rawRead, opts); }
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.rawRead); }
+  lowerTrustTier(table: TaintTable, ids: readonly number[], tier: TrustTier, origin: WriteOrigin | null) { return derivationTrustImpl.lowerTrustTier(this.rawRead, table, ids, tier, origin); }
+  countDerivedRowTaint(table: derivationTrustImpl.DerivedTaintTable) { return derivationTrustImpl.countDerivedRowTaint(this.rawRead, table); }
+  insertDerivationInputs(derived: derivationTrustImpl.DerivedRowKey, inputs: readonly derivationTrustImpl.DerivationEdgeRef[]) { return derivationTrustImpl.insertDerivationInputs(this.rawRead, derived, inputs); }
+  listDerivationDependents(frontier: readonly derivationTrustImpl.DerivationEdgeRef[], limit: number) { return derivationTrustImpl.listDerivationDependents(this.rawRead, frontier, limit); }
+  stampPageFrontmatter(stamp: derivationTrustImpl.PageFrontmatterStamp) { return derivationTrustImpl.stampPageFrontmatter(this.rawRead, stamp); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }

@@ -15,6 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
+import { trustRankSql } from '../src/core/trust/tier.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
@@ -66,6 +67,45 @@ const PINS: Pin[] = [
     from: 'src/core/generations/adapters/atoms.ts:82 readInput (at ec2fbe7ba3)',
     case: { method: 'readAtomOriginInput', variant: 'default', run: e => e.readAtomOriginInput('default', 'notes/origin') },
     texts: [`SELECT id, content_hash, knowledge_revision::text AS revision,\n        CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, '')) END AS body_bytes\n       FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/trust/taint.ts:127 lowerToDerivedTier (at d7fb3a97b7)',
+    case: { method: 'lowerTrustTier', variant: 'pages', run: e => e.lowerTrustTier('pages', [3, 1], 'external_untrusted', { channel: 'derive:test' }) },
+    texts: [`UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb
+      WHERE id=ANY($1::bigint[]) AND ${trustRankSql('trust_tier')}>${trustRankSql('$2::text')} RETURNING id`],
+  },
+  {
+    from: 'src/core/trust/taint.ts:235 readDerivedTaintShare (at d7fb3a97b7)',
+    case: { method: 'countDerivedRowTaint', variant: 'takes', run: e => e.countDerivedRowTaint('takes') },
+    texts: [`SELECT count(*) FILTER (WHERE write_origin ? 'taint_inputs') AS derived,
+                count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM takes`],
+  },
+  {
+    from: 'src/core/facts/derivation-inputs.ts:39 recordDerivationInputs (at d7fb3a97b7)',
+    case: { method: 'insertDerivationInputs', variant: 'default', run: e => e.insertDerivationInputs({ table: 'pages', id: '7', sourceId: 'default' }, [{ input_table: 'pages', input_id: '3' }]) },
+    texts: [`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`],
+  },
+  {
+    from: 'src/core/facts/derivation-inputs.ts:58 derivedRowsFrom (at d7fb3a97b7)',
+    case: { method: 'listDerivationDependents', variant: 'default', run: e => e.listDerivationDependents([{ input_table: 'pages', input_id: '3' }], 1_001) },
+    texts: [`SELECT DISTINCT d.derived_table,d.derived_id
+      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+        ON d.input_table=f.input_table AND d.input_id=f.input_id
+      ORDER BY d.derived_table,d.derived_id LIMIT $2`],
+  },
+  {
+    from: 'src/core/persistence/derived-retirement-hold.ts:51 stampDerivedRetirement (at d7fb3a97b7)',
+    case: { method: 'stampPageFrontmatter', variant: 'retired', run: e => e.stampPageFrontmatter({ match: 'retired', sourceId: 'default', slugs: ['synth/a'], retiredBy: 'synthesis-cleanup', retiredAt: '2026-01-01T00:00:00.000Z' }) },
+    texts: [`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+    WHERE source_id=$3 AND slug=ANY($4::text[]) AND deleted_at IS NOT NULL`],
+  },
+  {
+    from: 'src/core/generations/adapters/atoms.ts:110 completeItems (at d7fb3a97b7)',
+    case: { method: 'stampPageFrontmatter', variant: 'atom-source-hash', run: e => e.stampPageFrontmatter({ match: 'atom_source_hash', sourceId: 'default', slugs: ['atoms/a'], sourceHash: '0123456789abcdef' }) },
+    texts: [`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+      WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`],
   },
   {
     from: 'src/core/generations/adapters/page.ts:95 pageVersionEvidence (at ec2fbe7ba3), producer text of atoms.ts:95',

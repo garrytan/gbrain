@@ -1720,10 +1720,11 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   - `t 0x08 <fact id BE8>`: a withdrawal; `t 0x09 ...`: fact and take purges; `t 0x0a ...`: review queue rows.
   - `t 0x10` to `t 0x14`: belief events, lifetimes, commit marks, retier manifest and redactions.
   - Built so far (rust/docs/store/trust.md is the record of the bytes): `t 0x01` fact withdrawals, `t 0x02` to
-    `t 0x05` write gate receipts and holds, `t 0x06` to `t 0x08` trust proposals and their pending and by-row indexes.
+    `t 0x05` write gate receipts and holds, `t 0x06` to `t 0x08` trust proposals and their pending and by-row indexes,
+    `t 0x09` and `t 0x0A` the `derivation_inputs` edges and their by-input index.
     The proposed bytes above were not kept. A page's tier and write origin have no key: they are fields of the page
     record and of each version record, and no read looks a page up by tier, so there is no tier index. A later
-    record kind takes `t 0x09`.
+    record kind takes `t 0x0B`.
 - **Transaction rules:** a tier change and its tier index change in one write. `lowerPageTrustTiers` and
   `relowerClaimedRows` read the current tier and write the lower one in the same write, so a concurrent raise is not
   lost. `insertFactWithdrawal` checks for an existing withdrawal and writes in one write (PGLite's unique key gives

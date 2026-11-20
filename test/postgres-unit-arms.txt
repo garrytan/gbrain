@@ -152,6 +152,7 @@ test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/generation-output-parity.test.ts
+test/engine-parity/generation-write-parity.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts

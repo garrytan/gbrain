@@ -414,7 +414,7 @@ src/core/facts/conversation-memo.ts	execute_raw	2
 src/core/facts/conversation-publication.ts	execute_raw	24
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
-src/core/facts/derivation-inputs.ts	execute_raw	6
+src/core/facts/derivation-inputs.ts	execute_raw	4
 src/core/facts/embedding-identity.ts	execute_raw	1
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	2
@@ -453,7 +453,6 @@ src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
-src/core/generations/adapters/atoms.ts	execute_raw	1
 src/core/generations/adapters/chronicle-events.ts	execute_raw	13
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
@@ -640,7 +639,6 @@ src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/deactivation.ts	execute_raw	19
 src/core/persistence/derived-origin-hold.ts	execute_raw	10
-src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
 src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
@@ -1051,7 +1049,6 @@ src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	16
 src/core/trust/supersede-handlers.ts	execute_raw	12	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
-src/core/trust/taint.ts	execute_raw	5
 src/core/trust/timeline-projection.ts	execute_raw	2
 src/core/uncommitted-deletions.ts	execute_raw	1
 src/core/url-clone.ts	execute_raw	2
