@@ -18,6 +18,8 @@ import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './co
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
 import type { ConversationSegment } from './conversation-types.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
+import { keepQuietClaims, keptQuiet } from './keep-quiet.ts';
+import { isFactWithdrawn } from './withdrawal.ts';
 import { tagSlots } from './slot-tagging.ts';
 import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
@@ -92,7 +94,7 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   }, unbacked);
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
-  const rows = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
+  const inferred = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
     ...fact, visibility,
     row_num: rowNum + i,
     source_markdown_slug: page.slug,
@@ -101,6 +103,11 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
     ...segmentValidFrom(fact.valid_from, seg.startIso),
     context: fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
   })));
+  // GST-3170: a fact restating a claim its speaker asked to keep quiet is stored private, unless the claim was withdrawn
+  // or purged at any visibility: the guards match the row's own visibility, so narrowing must never bring one back.
+  const quiet = visibility === 'world' ? keepQuietClaims(seg.messages) : [];
+  const rows = await Promise.all(inferred.map(async row => keptQuiet(row.fact, quiet)
+    && !await isFactWithdrawn(run.engine, run.sourceId, null, row.fact, row.entity_slug ?? null) ? { ...row, visibility: 'private' as const } : row));
   // GBRA-574: slots come from a second call over facts whose person was named exactly: by identity evidence alone (an
   // exact slug, a unique basename or alias; never a prefix guess or a near name), by subject inference, which needs
   // one live page named in full, or by a name key this window kept (the full name, by construction). Never on
