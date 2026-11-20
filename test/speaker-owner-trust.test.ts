@@ -104,18 +104,42 @@ for (const backend of testBackends()) describe(`[${backend}] speaker_owner trust
     expect((await read())!.status).toBe('invalid');
   });
 
-  test('a marker names only the member the page\'s source belongs to', async () => {
+  test('a marker names only the one person the page\'s source belongs to', async () => {
     await addMember(engine, 'alice-example');
-    await addMember(engine, 'bob-example');
     await setOwner(engine, 'alice-example');
-    await importer(SLUG, page({ ...OWNER, member: 'bob-example' }));
-    expect((await read())!.status).toBe('member_mismatch');
     await importer(SLUG, page({ ...OWNER, member: 'alice-example' }));
     expect((await read())!.status).toBe('trusted');
     await importer(SLUG, page(OWNER));
     expect((await read())!.status).toBe('member_mismatch');
+    await addMember(engine, 'bob-example');
+    for (const member of ['alice-example', 'bob-example']) {
+      await importer(SLUG, page({ ...OWNER, member }));
+      expect((await read())!.status).toBe('member_mismatch');
+    }
     await bindMemberSource(engine, 'bob-example', 'default');
-    await importer(SLUG, page({ ...OWNER, member: 'bob-example' }));
     expect((await read())!.status).toBe('trusted');
+    await importer(SLUG, page({ ...OWNER, member: 'alice-example' }));
+    expect((await read())!.status).toBe('member_mismatch');
+    await bindMemberSource(engine, 'alice-example', 'default');
+    expect((await read())!.status).toBe('member_mismatch');
+  });
+
+  test('a connector write into a Meetings source is not honored: no meetings importer stamps a marker', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('calls', 'calls', '{\"kind\":\"meetings\"}'::jsonb)");
+    await importer('meetings/2026-01-02-example', page({ label: 'Owner Example', basis: 'is_from_me', turns: 1 }), 'calls', null);
+    expect((await read('meetings/2026-01-02-example', 'calls'))!.status).toBe('untrusted_writer');
+  });
+
+  test('an unjournaled write is honored only under a local principal', async () => {
+    await importer(SLUG, page(OWNER));
+    expect((await read())!.status).toBe('trusted');
+    await engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('gbrain.write_principal_kind', 'local_stdio', true), set_config('gbrain.write_principal_id', 'stdio:example', true)");
+      await tx.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' (edited)' WHERE source_id = 'default' AND slug = $1", [SLUG]);
+    });
+    const [row] = await engine.executeRaw<{ kind: string | null; req: string | null }>(
+      "SELECT revision_principal_kind AS kind, revision_write_request_id::text AS req FROM pages WHERE source_id = 'default' AND slug = $1", [SLUG]);
+    expect(row).toEqual({ kind: 'local_stdio', req: null });
+    expect((await read())!.status).toBe('untrusted_writer');
   });
 });

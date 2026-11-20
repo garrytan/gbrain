@@ -18,6 +18,7 @@ import type { ParsedSession, TranscriptMessage } from '../src/core/transcripts/t
 import { readSpeakerOwners } from '../src/core/identity/speaker-owner.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
+import { bindMemberSource } from '../src/core/access/member-sources.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -120,6 +121,19 @@ for (const backend of testBackends()) describe(`[${backend}] transcripts ingest 
     expect(r.pages.imported).toBe(1);
     const page = await conversation('session-e2e-cli');
     expect(page.frontmatter.speaker_owner).toEqual({ label: 'User', basis: 'session_user', turns: 3, member: 'alice-example' });
+    expect((await readSpeakerOwners(engine, [{ source_id: 'default', slug: page.slug }]))[0]!.status).toBe('trusted');
+  });
+
+  test('on a brain other people share, only a source bound to one person marks the owner', async () => {
+    await addMember(engine, 'alice-example');
+    await addMember(engine, 'bob-example');
+    await setOwner(engine, 'alice-example');
+    await ingest([claudeSession('e2e-shared', ['cli', 'cli'])]);
+    expect((await conversation('session-e2e-shared')).frontmatter.speaker_owner).toBeUndefined();
+    await bindMemberSource(engine, 'alice-example', 'default');
+    await ingest([claudeSession('e2e-bound', ['cli', 'cli'])]);
+    const page = await conversation('session-e2e-bound');
+    expect(page.frontmatter.speaker_owner).toEqual({ label: 'User', basis: 'session_user', turns: 2, member: 'alice-example' });
     expect((await readSpeakerOwners(engine, [{ source_id: 'default', slug: page.slug }]))[0]!.status).toBe('trusted');
   });
 

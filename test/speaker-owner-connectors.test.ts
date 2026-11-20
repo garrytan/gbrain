@@ -14,7 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { bindMemberSource } from '../src/core/access/member-sources.ts';
-import { connectorSpeakerOwnerStamp, readSpeakerOwners } from '../src/core/identity/speaker-owner.ts';
+import { sourceSpeakerOwnerStamp, readSpeakerOwners } from '../src/core/identity/speaker-owner.ts';
 import { renderThreadPage } from '../src/core/google/google-render.ts';
 import type { GmailMessageMeta } from '../src/core/google/types.ts';
 import { renderMeetingPage } from '../src/core/meetings/render.ts';
@@ -111,16 +111,16 @@ for (const backend of testBackends()) describe(`[${backend}] connector owner sta
 
   test('a source is one person\'s: its one bound member, or the owner on a brain no other person shares', async () => {
     await source('mail-a', 'google');
-    expect(await connectorSpeakerOwnerStamp(engine, 'mail-a')).toEqual({ member: null });
+    expect(await sourceSpeakerOwnerStamp(engine, 'mail-a')).toEqual({ member: null });
     await addMember(engine, 'alice-example');
     await setOwner(engine, 'alice-example');
-    expect(await connectorSpeakerOwnerStamp(engine, 'mail-a')).toEqual({ member: 'alice-example' });
+    expect(await sourceSpeakerOwnerStamp(engine, 'mail-a')).toEqual({ member: 'alice-example' });
     await addMember(engine, 'bob-example');
-    expect(await connectorSpeakerOwnerStamp(engine, 'mail-a')).toBeNull();
+    expect(await sourceSpeakerOwnerStamp(engine, 'mail-a')).toBeNull();
     await bindMemberSource(engine, 'bob-example', 'mail-a');
-    expect(await connectorSpeakerOwnerStamp(engine, 'mail-a')).toEqual({ member: 'bob-example' });
+    expect(await sourceSpeakerOwnerStamp(engine, 'mail-a')).toEqual({ member: 'bob-example' });
     await bindMemberSource(engine, 'alice-example', 'mail-a');
-    expect(await connectorSpeakerOwnerStamp(engine, 'mail-a')).toBeNull();
+    expect(await sourceSpeakerOwnerStamp(engine, 'mail-a')).toBeNull();
   });
 
   test('an iMessage sync marks "Me" only where the owner wrote and no one else renders as Me', async () => {

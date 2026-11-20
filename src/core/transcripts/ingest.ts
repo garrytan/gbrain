@@ -51,8 +51,7 @@ import { clientRequestUuid } from '../persistence/preconditions.ts';
 import { digest } from '../persistence/digest.ts';
 import { classifyItemFailure, ItemRun } from '../item-failure.ts';
 import { unchangedPutPage } from '../persistence/put-page-screen.ts';
-import { ownerMemberId } from '../access/owner.ts';
-import { SPEAKER_OWNER_KEY } from '../identity/speaker-owner.ts';
+import { SPEAKER_OWNER_KEY, sourceSpeakerOwnerStamp, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { canonicalJson } from '../remediation-step.ts';
 import type { FileDiagnostics, ParsedSession, TranscriptAdapter, TranscriptFormat } from './types.ts';
 import { detectAdapter, type DetectResult } from './detect.ts';
@@ -253,7 +252,7 @@ export async function runTranscriptsIngest(
   // Read with the first session that renders. A dry run reads nothing from the brain: it plans every session as a
   // new one-page session at the default ceiling.
   let pageCeiling: number | undefined;
-  let ownerMember: string | null | undefined;
+  let ownerStamp: SpeakerOwnerStamp | null | undefined;
 
   const total = opts.paths.length;
   let done = 0;
@@ -352,9 +351,9 @@ export async function runTranscriptsIngest(
           const stored = opts.dryRun
             ? { layout: 'single' as const, partTargetBytes: pageCeiling, existingSlug: null, titleOverCap: false, unmarked: false }
             : await storedTranscriptLayout(engine, opts.sourceId ?? 'default', session.meta, pageCeiling);
-          if (ownerMember === undefined) ownerMember = opts.dryRun ? null : await ownerMemberId(engine);
+          if (ownerStamp === undefined) ownerStamp = opts.dryRun ? { member: null } : await sourceSpeakerOwnerStamp(engine, opts.sourceId ?? 'default');
           const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes, existing: stored.titleOverCap,
-            ...(stored.unmarked ? {} : { owner: { member: ownerMember } }) });
+            ...(stored.unmarked || !ownerStamp ? {} : { owner: ownerStamp }) });
           if (stored.existingSlug) adoptExistingBaseSlug(rendered, stored.existingSlug);
           outcome.baseSlug = rendered.baseSlug;
           outcome.parts = rendered.parts.length;
