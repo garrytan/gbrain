@@ -6,6 +6,9 @@
  *
  * The check runs only when every case of the file reached an outcome, so a `-t` filter or a failed case never trips it.
  *
+ * A row may end in a fourth column: the reason its stopped cases stop by design, one line, kept by the regenerate
+ * command while the file still has stopped cases.
+ *
  * Regenerate the pin (one command; it runs every parity file with the Rust arm, one Bun process per file as CI does,
  * and writes the file only when every run passes):
  *   bun test/engine-parity/rust-tally.ts --write
@@ -18,9 +21,10 @@ export const RUST_TALLY_PATH = join(import.meta.dir, 'rust-tally.tsv');
 export const RUST_TALLY_REGEN = 'bun test/engine-parity/rust-tally.ts --write';
 /** Set by the regenerate command: each finished file appends its row here instead of checking its pin. */
 const OUT_ENV = 'GBRAIN_TEST_PARITY_TALLY_OUT';
-const HEADER = 'file\tequal\tstopped';
+const HEADER = 'file\tequal\tstopped\tstop_reason';
 
-export interface TallyPin { equal: number; stopped: number }
+/** A file's pinned counts; `reason` says why its stopped cases stop by design (no tab or newline). */
+export interface TallyPin { equal: number; stopped: number; reason?: string }
 /** What the Rust arm did with one file's cases (harness.ts RustTally plus the cases an `n/a` capability skipped). */
 export interface FileTally { compared: number; refused: number; diverged: number; skipped: number }
 
@@ -28,15 +32,25 @@ export function parsePins(text: string): Map<string, TallyPin> {
   const pins = new Map<string, TallyPin>();
   for (const line of text.split('\n').slice(1)) {
     if (line.trim() === '') continue;
-    const [file, equal, stopped] = line.split('\t');
-    pins.set(file!, { equal: Number(equal), stopped: Number(stopped) });
+    const [file, equal, stopped, reason] = line.split('\t');
+    pins.set(file!, { equal: Number(equal), stopped: Number(stopped), ...(reason ? { reason } : {}) });
   }
   return pins;
 }
 
 export function renderPins(rows: Iterable<[string, TallyPin]>): string {
   const sortedRows = [...rows].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return [HEADER, ...sortedRows.map(([file, pin]) => `${file}\t${pin.equal}\t${pin.stopped}`)].join('\n') + '\n';
+  return [HEADER, ...sortedRows.map(([file, pin]) => `${file}\t${pin.equal}\t${pin.stopped}${pin.reason ? `\t${pin.reason}` : ''}`)].join('\n') + '\n';
+}
+
+/** The regenerated pins with each earlier stop reason kept, for a file that still has stopped cases. */
+export function keepStopReasons(fresh: Map<string, TallyPin>, earlier: Map<string, TallyPin>): Map<string, TallyPin> {
+  const out = new Map<string, TallyPin>();
+  for (const [file, pin] of fresh) {
+    const reason = earlier.get(file)?.reason;
+    out.set(file, reason && pin.stopped > 0 ? { ...pin, reason } : pin);
+  }
+  return out;
 }
 
 function readPins(): Map<string, TallyPin> {
@@ -95,7 +109,7 @@ async function regenerate(): Promise<number> {
       console.error(`rust-tally: ${failed} file(s) failed; rust-tally.tsv is unchanged`);
       return 1;
     }
-    writeFileSync(RUST_TALLY_PATH, renderPins(parsePins(`${HEADER}\n${readFileSync(out, 'utf8')}`)));
+    writeFileSync(RUST_TALLY_PATH, renderPins(keepStopReasons(parsePins(`${HEADER}\n${readFileSync(out, 'utf8')}`), readPins())));
     console.log(`rust-tally: wrote ${RUST_TALLY_PATH}`);
     return 0;
   } finally {

@@ -907,6 +907,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'switchAccessMigration': OOS.callerRawSql,
   'listAccessPolicySources': OOS.callerRawSql,
   'countPeopleFolderPages': OOS.callerRawSql,
+  'countOpenPages': OOS.callerRawSql,
   'readAccessMembers': OOS.callerRawSql,
   'readAccessCredentials': OOS.callerRawSql,
   'revokeAccessTokensNamed': OOS.callerRawSql,
@@ -1846,6 +1847,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('restoreFactPreimage', [['default', (e) => e.restoreFactPreimage(SRC, { id: 3, fact: 'f', visibility: 'private', expired_at: null, valid_until: null, superseded_by: null, consolidated_at: null, consolidated_into: null, row_num: 1 })]]),
   ...variants('readGenerationRestored', [['default', (e) => e.readGenerationRestored({ sourceId: SRC, kind: 'consolidation', ownerKey: 'entity:a:cluster:1' })]]),
   ...variants('clearTieHeldGenerationRows', [['default', (e) => e.clearTieHeldGenerationRows(SRC, 'consolidation', 'entity:a:cluster:')]]),
+  ...variants('countOpenPages', [['default', (e) => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }])]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

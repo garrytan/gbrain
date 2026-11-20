@@ -317,7 +317,9 @@ the Rust arm answers equal to PGLite and how many stop on a typed refusal. A
 file with fewer equal or more stopped cases than its pin fails, so a member
 that falls back to a refusal cannot pass. A file that does better prints the
 new counts. After a change to Rust coverage, or at each merge, regenerate the
-pin with `bun test/engine-parity/rust-tally.ts --write` and commit it.
+pin with `bun test/engine-parity/rust-tally.ts --write` and commit it. A row can end in a
+one-line reason its stopped cases stop by design; the regenerate keeps it while
+the file still has stopped cases.
 
 With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
 

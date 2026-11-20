@@ -1077,6 +1077,7 @@ export const RUST_ENGINE_MEMBERS = {
   switchAccessMigration: 'access_control',
   listAccessPolicySources: 'access_control',
   countPeopleFolderPages: 'access_control',
+  countOpenPages: 'access_control',
   readAccessCredentials: 'access_control',
   revokeAccessTokensNamed: 'access_control',
   revokeAccessToken: 'access_control',

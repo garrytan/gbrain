@@ -1,14 +1,16 @@
 /**
  * The access setup and policy-store members outside access/policy.ts (listUnboundTokenNames through
- * countPeopleFolderPages; SQL in engine-sql/access-setup.ts). The member-key setup reads and writes come from the
+ * countOpenPages; SQL in engine-sql/access-setup.ts). The member-key setup reads and writes come from the
  * store's `access_tokens` and `oauth_clients` (rust/docs/store/access-tokens.md, oauth-clients.md); no store member
  * binds a token to a member yet, so every live token reads as unbound and no key reads a source. The source, page and
  * access-state reads come from the store's sources, its live page slugs and its access state; the migration journal is
  * gbrain-store `access_migrations`. What each member answers: rust/docs/store/access_rules.md.
  */
-import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
+import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
+import { accessAllowedSql, callerAccessAllowedSql, privacyPartSql } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const listUnboundTokenNames: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listUnboundTokenNames' }, () => brain.listUnboundTokenNames()) as Promise<string[]>;
@@ -91,5 +93,45 @@ export const countPeopleFolderPages: StoreMember<[], PeopleFolderCount[]> = asyn
   }
   return out.sort((a, b) => byCodeUnit(a.source_id, b.source_id) || byCodeUnit(a.folder, b.folder));
 };
+
+/**
+ * The open-page count (engine-sql/access-setup.ts countOpenPages). The SQL engines render the empty-identity floor
+ * (`accessAllowedSql('p', [], [])`) and the privacy part in the current access context; the store judges a page by
+ * the no-caller policies it implements (`page_hidden` in facts/privacy.rs). The member serves the read only when the
+ * floor equals the no-caller member-access rendering and the floor with the privacy part equals the no-caller page
+ * policy (storePageTextPolicy); any other rendering refuses before any read, so the count is never wider.
+ * A page is open when the member-access policy admits it, and visible when the page policy does too.
+ */
+export const countOpenPages: StoreMember<[sources: readonly string[], exclude: readonly OpenPageExclusion[]], OpenPageCount[]> = async (brain, sources, exclude) => {
+  const floor = accessAllowedSql('p', [], []);
+  if (floor !== renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) {
+    refuseMember('countOpenPages', 'an open-page floor rendered in a caller record');
+  }
+  const access: StorePrivacyPolicy = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(floor, 'pages', 'p') };
+  const page = storePageTextPolicy('countOpenPages', () => `(${accessAllowedSql('p', [], [])} AND ${privacyPartSql('p')})`);
+  const groups = new Map<string, OpenPageCount>();
+  for (const source of new Set(sources)) {
+    const skip = exclude.filter(x => x.source === source).map(x => x.prefix);
+    const slugs = (await liveSlugs(brain, 'countOpenPages', source, '')).filter(slug => !skip.some(x => slug.startsWith(x)));
+    if (!slugs.length) continue;
+    const open = await pageTypes(brain, source, slugs, access);
+    if (!open.length) continue;
+    const visible = new Set((await pageTypes(brain, source, open.map(r => r.slug), page)).map(r => r.slug));
+    for (const row of open) {
+      const cut = row.slug.indexOf('/');
+      const folder = cut >= 0 ? row.slug.slice(0, cut) : '(root)';
+      const shown = visible.has(row.slug);
+      const key = JSON.stringify([source, folder, row.type, shown]);
+      const group = groups.get(key) ?? { source, folder, type: row.type, visible: shown, pages: 0 };
+      groups.set(key, group);
+      group.pages++;
+    }
+  }
+  return [...groups.values()];
+};
+
+async function pageTypes(brain: StoreBrain, sourceId: string, slugs: string[], policy: StorePrivacyPolicy): Promise<Array<{ slug: string; type: string }>> {
+  return storeCall({ member: 'countOpenPages', sourceId }, () => brain.readLivePageTypes(sourceId, slugs, policy));
+}
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);

@@ -20,6 +20,7 @@ import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
+import { accessAllowedSql, privacyPartSql } from '../src/core/search/private-visibility.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
@@ -810,6 +811,15 @@ const PINS: Pin[] = [
     case: { method: 'countPeopleFolderPages', variant: 'default', run: e => e.countPeopleFolderPages() },
     texts: [`SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
       WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY source_id COLLATE "C", split_part(slug, '/', 2) COLLATE "C"`],
+  },
+  {
+    from: 'src/core/access/open-pages.ts:187 openPages (the open-page count, rendered in the pinned access context)',
+    case: { method: 'countOpenPages', variant: 'default', run: e => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }]) },
+    texts: () => [`SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,
+              p.type AS type, (${privacyPartSql('p')}) AS visible, count(*)::int AS pages
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND ${accessAllowedSql('p', [], [])} AND p.source_id = ANY($1::text[]) AND NOT (p.source_id = $2 AND starts_with(p.slug, $3))
+        GROUP BY 1, 2, 3, 4`],
   },
   {
     from: 'src/core/access/members.ts:199 legacyTokenByName (active tokens with one name)',
