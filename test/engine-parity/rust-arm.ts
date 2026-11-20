@@ -94,6 +94,11 @@ export function rustAccessBrain(engine: unknown) {
   return (engine as RustEngine).openStore('accessRules').brain;
 }
 
+/** Fixture: record a page purge on the Rust brain (the store's `page_purges` ledger has no typed BrainEngine writer). */
+export async function recordRustPagePurge(engine: unknown, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
+  await (engine as RustEngine).openStore('recordPagePurge').brain.recordPagePurge(sourceId, hashes, slug, requestId);
+}
+
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
 
 /**

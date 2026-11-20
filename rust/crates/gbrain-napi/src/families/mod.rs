@@ -33,6 +33,7 @@ mod large_page;
 mod links;
 mod notifier;
 mod op_checkpoint;
+mod page_purges;
 mod page_visibility;
 mod pages;
 mod search;

@@ -218,6 +218,7 @@ test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-read-options.test.ts
 test/engine-parity/page-snapshot-alias.test.ts
+test/engine-parity/page-purges.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts

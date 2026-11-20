@@ -24,6 +24,7 @@
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
+//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs` lists it).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -45,6 +46,7 @@ mod fence_overlay;
 mod held_cells;
 mod kept_rows;
 pub mod loops;
+pub mod page_purges;
 pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;
@@ -747,6 +749,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
+    page_purges::remove_source_page_purges(tx, source_id)?;
     purge_ledger::remove_source_rows(tx, source_id)
 }
 

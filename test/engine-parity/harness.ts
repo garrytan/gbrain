@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, recordRustPagePurge, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -246,6 +246,25 @@ export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend
     case 'pglite':
     case 'postgres':
       await engine.executeRaw('UPDATE pages SET updated_at = $3::text::timestamptz WHERE source_id = $1 AND slug = $2', [sourceId, slug, iso]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/** Records a page purge in the `page_purges` ledger the way `recordPagePurge` of src/core/persistence/page-purge.ts does. */
+export async function recordPagePurge(engine: BrainEngine, backend: ParityBackend, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await recordRustPagePurge(engine, sourceId, hashes, slug, requestId);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(
+        `INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
+          ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`,
+        [sourceId, hashes, slug, requestId],
+      );
       return;
     default:
       return assertNever(backend);

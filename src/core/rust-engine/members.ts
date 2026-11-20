@@ -451,7 +451,7 @@ export const RUST_ENGINE_MEMBERS = {
   listManagedRoots: 'persistence_journal',
   listUnboundSourcePages: 'persistence_journal',
   listRecentWriterVersions: 'persistence_journal',
-  listRecentPurgeRequests: 'persistence_journal',
+  listRecentPurgeRequests: 'facts',
   listStuckWorktreeRefreshes: 'persistence_journal',
   listSourceBindingsForMovement: 'persistence_journal',
   listRunningClaimOwners: 'persistence_journal',
