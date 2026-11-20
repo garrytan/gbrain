@@ -3,7 +3,18 @@
 //! `src/core/engine-sql/source-archive.ts`, callers in `src/core/destructive-guard.ts`).
 //!
 //! Members: `archiveSource`, `restoreArchivedSource`, `listArchivedSourceRows`,
-//! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds` and `readSourceImpactCounts`.
+//! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds`, `readSourceImpactCounts` and
+//! `deleteSourceRecord`.
+//!
+//! `deleteSourceRecord` removes the source in one write transaction: each page with
+//! `pages::remove_page` (the Postgres `ON DELETE CASCADE` of `pages.source_id`, whose cascade
+//! always fires here, so no page is ever stranded), the records keyed by source
+//! (`cascade::remove_source_rows`), then the rows the SQL scrubs by hand: the source's
+//! managed-sync cursors, its write gate holds with their receipts and the eval candidates'
+//! retrieved slugs no other covered source has. The store keeps no persistence source bindings,
+//! no retrieval events or feedback, no volunteer events and no core edit notices, so those steps
+//! have nothing to remove. An OAuth client that names the source refuses the delete, as the
+//! `ON DELETE RESTRICT` key does.
 //!
 //! The archive times live on the source record (`archived_at_us`, `archive_expires_at_us`), as
 //! the `sources.archived_at` and `sources.archive_expires_at` columns. An archive is expired when
@@ -17,6 +28,7 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
 use crate::pages::PageRecord;
+use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, keys, put_json};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -235,4 +247,59 @@ impl Store {
             facts: crate::facts::source_rows(&*read, id)?.len() as u64,
         }))
     }
+
+    /// `deleteSourceRecord(id, expiredArchiveOnly)`: deletes the source with its pages and every
+    /// record that names it (module doc). Whether the source was deleted: false when it does not
+    /// exist, or when `expired_only` and it is not an archive past its window. A source that an
+    /// OAuth client names fails with the foreign-key `CONSTRAINT_VIOLATION` and nothing changes.
+    pub fn delete_source_record(&self, id: &str, expired_only: bool) -> Result<bool> {
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            if expired_only && !expired(&record, now) {
+                return Ok(false);
+            }
+            crate::jobs::refuse_source_delete(&*tx, id)?;
+            for page in source_pages(&*tx, id)? {
+                crate::pages::remove_page(tx, &page)?;
+            }
+            crate::cascade::remove_source_rows(tx, id)?;
+            remove_sync_cursors(tx, id)?;
+            crate::trust::write_gate::remove_source_holds(tx, id)?;
+            crate::eval_capture::remove_source_retrieved_slugs(tx, id)?;
+            tx.delete(&source_key(id))?;
+            Ok(true)
+        })
+    }
+}
+
+/// The `cursors` step of the source delete: the `managed-sync` op checkpoints whose first
+/// completed key names the source (`completed_keys->0->>'sourceId'`).
+fn remove_sync_cursors(tx: &mut dyn crate::kv::KvWrite, source_id: &str) -> Result<()> {
+    const OP: &str = "managed-sync";
+    let rows = crate::persistence::list_op_checkpoint_records_in(&*tx, OP)?;
+    let doomed: Vec<String> = rows
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.get("completed_keys")
+                .and_then(|keys| keys.get(0))
+                .and_then(|first| first.get("sourceId"))
+                .and_then(jsonb_field_text)
+                .as_deref()
+                == Some(source_id)
+        })
+        .filter_map(|row| {
+            row.get("fingerprint")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect();
+    for fingerprint in doomed {
+        crate::persistence::delete_op_checkpoint_in(tx, OP, &fingerprint)?;
+    }
+    Ok(())
 }

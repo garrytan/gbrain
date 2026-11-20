@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — source archive: the soft delete of `gbrain sources archive`, its restore, the archived-source
- * list, the purge sweep's candidate reads, the impact preview counts and the OAuth clients that hold a source
- * (engine-sql/source-archive.ts).
+ * list, the purge sweep's candidate reads, the impact preview counts, the OAuth clients that hold a source and the
+ * source delete (engine-sql/source-archive.ts, source-delete.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `softDeleteSource` archives an active source with both archive times 72 hours apart and federation off,
@@ -9,13 +9,18 @@
  *    ones included); `restoreSource` clears both times and turns federation on (or keeps it off for `--no-federate`);
  *    `assessDestructiveImpact` counts pages, chunks, embeddings, facts and the clients (revoked ones included) that hold
  *    the source; `purgeExpiredSources` never purges an unexpired archive or one with no times (it reports the latter)
- *    and purges an expired one. The same observable result on every engine arm (PGLite always; Postgres with
+ *    and purges an expired one: the purge removes the source's pages, its write gate holds and their receipts, its
+ *    `managed-sync` cursors and each eval candidate slug no other covered source holds, keeps every other source's
+ *    rows, and a source made again with the same id starts empty; an OAuth client of the source, revoked or not,
+ *    refuses the delete (`23503`) and the archive stays whole. The same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that archives without the times, keeps them after a restore, or reads an archive with no
- *    times as expired: the purge sweep deletes a source before its 72-hour recovery window, or never deletes it.
+ *    times as expired: the purge sweep deletes a source before its 72-hour recovery window, or never deletes it. An
+ *    engine whose delete misses a row family leaves a deleted source's holds, cursors or slugs behind; one that
+ *    ignores the client deletes a source an OAuth client still names.
  *  - Why existing coverage misses it: test/destructive-guard.test.ts and test/sources-archive*.test.ts drive these
  *    flows on PGLite alone; no case compares engines, and the Rust engine refused every one of these statements (raw
- *    SQL), so it kept no archive times at all.
+ *    SQL), so it kept no archive times at all, and refused the source delete (raw SQL), so it purged nothing.
  *  - Seam: none. Real engines; the flows run through destructive-guard.ts, the rows are read with typed members (no
  *    executeRaw: D18). Archive times are compared as the gap between them, never as raw dates.
  */
@@ -143,6 +148,80 @@ describe('engine parity: source archive', () => {
       }));
       const result = await purgeExpiredSources(engine);
       return { expired, result, after: (await engine.listArchivedSourceRows()).map(r => r.id) };
+    },
+  );
+
+  parityTest(
+    'purging an expired archive removes its pages and every row that names it, and keeps what other sources still hold',
+    { methods: [
+      'archiveSource', 'deleteSourceRecord', 'putPage', 'upsertChunks', 'getPage', 'countSourcePages', 'upsertWriteGateHold',
+      'upsertWriteGateReceipt', 'listWriteGateHoldRows', 'listWriteGateReceiptsFor', 'logEvalCandidate', 'listEvalCandidates',
+      'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'listArchivedSourceRows',
+    ] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'stale', {});
+      await createSource(engine, backend, 'keeper', {});
+      for (const slug of ['notes/only-here', 'notes/shared']) await engine.putPage(slug, page(slug), { sourceId: 'stale' });
+      await engine.putPage('notes/shared', page('Shared'), { sourceId: 'keeper' });
+      await engine.upsertChunks('notes/only-here', [chunk(0, 'first'), chunk(1, 'second')], { sourceId: 'stale' });
+      const hold = (sourceId: string) => ({
+        kind: 'fact' as const, source_id: sourceId, slug: 'notes/shared', fingerprint: `fp-${sourceId}`, detector_version: 1,
+        tier: 'agent_written', reason_families: ['prompt_injection'], reasons: ['ignore previous instructions'], detector_error: false,
+        payload: { fact: 'A fact' }, write_origin: null, request_id: null,
+      });
+      const holds = { stale: await engine.upsertWriteGateHold(hold('stale')), keeper: await engine.upsertWriteGateHold(hold('keeper')) };
+      for (const [sourceId, id] of Object.entries(holds)) {
+        await engine.upsertWriteGateReceipt({
+          target_table: 'write_gate_holds', target_id: String(id), source_id: sourceId, content_hash: 'h1', tier: 'agent_written',
+          detector_version: 1, verdict: 'flag', reason_families: ['prompt_injection'], reasons: ['held'], detector_error: false, request_id: null,
+        });
+      }
+      const candidate = (query: string, sourceIds: string[]) => engine.logEvalCandidate({
+        tool_name: 'query', query, retrieved_slugs: ['notes/only-here', 'notes/shared', 'notes/nowhere'], retrieved_chunk_ids: [],
+        source_ids: sourceIds, expand_enabled: null, detail: null, detail_resolved: null, vector_enabled: false, expansion_applied: false,
+        latency_ms: 1, remote: false, job_id: null, subagent_id: null, embedding_column: null,
+      });
+      await candidate('covers both', ['stale', 'keeper']);
+      await candidate('covers stale', ['stale']);
+      await candidate('covers keeper', ['keeper']);
+      const cursor = (sourceId: string) => [{ runId: `run-${sourceId}`, index: 0, sourceId, incarnation: 'i', done: false }];
+      await engine.writeOpCheckpointRecord('managed-sync', 'stale-cursor', cursor('stale'));
+      await engine.writeOpCheckpointRecord('managed-sync', 'keeper-cursor', cursor('keeper'));
+      await engine.writeOpCheckpointRecord('other-op', 'stale-other', cursor('stale'));
+      await engine.archiveSource('stale', -1);
+      const result = await purgeExpiredSources(engine);
+      const receipts = async (id: number) => (await engine.listWriteGateReceiptsFor('write_gate_holds', String(id), 10)).length;
+      const cursors = async () => Promise.all(['stale-cursor', 'keeper-cursor'].map(async fp => (await engine.readOpCheckpointRecord('managed-sync', fp)) !== null));
+      const after = {
+        result,
+        archived: (await engine.listArchivedSourceRows()).map(r => r.id),
+        holds: (await engine.listWriteGateHoldRows({ status: 'all', limit: 100 })).map(h => h.source_id),
+        receipts: { stale: await receipts(holds.stale), keeper: await receipts(holds.keeper) },
+        slugs: (await engine.listEvalCandidates()).map(c => [c.query, c.retrieved_slugs]).sort(),
+        cursors: await cursors(),
+        otherOp: (await engine.readOpCheckpointRecord('other-op', 'stale-other')) !== null,
+        keeper: [await engine.countSourcePages('keeper'), (await engine.getPage('notes/shared', { sourceId: 'keeper' }))?.title],
+      };
+      // A source made again with the same id starts empty: no page of the purged one is left behind.
+      await createSource(engine, backend, 'stale', {});
+      return { ...after, recreated: [await engine.countSourcePages('stale', { includeDeleted: true }), await engine.getPage('notes/only-here', { sourceId: 'stale' })] };
+    },
+  );
+
+  parityTest(
+    'an OAuth client of an expired archive, revoked or not, blocks its purge and the archive stays whole',
+    { methods: ['archiveSource', 'deleteSourceRecord', 'insertOauthClient', 'putPage', 'countSourcePages', 'listArchivedSourceRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'held', {});
+      await engine.putPage('notes/kept', page('Kept'), { sourceId: 'held' });
+      await engine.insertOauthClient({ client_id: 'old-app', client_name: 'Old', source_id: 'held', deleted_at: new Date('2026-01-01T00:00:00Z') });
+      await engine.archiveSource('held', -1);
+      const result = await purgeExpiredSources(engine);
+      return {
+        result, archived: (await engine.listArchivedSourceRows()).map(r => r.id),
+        pages: await engine.countSourcePages('held', { includeDeleted: true }),
+        direct: await engine.deleteSourceRecord('held', true).then(() => 'deleted', (e: { code?: string }) => e.code),
+      };
     },
   );
 });

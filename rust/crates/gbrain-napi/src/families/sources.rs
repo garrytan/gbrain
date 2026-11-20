@@ -159,4 +159,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_source_impact_counts(&id))
     }
+
+    /// `deleteSourceRecord(id, expiredArchiveOnly)`: whether the source was deleted with its pages
+    /// and every record that names it; an OAuth client of the source refuses it.
+    #[napi]
+    pub fn delete_source_record<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        expired_archive_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_source_record(&id, expired_archive_only)
+        })
+    }
 }

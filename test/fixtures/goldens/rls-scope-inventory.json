@@ -5861,6 +5861,7 @@
         "deletePage": "none",
         "deletePages": "none",
         "deleteProjectionJob": "none",
+        "deleteSourceRecord": "none",
         "deleteStalePageWriteGateReceipts": "none",
         "deleteStaleWriteGateReceipts": "none",
         "deleteTakeRows": "none",

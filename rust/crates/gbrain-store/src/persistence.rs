@@ -75,7 +75,9 @@ pub use git_holds::GitHoldSummaryDelta;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
-pub(crate) use op_checkpoint::{list_op_checkpoint_records_in, op_checkpoint_completed_keys};
+pub(crate) use op_checkpoint::{
+    delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
+};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

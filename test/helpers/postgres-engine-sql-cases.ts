@@ -165,6 +165,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listUnverifiedArchivedSourceIds': OOS.sourceArchive,
   'readSourceImpactCounts': OOS.sourceArchive,
   'listSourceOAuthClients': OOS.sourceArchive,
+  'deleteSourceRecord': OOS.sourceArchive,
   'hasCoveringFactWithdrawal': OOS.trustWithdrawals,
   'hasFactWithdrawalForSubject': OOS.trustWithdrawals,
   'insertFactWithdrawal': OOS.trustWithdrawals,

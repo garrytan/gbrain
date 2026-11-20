@@ -1,6 +1,7 @@
 /**
  * A `constraint_violation` of the store as the error the SQL engines raise (shared by the members of tables the store
- * holds to their CHECK, UNIQUE and foreign-key constraints: jobs-oauth-clients.ts, jobs-access-tokens.ts).
+ * holds to their CHECK, UNIQUE and foreign-key constraints: jobs-oauth-clients.ts, jobs-access-tokens.ts,
+ * source-archive.ts).
  */
 import { storeCall } from './common.ts';
 
@@ -9,6 +10,7 @@ const PG_REFUSALS: ReadonlyArray<{ re: RegExp; code: string }> = [
   { re: /^new row for relation "([^"]+)" violates check constraint "([^"]+)"$/, code: '23514' },
   { re: /^duplicate key value violates unique constraint "([^"]+)"$/, code: '23505' },
   { re: /^insert or update on table "([^"]+)" violates foreign key constraint "([^"]+)"$/, code: '23503' },
+  { re: /^update or delete on table "([^"]+)" violates foreign key constraint "([^"]+)" on table "[^"]+"$/, code: '23503' },
 ];
 
 /** A `constraint_violation` of the store as the error PGLite (`constraint`, `table`) and postgres.js (`constraint_name`, `table_name`) raise. */

@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { gbrainPath } from '../src/core/config.ts';
-import { listSourceOAuthClients } from '../src/core/engine-sql/source-archive.ts';
+import { deleteSourceRecord, listSourceOAuthClients } from '../src/core/engine-sql/source-archive.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -478,26 +478,26 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       [flipExpiryId, flipArchId],
     );
     // The sweep reads candidates, then deletes one row at a time. Reproduce a
-    // stamp flip landing in between: the moment the first DELETE arrives, both
+    // stamp flip landing in between: the moment the first delete arrives, both
     // rows' stamps degrade to the refusal set — the DELETE itself must refuse.
-    const orig = engine.executeRaw.bind(engine);
+    const orig = engine.deleteSourceRecord.bind(engine);
     let flipped = false;
-    engine.executeRaw = (async (sql: string, params?: unknown[]) => {
-      if (!flipped && typeof sql === 'string' && sql.includes('DELETE FROM sources')) {
+    engine.deleteSourceRecord = (async (sourceId: string, expiredArchiveOnly: boolean) => {
+      if (!flipped) {
         flipped = true;
-        await orig(
+        await engine.executeRaw(
           `UPDATE sources SET archive_expires_at = '1970-01-01T00:00:00Z' WHERE id = $1`,
           [flipExpiryId],
         );
-        await orig(`UPDATE sources SET archived_at = NULL WHERE id = $1`, [flipArchId]);
+        await engine.executeRaw(`UPDATE sources SET archived_at = NULL WHERE id = $1`, [flipArchId]);
       }
-      return orig(sql, params);
-    }) as typeof engine.executeRaw;
+      return orig(sourceId, expiredArchiveOnly);
+    }) as typeof engine.deleteSourceRecord;
     let purged: string[] = [];
     try {
       ({ purged } = await purgeExpiredSources(engine));
     } finally {
-      engine.executeRaw = orig;
+      engine.deleteSourceRecord = orig;
     }
     expect(flipped).toBe(true);
     expect(purged).not.toContain(flipExpiryId);
@@ -570,6 +570,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
     listExpiredArchivedSources: async () => [{ id: 'boom', incarnation: 'i', config: {}, local_path: null }],
+    deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return deleteSourceRecord(this as never, sourceId, expiredArchiveOnly); },
   }) as never;
 
   test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
@@ -592,6 +593,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
       listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
       listExpiredArchivedSources: async () => [{ id: 'restored-mid-sweep', incarnation: 'i', config: {}, local_path: null }],
+      deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return deleteSourceRecord(this as never, sourceId, expiredArchiveOnly); },
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
     expect(purged).toEqual([]);
@@ -908,6 +910,7 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
       listUnverifiedArchivedSourceIds: async () => [],
       listExpiredArchivedSources: async () => [{ id, incarnation: 'i', config: { kind: 'github', gh_managed: true }, local_path: localPath }],
+      deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return deleteSourceRecord(this as never, sourceId, expiredArchiveOnly); },
     } as never;
   }
 

@@ -331,7 +331,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'closeMutedLoops', 'requeueMutedLoops', 'closeThreadLoops', 'settleMuteRecheck',
   // Source archive (engine-sql/source-archive.ts; pinned by test/engine-parity/source-archive.test.ts)
   'archiveSource', 'restoreArchivedSource', 'listArchivedSourceRows', 'listExpiredArchivedSources',
-  'listUnverifiedArchivedSourceIds', 'readSourceImpactCounts', 'listSourceOAuthClients',
+  'listUnverifiedArchivedSourceIds', 'readSourceImpactCounts', 'listSourceOAuthClients', 'deleteSourceRecord',
   // Group C: decide proposals and review proposals (engine-sql/decide-proposals.ts; pinned by test/engine-parity/decide-proposals.test.ts)
   'insertDecideProposal', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals', 'transitionDecideProposal',
   'listDecideProposedPairs', 'insertDecideReviewProposal', 'listDecideReviewProposals', 'getDecideReviewProposal',

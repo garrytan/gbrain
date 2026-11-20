@@ -286,8 +286,6 @@ fn fact_slug_id(slug: &str) -> Option<u64> {
 /// candidate covers. Purged slugs leave the array; the rest keep their order. Returns the number
 /// of candidates updated. A candidate with no `source_ids` is never touched (as in PGLite, where
 /// `$1 = ANY('{}')` is false), even though its capture matched pages in every source.
-// page_ops (`deletePages`, `purgeDeletedPages`) is its caller; until that lands only tests call it.
-#[allow(dead_code)]
 pub(crate) fn remove_retrieved_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -296,6 +294,23 @@ pub(crate) fn remove_retrieved_slugs(
     if slugs.is_empty() {
         return Ok(0);
     }
+    scrub_retrieved_slugs(tx, source_id, |slug| slugs.iter().any(|s| s == slug))
+}
+
+/// The `scrub_eval_candidates` step of a source delete (`removedSourceScrubCtes`,
+/// `src/core/engine-sql/source-archive.ts`), after the pages of `source_id` are gone: every
+/// retrieved slug of a candidate that covers `source_id` leaves the array unless a page by that
+/// name lives in another source the candidate covers, whatever source the slug came from.
+pub(crate) fn remove_source_retrieved_slugs(tx: &mut dyn KvWrite, source_id: &str) -> Result<u64> {
+    scrub_retrieved_slugs(tx, source_id, |_| true)
+}
+
+/// The shared scrub: `doomed` picks the slugs that leave unless another covered source has them.
+fn scrub_retrieved_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    doomed: impl Fn(&str) -> bool,
+) -> Result<u64> {
     let candidates: Vec<CandidateRecord> = read_all(&*tx, CANDIDATE)?;
     let mut updated = 0u64;
     for mut candidate in candidates {
@@ -315,7 +330,7 @@ pub(crate) fn remove_retrieved_slugs(
         let mut kept = Vec::with_capacity(candidate.retrieved_slugs.len());
         let mut changed = false;
         for slug in &candidate.retrieved_slugs {
-            let purged = slugs.iter().any(|s| s == slug) && {
+            let purged = doomed(slug) && {
                 let mut elsewhere = false;
                 for other in &others {
                     if read_page(&*tx, other, slug)?.is_some() {

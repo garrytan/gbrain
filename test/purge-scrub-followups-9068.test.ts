@@ -41,6 +41,7 @@ import { withResponseDeferral } from '../src/core/background-work.ts';
 import { deleteConnectorPage } from '../src/core/connectors/api-source.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
 import { deleteSourceRow } from '../src/core/source-delete.ts';
+import { deleteSourceRecord } from '../src/core/engine-sql/source-archive.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
@@ -305,13 +306,16 @@ describe('#9068 removing a source scrubs every row that names its pages', () => 
       const id = 'source-reused', slug = 'notes/reused-page', query = `reused ${randomUUID()}`;
       await traced(engine, id, slug);
       let calls = 0;
-      const racing = { executeRaw: async (sql: string, params?: unknown[]) => {
+      const exec = { executeRaw: async <R,>(sql: string, params?: unknown[]) => {
         if (calls++ === 1) {
           await traced(engine, id, slug);
           await engine.logEvalCandidate(candidate(query, [slug, OTHER], [id]));
         }
-        return engine.executeRaw(sql, params);
-      } } as Pick<BrainEngine, 'executeRaw'>;
+        return engine.executeRaw<R>(sql, params);
+      } };
+      const racing: Pick<BrainEngine, 'deleteSourceRecord'> = {
+        deleteSourceRecord: (sourceId, expiredArchiveOnly) => deleteSourceRecord(exec, sourceId, expiredArchiveOnly),
+      };
       expect(await deleteSourceRow(racing, id)).toBe(true);
       expect({ engine: engine.kind, residue: await residue(engine, id, slug) }).toEqual({ engine: engine.kind, residue: { retrieval_event_pages: 1,
         retrieval_event_links: 1, retrieval_feedback: 2, retrieval_weights: 2, context_volunteer_events: 1, mention_gazetteer_entries: 1 } });

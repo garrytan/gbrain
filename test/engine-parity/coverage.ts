@@ -239,7 +239,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'closeMutedLoops', 'requeueMutedLoops', 'closeThreadLoops', 'settleMuteRecheck'],
   // source_archive: the archive, restore, archive list, purge candidates, impact counts and source clients (engine-sql/source-archive.ts)
   source_archive: ['archiveSource', 'restoreArchivedSource', 'listArchivedSourceRows', 'listExpiredArchivedSources',
-    'listUnverifiedArchivedSourceIds', 'readSourceImpactCounts', 'listSourceOAuthClients'],
+    'listUnverifiedArchivedSourceIds', 'readSourceImpactCounts', 'listSourceOAuthClients', 'deleteSourceRecord'],
   // entity_identities: the identity link, unlink and group reads (engine-sql/entity-identities.ts)
   entity_identities: ['linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin'],
   cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',

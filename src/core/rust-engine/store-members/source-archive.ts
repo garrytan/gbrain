@@ -1,14 +1,18 @@
 /**
  * Source archive (BrainEngine archiveSource, restoreArchivedSource, listArchivedSourceRows, listExpiredArchivedSources,
- * listUnverifiedArchivedSourceIds, readSourceImpactCounts, listSourceOAuthClients; engine-sql/source-archive.ts), over
- * `rust/crates/gbrain-store/src/sources/archive.rs` and the client read of `jobs/oauth_clients.rs`.
+ * listUnverifiedArchivedSourceIds, readSourceImpactCounts, listSourceOAuthClients, deleteSourceRecord;
+ * engine-sql/source-archive.ts), over `rust/crates/gbrain-store/src/sources/archive.rs` and the client read of
+ * `jobs/oauth_clients.rs`.
  *
  * Times come back as ISO text. The store keeps no `files` table, so the impact count of files is 0. A source the store
- * keeps without a name reads with its id as the name, as the migration read does (rust/docs/store/sources.md).
+ * keeps without a name reads with its id as the name, as the migration read does (rust/docs/store/sources.md). The store
+ * deletes a source's pages with it, so a delete never strands one (`stranded` is 0); an OAuth client of the source
+ * refuses the delete with the 23503 error of the RESTRICT key (constraint-errors.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { ArchivedSourceListRow, ArchivedSourceRow, SourceImpactCounts } from '../../engine-sql/source-archive.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { refusing } from './constraint-errors.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -38,3 +42,8 @@ export const readSourceImpactCounts: Member<'readSourceImpactCounts'> = async (b
 
 export const listSourceOAuthClients: Member<'listSourceOAuthClients'> = (brain, sourceId) =>
   storeCall({ member: 'listSourceOAuthClients', sourceId }, () => brain.listSourceOAuthClients(sourceId));
+
+export const deleteSourceRecord: Member<'deleteSourceRecord'> = async (brain, sourceId, expiredArchiveOnly) => ({
+  deleted: await refusing<boolean>('deleteSourceRecord', () => brain.deleteSourceRecord(sourceId, expiredArchiveOnly)),
+  stranded: 0,
+});

@@ -286,6 +286,23 @@ pub(super) fn put_client(tx: &mut dyn KvWrite, record: &ClientRecord) -> Result<
     put_json(tx, &client_key(&record.client_id), record)
 }
 
+/// The `ON DELETE RESTRICT` of `oauth_clients.source_id`: a source that a client names, revoked
+/// clients included (the key is physical), cannot be deleted. The error is the one Postgres raises.
+pub(crate) fn refuse_source_delete(read: &dyn KvRead, source_id: &str) -> Result<()> {
+    if all_clients(read)?
+        .iter()
+        .any(|c| c.source_id.as_deref() == Some(source_id))
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"{TABLE}\""
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Every client, by client id.
 pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     let mut rows = Vec::new();

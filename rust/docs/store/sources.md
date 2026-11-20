@@ -24,6 +24,7 @@ to the global mode; `getSource` returns it.
 | `brain.listExpiredArchivedSources()` | `{ id, incarnation, config, local_path }[]` by id: both archive times after `1970-01-02` UTC and the expiry passed | `listExpiredArchivedSources` (the purge sweep) |
 | `brain.listUnverifiedArchivedSourceIds()` | the archived source ids, by id, with either time missing or at or before `1970-01-02` UTC | `listUnverifiedArchivedSourceIds` (the purge sweep's report) |
 | `brain.readSourceImpactCounts(id)` | `{ name, pages, chunks, embeddings, files, facts } \| null`; pages include soft-deleted ones, `embeddings` counts chunks with a vector, `files` counts the source's files | `readSourceImpactCounts` (the delete preview) |
+| `brain.deleteSourceRecord(id, expiredArchiveOnly)` | `boolean`, whether the source was deleted: a missing source, or with `expiredArchiveOnly` one that is not an archive past its window, changes nothing; in one write transaction it removes every page (`pages::remove_page`), the `cascade::remove_source_rows` list, the source's `managed-sync` cursors, its write gate holds with their receipts, and each eval candidate's retrieved slug no other covered source has; an OAuth client that names the source (revoked ones too) refuses `constraint_violation` with the foreign-key message and changes nothing | `deleteSourceRecord` (`deleteSourceRow`: `sources remove`, the purge sweep) |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
 
@@ -61,6 +62,9 @@ The source members below behave differently on the Rust engine. Each difference 
   hyphen can sort differently.
 - `listArchivedSourceRows` breaks equal archive times by id, greatest first, in byte order, as the
   SQL engines now do (`s.id COLLATE "C" DESC`).
-- Purging an expired archive refuses `engine_capability_missing`: the source delete
-  (`deleteSourceRow`) is still raw SQL. The sweep re-raises the refusal; it does not report the
-  source as blocked.
+- `deleteSourceRecord` always removes the pages, as the `pages -> sources` cascade does, so it
+  never reports `stranded` pages (the SQL engines report them when that cascade would not fire,
+  #7072). The store keeps no `persistence_source_bindings`, retrieval events or feedback,
+  `context_volunteer_events` or `core_edit_notices`, so those steps of the SQL delete have nothing
+  to remove. The SQL engines run the scrub again in a second statement for a write that waited on
+  the delete; the store's one write transaction leaves no such gap.

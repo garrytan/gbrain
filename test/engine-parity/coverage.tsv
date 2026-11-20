@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 974/974
+# covered: 975/975
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -62,7 +62,7 @@
 # trust: 29/29
 # open_loops: 4/4
 # loop_mutes: 8/8
-# source_archive: 7/7
+# source_archive: 8/8
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
@@ -93,11 +93,11 @@ transaction	lifecycle	yes	122	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	132	yes	yes	yes	serves
+getPage	pages	yes	133	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	555	yes	yes	yes	serves
+putPage	pages	yes	558	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -131,7 +131,7 @@ listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 setSourceContextualRetrievalMode	pages	yes	1	no	yes	yes	serves
-countSourcePages	pages	yes	2	no	yes	yes	serves
+countSourcePages	pages	yes	4	no	yes	yes	serves
 insertSource	pages	yes	5	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
@@ -208,7 +208,7 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	38	yes	yes	yes	serves
+upsertChunks	chunks	yes	39	yes	yes	yes	serves
 sealChunks	chunks	yes	67	no	yes	yes	serves
 getChunks	chunks	yes	39	yes	yes	yes	serves
 getChunkPage	chunks	yes	13	no	yes	yes	serves
@@ -300,7 +300,7 @@ discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
 putRawData	raw_files	yes	8	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
-upsertFile	raw_files	yes	3	no	yes	yes	serves
+upsertFile	raw_files	yes	4	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
@@ -597,7 +597,7 @@ settleSpendWithLog	minion_queue	yes	6	no	yes	yes	serves
 insertSpendLog	minion_queue	yes	2	no	yes	yes	serves
 sumClientSpendSince	minion_queue	yes	3	no	yes	yes	serves
 readClientBudgetUsd	minion_queue	yes	1	no	yes	yes	serves
-insertOauthClient	minion_queue	yes	19	no	yes	yes	serves
+insertOauthClient	minion_queue	yes	20	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	8	no	yes	yes	serves
@@ -778,8 +778,8 @@ getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves
-logEvalCandidate	eval_capture	yes	2	no	yes	yes	serves
-listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
+logEvalCandidate	eval_capture	yes	3	no	yes	yes	serves
+listEvalCandidates	eval_capture	yes	3	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
@@ -813,13 +813,13 @@ readPageRevisions	trust	yes	1	no	yes	yes	serves
 appendFactForgetReason	trust	yes	1	no	yes	yes	serves
 readFactWithdrawnRow	trust	yes	2	no	yes	yes	serves
 readFactWithdrawnBacking	trust	yes	1	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	14	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	15	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	16	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
-listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
+listWriteGateReceiptsFor	trust	yes	4	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
-upsertWriteGateHold	trust	yes	5	no	yes	yes	serves
-listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
+upsertWriteGateHold	trust	yes	6	no	yes	yes	serves
+listWriteGateHoldRows	trust	yes	2	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
@@ -827,7 +827,7 @@ upsertOpenLoop	open_loops	yes	18	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	9	no	yes	yes	serves
 listOpenLoops	open_loops	yes	7	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
-addLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
+addLoopSuppression	loop_mutes	yes	5	no	yes	yes	serves
 removeLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
 listLoopSuppressions	loop_mutes	yes	3	no	yes	yes	serves
 listMuteRecheckThreads	loop_mutes	yes	2	no	yes	yes	serves
@@ -835,13 +835,14 @@ closeMutedLoops	loop_mutes	yes	4	no	yes	yes	serves
 requeueMutedLoops	loop_mutes	yes	3	no	yes	yes	serves
 closeThreadLoops	loop_mutes	yes	2	no	yes	yes	serves
 settleMuteRecheck	loop_mutes	yes	2	no	yes	yes	serves
-archiveSource	source_archive	yes	3	no	yes	yes	serves
+archiveSource	source_archive	yes	5	no	yes	yes	serves
 restoreArchivedSource	source_archive	yes	1	no	yes	yes	serves
-listArchivedSourceRows	source_archive	yes	3	no	yes	yes	serves
+listArchivedSourceRows	source_archive	yes	6	no	yes	yes	serves
 listExpiredArchivedSources	source_archive	yes	2	no	yes	yes	serves
 listUnverifiedArchivedSourceIds	source_archive	yes	1	no	yes	yes	serves
 readSourceImpactCounts	source_archive	yes	1	no	yes	yes	serves
 listSourceOAuthClients	source_archive	yes	1	no	yes	yes	serves
+deleteSourceRecord	source_archive	yes	2	no	yes	yes	serves
 linkEntityIdentityRow	entity_identities	yes	9	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
@@ -866,7 +867,7 @@ readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	3	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
@@ -877,8 +878,8 @@ writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	11	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	11	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	12	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	12	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
@@ -1054,7 +1055,7 @@ claimWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
-readMigrationRows	engine_migration	yes	3	no	yes	yes	serves
+readMigrationRows	engine_migration	yes	4	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves
 listManualLinkTransitions	engine_migration	yes	2	no	yes	yes	serves
 countLiveTimelineEntries	engine_migration	yes	2	no	yes	yes	serves

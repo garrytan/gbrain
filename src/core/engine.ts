@@ -4827,7 +4827,8 @@ export interface BrainEngine {
   settleMuteRecheck(sourceId: string, threadId: string): Promise<number>;
 
   // Source archive (engine-sql/source-archive.ts): the soft delete, restore, archive list, purge candidates, impact
-  // counts and source-holding OAuth clients of destructive-guard.ts, which still picks the managed path and shapes results.
+  // counts and source-holding OAuth clients of destructive-guard.ts, which still picks the managed path and shapes results,
+  // and the unmanaged source delete of source-delete.ts.
   /** Archives the active source now, expiring `ttlHours` later, with `config.federated` false; null when missing or already archived. */
   archiveSource(sourceId: string, ttlHours: number): Promise<SourceArchiveSql.ArchivedSourceRow | null>;
   /** Un-archives the archived source, clears both archive times and sets `config.federated`; whether one was restored. */
@@ -4842,6 +4843,13 @@ export interface BrainEngine {
   readSourceImpactCounts(sourceId: string): Promise<SourceArchiveSql.SourceImpactCounts | null>;
   /** The OAuth clients that name the source, revoked ones included, by client id. */
   listSourceOAuthClients(sourceId: string): Promise<SourceArchiveSql.SourceOAuthClientRow[]>;
+  /**
+   * Deletes the source (only an expired archive when `expiredArchiveOnly`) with its pages and every row that names it
+   * outside a foreign key (binding, managed-sync cursors, write gate holds with their receipts, eval candidate slugs);
+   * `stranded` counts the pages when the pages would not cascade, and then nothing is deleted. A RESTRICT foreign key
+   * (an OAuth client of the source, revoked or not) fails it with 23503. source-delete.ts `deleteSourceRow` wraps it.
+   */
+  deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean): Promise<SourceArchiveSql.SourceDeleteResult>;
 
   // Entity identities: cross-source identity groups (engine-sql/entity-identities.ts; entity-identity.ts validates first).
   /** Links the live page (sourceId, slug) into the group: re-linking moves it; canonical true demotes the old canonical in the same write. Throws the identity page-not-found error with no live page. */

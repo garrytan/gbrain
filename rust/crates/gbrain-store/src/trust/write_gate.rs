@@ -12,8 +12,9 @@
 //!   re-opens a hold when the same content arrives again.
 //!
 //! Ids come from the `write_gate_receipts` and `write_gate_holds` counters and start at 1. Neither
-//! table has a foreign key in Postgres, so a source or page delete leaves these rows; the callers
-//! that scrub them (source delete, purge) still run raw SQL, which the Rust engine refuses.
+//! table has a foreign key in Postgres, so a source or page delete leaves these rows; a source
+//! delete (`sources::delete_source_record`) removes the source's holds with their receipts through
+//! [`remove_source_holds`], as `removedSourceScrubCtes` does.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -459,6 +460,28 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// The `scrub_write_gate_holds` and `scrub_write_gate_receipts` steps of a source delete
+/// (`removedSourceScrubCtes`): every hold of `source_id`, whatever its status, with its dedupe
+/// entry and the receipts whose target is that hold (`target_table = 'write_gate_holds'`).
+pub(crate) fn remove_source_holds(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    for hold in all_holds(&*tx)?
+        .into_iter()
+        .filter(|h| h.source_id == source_id)
+    {
+        let id = hold.id.to_string();
+        for receipt in receipts_of(&*tx, "write_gate_holds", &id)? {
+            delete_receipt(tx, &receipt)?;
+        }
+        let version = hold.detector_version.to_string();
+        tx.delete(&tagged(
+            HOLD_DEDUPE,
+            &[&hold.source_id, &hold.slug, &hold.fingerprint, &version],
+        ))?;
+        tx.delete(&by_id(HOLD, hold.id))?;
+    }
+    Ok(())
 }
 
 /// The fingerprints of the holds with `kind = 'fact'` and `status = 'held'` on page (`source_id`,

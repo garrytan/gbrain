@@ -39,8 +39,8 @@ only its contextual retrieval state, which is a column of the page row. `getPage
 
 A deleted source loses every alias row of that source, as Postgres's `ON DELETE CASCADE` does:
 `remove_source_rows` (on core's `cascade::remove_source_rows` list) deletes the source's `k 0x01`,
-`0x02`, `0x03`, `0x05` and `0x06` keys and the state of any page still in it. The Rust engine does not
-serve source delete yet, so nothing calls it today.
+`0x02`, `0x03`, `0x05` and `0x06` keys and the state of any page still in it. The source delete
+(`deleteSourceRecord`, rust/docs/store/sources.md) calls it.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

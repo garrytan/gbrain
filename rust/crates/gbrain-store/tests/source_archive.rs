@@ -1,12 +1,14 @@
 //! Source archive (`archiveSource`, `restoreArchivedSource`, `listArchivedSourceRows`,
 //! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds`, `readSourceImpactCounts`) and
-//! the source's OAuth clients (`listSourceOAuthClients`), on a clock the test moves.
+//! the source's OAuth clients (`listSourceOAuthClients`) and the source delete
+//! (`deleteSourceRecord`), on a clock the test moves.
 
 mod memory_env;
 
 use gbrain_store::jobs::ClientInsert;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::raw_files::FileSpec;
+use gbrain_store::trust::write_gate::{HoldInput, HoldListOpts};
 use memory_env::{Brain, T0, brain};
 use serde_json::{Map, Value, json};
 
@@ -171,4 +173,86 @@ fn the_source_client_list_names_revoked_clients_and_skips_other_sources() {
         ])
     );
     assert_eq!(b.list_source_oauth_clients("nope").unwrap(), json!([]));
+}
+
+fn hold(b: &Brain, source: &str) {
+    let input: HoldInput = serde_json::from_value(json!({
+        "kind": "fact", "source_id": source, "slug": "notes/shared", "fingerprint": "fp",
+        "detector_version": 1, "tier": "agent_written", "reason_families": ["override"],
+        "reasons": ["override found"], "detector_error": false,
+        "payload": {}, "write_origin": null, "request_id": null,
+    }))
+    .unwrap();
+    b.upsert_write_gate_hold(input).unwrap();
+}
+
+#[test]
+fn deleting_a_source_removes_its_pages_holds_and_cursors_and_keeps_other_sources() {
+    let b = brain("archive-delete");
+    for id in ["stale", "keeper"] {
+        b.insert_source(id, id, None, &Map::new()).unwrap();
+        page(&b, id, "notes/shared");
+        hold(&b, id);
+        b.write_op_checkpoint_record(
+            "managed-sync",
+            &format!("{id}-cursor"),
+            Some(&json!([{ "sourceId": id }])),
+        )
+        .unwrap();
+    }
+    page(&b, "stale", "notes/only-here");
+    // A missing source and, for the purge, a source that is not an expired archive: no change.
+    assert!(!b.delete_source_record("nope", false).unwrap());
+    assert!(!b.delete_source_record("stale", true).unwrap());
+    b.archive_source("stale", 72).unwrap().unwrap();
+    assert!(!b.delete_source_record("stale", true).unwrap());
+    assert_eq!(b.count_source_pages("stale", true).unwrap(), 2);
+    b.clock.advance(72 * HOUR);
+    assert!(b.delete_source_record("stale", true).unwrap());
+    assert!(b.get_source("stale").unwrap().is_none());
+    assert_eq!(b.count_source_pages("stale", true).unwrap(), 0);
+    assert_eq!(b.count_source_pages("keeper", true).unwrap(), 1);
+    let opts: HoldListOpts =
+        serde_json::from_value(json!({ "status": "all", "limit": 100 })).unwrap();
+    let holds: Vec<Value> = b
+        .list_write_gate_hold_rows(&opts)
+        .unwrap()
+        .into_iter()
+        .map(|row| row["source_id"].clone())
+        .collect();
+    assert_eq!(holds, [json!("keeper")]);
+    let cursors: Vec<Value> = b
+        .list_op_checkpoint_records("managed-sync")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["fingerprint"].clone())
+        .collect();
+    assert_eq!(cursors, [json!("keeper-cursor")]);
+    // A source made again with the same id starts empty.
+    b.insert_source("stale", "stale", None, &Map::new())
+        .unwrap();
+    assert_eq!(b.count_source_pages("stale", true).unwrap(), 0);
+}
+
+#[test]
+fn an_oauth_client_of_the_source_refuses_its_delete_even_when_revoked() {
+    let b = brain("archive-delete-client");
+    b.insert_source("held", "held", None, &Map::new()).unwrap();
+    page(&b, "held", "notes/one");
+    let row: ClientInsert = serde_json::from_value(json!({
+        "client_id": "old-app", "client_name": "old app", "source_id": "held", "deleted_at": "2027-01-01T00:00:00Z",
+    }))
+    .unwrap();
+    b.insert_oauth_client(&row).unwrap();
+    let err = b.delete_source_record("held", false).unwrap_err();
+    assert_eq!(err.code, "constraint_violation");
+    assert!(
+        err.message.contains("oauth_clients_source_id_fkey"),
+        "{}",
+        err.message
+    );
+    assert!(b.get_source("held").unwrap().is_some());
+    assert_eq!(b.count_source_pages("held", true).unwrap(), 1);
 }

@@ -4110,6 +4110,7 @@ export class PGLiteEngine implements BrainEngine {
   listUnverifiedArchivedSourceIds() { return sourceArchiveImpl.listUnverifiedArchivedSourceIds(unscopedExecutor(this.engineSql, 'source archive: the unverified archive read ran through executeRaw unscoped')); }
   readSourceImpactCounts(sourceId: string) { return sourceArchiveImpl.readSourceImpactCounts(unscopedExecutor(this.engineSql, 'source archive: the impact count read ran through executeRaw unscoped'), sourceId); }
   listSourceOAuthClients(sourceId: string) { return sourceArchiveImpl.listSourceOAuthClients(unscopedExecutor(this.engineSql, 'source archive: the source client read ran through executeRaw unscoped'), sourceId); }
+  deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return sourceArchiveImpl.deleteSourceRecord(this.engineSql, sourceId, expiredArchiveOnly); }
   private get entityIdentityRead() { return unscopedExecutor(this.engineSql, 'entity identities: master engine.executeRaw, unscoped'); }
   linkEntityIdentityRow(input: EntityIdentityLinkInput) { return entityIdentitiesImpl.linkEntityIdentityRow(this.engineSql, input); }
   unlinkEntityIdentityRow(input: EntityIdentityUnlinkInput) { return entityIdentitiesImpl.unlinkEntityIdentityRow(this.engineSql, input); }
