@@ -29,6 +29,7 @@ import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
 import * as stats from './stats.ts';
 import * as rawFiles from './raw-files.ts';
+import * as filesOps from './files-ops.ts';
 import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
 import * as keyword from './keyword.ts';
@@ -106,7 +107,7 @@ export const STORE_MEMBERS = {
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
-  ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
+  ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...filesOps, ...linkQueries, ...timelineQueries, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
