@@ -81,4 +81,8 @@ A deleted proposal takes its evidence key with it, so the next dream cycle can r
   single-precision value (0.9, not 0.8999999761581421), as PGLite and Postgres print a `REAL`.
 - `gbrain edge-proposals date` writes its timeline line through the `add_timeline_entry` operation. On a Rust brain that
   write queues: its preparation reads the source kind through `executeRaw`
-  (`src/core/persistence/semantic-pages.ts:83`). The command's own members are served; the parity case pins that stop.
+  (`src/core/persistence/semantic-pages.ts:83`). The command's own members are served; the parity case pins that stop
+  by name. The getSource hunk on that line serves the read: babe38bded (`rust-engine/admin-unowned-rust`) and
+  65b3f8a992 (`rust-engine/timeline-add-rust`) carry it byte-identical. With that hunk, the write stops next in
+  `guardFenceRows` (`src/core/trust/fence-guard.ts:71`), which the pin also names. Whichever change lands second
+  removes the pin.

@@ -141,12 +141,26 @@ function watched(engine: BrainEngine) {
 }
 
 /**
- * Known stop on Rust: `date` writes its line through the add_timeline_entry operation, whose preparation reads the
- * source kind through executeRaw (prepareSemanticPageMutation, src/core/persistence/semantic-pages.ts:83). On a Rust
- * brain that write queues on the refused read, so the dated case stops there. The pin fails as soon as that read is
- * served: the case must then compare equal, and whichever change lands second removes this pin.
+ * Known stops on Rust: `date` writes its line through the add_timeline_entry operation. On a Rust brain that write
+ * queues on a refused executeRaw, so the dated case stops there. Two stops are pinned, in the order the case meets them:
+ * 1. Today: the preparation reads the source kind through executeRaw (prepareSemanticPageMutation,
+ *    src/core/persistence/semantic-pages.ts:83). The getSource hunk on that line serves it: babe38bded
+ *    (rust-engine/admin-unowned-rust) and 65b3f8a992 (rust-engine/timeline-add-rust) carry it byte-identical.
+ * 2. With that hunk applied, the publish transaction stops in guardFenceRows (src/core/trust/fence-guard.ts:71), which
+ *    clears the guarded rows through executeRaw. The tx engine is not watched, so this stop is read from the stack of
+ *    the refusal itself; the watched call is the transaction (publicationTransaction).
+ * The pin fails as soon as the case runs to the end on Rust: it must then compare equal, and whichever change lands
+ * second (this branch, or the branch that carries the getSource hunk) removes this pin.
  */
-const RUST_KNOWN_STOP = /at prepareSemanticPageMutation \([^)]*src\/core\/persistence\/semantic-pages\.ts:83:/;
+const RUST_KNOWN_STOP = new RegExp([
+  /at prepareSemanticPageMutation \([^)]*src\/core\/persistence\/semantic-pages\.ts:83:/.source,
+  /at (?:async )?guardFenceRows \([^)]*src\/core\/trust\/fence-guard\.ts:71:/.source,
+].join('|'));
+
+/** Where the queued write stopped: the watched call's stack, then the stack of the refusal it raised. */
+function stopSite(w: ReturnType<typeof watched>): string {
+  return `${w.refusalSite()}\n${(w.refusal() as Error | null)?.stack ?? ''}`;
+}
 
 /** Runs a command whose write a missing capability queues: it then stops on the typed refusal the write waits for. */
 async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, backend: string, run: () => Promise<T>): Promise<T> {
@@ -156,13 +170,13 @@ async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, backend: str
   } catch (error) {
     const blocked = (error as { writeRequest?: { blocked_reason?: unknown } })?.writeRequest?.blocked_reason;
     if (blocked === 'engine_capability_missing' && w.refusal() !== null) {
-      if (backend === 'rust') expect(w.refusalSite()).toMatch(RUST_KNOWN_STOP);
+      if (backend === 'rust') expect(stopSite(w)).toMatch(RUST_KNOWN_STOP);
       throw w.refusal();
     }
     throw error;
   }
   // The known stop above: reaching here on Rust means the read is served, so this pin has to go.
-  if (backend === 'rust') expect('the dated case ran to the end on Rust').toBe('the case stops at prepareSemanticPageMutation (RUST_KNOWN_STOP)');
+  if (backend === 'rust') expect('the dated case ran to the end on Rust').toBe('the case stops at prepareSemanticPageMutation or guardFenceRows (RUST_KNOWN_STOP)');
   return out;
 }
 
