@@ -7,7 +7,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: (1) a put_page to a git-rooted source that no writer claimed commits the page and writes its file on
- *    a single-process engine (PGLite, Rust), and refuses owner_unavailable on Postgres until a writer claims it;
+ *    PGLite, and refuses owner_unavailable on Postgres until a writer claims it; on Rust it refuses as Postgres does
+ *    (a named stop, RUST_STOP_UNBOUND) until the single-process claim serves Rust;
  *    (2) a forced update of an existing page commits, and a later write in the same source behind it commits;
  *    (3) a new conversation page (chronicle-shaped) commits.
  *  - Regression: (1) persistence/unbound-source.ts decideUnboundWrite auto-claims only for PGLite, so Rust refuses
@@ -55,12 +56,22 @@ const thrown = new WeakMap<object, unknown>();
  * refusal, which the Rust arm counts as refused; once the member is served the case commits and this is never taken.
  */
 const typedOnRust = (backend: string, out: { ok: boolean; code?: unknown }) => backend === 'rust' && out.ok === false && out.code === 'engine_capability_missing';
+/**
+ * Case 1's named Rust stop (harness `rustStop`): not a capability refusal, so not the in-test pin. The refusal is the
+ * one persistence/unbound-source.ts unboundSourceError raises, code `owner_unavailable`, detail `unbound_source`.
+ */
+const UNBOUND_REFUSAL = 'This source has no designated canonical owner.';
+const RUST_STOP_UNBOUND = `Rust stop: put_page to an unclaimed git-rooted source refuses owner_unavailable (unbound_source): "${UNBOUND_REFUSAL}" `
+  + 'persistence/unbound-source.ts decideUnboundWrite claims the source only when engine.kind is pglite, so the single-process Rust engine '
+  + 'refuses as Postgres does. Owner: the lane that makes the single-process claim serve Rust (bench-save-repro case 1). Unpin at that '
+  + 'join: expect the Rust arm to commit the page and its file, as PGLite does.';
 const person = (n: string) => `---\ntitle: Carol\ntype: person\n---\nCarol ${n}.\n`;
 const COMMITTED = { ok: true, state: 'committed', status: 'created_or_updated' };
 
 describe('the bench save failures', () => {
   parityTest('case 1: put_page to a git-rooted source no writer claimed commits the page and its file', {
-    methods: ['putPage', 'getPage'],
+    methods: ['getPage'],
+    rustStop: { code: 'owner_unavailable', pin: RUST_STOP_UNBOUND },
     timeout: 60_000,
   }, async (engine, backend) => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-bench-save-parity-')));
@@ -78,8 +89,15 @@ describe('the bench save failures', () => {
           const page = await engine.getPage('notes/bob-example', { sourceId: 'vault' });
           const file = join(root, 'notes', 'bob-example.md');
           const out = { put, page: page !== null, file: existsSync(file) && readFileSync(file, 'utf8').includes('widget-co') };
+          if (backend === 'rust') {
+            // The named stop: the same refusal as Postgres, and nothing written.
+            const refusal = thrown.get(put) as { message?: string; detail?: string } | undefined;
+            expect({ ...out, message: refusal?.message, detail: refusal?.detail }).toEqual({ put: { ok: false, code: 'owner_unavailable' }, page: false, file: false,
+              message: UNBOUND_REFUSAL, detail: 'unbound_source' });
+            throw Object.assign(new Error(`put_page refused owner_unavailable: ${RUST_STOP_UNBOUND}`), { code: 'owner_unavailable' });
+          }
           // Postgres is a multi-process engine: an unclaimed rooted source refuses until `gbrain sources writer claim`
-          // (by design, #6608). PGLite and Rust are single-process engines (consumer-election.ts) and claim it.
+          // (by design, #6608). PGLite is a single-process engine (consumer-election.ts) and claims it.
           const rule = backend === 'postgres'
             ? { put: { ok: false, code: 'owner_unavailable' }, page: false, file: false }
             : { put: COMMITTED, page: true, file: true };
@@ -92,7 +110,7 @@ describe('the bench save failures', () => {
     }
   });
 
-  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['putPage', 'createVersion', 'addTag', 'getPage'] }, async (engine, backend) => {
+  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['createVersion', 'getPage'] }, async (engine, backend) => {
     try {
       const created = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v1') });
       const updated = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v2'), force: true });
@@ -109,7 +127,7 @@ describe('the bench save failures', () => {
     } finally { await disposePersistenceConsumer(engine); }
   });
 
-  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['putPage'] }, async (engine) => {
+  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['readPageSnapshot'] }, async (engine) => {
     try {
       const big = '---\ntitle: Conv\ntype: conversation\n---\n' + 'User: hello there, this is a long line of conversation text.\n'.repeat(90);
       const part = await run(engine, 'put_page', { slug: 'conversations/conv-example/part-1', content: big });

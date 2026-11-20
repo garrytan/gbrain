@@ -6,6 +6,7 @@ test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
+test/engine-parity/bench-save-repro.test.ts	1	2
 test/engine-parity/bound-write.test.ts	1	2
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chronicle-decision.test.ts	4	4
