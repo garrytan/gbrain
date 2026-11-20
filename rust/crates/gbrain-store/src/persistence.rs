@@ -542,7 +542,7 @@ pub(crate) fn pending_skill_revisions(
     Ok(out)
 }
 
-fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
+pub(crate) fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
     get_json(read, &keys::request(&uuid_param(id, "id")?))
 }
 

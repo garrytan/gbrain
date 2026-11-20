@@ -6,7 +6,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -51,16 +51,17 @@ export const readDriftSchema: Member<'readDriftSchema'> = async () => 'current';
 export const originIndexPresent: Member<'originIndexPresent'> = async (_brain, name) => name === 'pages_live_origin_key';
 
 /**
- * A source with no live page has nothing to scan. A source with pages needs the writer of each revision (which request
- * wrote it), which the store does not keep, so the read refuses instead of answering without it.
+ * The live pages of a source (a batch after `at.after`, or the page at `at.slug`) and their versions, from the store
+ * (cli_reads/doctor_drift.rs). `req` and `kind` come from the page's revision receipt or the version's archived actor,
+ * and `remote` from the attributed journal request's authority, as the SQL's join reads them; an unattributed write
+ * answers all three as null.
  */
-export const listDriftLiveRows: Member<'listDriftLiveRows'> = async (brain, _schema, sourceId) => {
-  const live = Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, false)));
-  if (live === 0) return [];
-  return refuseMember('listDriftLiveRows', 'the store keeps no write-request attribution of a page revision');
-};
-export const listDriftVersionRows: Member<'listDriftVersionRows'> = async (_brain, _schema, pageIds) =>
-  pageIds.length === 0 ? [] : refuseMember('listDriftVersionRows', 'the store keeps no write-request attribution of a page version');
+export const listDriftLiveRows: Member<'listDriftLiveRows'> = (brain, _schema, sourceId, at) =>
+  storeCall({ member: 'listDriftLiveRows' }, async () =>
+    (await brain.listDriftLiveRows({ sourceId, after: at.after ?? null, slug: at.slug ?? null })) as never);
+export const listDriftVersionRows: Member<'listDriftVersionRows'> = (brain, _schema, pageIds) =>
+  pageIds.length === 0 ? Promise.resolve([]) : storeCall({ member: 'listDriftVersionRows' }, async () =>
+    (await brain.listDriftVersionRows({ pageIds: [...pageIds] })) as never);
 
 // Decide, proposals, chronicle, feedback, belief and volunteer state: none is written on this engine.
 export const listDecideCalibrationRows: Member<'listDecideCalibrationRows'> = async () => [];

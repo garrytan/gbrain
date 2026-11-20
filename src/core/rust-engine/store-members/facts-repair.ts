@@ -8,8 +8,9 @@
  * Also served (facts/repair_gone.rs): listExtractorFactsForClassification, whose receipt is read off the write journal's
  * committed requests, and countPurgedPageFacts, which the store answers as one `purged` flag per counted fact: true when
  * the source's `page_purges` ledger records a purge of the fact's page at or after the fact was written.
- * Refused: listUnwithdrawnFacts. The store keeps derived generations and their items (generations.rs writes them), but
- * no store read lists the facts a facts-fence generation retired, so answering no row could hide one.
+ * Not served: listUnwithdrawnFacts (it refuses as an unserved member of the facts capability). The store keeps derived
+ * generations and their items (generations.rs writes them), but no store read lists the facts a facts-fence generation
+ * retired, so answering no row could hide one.
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
@@ -94,7 +95,3 @@ export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sour
     return { evidenced: kept.filter(Boolean).length, ambiguous: kept.filter(r => !r).length, capped: rows.length > cap };
   });
 };
-
-/** `listUnwithdrawnFacts`: refused; the store keeps generation items but has no read of the facts a fence retired. */
-export const listUnwithdrawnFacts: Member<'listUnwithdrawnFacts'> = async () =>
-  refuseMember('listUnwithdrawnFacts', 'a read of the facts a facts-fence generation retired');

@@ -9,6 +9,7 @@ pub mod doctor_checkpoints;
 pub mod doctor_derived;
 pub mod doctor_derived_health;
 pub mod doctor_derived_ledgers;
+pub mod doctor_drift;
 pub mod doctor_facts_trust;
 pub mod doctor_fence;
 pub mod doctor_pages;

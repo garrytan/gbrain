@@ -89,6 +89,83 @@ describe('doctor reads, second set', () => {
   );
 
   parityTest(
+    'the drift reads list the live pages of a source and the versions of those pages',
+    { methods: ['putPage', 'softDeletePage', 'createVersion', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows'] },
+    async (engine) => {
+      const page = (title: string, frontmatter: Record<string, unknown>) => ({ ...NOTE, title, frontmatter });
+      await engine.putPage('notes/a', page('A', { tag: 'one' }));
+      await engine.createVersion('notes/a');
+      await engine.putPage('notes/a', page('A', { tag: 'two' }));
+      await engine.putPage('notes/b', page('B', {}));
+      await engine.putPage('notes/gone', page('Gone', {}));
+      expect(await engine.softDeletePage('notes/gone')).toBeTruthy();
+      const schema = await engine.readDriftSchema();
+      const live = await engine.listDriftLiveRows(schema, 'default', { after: 0 });
+      const ids = live.map(r => Number(r.id));
+      const later = await engine.listDriftLiveRows(schema, 'default', { after: ids[0]! });
+      const bySlug = await engine.listDriftLiveRows(schema, 'default', { slug: 'notes/b' });
+      const deleted = await engine.listDriftLiveRows(schema, 'default', { slug: 'notes/gone' });
+      const elsewhere = await engine.listDriftLiveRows(schema, 'no-such-source', { after: 0 });
+      const versions = await engine.listDriftVersionRows(schema, ids);
+      // These writes run under no principal, so `req`, `kind` and `remote` are null on every arm; the attributed case
+      // below compares them. The comparison masks the revision uuid to its presence.
+      const view = (rows: typeof live) => rows.map(({ id: _id, ingested_at, revision, ...r }) => ({ ...r, stamped: ingested_at !== null, revised: typeof revision === 'string' }));
+      const versionView = versions.map(({ page_id, ...v }) => ({ ...v, first_page: Number(page_id) === ids[0] }));
+      expect(live.map(r => r.slug)).toEqual(['notes/a', 'notes/b']);
+      expect(later.map(r => r.slug)).toEqual(['notes/b']);
+      expect(bySlug.map(r => r.slug)).toEqual(['notes/b']);
+      expect(deleted).toEqual([]);
+      expect(elsewhere).toEqual([]);
+      expect(versionView.length).toBe(1);
+      return { live: view(live), later: view(later), bySlug: view(bySlug), versions: versionView };
+    },
+  );
+
+  parityTest(
+    'the drift reads carry the request, principal kind and remote flag of an attributed write',
+    { methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'applyTransactionSettings', 'putPage', 'createVersion', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows'] },
+    async (engine) => {
+      const source = await engine.readSourceMembership('default');
+      const admit = async (n: number, remote: unknown) => {
+        const keys = ['principal:local_cli:w', 'brain'];
+        await engine.lockPersistenceCounters(keys);
+        const row = await engine.insertWriteRequest({
+          principalKind: 'local_cli', principalId: 'w', requestId: `c0000000-0000-4000-8000-00000000000${n}`, operation: 'put_page',
+          sourceId: 'default', sourceIncarnation: source!.incarnation, pageId: null, slug: 'notes/a', worktreeId: null,
+          topologyGeneration: null, digest: String(n).repeat(64), intent: { kind: 'put_page', slug: 'notes/a' },
+          authority: { scopes: ['write'], remote }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page',
+          protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null,
+          state: 'queued', deferredRefreshId: null,
+        });
+        return row.id;
+      };
+      const wrote = await admit(1, true);
+      const archived = await admit(2, false);
+      const settings = ['gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id'];
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(settings, [wrote, 'local_cli', 'w']);
+        await tx.putPage('notes/a', { ...NOTE, title: 'A' });
+      });
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(settings, [archived, 'local_cli', 'w']);
+        await tx.createVersion('notes/a');
+      });
+      const schema = await engine.readDriftSchema();
+      const live = await engine.listDriftLiveRows(schema, 'default', { after: 0 });
+      const versions = await engine.listDriftVersionRows(schema, live.map(r => Number(r.id)));
+      // Request ids are uuids minted per arm, so each reads as the role it plays.
+      const role = (req: string | null) => (req === null ? null : req === wrote ? 'wrote' : req === archived ? 'archived' : 'other');
+      const pick = (r: { req: string | null; kind: string | null; remote: string | null }) => ({ req: role(r.req), kind: r.kind, remote: r.remote });
+      const answers = { live: live.map(pick), versions: versions.map(pick) };
+      expect(answers).toEqual({
+        live: [{ req: 'wrote', kind: 'local_cli', remote: 'true' }],
+        versions: [{ req: 'archived', kind: 'local_cli', remote: 'false' }],
+      });
+      return answers;
+    },
+  );
+
+  parityTest(
     'the request log reads count rows, bound the count and find a row past the retention window',
     { methods: ['logMcpRequest', 'readMcpRequestLogBytes', 'countMcpRequestLogRows', 'hasMcpLogRowsPastWindow'] },
     async (engine) => {

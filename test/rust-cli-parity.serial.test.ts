@@ -476,8 +476,6 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyRust: [],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
-      // provenance_stamp_drift warns with the refusal of listDriftLiveRows, which refuses on a populated brain and names
-      // the missing write-request attribution in its parenthesis.
       // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
       // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
       // readRawProvenanceGaps counts the gaps in the store.
@@ -490,7 +488,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // does, so the check reads the same model and passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
       // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
-      untypedWarnings: ['provenance_stamp_drift'],
+      // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
+      untypedWarnings: [],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
