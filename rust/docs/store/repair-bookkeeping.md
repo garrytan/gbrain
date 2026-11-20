@@ -321,8 +321,10 @@ the store table is in `write-guards.md`): `detachPageOrigin` (origin twins, file
 `readPageDatabaseOnlyReason` (the origin-twin check of a page write), `bumpPageKnowledgeRevision`
 (secret spans), `removePageFrontmatterKeys` (atom restore) and `setPageType` (file repair). The page
 record keeps `database_only_reason`, which the store dropped before. Each apply still runs these
-inside a maintenance transaction, which a Rust brain does not open yet, so the applies run on Rust
-once the transaction API lands. Pinned by `test/engine-parity/page-repair-writes.test.ts`.
+inside a maintenance transaction. A Rust brain serves `engine.transaction` (savepoints on a bound
+clone, `src/core/rust-engine/store-members/transactions.ts`), and `maintenanceTransaction` runs on
+it: the attribution falls back to the host principal when no writer is registered. Pinned by
+`test/engine-parity/page-repair-writes.test.ts`.
 
 ## Kinds that need the owner host
 
@@ -331,6 +333,28 @@ binding, the three engines give the same answer: the first two refuse `not_owner
 `rows-behind` previews no rows. The binding is a `persistence_journal` record, which a Rust brain
 does not serve yet, so their owner-host path waits for the batch that serves it. Pinned by
 `test/engine-parity/repair-owner-kinds.test.ts`.
+
+### Where each owner-host apply stops on Rust
+
+No apply stops inside `maintenanceTransaction`. Each one stops at an owner-host prerequisite or at
+a raw read before its transaction opens. The table names the first typed refusal past the owner
+gate (`engine_capability_missing` unless the table says otherwise).
+
+| apply | first refusal | owner |
+|---|---|---|
+| `segmented-tiling` | `receiptsOf` raw read of `op_checkpoints`, `repair/segmented-tiling.ts:256` | B6 |
+| `rows-behind` reimport | `owner_unavailable` in `managedRepairRoot`, `persistence/file-repair.ts:282` (no managed owner binding) | worktree binding, managed persistence |
+| `rows-behind` hold | none: the hold is written in `engine.transaction` | served |
+| `overwritten-edits` | raw read of `persistence_requests`, `repair/overwritten-edits.ts:147` | B6 |
+| `file-drift` keep-deleted and reconcile | `authorizeReconcileGrant` raw read of `persistence_local_writers`, `persistence/reconcile.ts:58` | B8 |
+| `moved-pages` | `movedPairNow` raw read of `pages`, `repair/moved-pages.ts:174` | B6 |
+| `legacy-twins` | `pairNow` raw read of `pages`, `repair/legacy-twins.ts:303` | B8 |
+| `ghost-pages` | `ghostFileBacked` raw read of `pages`, `repair/ghost-pages.ts:246` | B8 |
+| `frontmatter` managed | `owner_unavailable` in `managedRepairRoot`, `persistence/file-repair.ts:282` | worktree binding, managed persistence |
+
+Before any of these, a Rust brain has no worktree binding (`getWorktreeBinding` returns null), so
+the owner-host gate refuses first: `claimWorktree` stops at `persistence/ownership.ts:113` and
+`activateSharedSkillPersistence` at `persistence/skill-activation.ts:22`.
 
 ### Applies moved to a later batch
 
