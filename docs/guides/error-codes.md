@@ -334,6 +334,26 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
 
+### apple_contacts_backup_failed
+
+<a id="apple_contacts_backup_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper could not save its daily copy of the contacts before a change, so it changed nothing. | Every day the helper copies all contacts before its first change, so a bad batch can be undone; without that copy no change runs. | Check disk space on the Mac and the contacts-backups folder beside the helper config, then send the same command again. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_backup_failed](../../docs/guides/apple-contacts.md#apple_contacts_backup_failed)
+
+### apple_contacts_bad_request
+
+<a id="apple_contacts_bad_request"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An apple-contacts write command or batch was malformed (a missing flag, bad JSON or a field the helper does not know), so nothing was changed. | A change to Contacts is sent only when every field it needs is present and well formed; the message names what is missing. | Run gbrain apple-contacts --help for the verb's flags, then send the command again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_bad_request](../../docs/guides/apple-contacts.md#apple_contacts_bad_request)
+
 ### apple_contacts_config
 
 <a id="apple_contacts_config"></a>
@@ -353,6 +373,16 @@ More: [docs/guides/apple-contacts.md#apple_contacts_config](../../docs/guides/ap
 | An Apple Contacts run would have deleted more than 20% of the contacts the source owns, or all of them, so no contact was deleted: a full read wrote nothing and kept its cursor, an incremental run kept the deletions pending. | A revoked Contacts grant or a half-synced Contacts store looks like mass deletion; the run refuses the deletions whole instead of retiring pages. Pending deletions cancel when the contacts come back. GBRAIN_ALLOW_MASS_RECONCILE=1 lets a real large deletion through; deleting every contact never passes. | Check Contacts on the Mac and that GBrain Helper can read it, then run gbrain sync --source <id> again; if the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/apple-contacts.md#apple_contacts_delete_floor](../../docs/guides/apple-contacts.md#apple_contacts_delete_floor)
+
+### apple_contacts_destructive_off
+
+<a id="apple_contacts_destructive_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A verb that changes or removes what is on an Apple Contacts card was refused because apple_contacts.destructive_writes is not on, so nothing was changed. | Changing or removing contact data ships off; the brain operator turns it on only after the host checks who asked for the change. | Ask the brain operator; when the host is ready they run gbrain config set apple_contacts.destructive_writes on. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_destructive_off](../../docs/guides/apple-contacts.md#apple_contacts_destructive_off)
 
 ### apple_contacts_disabled
 
@@ -384,6 +414,16 @@ More: [docs/guides/apple-contacts.md#apple_contacts_helper_error](../../docs/gui
 
 More: [docs/guides/apple-contacts.md#apple_contacts_not_allowed](../../docs/guides/apple-contacts.md#apple_contacts_not_allowed)
 
+### apple_contacts_owner_key_file
+
+<a id="apple_contacts_owner_key_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The owner key file apple_contacts.owner_key_file names is unset, missing, not a regular file, readable by group or others, or does not hold a key name and a 32-byte seed, so nothing was changed. | Owner changes to Contacts are signed with that key, read only from a 0600 file; the Mac holds only its public half. | Write {"key_name":"<name>","seed":"<32-byte Ed25519 seed, base64url>"} to a chmod 600 file, run gbrain config set apple_contacts.owner_key_file <path>, and register the public key on the Mac. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_owner_key_file](../../docs/guides/apple-contacts.md#apple_contacts_owner_key_file)
+
 ### apple_contacts_token_file
 
 <a id="apple_contacts_token_file"></a>
@@ -413,6 +453,26 @@ More: [docs/guides/apple-contacts.md#apple_contacts_unauthorized](../../docs/gui
 | GBrain Helper did not answer the Contacts route (503, a timeout or no connection) after retries at 1, 4 and 15 seconds, so the run stopped with its cursor unchanged. | The helper runs on the owner's Mac, which may be asleep or off the network; the next scheduled pull picks up where this one stopped. | Check that the Mac is awake, GBrain Helper is running and any proxy is up, then run gbrain sync --source <id>. | agent | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/apple-contacts.md#apple_contacts_unreachable](../../docs/guides/apple-contacts.md#apple_contacts_unreachable)
+
+### apple_contacts_write_off
+
+<a id="apple_contacts_write_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Apple Contacts writes are off, on this brain (apple_contacts.write is not on) or on the Mac (contacts-write off), so nothing was changed. | Writes to Contacts ship off at both ends; the owner turns them on. | Turn on the switch the message names: gbrain config set apple_contacts.write on, or gbrain-apple-helper contacts-write on at the Mac. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_write_off](../../docs/guides/apple-contacts.md#apple_contacts_write_off)
+
+### apple_contacts_write_token_file
+
+<a id="apple_contacts_write_token_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The enrichment token file for Apple Contacts writes is missing, not a regular file, readable by group or others, or does not hold an accessToken, so nothing was changed. | The write:contacts:enrich token is read only from that 0600 file, never from the environment, a flag or a URL. | Write {"accessToken":"<token>"} to a chmod 600 file and run gbrain config set apple_contacts.write_token_file <path>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_write_token_file](../../docs/guides/apple-contacts.md#apple_contacts_write_token_file)
 
 ### apple_full_disk_access_pending
 

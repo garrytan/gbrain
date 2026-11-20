@@ -22,7 +22,7 @@ func bundleFile(_ name: String) throws -> [String: Any] {
         #expect(info["LSUIElement"] as? Bool == true)
         #expect(info["LSMinimumSystemVersion"] as? String == "13.0")
         #expect((info["NSAppleEventsUsageDescription"] as? String)?.isEmpty == false)
-        #expect((info["NSContactsUsageDescription"] as? String)?.contains("never changes your contacts") == true)
+        #expect((info["NSContactsUsageDescription"] as? String)?.contains("read and update your contacts") == true)
         #expect(info["CFBundleShortVersionString"] is String)
     }
 
