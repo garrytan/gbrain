@@ -2,8 +2,8 @@
  * The page statements a fact withdrawal (recordFactWithdrawal, src/core/facts/withdrawal.ts) runs on the pages that
  * carry the withdrawn claim. They ran through `executeRaw` before they were typed members; each keeps the statement
  * text and parameter order its call site ran, so PGLite and Postgres answer exactly as before
- * (test/withdrawal-pages-sql-pin.test.ts pins the text). A Rust brain answers from its store
- * (rust/crates/gbrain-store/src/facts/withdrawal_pages.rs).
+ * (test/withdrawal-pages-sql-pin.test.ts pins the text). A Rust brain refuses them with
+ * engine_capability_missing until the Rust store gets native methods.
  *
  * - `listSegmentedPages`: the id and slug of the segmented pages among `slugs` in the source, which the withdrawal
  *   strikes segment by segment.

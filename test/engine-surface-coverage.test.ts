@@ -61,9 +61,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'readFieldUsageSamples',
   // schema detect --fields page samples (engine-sql/field-usage.ts; covered by test/engine-parity/field-usage.test.ts)
   'hasWithdrawnFenceClaim',
-  // Withdrawal fence check (engine-sql/withdrawal-fence.ts; covered by test/engine-parity/withdrawal-fence.test.ts)
+  // Withdrawal fence check (engine-sql/withdrawal-fence.ts; SQL text pinned by test/withdrawal-fence-sql-pin.test.ts)
   'listSegmentedPages', 'invalidateWithdrawnPages',
-  // Withdrawal page statements (engine-sql/withdrawal-pages.ts; covered by test/engine-parity/withdrawal-forget.test.ts)
+  // Withdrawal page statements (engine-sql/withdrawal-pages.ts; SQL text pinned by test/withdrawal-pages-sql-pin.test.ts)
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',

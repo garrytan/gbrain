@@ -3,8 +3,8 @@
  * src/core/facts/withdrawal.ts). A fence the parser cannot read is not struck row by row, so the import refuses it
  * when any claim it holds is withdrawn or purged. The statement ran through `executeRaw` before it was a typed member;
  * it keeps that text and parameter order, so PGLite and Postgres answer exactly as before
- * (test/withdrawal-fence-sql-pin.test.ts pins the text). A Rust brain answers from its withdrawal and purge ledgers
- * (rust/crates/gbrain-store/src/facts/withdrawal_fence.rs).
+ * (test/withdrawal-fence-sql-pin.test.ts pins the text). A Rust brain refuses it with
+ * engine_capability_missing until the Rust store gets a native method.
  *
  * `hasWithdrawnFenceClaim(sourceId, claims, subject)` is true when a withdrawal or a purge tombstone of the source has
  * the fingerprint or the v1 fingerprint of a claim, at the claim's visibility (any visibility when the claim has
