@@ -81,9 +81,11 @@ rollback, and a savepoint rollback sets the nine back to what they were when the
   - a setting name outside the nine (the engine routes no other name here);
   - lists of different lengths.
   TypeScript sets none of these.
-- A `write_request` that is not a UUID is kept as set, as `set_config` keeps it. A timeline write then refuses with
-  `invalid_argument`, as PGLite's attribution trigger raises at its `::uuid` cast. A page, fact or take write does
-  not read it yet, so it is not refused there (PGLite's trigger raises on those tables too).
-- Only the timeline writer reads the attribution settings. A trust proposal the store files still reads
-  `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` NULL ([trust.md](trust.md#trust-proposals-trustproposals)),
-  and facts, takes and page versions carry no write receipt yet (TODOS.md).
+- A `write_request` that is not a UUID is kept as set, as `set_config` keeps it. A timeline or page write then
+  refuses with `invalid_argument`, as PGLite's attribution trigger raises at its `::uuid` cast. A fact or take write
+  does not read it yet, so it is not refused there (PGLite's trigger raises on those tables too).
+- The timeline and page writers read the attribution settings. A page write stamps the revision's writer as
+  `gbrain_stamp_revision_attribution` does (a new revision takes the writer, NULLs included; an unchanged one keeps
+  it), and a version takes the page's revision writer plus the archiving writer when a principal is set. A trust
+  proposal the store files still reads `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` NULL
+  ([trust.md](trust.md#trust-proposals-trustproposals)), and facts and takes carry no write receipt yet (TODOS.md).

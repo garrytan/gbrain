@@ -15,10 +15,30 @@
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { withWriteAttribution } from '../../src/core/persistence/context.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const NOTE = { type: 'note' as const, title: 'note', compiled_truth: 'body', timeline: '' };
+
+const DRIFT_KEYS = ['principal:local_cli:drift-writer', 'brain'];
+/** A queued write request of the drift writer whose authority says whether it came over a remote transport. */
+async function driftRequest(engine: BrainEngine, requestId: string, slug: string, remote: boolean): Promise<string> {
+  const source = await engine.readSourceMembership('default');
+  await engine.lockPersistenceCounters(DRIFT_KEYS);
+  const row = await engine.insertWriteRequest({
+    principalKind: 'local_cli', principalId: 'drift-writer', requestId, operation: 'put_page', sourceId: 'default',
+    sourceIncarnation: source!.incarnation, pageId: null, slug, worktreeId: null, topologyGeneration: null,
+    digest: 'd'.repeat(64), intent: {}, authority: { remote }, intentBytes: 10, terminalReservation: 4096, targetKind: 'page',
+    protocolVersion: 1, admitterVersion: 'v-test', admitterHostId: null, counterKeys: DRIFT_KEYS, clientRequestId: null,
+    state: 'queued', deferredRefreshId: null,
+  });
+  return row.id;
+}
+/** Runs `fn` in one transaction attributed to request `id` of the drift writer. */
+const asRequest = <T,>(engine: BrainEngine, id: string, fn: (tx: BrainEngine) => Promise<T>) =>
+  engine.transaction(tx => withWriteAttribution(tx, { requestId: id, principal: { kind: 'local_cli', id: 'drift-writer' } }, () => fn(tx)));
 
 describe('doctor reads, second set', () => {
   parityTest(
@@ -109,10 +129,10 @@ describe('doctor reads, second set', () => {
       const deleted = await engine.listDriftLiveRows(schema, 'default', { slug: 'notes/gone' });
       const elsewhere = await engine.listDriftLiveRows(schema, 'no-such-source', { after: 0 });
       const versions = await engine.listDriftVersionRows(schema, ids);
-      // The write attribution (`req`, `kind`, `remote`) is the one thing the Rust store does not keep: it answers null on
-      // every row (rust/docs/store/cli-reads-doctor-acc.md), so the comparison reads the other columns only (the revision uuid is masked to its presence).
-      const view = (rows: typeof live) => rows.map(({ id: _id, req: _req, kind: _kind, remote: _remote, ingested_at, revision, ...r }) => ({ ...r, stamped: ingested_at !== null, revised: typeof revision === 'string' }));
-      const versionView = versions.map(({ page_id, req: _req, kind: _kind, remote: _remote, ...v }) => ({ ...v, first_page: Number(page_id) === ids[0] }));
+      // No write here runs under a request, so `req`, `kind` and `remote` are null on every row; the next case sets them.
+      // The revision uuid is masked to its presence.
+      const view = (rows: typeof live) => rows.map(({ id: _id, ingested_at, revision, ...r }) => ({ ...r, stamped: ingested_at !== null, revised: typeof revision === 'string' }));
+      const versionView = versions.map(({ page_id, ...v }) => ({ ...v, first_page: Number(page_id) === ids[0] }));
       expect(live.map(r => r.slug)).toEqual(['notes/a', 'notes/b']);
       expect(later.map(r => r.slug)).toEqual(['notes/b']);
       expect(bySlug.map(r => r.slug)).toEqual(['notes/b']);
@@ -120,6 +140,44 @@ describe('doctor reads, second set', () => {
       expect(elsewhere).toEqual([]);
       expect(versionView.length).toBe(1);
       return { live: view(live), later: view(later), bySlug: view(bySlug), versions: versionView };
+    },
+  );
+
+  parityTest(
+    'the drift reads name the request, principal kind and transport of the write behind a revision and a version',
+    { methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transaction', 'applyTransactionSettings',
+      'readTransactionSettings', 'putPage', 'createVersion', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows'] },
+    async (engine) => {
+      const local = await driftRequest(engine, 'd0000000-0000-4000-8000-0000000000d1', 'notes/a', false);
+      const remote = await driftRequest(engine, 'd0000000-0000-4000-8000-0000000000d2', 'notes/a', true);
+      const page = (title: string, frontmatter: Record<string, unknown>) => ({ ...NOTE, title, frontmatter });
+      await asRequest(engine, local, tx => tx.putPage('notes/a', page('A', { tag: 'one' })));
+      // The archiving write runs for the remote request; the snapshot keeps the revision the local request wrote.
+      await asRequest(engine, remote, async tx => { await tx.createVersion('notes/a'); await tx.putPage('notes/a', page('A', { tag: 'two' })); });
+      await asRequest(engine, local, tx => tx.putPage('notes/kept', page('Kept', {})));
+      // A write with no principal that moves the revision clears its writer; one that keeps the revision keeps it.
+      await engine.putPage('notes/kept', page('Kept', { moved: true }));
+      await asRequest(engine, remote, tx => tx.putPage('notes/same', page('Same', {})));
+      await engine.createVersion('notes/same');
+      await engine.putPage('notes/plain', page('Plain', {}));
+      const schema = await engine.readDriftSchema();
+      const live = await engine.listDriftLiveRows(schema, 'default', { after: 0 });
+      const byId = new Map(live.map(r => [Number(r.id), r.slug]));
+      const versions = await engine.listDriftVersionRows(schema, live.map(r => Number(r.id)));
+      const who = (req: string | null) => req === null ? null : req === local ? 'local' : req === remote ? 'remote' : 'other';
+      const writers = Object.fromEntries(live.map(r => [r.slug, { req: who(r.req), kind: r.kind, remote: r.remote }]));
+      const archived = versions.map(v => ({ slug: byId.get(Number(v.page_id)), req: who(v.req), kind: v.kind, remote: v.remote }));
+      expect(writers).toEqual({
+        'notes/a': { req: 'remote', kind: 'local_cli', remote: 'true' },
+        'notes/kept': { req: null, kind: null, remote: null },
+        'notes/same': { req: 'remote', kind: 'local_cli', remote: 'true' },
+        'notes/plain': { req: null, kind: null, remote: null },
+      });
+      expect(archived).toEqual([
+        { slug: 'notes/a', req: 'remote', kind: 'local_cli', remote: 'true' },
+        { slug: 'notes/same', req: null, kind: null, remote: null },
+      ]);
+      return { writers, archived };
     },
   );
 

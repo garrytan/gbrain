@@ -174,6 +174,38 @@ pub(crate) struct PageRecord {
     /// NULL. [`write_page`] sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_origin: Option<Value>,
+    /// The writer of the current revision (`pages.revision_write_request_id`, `revision_principal_kind`,
+    /// `revision_principal_id`), as `gbrain_stamp_revision_attribution` stamps it. `None` is NULL. [`write_page`]
+    /// sets it.
+    #[serde(default, skip_serializing_if = "RevisionWriter::is_empty")]
+    pub revision_writer: RevisionWriter,
+}
+
+/// A writer as the attribution columns store it: the request, the principal kind and the principal id.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct RevisionWriter {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal_id: Option<String>,
+}
+
+impl RevisionWriter {
+    /// All three columns NULL.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.request_id.is_none() && self.principal_kind.is_none() && self.principal_id.is_none()
+    }
+
+    fn of(actor: &crate::write_trust::WriteAttribution) -> Self {
+        RevisionWriter {
+            request_id: actor.request_id.clone(),
+            principal_kind: actor.principal_kind.clone(),
+            principal_id: actor.principal_id.clone(),
+        }
+    }
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -426,6 +458,12 @@ pub(crate) struct VersionRecord {
     /// The page's write origin when the snapshot was taken.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_origin: Option<Value>,
+    /// The writer of the snapshotted revision (`page_versions.write_*`): the page's revision writer.
+    #[serde(default, skip_serializing_if = "RevisionWriter::is_empty")]
+    pub writer: RevisionWriter,
+    /// The writer of the archiving write (`page_versions.archived_*`), set only under a principal.
+    #[serde(default, skip_serializing_if = "RevisionWriter::is_empty")]
+    pub archived_by: RevisionWriter,
 }
 
 impl VersionRecord {
@@ -578,7 +616,8 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    let stamped = stamp_page_trust(before.as_ref(), record)?;
+    let mut stamped = stamp_page_trust(before.as_ref(), record)?;
+    stamped.revision_writer = stamp_revision_writer(before.as_ref(), record)?;
     let record = &stamped;
     // A write that changes the title or timeline sets them, so PGLite's search vector trigger fires.
     if before
@@ -649,6 +688,33 @@ fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<
         OriginStamp::Set(origin) => origin,
     };
     Ok(out)
+}
+
+/// The revision writer `gbrain_stamp_revision_attribution` (persistence/attribution-schema.ts) stores, under the
+/// attribution settings of the open write. INSERT: the actor when a principal is set, else what the record carries.
+/// UPDATE: the actor (NULLs included) when the revision moves, else the stored writer. The trigger casts the request
+/// setting to `uuid` before it reads anything, so a request that is not a UUID refuses the write.
+fn stamp_revision_writer(
+    before: Option<&PageRecord>,
+    record: &PageRecord,
+) -> Result<RevisionWriter> {
+    let actor = crate::write_trust::stamp_context::current()?.attribution;
+    if let Some(request) = actor.request_id.as_deref()
+        && !crate::env::is_uuid(request)
+    {
+        return Err(StoreError::invalid(format!(
+            "{} is not a UUID: {request}",
+            crate::write_trust::WRITE_REQUEST
+        )));
+    }
+    Ok(match before {
+        None if actor.principal_kind.is_some() => RevisionWriter::of(&actor),
+        None => record.revision_writer.clone(),
+        Some(old) if old.knowledge_revision != record.knowledge_revision => {
+            RevisionWriter::of(&actor)
+        }
+        Some(old) => old.revision_writer.clone(),
+    })
 }
 
 /// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
@@ -1143,6 +1209,7 @@ pub(crate) fn put_page_in(
             tag_sources: BTreeMap::new(),
             trust_tier: None,
             write_origin: None,
+            revision_writer: RevisionWriter::default(),
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1780,8 +1847,10 @@ pub(crate) fn snapshot_in(
     let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
     // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
     // caller supplies its own, so the backfill branch never applies.
+    let context = crate::write_trust::stamp_context::current()?;
+    let actor = context.attribution.clone();
     let (tier, write_origin) = crate::trust::snapshot_version(
-        &crate::write_trust::stamp_context::current()?,
+        &context,
         crate::trust::TrustTier::stored(page.trust_tier.as_deref()),
         page.write_origin.as_ref(),
         None,
@@ -1805,6 +1874,14 @@ pub(crate) fn snapshot_in(
         body_bytes: segmented.and_then(|(_, bytes)| bytes),
         trust_tier: (tier != crate::trust::TrustTier::Unknown).then(|| tier.as_str().to_owned()),
         write_origin,
+        // `gbrain_stamp_version_attribution`: the snapshotted revision's writer off the page row, and the archiving
+        // actor when a principal is set.
+        writer: page.revision_writer.clone(),
+        archived_by: if actor.principal_kind.is_some() {
+            RevisionWriter::of(&actor)
+        } else {
+            RevisionWriter::default()
+        },
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     Ok(row)

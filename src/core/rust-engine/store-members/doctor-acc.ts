@@ -52,9 +52,8 @@ export const originIndexPresent: Member<'originIndexPresent'> = async (_brain, n
 
 /**
  * The live pages of a source (a batch after `at.after`, or the page at `at.slug`) and their versions, from the store
- * (cli_reads/doctor_drift.rs). The store keeps no write-request attribution of a revision or a version, so `req`, `kind`
- * and `remote` are null, as the SQL answers on a brain from before write attribution: the scan reads every writer as
- * `unattributed`, and a changed stamp or trust marker is reported as ambiguous, never as remote or local.
+ * (cli_reads/doctor_drift.rs). `req` and `kind` are the writer the store stamped on the revision (on a version, the
+ * archiving write), and `remote` is `authority->>'remote'` of that request, as the SQL joins them.
  */
 export const listDriftLiveRows: Member<'listDriftLiveRows'> = (brain, _schema, sourceId, at) =>
   storeCall({ member: 'listDriftLiveRows' }, async () =>
