@@ -61,6 +61,9 @@ const INTERFACE_METHODS: readonly string[] = [
   // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
   'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
   'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
+  // Wanted-link, timeline-write, take-fence and code-traversal-cache members (engine-sql/wanted-links.ts, timeline.ts, takes.ts, code-traversal-cache.ts)
+  'lockRegisteredSourceIds', 'replaceWantedLinkRows', 'removeTimelineRows', 'updateTimelineDetails', 'matchTakeRows', 'deleteTakeRows',
+  'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
