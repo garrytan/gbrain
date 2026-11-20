@@ -3819,7 +3819,7 @@ export interface BrainEngine {
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
-  /** Stores a take purge tombstone; false when the same (source, subject, fingerprint) one exists. */
+  /** The one writer of take purge tombstones: stores one for `claimHash`, or one per distinct take claim of the page for `pageId`, under the subject; false when none was new (each exists, or the page has no takes). Write; run it in the purge transaction. */
   insertTakePurge(row: FactsPurgeSql.TakePurgeInsert): Promise<boolean>;
   /** One hop of the derivation walk: the rows a `derivation_inputs` edge derives from a frontier row, distinct, by (table, id), at most `limit`. */
   listDerivedRows(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;

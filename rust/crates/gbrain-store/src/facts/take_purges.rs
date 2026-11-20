@@ -24,6 +24,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::read_page_by_id;
 use crate::sources::require_source;
+use crate::takes::page_takes;
 use crate::{get_json, put_json};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -49,7 +50,7 @@ pub struct TakeClaimRow {
     pub claim: String,
 }
 
-/// `insertTakePurge`'s argument (`TakePurgeInsert`).
+/// `insertTakePurge`'s claim form (`TakePurgeInsert` with a `claimHash`): one tombstone.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TakePurgeInsert {
@@ -57,6 +58,25 @@ pub struct TakePurgeInsert {
     pub subject: String,
     pub claim_hash: String,
     pub request_id: Option<String>,
+}
+
+/// `insertTakePurge`'s page form (`TakePurgeInsert` with a `pageId`): one tombstone for the
+/// fingerprint of each distinct take claim of the page, under `subject`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageTakePurgeInsert {
+    pub source_id: String,
+    pub subject: String,
+    pub page_id: i64,
+    pub request_id: Option<String>,
+}
+
+/// The two forms of `insertTakePurge`'s row; each form's field set tells them apart.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum TakePurgeRow {
+    Claim(TakePurgeInsert),
+    Page(PageTakePurgeInsert),
 }
 
 fn key(parts: &[&str]) -> Vec<u8> {
@@ -202,8 +222,17 @@ impl Store {
         Ok(rows.into_iter().collect())
     }
 
-    /// `insertTakePurge`: stores the tombstone; false when the same key exists (`ON CONFLICT DO
-    /// NOTHING`), which keeps its columns. A missing source fails as the foreign key does.
+    /// `insertTakePurge`, either form: false when no tombstone was new.
+    pub fn insert_take_purge_row(&self, row: &TakePurgeRow) -> Result<bool> {
+        match row {
+            TakePurgeRow::Claim(row) => self.insert_take_purge(row),
+            TakePurgeRow::Page(row) => self.insert_page_take_purges(row),
+        }
+    }
+
+    /// `insertTakePurge` with a claim hash: stores the tombstone; false when the same key exists
+    /// (`ON CONFLICT DO NOTHING`), which keeps its columns. A missing source fails as the foreign
+    /// key does.
     pub fn insert_take_purge(&self, row: &TakePurgeInsert) -> Result<bool> {
         let op = "insertTakePurge";
         no_nul(
@@ -214,33 +243,84 @@ impl Store {
                 ("claimHash", &row.claim_hash),
             ],
         )?;
-        let request_id = match &row.request_id {
-            None => None,
-            Some(text) if is_uuid(text) => Some(text.to_lowercase()),
-            Some(_) => {
-                return Err(StoreError::invalid(format!(
-                    "{op}: requestId is not a UUID"
-                )));
-            }
-        };
+        let request_id = request_uuid(op, &row.request_id)?;
         let purged_at_us = self.env.now_micros();
         self.write(|tx| {
             require_source(tx, &row.source_id)?;
-            let k = key(&[&row.source_id, &row.subject, &row.claim_hash]);
-            if get_json::<TakePurgeRecord>(tx, &k)?.is_some() {
-                return Ok(false);
-            }
-            put_json(
+            store_tombstone(
                 tx,
-                &k,
-                &TakePurgeRecord {
-                    request_id: request_id.clone(),
-                    purged_at_us,
-                },
-            )?;
-            Ok(true)
+                &key(&[&row.source_id, &row.subject, &row.claim_hash]),
+                &request_id,
+                purged_at_us,
+            )
         })
     }
+
+    /// `insertTakePurge` with a page id (the page purge): `INSERT ... SELECT DISTINCT
+    /// gbrain_fact_fingerprint(claim) FROM takes WHERE page_id = $3 ON CONFLICT DO NOTHING`. True
+    /// when any tombstone was new; a page with no takes (or no page) stores nothing and answers
+    /// false. A missing source fails as the foreign key does, but only when there is a row to
+    /// insert, as the statement does.
+    pub fn insert_page_take_purges(&self, row: &PageTakePurgeInsert) -> Result<bool> {
+        let op = "insertTakePurge";
+        no_nul(
+            op,
+            &[("sourceId", &row.source_id), ("subject", &row.subject)],
+        )?;
+        let request_id = request_uuid(op, &row.request_id)?;
+        let purged_at_us = self.env.now_micros();
+        self.write(|tx| {
+            let hashes: BTreeSet<String> = match u64::try_from(row.page_id) {
+                Ok(page_id) => page_takes(&*tx, page_id)?
+                    .iter()
+                    .map(|t| fact_fingerprint(&t.claim))
+                    .collect(),
+                Err(_) => BTreeSet::new(),
+            };
+            if hashes.is_empty() {
+                return Ok(false);
+            }
+            require_source(tx, &row.source_id)?;
+            let mut stored = false;
+            for hash in &hashes {
+                let k = key(&[&row.source_id, &row.subject, hash]);
+                stored |= store_tombstone(tx, &k, &request_id, purged_at_us)?;
+            }
+            Ok(stored)
+        })
+    }
+}
+
+/// A `requestId` as the `uuid` column stores it: none, or a UUID lower-cased.
+fn request_uuid(op: &str, request_id: &Option<String>) -> Result<Option<String>> {
+    match request_id {
+        None => Ok(None),
+        Some(text) if is_uuid(text) => Ok(Some(text.to_lowercase())),
+        Some(_) => Err(StoreError::invalid(format!(
+            "{op}: requestId is not a UUID"
+        ))),
+    }
+}
+
+/// Stores the tombstone at `k` unless one is there (the row keeps its columns); whether it was new.
+fn store_tombstone(
+    tx: &mut dyn KvWrite,
+    k: &[u8],
+    request_id: &Option<String>,
+    purged_at_us: i64,
+) -> Result<bool> {
+    if get_json::<TakePurgeRecord>(tx, k)?.is_some() {
+        return Ok(false);
+    }
+    put_json(
+        tx,
+        k,
+        &TakePurgeRecord {
+            request_id: request_id.clone(),
+            purged_at_us,
+        },
+    )?;
+    Ok(true)
 }
 
 #[cfg(test)]

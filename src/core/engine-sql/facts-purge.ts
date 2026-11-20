@@ -299,13 +299,22 @@ export async function upsertPagePurges(raw: EngineRawRead, row: PagePurgeUpsert)
     ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [row.sourceId, row.contentHashes, row.slug, row.requestId]);
 }
 
-/** A take purge tombstone, the row purge_fact and the page purge write into `take_purges`. */
-export interface TakePurgeInsert { sourceId: string; subject: string; claimHash: string; requestId: string | null }
+/**
+ * The one writer of `take_purges`, in two forms. `claimHash` is one tombstone (purge_fact, and the belief purge replay,
+ * one per replayed hash); `pageId` tombstones the fingerprint of every take claim of that page (the page purge), under
+ * the same subject. `requestId` is the purge request the tombstones answer to, or null.
+ */
+export type TakePurgeInsert = { sourceId: string; subject: string; requestId: string | null }
+  & ({ claimHash: string; pageId?: undefined } | { pageId: number; claimHash?: undefined });
 
-/** purge_fact's take tombstone: stores it; false when one already holds the same (source, subject, fingerprint). */
+/** The take tombstone writer: stores it (or one per distinct take claim of the page); false when every one already exists, or the page has no takes. */
 export async function insertTakePurge(raw: EngineRawRead, row: TakePurgeInsert): Promise<boolean> {
-  const rows = await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
-    [row.sourceId, row.subject, row.claimHash, row.requestId]);
+  const rows = row.pageId === undefined
+    ? await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+      [row.sourceId, row.subject, row.claimHash, row.requestId])
+    : await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
+      SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.subject, row.pageId, row.requestId]);
   return rows.length > 0;
 }
 

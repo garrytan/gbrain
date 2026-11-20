@@ -250,8 +250,7 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
   await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
     SELECT DISTINCT source_id,visibility,COALESCE(entity_slug,'*'),gbrain_fact_fingerprint(fact),$3::uuid,$4,'page purge'
     FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')} ON CONFLICT DO NOTHING`, [sourceId, slug, requestId, actor]);
-  await tx.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
-    SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING`, [sourceId, slug, pageId, requestId]);
+  await tx.insertTakePurge({ sourceId, subject: slug, pageId, requestId });
   // Tombstone the content hash of the page and of every retained version, each as an import of that body would
   // compute it and as the purge overlay leaves it (the overlay now drops this page's tombstoned fence rows), so
   // neither the stale file nor an older version of it imports again under any slug.

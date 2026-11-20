@@ -696,12 +696,17 @@ trigger's exception does. Deleting a source removes its tombstones.
 ## The take purge ledger
 
 `facts/take_purges.rs` keeps `take_purges` (key `F 0x10 source subject claim_hash`, the row after `F 0x0F`).
-`insertTakePurge({ sourceId, subject, claimHash, requestId })` stores a tombstone and answers true, or false when the
-key exists (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A `requestId` that is not a UUID or a NUL
-character refuses with `invalid_argument`; a missing source refuses as the foreign key does. `purge_fact` writes its
-tombstone through this member. The page purge (`persistence/page-purge.ts`) and the belief purge mirror
-(`belief/purge-mirror.ts`) still send the same INSERT through `executeRaw`, so on Rust those two paths stop on the
-`raw_sql` refusal.
+`insertTakePurge` is the one writer of the ledger, in two forms. `insertTakePurge({ sourceId, subject, claimHash,
+requestId })` stores a tombstone and answers true, or false when the key exists (`ON CONFLICT DO NOTHING`; the stored
+row keeps its columns). `insertTakePurge({ sourceId, subject, pageId, requestId })` stores one tombstone under `subject`
+for the fingerprint of each distinct take claim of the page (`INSERT ... SELECT DISTINCT gbrain_fact_fingerprint(claim)
+FROM takes WHERE page_id = $3`) and answers true when any was new; a page with no takes, an unknown page or a negative
+id stores nothing and answers false. A `requestId` that is not a UUID or a NUL character refuses with
+`invalid_argument`; a missing source refuses as the foreign key does. `purge_fact` (claim form), the page purge's
+`tombstonePage` (`persistence/page-purge.ts`, page form) and the belief purge mirror's restore replay
+(`belief/purge-mirror.ts`, claim form, one call per replayed hash) all write through this member. The store keeps the
+two forms apart by their field sets (`TakePurgeRow`); a row naming both a claim hash and a page id, or neither, refuses
+with an argument error.
 
 Readers: `readSourcePurgeFlags`'s `takes` (any tombstone of the source, read in the same snapshot as `facts`), the
 import overlay's take match (`listPurgedTakeRows`, [trust.md](trust.md): the incoming takes-fence rows a tombstone names
@@ -908,7 +913,7 @@ read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column
 | `listPurgeMatchCandidates` | The first 25 facts of the source whose text contains `text` (case folded), in id order, each cut to 160 characters. Reads facts. |
 | `lockPurgeSource` | Locks the source row for the purge transaction and returns its incarnation and archived flag, null for no such source. Reads sources; run it in the purge transaction. |
 | `insertHoldingPagePurges` | Stores a purge tombstone for each holding page that holds one of the facts about an entity with no page of its own, none twice. Writes fact_purges; run it in the purge transaction. |
-| `insertTakePurge` | Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice: takes a `TakePurgeInsert` row and answers true, or false when the key exists. Writes take_purges; run it in the purge transaction. Served on Rust (see the take purge ledger section). |
+| `insertTakePurge` | The one writer of text-free take purge tombstones, none twice: a `TakePurgeInsert` row names one claim fingerprint (`claimHash`) or a page (`pageId`, one tombstone per distinct take claim of the page) under the subject, and the answer is true when any tombstone was new. Writes take_purges; run it in the purge transaction. Served on Rust (see the take purge ledger section). |
 | `deletePurgedTakes` | Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. |
 | `deletePurgeReviewQueue` | Deletes the source's review queue rows naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_queue; run it in the purge transaction. |
 | `deletePurgeReviewProposals` | Deletes the source's review proposals naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_proposals; run it in the purge transaction. |
@@ -939,7 +944,7 @@ What the store would need to hold to answer them, by family:
 The parity cases seed pages, tags, versions, facts, chunks and write requests through the typed writers. Stagings, takes,
 review and proposal rows, gate holds and receipts, open loops, core edit notices and view digests have no typed fixture, so
 those members are compared on empty tables only; `insertTakePurge` is compared by its
-boolean (true, then false for the same key). `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
+boolean (true, then false for the same key) and by the refusals its tombstones cause (take-purge-ledger.test.ts). `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
 (holding-page-purges.test.ts).
 
 ## Not modeled

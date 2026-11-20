@@ -96,11 +96,11 @@ transaction	lifecycle	yes	150	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	138	yes	yes	yes	serves
+getPage	pages	yes	139	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	617	yes	yes	yes	serves
+putPage	pages	yes	618	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -334,7 +334,7 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	53	yes	yes	yes	serves
+addTakesBatch	takes	yes	54	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
 listTakes	takes	yes	28	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
@@ -852,7 +852,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	12	no	yes	yes	serves
-insertTakePurge	facts_purge	yes	10	no	yes	yes	serves
+insertTakePurge	facts_purge	yes	12	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeSourceLocalPath	facts_purge	yes	2	no	yes	yes	serves
@@ -1043,7 +1043,7 @@ listEntityHintPages	facts_conversation	yes	1	no	yes	yes	refuses:facts
 lockPageById	facts_conversation	yes	1	no	yes	yes	refuses:facts
 listClearedRelinkedFacts	facts_conversation	yes	1	no	yes	yes	refuses:facts
 countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	refuses:facts
-readBeliefTombstones	belief_ledger	yes	4	no	yes	yes	serves
+readBeliefTombstones	belief_ledger	yes	6	no	yes	yes	serves
 readLatestBeliefCoverage	belief_ledger	yes	2	no	yes	yes	serves
 hasBeliefBaseline	belief_ledger	yes	1	no	yes	yes	serves
 listBeliefBaselinePending	belief_ledger	yes	2	no	yes	yes	serves
@@ -1127,7 +1127,7 @@ hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	3	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
-readSourcePurgeFlags	trust	yes	6	no	yes	yes	serves
+readSourcePurgeFlags	trust	yes	8	no	yes	yes	serves
 listPurgedTakeRows	trust	yes	2	no	yes	yes	serves
 lockFactForWithdrawal	trust	yes	1	no	yes	yes	serves
 queueWithdrawalReview	trust	yes	1	no	yes	yes	serves

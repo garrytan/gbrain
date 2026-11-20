@@ -1857,6 +1857,59 @@ mod tests {
         assert!(!has_take_purges(&*store.read().unwrap(), "team").unwrap());
     }
 
+    #[test]
+    fn a_page_take_purge_tombstones_each_distinct_claim_of_the_page_once() {
+        use crate::facts::take_purges::{PageTakePurgeInsert, TakePurgeRow, tombstoned_hashes};
+        let store = store();
+        source(&store, "team");
+        let page = put(&store, "team", "people/a");
+        let other = put(&store, "team", "people/b");
+        let claim = |page: u64, row: i32, claim: &str| -> TakeInput {
+            serde_json::from_value(json!({
+                "page_id": page, "row_num": row, "claim": claim, "kind": "take",
+                "holder": "garry", "weight": 0.5, "active": true,
+            }))
+            .unwrap()
+        };
+        store
+            .add_takes_batch(&[
+                claim(page, 1, "Acme will win"),
+                claim(page, 2, "  ACME will win. "),
+                claim(page, 3, "Rates fall"),
+                claim(other, 1, "Other page claim"),
+            ])
+            .unwrap();
+        let purge = |page_id: i64, request_id: Option<&str>| {
+            let row = TakePurgeRow::Page(PageTakePurgeInsert {
+                source_id: "team".into(),
+                subject: "people/a".into(),
+                page_id,
+                request_id: request_id.map(str::to_string),
+            });
+            store.insert_take_purge_row(&row)
+        };
+        assert!(purge(page as i64, None).unwrap());
+        assert!(!purge(page as i64, Some("6f9619ff-8b86-4d01-b42d-00cf4fc964aa")).unwrap());
+        assert!(!purge(987_654, None).unwrap());
+        assert!(!purge(-1, None).unwrap());
+        assert!(
+            purge(page as i64, Some("not-a-uuid"))
+                .unwrap_err()
+                .message
+                .contains("requestId is not a UUID")
+        );
+        let hash = |c: &str| crate::facts::fact_fingerprint(c);
+        let asked = [
+            hash("Acme will win"),
+            hash("Rates fall"),
+            hash("Other page claim"),
+        ];
+        assert_eq!(
+            tombstoned_hashes(&*store.read().unwrap(), "team", &asked).unwrap(),
+            BTreeSet::from([hash("Acme will win"), hash("Rates fall")])
+        );
+    }
+
     fn cite(store: &Store, synth: u64, page: u64, row: i32) {
         let input: EvidenceInput = serde_json::from_value(json!({
             "synthesis_page_id": synth, "take_page_id": page, "take_row_num": row, "citation_index": 1,

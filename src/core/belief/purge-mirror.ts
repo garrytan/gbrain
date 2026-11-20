@@ -164,8 +164,7 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
   }
   const takeHashes = [...new Set([...intent.takes, ...(intent.scope === 'fact' ? intent.facts.map(f => f.fact_hash) : [])])];
   for (const hash of takeHashes) {
-    await tx.executeRaw('INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING',
-      [src, intent.scope === 'page' ? intent.slug : intent.facts[0]?.subject ?? '*', hash, intent.request]);
+    await tx.insertTakePurge({ sourceId: src, subject: (intent.scope === 'page' ? intent.slug : intent.facts[0]?.subject) ?? '*', claimHash: hash, requestId: intent.request });
   }
   if (intent.content_hashes?.length) {
     await tx.executeRaw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h

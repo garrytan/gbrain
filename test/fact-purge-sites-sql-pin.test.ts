@@ -223,6 +223,14 @@ const PINS: Pin[] = [
     params: [['src-a', '*', 'hash-a', 'a0000000-0000-4000-8000-0000000000a1']],
   },
   {
+    from: 'src/core/persistence/page-purge.ts tombstonePage',
+    member: 'insertTakePurge',
+    run: e => e.insertTakePurge({ sourceId: 'src-a', subject: 'people/alice', pageId: 7, requestId: 'a0000000-0000-4000-8000-0000000000a1' }),
+    texts: [`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
+      SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING RETURNING 1 AS inserted`],
+    params: [['src-a', 'people/alice', 7, 'a0000000-0000-4000-8000-0000000000a1']],
+  },
+  {
     from: 'src/core/facts/purge.ts:554 submitPurgeFactMutation',
     member: 'deletePurgedTakes',
     run: e => e.deletePurgedTakes([5, 6]),

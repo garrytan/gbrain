@@ -101,4 +101,54 @@ describe('engine parity: the take purge ledger', () => {
     });
     return { out, takes };
   });
+
+  // The page purge and the belief purge replay write their take tombstones through this same member (they sent a raw
+  // INSERT, which the Rust arm refuses), so the page form and the per-hash form are pinned here on every arm.
+  parityTest('insertTakePurge with a page id tombstones each distinct take claim of that page under its slug, none twice', {
+    methods: ['putPage', 'getPage', 'insertTakePurge', 'addTakesBatch', 'readSourcePurgeFlags', 'readBeliefTombstones'],
+  }, async (engine) => {
+    const page = await pageId(engine, SLUG);
+    const other = await pageId(engine, OTHER);
+    const empty = await pageId(engine, 'people/take-purge-empty');
+    await engine.addTakesBatch([take(page, 1, 'Acme will win the market'), take(page, 2, 'Rates fall in spring'),
+      take(page, 3, 'ACME will win the market.'), take(other, 1, 'Widgets sell out')]);
+    const before = await engine.readSourcePurgeFlags(SRC);
+    const stored = {
+      first: await engine.insertTakePurge({ sourceId: SRC, subject: SLUG, pageId: page, requestId: REQUEST }),
+      again: await engine.insertTakePurge({ sourceId: SRC, subject: SLUG, pageId: page, requestId: null }),
+      noTakes: await engine.insertTakePurge({ sourceId: SRC, subject: 'people/take-purge-empty', pageId: empty, requestId: REQUEST }),
+      noPage: await engine.insertTakePurge({ sourceId: SRC, subject: 'people/no-such-page', pageId: 987654, requestId: REQUEST }),
+    };
+    const after = await engine.readSourcePurgeFlags(SRC);
+    const out = {
+      samePage: await refusal(() => engine.addTakesBatch([take(page, 4, ' acme will win the MARKET ')])),
+      otherClaimSamePage: await refusal(() => engine.addTakesBatch([take(page, 5, 'Rates fall in spring.')])),
+      freshClaim: await refusal(() => engine.addTakesBatch([take(page, 6, 'A claim nobody purged')])),
+      otherPage: await refusal(() => engine.addTakesBatch([take(other, 2, 'Acme will win the market')])),
+      otherPageOwnClaim: await refusal(() => engine.addTakesBatch([take(other, 3, 'Widgets sell out')])),
+    };
+    const tombstones = (await engine.readBeliefTombstones(SRC, [], [await fingerprintOf(engine, 1, 'Acme will win the market'),
+      await fingerprintOf(engine, 2, 'Rates fall in spring'), await fingerprintOf(engine, 3, 'Widgets sell out')])).length;
+    expect(stored).toEqual({ first: true, again: false, noTakes: false, noPage: false });
+    expect({ before, after }).toEqual({ before: { facts: false, takes: false }, after: { facts: false, takes: true } });
+    expect(out.samePage).toStartWith('purged_content:');
+    expect(out.otherClaimSamePage).toStartWith('purged_content:');
+    expect(out).toMatchObject({ freshClaim: 'saved', otherPage: 'saved', otherPageOwnClaim: 'saved' });
+    expect(tombstones).toBe(2);
+    return { stored, before, after, out, tombstones };
+  });
+
+  parityTest('insertTakePurge with a claim hash is the per-hash tombstone the belief purge replay writes: a null request, any subject', {
+    methods: ['insertTakePurge', 'readSourcePurgeFlags', 'readBeliefTombstones'],
+  }, async (engine) => {
+    const stored = [await engine.insertTakePurge({ sourceId: SRC, subject: SLUG, claimHash: 'c'.repeat(64), requestId: null }),
+      await engine.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: 'c'.repeat(64), requestId: REQUEST }),
+      await engine.insertTakePurge({ sourceId: SRC, subject: SLUG, claimHash: 'c'.repeat(64), requestId: REQUEST })];
+    const flags = await engine.readSourcePurgeFlags(SRC);
+    const hashes = (await engine.readBeliefTombstones(SRC, [], ['c'.repeat(64), 'd'.repeat(64)])).length;
+    expect(stored).toEqual([true, true, false]);
+    expect(flags).toEqual({ facts: false, takes: true });
+    expect(hashes).toBe(1);
+    return { stored, flags, hashes };
+  });
 });
