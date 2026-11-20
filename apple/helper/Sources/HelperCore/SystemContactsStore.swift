@@ -57,7 +57,8 @@ extension SystemContactsStore: ContactsWriteStore {
          CNContactPreviousFamilyNameKey, CNContactNameSuffixKey, CNContactNicknameKey, CNContactPhoneticGivenNameKey, CNContactPhoneticMiddleNameKey,
          CNContactPhoneticFamilyNameKey, CNContactPhoneticOrganizationNameKey, CNContactOrganizationNameKey, CNContactDepartmentNameKey, CNContactJobTitleKey,
          CNContactEmailAddressesKey, CNContactPhoneNumbersKey, CNContactUrlAddressesKey, CNContactPostalAddressesKey, CNContactDatesKey,
-         CNContactRelationsKey, CNContactSocialProfilesKey, CNContactInstantMessageAddressesKey, CNContactBirthdayKey].map { $0 as CNKeyDescriptor }
+         CNContactRelationsKey, CNContactSocialProfilesKey, CNContactInstantMessageAddressesKey, CNContactBirthdayKey,
+         CNContactNonGregorianBirthdayKey].map { $0 as CNKeyDescriptor }
     }
 
     static func raw(_ label: String) -> String {
@@ -75,7 +76,9 @@ extension SystemContactsStore: ContactsWriteStore {
 
     static func date(_ components: DateComponents?) -> DateValue? {
         guard let components else { return nil }
-        return DateValue(year: components.year == NSDateComponentUndefined ? nil : components.year, month: components.month, day: components.day)
+        let calendar = components.calendar.map { ($0 as NSCalendar).calendarIdentifier.rawValue }
+        return DateValue(year: components.year == NSDateComponentUndefined ? nil : components.year, month: components.month, day: components.day,
+                         calendar: calendar == NSCalendar.Identifier.gregorian.rawValue ? nil : calendar, leapMonth: components.isLeapMonth == true ? true : nil)
     }
 
     static func components(_ value: DateValue) -> DateComponents {
@@ -83,6 +86,8 @@ extension SystemContactsStore: ContactsWriteStore {
         components.year = value.year
         components.month = value.month
         components.day = value.day
+        if let id = value.calendar, let calendar = NSCalendar(calendarIdentifier: NSCalendar.Identifier(rawValue: id)) { components.calendar = calendar as Calendar }
+        if value.leapMonth == true { components.isLeapMonth = true }
         return components
     }
 
@@ -137,6 +142,7 @@ extension SystemContactsStore: ContactsWriteStore {
             return Labeled(label: entry.label ?? "", value: im)
         }
         card.birthday = date(contact.birthday)
+        card.nonGregorianBirthday = date(contact.nonGregorianBirthday)
         if image, contact.isKeyAvailable(CNContactImageDataKey), let data = contact.imageData { card.imageData = data.base64EncodedString() }
         card.groups = groups.sorted()
         return card
@@ -183,6 +189,7 @@ extension SystemContactsStore: ContactsWriteStore {
             CNLabeledValue(label: raw($0.label), value: CNInstantMessageAddress(username: $0.value.username, service: $0.value.service))
         }
         m.birthday = card.birthday.map(components)
+        m.nonGregorianBirthday = card.nonGregorianBirthday.map(components)
         if let image = card.imageData { m.imageData = Data(base64Encoded: image) }
     }
 
