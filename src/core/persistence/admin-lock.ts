@@ -25,12 +25,10 @@ function parseLock(value: string | null | undefined): WriterAdminLock {
     generation: Number.isSafeInteger(parsed?.generation) ? parsed.generation! : 0 };
 }
 
-export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdminLock> {
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [WRITER_ADMIN_LOCK_KEY]);
-  return parseLock(row?.value);
-}
-
-/** `readWriterAdminLock` through the typed config read every engine serves (writer status). */
+/**
+ * The operator lock, read through the typed config read every engine serves (writer status, graduation and
+ * deactivation blockers, and the in-transaction refusal below).
+ */
 export async function readWriterAdminLockTyped(engine: Pick<BrainEngine, 'getConfig'>): Promise<WriterAdminLock> {
   return parseLock(await engine.getConfig(WRITER_ADMIN_LOCK_KEY));
 }
@@ -39,9 +37,9 @@ export async function readWriterAdminLockTyped(engine: Pick<BrainEngine, 'getCon
  * Runs inside claim, activation and transfer transactions for every caller, reviewed or internal.
  * FOR SHARE serializes with lock/unlock (FOR UPDATE) without blocking admission, which also shares this row.
  */
-export async function assertWriterAdminUnlocked(tx: SqlEngine): Promise<void> {
+export async function assertWriterAdminUnlocked(tx: SqlEngine & Pick<BrainEngine, 'getConfig'>): Promise<void> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
-  refuseWriterAdminLocked(await readWriterAdminLock(tx));
+  refuseWriterAdminLocked(await readWriterAdminLockTyped(tx));
 }
 
 /** The same refusal from the stored config value of `WRITER_ADMIN_LOCK_KEY` (null when unset), for a typed config read. */

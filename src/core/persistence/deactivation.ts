@@ -37,7 +37,7 @@ import { acquireWorktree, getWorktreeBinding, readPersistenceBrain, type Persist
 import { existingHostIdFor } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
-import { assertWriterAdminUnlocked, readWriterAdminLock, WRITER_ADMIN_LOCKED_DOCS } from './admin-lock.ts';
+import { assertWriterAdminUnlocked, readWriterAdminLockTyped, WRITER_ADMIN_LOCKED_DOCS } from './admin-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { recordTopologyChange } from './topology-receipts.ts';
 import { lockTopologyPrincipal, topologyPrincipal } from './topology-locks.ts';
@@ -102,7 +102,7 @@ function readBrain(engine: BrainEngine, lock = false): Promise<BrainRow> {
 /** Every piece of work that keeps the brain from quiescing, with its CLI exit. Read-only. */
 export async function deactivationBlockers(engine: BrainEngine): Promise<DeactivationBlocker[]> {
   const blockers: DeactivationBlocker[] = [];
-  const lock = await readWriterAdminLock(engine);
+  const lock = await readWriterAdminLockTyped(engine);
   if (lock.locked) blockers.push({ kind: 'writer_admin_lock', id: 'persistence.writer_admin_lock', detail: `set at ${lock.set_at ?? 'unknown'}`,
     exit: 'gbrain sources writer unlock' });
   const requests = await engine.executeRaw<{ request_id: string; source_id: string; slug: string; operation: string; state: string; recovering: boolean }>(

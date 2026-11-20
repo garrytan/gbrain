@@ -10,7 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { PersistenceConsumer } from './consumer.ts';
 import { disposePersistenceConsumer, preparePersistedMutation } from './service.ts';
-import { readWriterAdminLock } from './admin-lock.ts';
+import { readWriterAdminLockTyped } from './admin-lock.ts';
 import type { GraduationBlocker } from './engine-graduation.types.ts';
 
 const PENDING_REQUESTS_SQL = `SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
@@ -39,7 +39,7 @@ const stuckRecoveryPreview = (sourceId: string, requestId: string) => ['gbrain',
  */
 export async function graduationBlockers(source: BrainEngine, hostId: string): Promise<readonly GraduationBlocker[]> {
   const blockers: GraduationBlocker[] = [];
-  const lock = await readWriterAdminLock(source);
+  const lock = await readWriterAdminLockTyped(source);
   if (lock.locked) {
     blockers.push({ kind: 'writer_admin_lock', id: 'persistence.writer_admin_lock', detail: `writer administration locked at ${lock.set_at ?? 'unknown time'}`,
       argv: ['gbrain', 'sources', 'writer', 'unlock'], needsUser: true });
