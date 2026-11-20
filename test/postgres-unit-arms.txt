@@ -129,6 +129,7 @@ test/engine-parity/access-grants.test.ts
 test/engine-parity/access-members.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/admin-counts.test.ts
+test/engine-parity/admin-http.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/chunk-reads.test.ts
@@ -187,8 +188,8 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/oauth-clients.test.ts
-test/engine-parity/oauth-lifecycle.test.ts
 test/engine-parity/oauth-http.test.ts
+test/engine-parity/oauth-lifecycle.test.ts
 test/engine-parity/oauth-revocation.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-reads.test.ts
