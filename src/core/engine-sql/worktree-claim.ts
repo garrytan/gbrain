@@ -1,6 +1,6 @@
 /**
- * The unmanaged writer claim's store work (`BrainEngine.claimWorktreeBinding`, Rust engine lane 9, option A): one
- * transaction that locks the brain row, then hands the claim (persistence/ownership.ts `claimWorktree`) a store for
+ * The unmanaged writer claim's store work (`claimWorktreeBinding` over `BrainEngine.worktreeClaimStore`, Rust engine lane 9, option A):
+ * one transaction that locks the brain row, then hands the claim (persistence/ownership.ts `claimWorktree`) a store for
  * the source lock, the writer-admin checks, the binding reads and the three binding inserts. The reads are the claim's
  * statements; the inserts name every column with the column defaults the claim relied on, so PGLite and Postgres keep
  * the same rows. What the rows mean (which claim is a transfer, which
@@ -94,11 +94,17 @@ export function sqlWorktreeClaimStore(tx: BrainEngine): WorktreeClaimStore {
   };
 }
 
-/** `claimWorktreeBinding(body)` on PGLite and Postgres: a synchronous commit, the brain row locked, then the body. */
+/** `worktreeClaimStore()` on PGLite and Postgres, called on a transaction: a synchronous commit, the brain row locked, then the store. */
+export async function worktreeClaimStore(tx: BrainEngine): Promise<WorktreeClaimStore> {
+  await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+  return sqlWorktreeClaimStore(tx);
+}
+
+/**
+ * Runs the claim body in one `engine.transaction` with the transaction's claim store. The transaction starts on
+ * `engine` itself, so a wrapper of `engine` (a test proxy, a recording engine) sees it.
+ */
 export function claimWorktreeBinding<T>(engine: BrainEngine, body: WorktreeClaimBody<T>): Promise<T> {
-  return engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-    await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-    return body(sqlWorktreeClaimStore(tx), tx);
-  });
+  return engine.transaction(async tx => body(await tx.worktreeClaimStore(), tx));
 }

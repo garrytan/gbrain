@@ -589,8 +589,7 @@ src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/activation.ts	execute_raw	9
-src/core/persistence/admin-intent.ts	execute_raw	3
-src/core/persistence/admin-lock.ts	execute_raw	7
+src/core/persistence/admin-lock.ts	execute_raw	2
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	4
@@ -693,7 +692,7 @@ src/core/persistence/origin-twins.ts	execute_raw	2
 src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	17
+src/core/persistence/ownership.ts	execute_raw	8
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-batch.ts	execute_raw	2

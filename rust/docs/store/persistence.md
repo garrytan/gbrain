@@ -460,9 +460,11 @@ brain predates the queue, so no such store exists outside development.
 
 An unmanaged writer claim (`claimWorktree` in `src/core/persistence/ownership.ts`) records one
 worktree per checkout, its paths on this host and the source that lives under it. The claim runs
-through the engine member `claimWorktreeBinding(body)`: on PGLite and Postgres the body gets the SQL
-store of `src/core/engine-sql/worktree-claim.ts` inside one transaction; on this engine it gets the
-store calls below inside `transaction`. The claim's checks (the source lock, the writer admin lock,
+through `claimWorktreeBinding(engine, body)` in `src/core/engine-sql/worktree-claim.ts`: it opens
+`engine.transaction` and gives the body the transaction's `worktreeClaimStore()`. On PGLite and
+Postgres that store is the module's SQL; on this engine it is the store calls below on the
+transaction's handle. The transaction opens on the engine the caller holds, so a wrapper of the
+engine sees it. The claim's checks (the source lock, the writer admin lock,
 the overlap with this host's other worktrees and the physical-root files) stay in TypeScript. The
 store keeps the three rows and refuses what the tables' keys, foreign keys and CHECKs refuse.
 
@@ -475,12 +477,40 @@ store keeps the three rows and refuses what the tables' keys, foreign keys and C
 | `brain.insertWorktree(row)`, `brain.insertHostBinding(row)`, `brain.insertSourceBinding(row)` | the row is stored with the column defaults the SQL relies on. `constraint_violation` for a taken key, an unknown worktree, or a state or Git-durability value the CHECK refuses | the claim's three `INSERT`s |
 | `brain.stampWorktreeHeartbeats(hostId)` | the number of worktrees `hostId` owns, each stamped now | `stampWorktreeHeartbeats` |
 | `brain.listHostRootBindings(hostId)` | one row per source bound under a worktree `hostId` binds, `topology_generation` as text | the first half of `listManagedRootBindings` |
+| `brain.writerAdminStateText()` | the writer topology document as jsonb text, from one snapshot: see "Writer admin state" below | `readWriterAdminState` (`WRITER_ADMIN_STATE_SQL`) |
+| `brain.preparedTransferWorktree()` | the first worktree id, in key order, that is `draining` with a manifest; `null` when none is | the writer lock's prepared-transfer check |
+| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.worktreePublicationPending(id)` | whether a request on the worktree is `running` or `recovering` or holds a recovery record, or an effect on it holds one | the transfer's pending-publication check |
+| `brain.markWorktreeDraining(id, manifest)`, `brain.reactivateWorktree(id)` | the worktree is `draining` with the manifest plus `prepared_at` (now, jsonb `timestamptz` text); `active` with no manifest. A missing worktree changes nothing; a manifest that is not an object is `invalid_argument` | the transfer prepare and cancel `UPDATE`s |
 
 A source binding has no foreign key to its source, as on Postgres: a removed or re-created source
 leaves its binding, and the readers compare incarnations. Rows are not deleted on this engine yet: no
-writer transfer, rebind or source purge runs here. A claim with `expectedAdminState` (a reviewed
-`--expected-state` check) refuses with `engine_capability_missing`, because the writer admin state
-is read through raw SQL.
+rebind or source purge runs here.
+
+### Writer admin state
+
+`readWriterAdminState(opts?)` and `writerAdminStore()` are the BrainEngine members of
+`src/core/engine-sql/writer-admin.ts`; `writerAdminTransaction(engine, body)` there opens
+`engine.transaction` and gives the body the transaction's `writerAdminStore()`. `persistence/admin-intent.ts` hashes the state text for a
+reviewed `--expected-state` check (`writerAdminState`, `assertWriterAdminState`). The writer lock
+(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare and cancel
+(`ownership.ts`) run as a `writerAdminTransaction` body over that store. On this
+engine the store's calls run on the transaction's store handle (`store-members/writer-admin.ts`).
+`lockBrain` and `{ lock: true }` do nothing: the store runs one write transaction at a time, so a
+state read in a transaction holds until it commits. `now()` is this process's clock in the SQL
+engines' format.
+
+The document has the SQL's keys and row shapes. Source ids, binding source ids and lock ids sort in
+byte order on every engine (`COLLATE "C"` in the SQL). An empty table is `null`, as `jsonb_agg`
+over no rows gives. Two parts differ from a SQL brain:
+
+- **`brain`.** This engine keeps no `persistence_brain` columns besides the brain id. The other
+  columns hold their defaults: `enabled` and `skill_bundles_enabled` false, `writer_protocol_floor`
+  and `mode_epoch` 1. A store with no brain id has no row, so `brain` is `null`.
+- **The digest.** Each brain has its own id, so a state reviewed on one brain never matches
+  another, on any engine.
+
+`acceptWriterTransfer` still reads raw SQL and refuses here.
 
 ## TypeScript members with no stored state
 

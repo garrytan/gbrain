@@ -6587,7 +6587,6 @@
         "claimSegmentedProjection": "none",
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
-        "claimWorktreeBinding": "none",
         "clearCodeTraversalCache": "none",
         "clearWantedMarker": "none",
         "cliReads": "none",
@@ -7409,6 +7408,7 @@
         "readWriteRequestProgress": "none",
         "readWriteVisibilityProbe": "none",
         "readWriteWatermarkRow": "none",
+        "readWriterAdminState": "none",
         "readWriterSlugFence": "none",
         "readWriterVersionCutoff": "none",
         "recentWriterVersions": "none",
@@ -7590,6 +7590,7 @@
         "withReservedConnection": "none",
         "withScopedReadTransaction": "none",
         "wordLexemes": "none",
+        "worktreeClaimStore": "none",
         "writeAccessStoreConfig": "none",
         "writeContradictionsRun": "none",
         "writeGitHoldRow": "none",
@@ -7602,7 +7603,8 @@
         "writeOpCheckpointKeys": "none",
         "writeReasonPurgeTombstones": "none",
         "writeSyncPassRow": "none",
-        "writeTextProjectionSeal": "none"
+        "writeTextProjectionSeal": "none",
+        "writerAdminStore": "none"
       }
     }
   },

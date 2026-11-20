@@ -58,7 +58,6 @@
         "claimSegmentedProjection",
         "claimWakeForgets",
         "claimWakeWatch",
-        "claimWorktreeBinding",
         "clearCodeTraversalCache",
         "clearWantedMarker",
         "cliReads",
@@ -870,6 +869,7 @@
         "readWriteRequestProgress",
         "readWriteVisibilityProbe",
         "readWriteWatermarkRow",
+        "readWriterAdminState",
         "readWriterSlugFence",
         "readWriterVersionCutoff",
         "recentWriterVersions",
@@ -1044,6 +1044,7 @@
         "upsertWriteGateReceipt",
         "withReservedConnection",
         "wordLexemes",
+        "worktreeClaimStore",
         "writeAccessStoreConfig",
         "writeContradictionsRun",
         "writeGitHoldRow",
@@ -1055,7 +1056,8 @@
         "writeOpCheckpointKeys",
         "writeReasonPurgeTombstones",
         "writeSyncPassRow",
-        "writeTextProjectionSeal"
+        "writeTextProjectionSeal",
+        "writerAdminStore"
       ],
       "PostgresEngine": [
         "_searchKeywordCJK",
@@ -1111,7 +1113,6 @@
         "claimSegmentedProjection",
         "claimWakeForgets",
         "claimWakeWatch",
-        "claimWorktreeBinding",
         "clearCodeTraversalCache",
         "clearWantedMarker",
         "cliReads",
@@ -1933,6 +1934,7 @@
         "readWriteRequestProgress",
         "readWriteVisibilityProbe",
         "readWriteWatermarkRow",
+        "readWriterAdminState",
         "readWriterSlugFence",
         "readWriterVersionCutoff",
         "recentWriterVersions",
@@ -2114,6 +2116,7 @@
         "withReservedConnection",
         "withScopedReadTransaction",
         "wordLexemes",
+        "worktreeClaimStore",
         "writeAccessStoreConfig",
         "writeContradictionsRun",
         "writeGitHoldRow",
@@ -2126,7 +2129,8 @@
         "writeOpCheckpointKeys",
         "writeReasonPurgeTombstones",
         "writeSyncPassRow",
-        "writeTextProjectionSeal"
+        "writeTextProjectionSeal",
+        "writerAdminStore"
       ]
     },
     "subpaths": {

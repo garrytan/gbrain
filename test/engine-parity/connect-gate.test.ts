@@ -8,7 +8,7 @@
  *    test/engine-parity/harness.ts) for a fresh, unmanaged brain: every persistence table is present, the roots are
  *    the sources with a local path (archived ones too) with no worktree, there is no custody row (with or without
  *    the run setting) and no retired deactivation. Once an unmanaged claim binds a worktree on this host
- *    (claimWorktreeBinding), the roots add that worktree's root for each source bound under it.
+ *    (worktreeClaimStore), the roots add that worktree's root for each source bound under it.
  *  - Regression: an engine that answers one of these differently either refuses every connect and every write's
  *    admission (a custody row that is not there, a missing table read as an error) or records the wrong managed
  *    roots (a source path dropped, an archived checkout no longer guarded); the Rust engine has no SQL, so each
@@ -24,6 +24,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { cleanupRetiredManagedMarkers } from '../../src/core/persistence/deactivation.ts';
 import { assertGraduationConnectAllowed } from '../../src/core/persistence/graduation-custody.ts';
@@ -73,14 +74,14 @@ describe('engine parity: connect gate persistence reads', () => {
     return answers;
   });
 
-  // An unmanaged claim binds a worktree on this host (claimWorktreeBinding, as persistence/ownership.ts claimWorktree
+  // An unmanaged claim binds a worktree on this host (worktreeClaimStore, as persistence/ownership.ts claimWorktree
   // does): the host's bound sources come first in the UNION, at the worktree's root, next to the source's own path row.
   parityTest('listManagedRootBindings adds this host\'s claimed worktree roots and leaves another host with the path rows', {
-    methods: ['listManagedRootBindings', 'claimWorktreeBinding', 'readSourceIncarnation'],
+    methods: ['listManagedRootBindings', 'worktreeClaimStore', 'readSourceIncarnation'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'work', {}, '/srv/brain/root/work');
     const worktreeId = randomUUID();
-    await engine.claimWorktreeBinding(async store => {
+    await claimWorktreeBinding(engine, async store => {
       const source = await store.lockSource('work');
       await store.insertWorktree({ id: worktreeId, ownerHostId: HOST, ownerEpoch: 1 });
       await store.insertHostBinding({ worktreeId, hostId: HOST, localPath: '/srv/brain/root', coordinationPath: '/srv/brain/coord' });

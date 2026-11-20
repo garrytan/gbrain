@@ -98,7 +98,6 @@
           "claimSegmentedProjection: (ref: ProjectionPageRef, claim: string) => Promise<SegmentedProjectionClaimOutcome>",
           "claimWakeForgets: (spec: { leaseSeconds: number; limit: number; }) => Promise<WakeForgetClaim[]>",
           "claimWakeWatch: (id: number, leaseSeconds: number) => Promise<{ lease: string; attempts: number; } | null>",
-          "claimWorktreeBinding: <T>(body: WorktreeClaimBody<T>) => Promise<T>",
           "clearCodeTraversalCache: (opts: CodeTraversalCacheClear) => Promise<number>",
           "clearWantedMarker: (sourceId: string, intent: MarkerIntent, generation: number) => Promise<boolean>",
           "closeOpenLoop: (sourceId: string | null, id: number, status: Exclude<LoopStatus, \"open\">, closedBy: string) => Promise<OpenLoopDbRow | null>",
@@ -897,6 +896,7 @@
           "readWriteRequestProgress: (id: string, opts?: { signal?: AbortSignal; }) => Promise<WriteRequestProgress | null>",
           "readWriteVisibilityProbe: (sourceId: string, slug: string) => Promise<WriteVisibilityProbe | undefined>",
           "readWriteWatermarkRow: (sourceId: string) => Promise<WriteWatermarkRow>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readWriterSlugFence: (principal: { kind: string; id: string; }) => Promise<unknown>",
           "readWriterVersionCutoff: () => Promise<string | null>",
           "readonly capabilities: EngineCapabilities",
@@ -1069,6 +1069,7 @@
           "upsertWriteGateReceipt: (input: WriteGateReceiptInput) => Promise<number>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; selfContained?: boolean; }) => Promise<T>",
           "wordLexemes: (words: string[]) => Promise<Map<string, string[]>>",
+          "worktreeClaimStore: () => Promise<WorktreeClaimStore>",
           "writeAccessStoreConfig: (sourceId: string, store: string) => Promise<void>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>",
           "writeGitHoldRow: (sourceId: string, incarnation: string, path: string, record: object) => Promise<void>",
@@ -1079,7 +1080,8 @@
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writerAdminStore: () => Promise<WriterAdminStore>"
         ],
         "name": "BrainEngine"
       },
@@ -1952,7 +1954,6 @@
           "claimSegmentedProjection: (ref: ProjectionPageRef, claim: string) => Promise<SegmentedProjectionClaimOutcome>",
           "claimWakeForgets: (spec: { leaseSeconds: number; limit: number; }) => Promise<WakeForgetClaim[]>",
           "claimWakeWatch: (id: number, leaseSeconds: number) => Promise<{ lease: string; attempts: number; } | null>",
-          "claimWorktreeBinding: <T>(body: WorktreeClaimBody<T>) => Promise<T>",
           "clearCodeTraversalCache: (opts: CodeTraversalCacheClear) => Promise<number>",
           "clearWantedMarker: (sourceId: string, intent: MarkerIntent, generation: number) => Promise<boolean>",
           "closeOpenLoop: (sourceId: string | null, id: number, status: Exclude<LoopStatus, \"open\">, closedBy: string) => Promise<OpenLoopDbRow | null>",
@@ -2817,6 +2818,7 @@
           "readWriteRequestProgress: (id: string, opts?: { signal?: AbortSignal; }) => Promise<WriteRequestProgress | null>",
           "readWriteVisibilityProbe: (sourceId: string, slug: string) => Promise<WriteVisibilityProbe | undefined>",
           "readWriteWatermarkRow: (sourceId: string) => Promise<WriteWatermarkRow>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readWriterSlugFence: (principal: { kind: string; id: string; }) => Promise<unknown>",
           "readWriterVersionCutoff: () => Promise<string | null>",
           "readonly [ENGINE_ROOT]: object",
@@ -2991,6 +2993,7 @@
           "upsertWriteGateReceipt: (input: WriteGateReceiptInput) => Promise<number>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; selfContained?: boolean; }) => Promise<T>",
           "wordLexemes: (words: string[]) => Promise<Map<string, string[]>>",
+          "worktreeClaimStore: () => Promise<WorktreeClaimStore>",
           "writeAccessStoreConfig: (sourceId: string, store: string) => Promise<void>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>",
           "writeGitHoldRow: (sourceId: string, incarnation: string, path: string, record: object) => Promise<void>",
@@ -3001,7 +3004,8 @@
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writerAdminStore: () => Promise<WriterAdminStore>"
         ],
         "name": "PostgresEngine",
         "signature": [
@@ -5360,7 +5364,6 @@
           "claimSegmentedProjection: (ref: ProjectionPageRef, claim: string) => Promise<SegmentedProjectionClaimOutcome>",
           "claimWakeForgets: (spec: { leaseSeconds: number; limit: number; }) => Promise<JobsWake.WakeForgetClaim[]>",
           "claimWakeWatch: (id: number, leaseSeconds: number) => Promise<{ lease: string; attempts: number; } | null>",
-          "claimWorktreeBinding: <T>(body: WorktreeClaimBody<T>) => Promise<T>",
           "clearCodeTraversalCache: (opts: CodeTraversalCacheClear) => Promise<number>",
           "clearWantedMarker: (sourceId: string, intent: MarkerIntent, generation: number) => Promise<boolean>",
           "closeOpenLoop: (sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, \"open\">, closedBy: string) => Promise<OpenLoopsSql.OpenLoopDbRow | null>",
@@ -6159,6 +6162,7 @@
           "readWriteRequestProgress: (id: string, opts?: { signal?: AbortSignal; }) => Promise<WriteRequestProgress | null>",
           "readWriteVisibilityProbe: (sourceId: string, slug: string) => Promise<WriteVisibilityProbe | undefined>",
           "readWriteWatermarkRow: (sourceId: string) => Promise<WriteWatermarkRow>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readWriterSlugFence: (principal: { kind: string; id: string; }) => Promise<unknown>",
           "readWriterVersionCutoff: () => Promise<string | null>",
           "readonly capabilities: EngineCapabilities",
@@ -6331,6 +6335,7 @@
           "upsertWriteGateReceipt: (input: TrustWriteGateSql.WriteGateReceiptInput) => Promise<number>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; selfContained?: boolean; }) => Promise<T>",
           "wordLexemes: (words: string[]) => Promise<Map<string, string[]>>",
+          "worktreeClaimStore: () => Promise<WorktreeClaimStore>",
           "writeAccessStoreConfig: (sourceId: string, store: string) => Promise<void>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>",
           "writeGitHoldRow: (sourceId: string, incarnation: string, path: string, record: object) => Promise<void>",
@@ -6341,7 +6346,8 @@
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writerAdminStore: () => Promise<WriterAdminStore>"
         ],
         "name": "BrainEngine"
       },
@@ -9924,7 +9930,6 @@
           "claimSegmentedProjection: (ref: housekeepingImpl.ProjectionPageRef, claim: string) => Promise<housekeepingImpl.SegmentedProjectionClaimOutcome>",
           "claimWakeForgets: (spec: { leaseSeconds: number; limit: number; }) => Promise<jobsWake.WakeForgetClaim[]>",
           "claimWakeWatch: (id: number, leaseSeconds: number) => Promise<{ lease: string; attempts: number; } | null>",
-          "claimWorktreeBinding: <T>(body: WorktreeClaimBody<T>) => Promise<T>",
           "clearCodeTraversalCache: (opts: codeTraversalCache.CodeTraversalCacheClear) => Promise<number>",
           "clearWantedMarker: (sourceId: string, intent: notifierImpl.MarkerIntent, generation: number) => Promise<boolean>",
           "closeOpenLoop: (sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, \"open\">, closedBy: string) => Promise<openLoopsImpl.OpenLoopDbRow | null>",
@@ -10773,6 +10778,7 @@
           "readWriteRequestProgress: (id: string, opts?: { signal?: AbortSignal; }) => Promise<persistenceJournalImpl.WriteRequestProgress | null>",
           "readWriteVisibilityProbe: (sourceId: string, slug: string) => Promise<pageVisibilityImpl.WriteVisibilityProbe | undefined>",
           "readWriteWatermarkRow: (sourceId: string) => Promise<appliedWatermarkReadsImpl.WriteWatermarkRow>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readWriterSlugFence: (principal: { kind: string; id: string; }) => Promise<unknown>",
           "readWriterVersionCutoff: () => Promise<string | null>",
           "readonly [ENGINE_ROOT]: object",
@@ -10947,6 +10953,7 @@
           "walRepairReceipt: WalRepairReceipt | null",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>) => Promise<T>",
           "wordLexemes: (words: string[]) => Promise<Map<string, string[]>>",
+          "worktreeClaimStore: () => Promise<WorktreeClaimStore>",
           "writeAccessStoreConfig: (sourceId: string, store: string) => Promise<void>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>",
           "writeGitHoldRow: (sourceId: string, incarnation: string, path: string, record: object) => Promise<void>",
@@ -10957,7 +10964,8 @@
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
           "writeReasonPurgeTombstones: (sourceId: string, pairs: readonly sourcesImpl.ReasonPurgeTombstone[]) => Promise<number>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writerAdminStore: () => Promise<WriterAdminStore>"
         ],
         "name": "PGLiteEngine",
         "signature": [

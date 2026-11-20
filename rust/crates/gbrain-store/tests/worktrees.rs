@@ -301,3 +301,166 @@ fn a_rolled_back_claim_keeps_no_row() {
     assert!(!store.is_source_claimed("work").unwrap());
     assert!(store.read_worktree(WORKTREE).unwrap().is_none());
 }
+
+fn lock(holder_pid: i64, token: &str) -> gbrain_store::jobs::LockAcquire {
+    gbrain_store::jobs::LockAcquire {
+        holder_pid,
+        holder_host: Some("host-a".into()),
+        acquisition_token: token.into(),
+        ttl_minutes: 30.0,
+        steal_grace_seconds: 0.0,
+    }
+}
+
+#[test]
+fn the_writer_admin_state_is_the_jsonb_text_of_the_topology_without_embedding_leases() {
+    let dir = TempDir::new("worktrees-admin-state");
+    let store = open(&dir);
+    let brain = format!(
+        "{{\"id\": \"{}\", \"enabled\": false, \"mode_epoch\": 1, \"skill_bundles_enabled\": false, \"writer_protocol_floor\": 1}}",
+        store.brain_id()
+    );
+    let first = store.writer_admin_state_text().unwrap();
+    let parsed: Value = serde_json::from_str(&first).unwrap();
+    let sources = match parsed["sources"].as_array() {
+        None => "null".to_string(),
+        Some(rows) => {
+            assert_eq!(rows.len(), 1, "{first}");
+            let inc = rows[0][1].as_str().unwrap();
+            format!(
+                "[[\"{}\", \"{inc}\", false, null, null]]",
+                rows[0][0].as_str().unwrap()
+            )
+        }
+    };
+    assert_eq!(
+        first,
+        format!(
+            "{{\"brain\": {brain}, \"hosts\": null, \"sources\": {sources}, \"bindings\": null, \"fallback\": null, \"worktrees\": null, \"legacy_locks\": null}}"
+        ),
+    );
+    // Byte order: "a-b" sorts before "ab" ('-' is 0x2d), whatever the server's locale.
+    let ab = source(&store, "ab", json!({ "kind": "notes" }));
+    let a_b = source(&store, "a-b", json!({ "kind": 7 }));
+    seed(&store, "ab", &ab);
+    store.set_config("sync.repo_path", "/var/tmp/repo").unwrap();
+    store
+        .acquire_cycle_lock(
+            "gbrain-cycle",
+            &lock(42, "d0000000-0000-4000-8000-0000000000d1"),
+        )
+        .unwrap()
+        .unwrap();
+    store
+        .acquire_cycle_lock(
+            "embed-page:7",
+            &lock(43, "d0000000-0000-4000-8000-0000000000d2"),
+        )
+        .unwrap()
+        .unwrap();
+    let text = store.writer_admin_state_text().unwrap();
+    let state: Value = serde_json::from_str(&text).unwrap();
+    let sources = state["sources"].as_array().unwrap();
+    let ids: Vec<&str> = sources.iter().map(|s| s[0].as_str().unwrap()).collect();
+    assert_eq!(
+        ids.iter()
+            .filter(|id| **id != "default")
+            .collect::<Vec<_>>(),
+        [&"a-b", &"ab"]
+    );
+    assert_eq!(sources[0], json!(["a-b", a_b, false, null, "7"]));
+    assert_eq!(sources[1], json!(["ab", ab, false, null, "notes"]));
+    assert_eq!(state["fallback"], json!("/var/tmp/repo"));
+    assert_eq!(
+        state["worktrees"],
+        json!([[WORKTREE, HOST_A, "7", "3", "draining", { "prepared_at": "2026-01-02T03:04:05Z" }]])
+    );
+    assert_eq!(
+        state["bindings"],
+        json!([["ab", ab, WORKTREE, "notes", "3"]])
+    );
+    assert_eq!(
+        state["hosts"],
+        json!([[
+            WORKTREE,
+            HOST_A,
+            "/var/tmp/work-root",
+            "/var/tmp/work-coord",
+            "enabled"
+        ]])
+    );
+    let locks = state["legacy_locks"].as_array().unwrap();
+    assert_eq!(locks.len(), 1, "the page embedding lease is left out");
+    assert_eq!(
+        locks[0].as_array().unwrap()[..4],
+        [
+            json!("gbrain-cycle"),
+            json!(42),
+            json!("host-a"),
+            json!("d0000000-0000-4000-8000-0000000000d1")
+        ]
+    );
+    let at = locks[0][4].as_str().unwrap();
+    assert!(at.ends_with("+00:00") && at.as_bytes()[10] == b'T', "{at}");
+    assert!(
+        text.starts_with(&format!("{{\"brain\": {brain}, \"hosts\": [[")),
+        "{text}"
+    );
+    assert_eq!(
+        store.writer_admin_state_text().unwrap(),
+        text,
+        "a second read is the same text"
+    );
+}
+
+#[test]
+fn a_transfer_prepare_drains_the_worktree_and_a_cancel_reactivates_it() {
+    let dir = TempDir::new("worktrees-transfer");
+    let store = open(&dir);
+    store
+        .insert_worktree(&worktree(
+            json!({ "id": OTHER_WORKTREE, "ownerHostId": HOST_B, "ownerEpoch": 1 }),
+        ))
+        .unwrap();
+    assert_eq!(store.prepared_transfer_worktree().unwrap(), None);
+    assert_eq!(
+        store.read_worktree_owner(OTHER_WORKTREE).unwrap(),
+        Some(json!({ "owner_host_id": HOST_B, "owner_epoch": "1", "state": "active" }))
+    );
+    assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
+    assert!(!store.worktree_publication_pending(OTHER_WORKTREE).unwrap());
+
+    store
+        .mark_worktree_draining(OTHER_WORKTREE, &json!({ "file_count": 1 }))
+        .unwrap();
+    assert_eq!(
+        store.prepared_transfer_worktree().unwrap().as_deref(),
+        Some(OTHER_WORKTREE)
+    );
+    let state: Value = serde_json::from_str(&store.writer_admin_state_text().unwrap()).unwrap();
+    let row = &state["worktrees"][0];
+    assert_eq!(row[4], json!("draining"));
+    assert_eq!(row[5]["file_count"], json!(1));
+    let at = row[5]["prepared_at"].as_str().unwrap();
+    assert!(at.ends_with("+00:00"), "{at}");
+    assert_eq!(
+        store.read_worktree_owner(OTHER_WORKTREE).unwrap().unwrap()["state"],
+        json!("draining")
+    );
+    assert!(
+        store
+            .mark_worktree_draining(OTHER_WORKTREE, &json!([1]))
+            .is_err(),
+        "a manifest is an object"
+    );
+
+    store.reactivate_worktree(OTHER_WORKTREE).unwrap();
+    assert_eq!(store.prepared_transfer_worktree().unwrap(), None);
+    let state: Value = serde_json::from_str(&store.writer_admin_state_text().unwrap()).unwrap();
+    assert_eq!(state["worktrees"][0][4], json!("active"));
+    assert_eq!(state["worktrees"][0][5], Value::Null);
+    // A missing worktree changes nothing, as an UPDATE that matches no row.
+    store.reactivate_worktree(STALE).unwrap();
+    store.mark_worktree_draining(STALE, &json!({})).unwrap();
+    assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
+}
