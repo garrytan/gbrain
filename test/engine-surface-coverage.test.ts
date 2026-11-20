@@ -73,6 +73,9 @@ const INTERFACE_METHODS: readonly string[] = [
   // Wanted-link, timeline-write, take-fence and code-traversal-cache members (engine-sql/wanted-links.ts, timeline.ts, takes.ts, code-traversal-cache.ts)
   'lockRegisteredSourceIds', 'replaceWantedLinkRows', 'removeTimelineRows', 'updateTimelineDetails', 'matchTakeRows', 'deleteTakeRows',
   'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
+  // N4 reads (engine-sql/cli-reads-import.ts, cli-reads-ops.ts, entity-reads.ts, jobs-insight.ts; master text pinned by test/n4-sql-move-parity.test.ts)
+  'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
+  'filterPagesAtRevision', 'nextLivePageAfter', 'readMentionLastPass', 'findExactBasenameCandidates', 'readJobInsight',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
@@ -187,6 +190,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'cycleLockSql',
   // Hybrid search reads: the unscoped engine-sql executor the search-read methods run through.
   'searchRead',
+  // N4 reads: the unscoped engine-sql executors the cli, entity and job-insight read members run through.
+  'cliReads', 'rawRead',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 303/328
+# covered: 304/339
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -30,6 +30,10 @@
 # withdrawal_pages: 0/2
 # withdrawal_fence: 0/1
 # import_guards: 9/9
+# cli_reads_import: 0/7
+# cli_reads_ops: 0/1
+# entity_reads: 0/2
+# jobs_insight: 1/1
 # cycle_locks: 6/6
 # raw_sql: 4/4
 # code_edges: 8/8
@@ -277,6 +281,17 @@ readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
+listSourceRecords	cli_reads_import	no	0	no	-	-	-
+readSourceIncarnation	cli_reads_import	no	0	no	-	-	-
+hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
+readDatabaseClock	cli_reads_import	no	0	no	-	-	-
+listLinkPageMetadata	cli_reads_import	no	0	no	-	-	-
+listStoredTimelineRows	cli_reads_import	no	0	no	-	-	-
+filterPagesAtRevision	cli_reads_import	no	0	no	-	-	-
+nextLivePageAfter	cli_reads_ops	no	0	no	-	-	-
+readMentionLastPass	entity_reads	no	0	no	-	-	-
+findExactBasenameCandidates	entity_reads	no	0	no	-	-	-
+readJobInsight	jobs_insight	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue

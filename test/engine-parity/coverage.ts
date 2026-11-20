@@ -95,6 +95,12 @@ export const FAMILIES: Record<string, readonly string[]> = {
   withdrawal_fence: ['hasWithdrawnFenceClaim'],
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
+  // cli_reads_import / cli_reads_ops / entity_reads / jobs_insight: the N4 reads (engine-sql/cli-reads-import.ts, cli-reads-ops.ts, entity-reads.ts, jobs-insight.ts)
+  cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
+    'filterPagesAtRevision'],
+  cli_reads_ops: ['nextLivePageAfter'],
+  entity_reads: ['readMentionLastPass', 'findExactBasenameCandidates'],
+  jobs_insight: ['readJobInsight'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
