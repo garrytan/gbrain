@@ -392,9 +392,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   factsPagesEntry,
   // GST-2988 PR 3: secret store entries, backups, keys and escrow, spool, held-back commits and side refs (read-only).
   secretStoreEntry,
-  fenceIntegrityEntry,
   // GST-3216: who gbrain takes the owner to be; warns on shared identifiers and ambiguous owner pages (read-only).
   ownerIdentityEntry,
+  fenceIntegrityEntry,
   searchModeEntry,
 ];
 
