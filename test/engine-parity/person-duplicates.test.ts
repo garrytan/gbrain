@@ -97,15 +97,15 @@ describe('engine parity: person-duplicate reads', () => {
       return result;
     });
 
-  parityTest('readPageRetirement reads whether a live page is retired and its trimmed redirect value',
-    { methods: ['readPageRetirement'] }, async (engine, backend) => {
+  parityTest('readRetirementHop with no page policy reads whether a live page is retired and its trimmed redirect value',
+    { methods: ['readRetirementHop'] }, async (engine, backend) => {
       await seed(engine, backend);
       const out: Record<string, unknown> = {};
       for (const slug of ['people/alice-example', 'people/old-alice', 'people/dr-retired', 'people/alias-page',
         'people/blank-merge', 'people/dr-gone', 'people/missing']) {
-        out[slug] = await engine.readPageRetirement('default', slug);
+        out[slug] = await engine.readRetirementHop('default', slug, 'none');
       }
-      out.otherSource = await engine.readPageRetirement('other', 'people/alice-example');
+      out.otherSource = await engine.readRetirementHop('other', 'people/alice-example', 'none');
       expect(out).toEqual({
         'people/alice-example': { slug: 'people/alice-example', type: 'person', retired: false, target: null },
         'people/old-alice': { slug: 'people/old-alice', type: 'person', retired: true, target: '[[people/alice-example|Alice]]' },

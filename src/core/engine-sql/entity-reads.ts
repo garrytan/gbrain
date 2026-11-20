@@ -205,7 +205,8 @@ function retirementPrivacySql(privacy: RetirementPrivacy): SqlFragment {
 
 /**
  * The live page at `slug` in the source with whether it is retired and its `superseded_by` (else `merged_into`)
- * value, trimmed, as the redirect target; null when no live page sits there or `privacy` hides it.
+ * value, trimmed, as the redirect target; null when no live page sits there or `privacy` hides it. `'none'` reads
+ * every live page (entities/resolve.ts `followRetirement` and the person-duplicate checks).
  */
 export async function readRetirementHop(exec: LegacyUnscopedRead, sourceId: string, slug: string, privacy: RetirementPrivacy): Promise<RetirementHopRow | null> {
   const { text, params } = renderFragment(sqlFragment`SELECT p.slug, p.type, ${trustedSql(retiredPageSql('p'))} AS retired,
@@ -303,22 +304,6 @@ export async function readVisibleVariantPages(exec: LegacyUnscopedRead, sourceId
          JOIN pages ON pages.source_id = ${sourceId} AND pages.slug = wanted.slug AND pages.deleted_at IS NULL${priv}
         ORDER BY wanted.n`);
   return exec.executeRaw<VariantPageRow>(text, params);
-}
-
-export interface PageRetirementRow { slug: string; type: string | null; retired: boolean; target: string | null }
-
-/**
- * The live page at `slug` in the source, whether it is retired (`retiredPageSql`) and its trimmed `superseded_by`
- * (else `merged_into`) value; null when no live page sits there (entities/resolve.ts `followRetirement`).
- */
-export async function readPageRetirement(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<PageRetirementRow | null> {
-  const { text, params } = renderFragment(sqlFragment`SELECT p.slug, p.type, ${trustedSql(retiredPageSql('p'))} AS retired,
-              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
-         FROM pages p
-        WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL
-        LIMIT 1`);
-  const [row] = await exec.executeRaw<PageRetirementRow>(text, params);
-  return row ?? null;
 }
 
 export interface InboundLinkerCountRow { source_id: string; slug: string; n: number }

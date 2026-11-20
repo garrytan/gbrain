@@ -228,17 +228,6 @@ impl Brain {
         })
     }
 
-    /// `readPageRetirement(sourceId, slug)`: the live page's retirement, or `null`.
-    #[napi]
-    pub fn read_page_retirement<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slug: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_page_retirement(&source_id, &slug))
-    }
-
     /// `countDistinctInboundLinkers(sourceIds, slugs)`: distinct inbound linkers per page.
     #[napi]
     pub fn count_distinct_inbound_linkers<'env>(

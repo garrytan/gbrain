@@ -8,7 +8,7 @@
  */
 import type {
   EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, MentionDueQuery, NameVariantCandidateQuery,
-  NameVariantCandidateRow, PageRetirementRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, VariantPageRow,
+  NameVariantCandidateRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, VariantPageRow,
 } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
@@ -116,9 +116,6 @@ export const readVisibleVariantPages: StoreMember<[sourceId: string, slugs: read
     const policy = storePagePolicy('readVisibleVariantPages', taken.excludePrivate, { callerReaders: true });
     return storeCall({ member: 'readVisibleVariantPages', sourceId }, () => brain.readVisibleVariantPages(sourceId, [...slugs], policy ?? null));
   };
-
-export const readPageRetirement: StoreMember<[sourceId: string, slug: string], PageRetirementRow | null> = (brain, sourceId, slug) =>
-  storeCall({ member: 'readPageRetirement', sourceId }, () => brain.readPageRetirement(sourceId, slug));
 
 export const countDistinctInboundLinkers: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], InboundLinkerCountRow[]> =
   (brain, sourceIds, slugs) => storeCall({ member: 'countDistinctInboundLinkers' }, () =>

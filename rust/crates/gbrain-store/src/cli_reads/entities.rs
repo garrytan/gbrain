@@ -152,17 +152,6 @@ pub struct VariantPageRow {
     pub frontmatter: Map<String, Value>,
 }
 
-/// A live page's retirement (`readPageRetirement`): `target` is the trimmed `superseded_by`, else
-/// `merged_into`, value.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PageRetirementRow {
-    pub slug: String,
-    #[serde(rename = "type")]
-    pub page_type: String,
-    pub retired: bool,
-    pub target: Option<String>,
-}
-
 /// The distinct pages linking to one page (`countDistinctInboundLinkers`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InboundLinkerCountRow {
@@ -275,7 +264,7 @@ impl Store {
 
     /// `readRetirementHop(sourceId, slug, privacy)`: the live page at `slug` in the source with its
     /// retirement and redirect target, or `None` when no live page sits there or `policy` hides it
-    /// (`page_hidden`). `None` policy reads every page.
+    /// (`page_hidden`). `None` policy reads every page (the person-duplicate checks' retirement read).
     pub fn read_retirement_hop(
         &self,
         source_id: &str,
@@ -520,36 +509,6 @@ impl Store {
             });
         }
         Ok(rows)
-    }
-
-    /// `readPageRetirement(sourceId, slug)`: whether the live page at `slug` is retired
-    /// (`retiredPageSql`) and its trimmed `superseded_by`, else `merged_into`, value; `None` when no
-    /// live page sits there.
-    pub fn read_page_retirement(
-        &self,
-        source_id: &str,
-        slug: &str,
-    ) -> Result<Option<PageRetirementRow>> {
-        let read = self.read()?;
-        let Some(p) =
-            crate::pages::read_page(&*read, source_id, slug)?.filter(|p| p.deleted_at_us.is_none())
-        else {
-            return Ok(None);
-        };
-        let trimmed = |key: &str| {
-            p.frontmatter
-                .get(key)
-                .and_then(arrow_text)
-                .map(|v| v.trim_matches(' ').to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let target = trimmed("superseded_by").or_else(|| trimmed("merged_into"));
-        Ok(Some(PageRetirementRow {
-            retired: is_retired(&p),
-            target,
-            slug: p.slug,
-            page_type: p.page_type,
-        }))
     }
 
     /// `countDistinctInboundLinkers(sourceIds, slugs)`: for each page at (`source_ids[i]`,

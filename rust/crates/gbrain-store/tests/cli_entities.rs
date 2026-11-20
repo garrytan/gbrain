@@ -6,7 +6,7 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::cli_reads::entities::{
-    MentionDueQuery, NameVariantCandidateQuery, PageRetirementRow, SiblingCandidateQuery,
+    MentionDueQuery, NameVariantCandidateQuery, RetirementHopRow, SiblingCandidateQuery,
 };
 use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::links::AddLinkOptions;
@@ -515,11 +515,11 @@ fn visible_name_variants_skip_private_pages_under_the_policy() {
 }
 
 #[test]
-fn page_retirement_reads_the_trimmed_redirect_of_a_live_page() {
+fn retirement_hop_with_no_policy_reads_the_trimmed_redirect_of_a_live_page() {
     let dir = TempDir::new("cli-retirement");
     let store = seeded(&dir);
-    let read = |slug: &str| store.read_page_retirement("default", slug).unwrap();
-    let row = |slug: &str, retired: bool, target: Option<&str>| PageRetirementRow {
+    let read = |slug: &str| store.read_retirement_hop("default", slug, None).unwrap();
+    let row = |slug: &str, retired: bool, target: Option<&str>| RetirementHopRow {
         slug: slug.into(),
         page_type: "person".into(),
         retired,

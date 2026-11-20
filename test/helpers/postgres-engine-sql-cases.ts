@@ -772,7 +772,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
-  'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads, 'readPageRetirement': OOS.entityReads,
+  'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads,
   'countDistinctInboundLinkers': OOS.entityReads, 'listVisibleNameVariantCandidates': OOS.entityReads, 'readVisibleVariantPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
@@ -1675,7 +1675,6 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listUnretiredPagesBySlugPattern', [['default', (e) => e.listUnretiredPagesBySlugPattern(SRC, ['people/dr-%'], 5)]]),
   ...variants('listNameVariantCandidates', [['default', (e) => e.listNameVariantCandidates(SRC,
     { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })]]),
-  ...variants('readPageRetirement', [['default', (e) => e.readPageRetirement(SRC, SLUG)]]),
   ...variants('countDistinctInboundLinkers', [['default', (e) => e.countDistinctInboundLinkers([SRC], [SLUG])]]),
   ...variants('listVisibleNameVariantCandidates', [
     ['all', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })],

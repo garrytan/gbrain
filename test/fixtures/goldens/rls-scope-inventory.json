@@ -4321,17 +4321,6 @@
         ],
         "flagOnScopes": []
       },
-      "readPageRetirement#default": {
-        "flagOffLanes": [
-          "pool"
-        ],
-        "flagOffOpensTransaction": false,
-        "flagOn": "unscoped",
-        "flagOnLanes": [
-          "pool"
-        ],
-        "flagOnScopes": []
-      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -6621,7 +6610,6 @@
         "readPageHiddenFromCaller": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
-        "readPageRetirement": "none",
         "readPageRevisionAttribution": "none",
         "readPageRevisions": "none",
         "readPageSnapshot": "direct",
