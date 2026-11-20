@@ -81,9 +81,12 @@ export interface ParityCaseOpts {
   requires?: EngineCapability;
   /**
    * A named stop on the Rust arm: the scenario there ends on an error with this `code` that is not a capability
-   * refusal (a refusal the store answers by design until a member lands elsewhere). The error's message must carry
-   * `pin`, which says why, who owns the gap and how to unpin it, and every member in `methods` must have been called
-   * first. Counted as stopped, like a typed refusal. The SQL arms still compare.
+   * refusal (a refusal the store answers by design until a member lands elsewhere). The error must be an Error whose
+   * message carries `pin`, which says why, who owns the gap and how to unpin it, and every member in `methods` must
+   * have been called first. Counted as stopped. With a pin, the named stop is the only Rust outcome accepted: a case
+   * that returns, or ends on a capability refusal, fails until the pin is removed. The SQL arms still compare.
+   * One rule for a known Rust stop: a capability refusal uses the in-test pin (assert the refusal, rethrow it; the
+   * sweep-reads case is the example); any other refusal code uses `rustStop`. There is no third form.
    */
   rustStop?: { code: string; pin: string };
   timeout?: number;
@@ -598,9 +601,25 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   if (c.opts.requires !== undefined && !armHas('rust', c.opts.requires)) capabilities.add(c.opts.requires);
   const refusedBy = (e: unknown) => [...capabilities].some((capability) => isCapabilityRefusal(e, capability as EngineCapability));
   const caught = c.refusals.filter(refusedBy).length;
-  if (c.opts.rustStop !== undefined && c.opts.rustStop.pin.trim() === '') throw new Error(`[rust] "${c.name}": its rustStop needs a pin`);
-  const namedStop = (e: unknown) => c.opts.rustStop !== undefined && typeof e === 'object' && e !== null
-    && (e as { code?: unknown }).code === c.opts.rustStop.code && e instanceof Error && e.message.includes(c.opts.rustStop.pin);
+  const pin = c.opts.rustStop;
+  if (pin !== undefined && pin.pin.trim() === '') throw new Error(`[rust] "${c.name}": its rustStop needs a pin`);
+  if (pin?.code === 'engine_capability_missing') {
+    throw new Error(`[rust] "${c.name}": a capability refusal takes the in-test pin (assert the refusal, rethrow it), not rustStop`);
+  }
+  const namedStop = (e: unknown) => pin !== undefined && e instanceof Error
+    && (e as { code?: unknown }).code === pin.code && e.message.includes(pin.pin);
+
+  if (pin !== undefined && !('error' in outcome)) {
+    throw new Error(`[rust] ${c.name} has a rustStop pin (${pin.code}) but now returns; remove the pin and expect equal`);
+  }
+  if (pin !== undefined && 'error' in outcome && !namedStop(outcome.error)) {
+    const why = refusedBy(outcome.error) ? 'a typed capability refusal' : 'another error';
+    if (outcome.error instanceof Error) {
+      outcome.error.message = `[rust] ${c.name} has a rustStop pin (${pin.code}) but ended on ${why}: ${outcome.error.message}`;
+      throw outcome.error;
+    }
+    throw new Error(`[rust] ${c.name} has a rustStop pin (${pin.code}) but ended on ${why}`);
+  }
 
   if ('error' in outcome) {
     // Only the terminal outcome counts: a refusal caught earlier does not excuse a different failure.
@@ -610,11 +629,11 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
       }
       throw outcome.error;
     }
-    if (!refusedBy(outcome.error)) {
+    if (pin !== undefined) {
       // A named stop comes after the members the case covers: each must have been called before it.
       const notReached = c.opts.methods.filter((m) => !c.calls.has(m));
-      expect({ backend: 'rust', case: c.name, rustStop: c.opts.rustStop?.code, declaredButNotCalled: notReached })
-        .toEqual({ backend: 'rust', case: c.name, rustStop: c.opts.rustStop?.code, declaredButNotCalled: [] });
+      expect({ backend: 'rust', case: c.name, rustStop: pin.code, declaredButNotCalled: notReached })
+        .toEqual({ backend: 'rust', case: c.name, rustStop: pin.code, declaredButNotCalled: [] });
     }
     if (c.divergence) {
       throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence/ (${c.divergence.reason}) but now stops on a typed refusal; remove the row`);
