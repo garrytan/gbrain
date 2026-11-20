@@ -30,46 +30,6 @@ fn put(store: &Store, source: &str, slug: &str, frontmatter: Value) {
 }
 
 #[test]
-fn live_pages_naming_reader_are_listed_by_byte_source_and_slug_and_skip_deleted_ones() {
-    let dir = TempDir::new("collate-reads-naming");
-    let store = open(&dir);
-    for id in ["ab", "a-z"] {
-        source(&store, id);
-    }
-    let readers = json!({"readable_by": ["member:gone-example"]});
-    for s in ["ab", "a-z"] {
-        for slug in ["ab", "a-z"] {
-            put(&store, s, slug, readers.clone());
-        }
-    }
-    put(
-        &store,
-        "ab",
-        "other",
-        json!({"readable_by": ["member:someone-else"]}),
-    );
-    put(&store, "ab", "open", json!({}));
-    let rows = store
-        .list_live_pages_naming_reader("member:gone-example", 201)
-        .unwrap();
-    let got: Vec<(String, String)> = rows.into_iter().map(|r| (r.source_id, r.slug)).collect();
-    let pair = |s: &str, l: &str| (s.to_string(), l.to_string());
-    assert_eq!(
-        got,
-        vec![
-            pair("a-z", "a-z"),
-            pair("a-z", "ab"),
-            pair("ab", "a-z"),
-            pair("ab", "ab")
-        ]
-    );
-    let cut = store
-        .list_live_pages_naming_reader("member:gone-example", 3)
-        .unwrap();
-    assert_eq!(cut.len(), 3);
-}
-
-#[test]
 fn page_access_rows_read_one_source_or_every_source_by_byte_source_id() {
     let dir = TempDir::new("collate-reads-access");
     let store = open(&dir);

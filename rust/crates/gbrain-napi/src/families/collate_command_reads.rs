@@ -1,5 +1,5 @@
-//! The page reads three commands made through raw SQL: the member-disable pages check, the
-//! who-can-read page rows and the reconcile-links markdown walk (rust/docs/store/collate-command-reads.md).
+//! The page reads two commands made through raw SQL: the who-can-read page rows and the
+//! reconcile-links markdown walk (rust/docs/store/collate-command-reads.md).
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store` call on the pool through
 //! `Brain::run` and resolves plain JSON.
@@ -12,19 +12,6 @@ use crate::store_binding::Brain;
 
 #[napi]
 impl Brain {
-    /// `listLivePagesNamingReader(principal, limit)`: `[{ source_id, slug }]` by (source id, slug).
-    #[napi]
-    pub fn list_live_pages_naming_reader<'env>(
-        &self,
-        env: &'env Env,
-        principal: String,
-        limit: u32,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_live_pages_naming_reader(&principal, limit)
-        })
-    }
-
     /// `readPageAccessRows(slug, sourceId)`: `[{ slug, source_id, type, frontmatter, folder_rule_ids }]`.
     #[napi]
     pub fn read_page_access_rows<'env>(

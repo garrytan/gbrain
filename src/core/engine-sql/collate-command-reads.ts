@@ -1,29 +1,13 @@
 /**
- * Statements three commands ran through `engine.executeRaw`, now typed members so a Rust brain answers them from its
- * store (rust/docs/store/collate-command-reads.md): the member-disable pages check (commands/access-read-by-nobody.ts),
- * the who-can-read page rows (commands/access.ts) and the reconcile-links page walk (commands/reconcile-links.ts).
+ * Statements two commands ran through `engine.executeRaw`, now typed members so a Rust brain answers them from its
+ * store (rust/docs/store/collate-command-reads.md): the who-can-read page rows (commands/access.ts) and the
+ * reconcile-links page walk (commands/reconcile-links.ts).
  * Each orders its text keys by byte (`COLLATE "C"`), so every engine lists them in one order whatever its locale.
  * The statements and their parameters are unchanged; only their home moved.
  */
 
 /** The engine's `executeRaw` (bound). */
 export type CommandReadRaw = <R = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<R[]>;
-
-/** A page by source and slug. */
-export interface LivePageNamingReaderRow { source_id: string; slug: string }
-
-/** The most pages listLivePagesNamingReader returns: member disable checks 200 and reads one more to see a cut. */
-export const LIVE_PAGES_NAMING_READER_LIMIT = 201;
-
-/** The statement commands/access-read-by-nobody.ts ran, spelled out as one literal (LIMIT is LIVE_PAGES_NAMING_READER_LIMIT). */
-export const LIVE_PAGES_NAMING_READER_SQL = `SELECT source_id, slug FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`;
-
-/** The live pages whose normalized readers name exactly `principal`, by source id then slug, at most LIVE_PAGES_NAMING_READER_LIMIT. */
-export async function listLivePagesNamingReader(raw: CommandReadRaw, principal: string): Promise<LivePageNamingReaderRow[]> {
-  const rows = await raw<LivePageNamingReaderRow>(LIVE_PAGES_NAMING_READER_SQL, [principal]);
-  return rows.map(r => ({ source_id: r.source_id, slug: r.slug }));
-}
 
 /** What who-can-read reads of a page: its type, frontmatter and the folder rules stamped on it (`source:rule_id`; null when none). */
 export interface PageAccessRow {

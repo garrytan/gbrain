@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 987/996
+# covered: 986/995
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -61,7 +61,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 13/13
 # wanted_links: 2/2
-# collate_command_reads: 3/3
+# collate_command_reads: 2/2
 # collate_identity_downgrades: 4/5
 # collate_cycle_window: 2/2
 # collate_take_proposals: 2/2
@@ -885,7 +885,6 @@ listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
-listLivePagesNamingReader	collate_command_reads	yes	1	no	yes	yes	serves
 readPageAccessRows	collate_command_reads	yes	2	no	yes	yes	serves
 listMarkdownPageSlugs	collate_command_reads	yes	1	no	yes	yes	serves
 readSoftDeletedPageAtOrigin	collate_identity_downgrades	yes	1	no	yes	yes	serves
@@ -967,7 +966,7 @@ revokeAccessToken	write_misc	yes	9	no	yes	yes	serves
 deleteOAuthClient	write_misc	yes	5	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	4	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
-listPagesNamingReader	write_misc	yes	5	no	yes	yes	serves
+listPagesNamingReader	write_misc	yes	6	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

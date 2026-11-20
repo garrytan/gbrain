@@ -1543,7 +1543,6 @@ export class PostgresEngine implements BrainEngine {
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]> { return accessControlImpl.readAccessGroups(this, id); }
   listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]> { return accessControlImpl.listPagesNamingReader(this, principal, opts); }
   // Command reads (engine-sql/collate-command-reads.ts), through this engine's executeRaw.
-  listLivePagesNamingReader(principal: string) { return collateCommandReadsImpl.listLivePagesNamingReader(this.executeRaw.bind(this), principal); }
   readPageAccessRows(slug: string, sourceId?: string) { return collateCommandReadsImpl.readPageAccessRows(this.executeRaw.bind(this), slug, sourceId); }
   listMarkdownPageSlugs(sourceId: string) { return collateCommandReadsImpl.listMarkdownPageSlugs(this.executeRaw.bind(this), sourceId); }
   // Identity-downgrade reads and checkpoint row (engine-sql/collate-identity-downgrades.ts), through this engine's executeRaw.

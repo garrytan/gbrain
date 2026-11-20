@@ -1861,7 +1861,6 @@ export class PGLiteEngine implements BrainEngine {
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]> { return accessControlImpl.readAccessGroups(this, id); }
   listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]> { return accessControlImpl.listPagesNamingReader(this, principal, opts); }
   // Command reads (engine-sql/collate-command-reads.ts), through this engine's executeRaw.
-  listLivePagesNamingReader(principal: string) { return collateCommandReadsImpl.listLivePagesNamingReader(this.rawRead, principal); }
   readPageAccessRows(slug: string, sourceId?: string) { return collateCommandReadsImpl.readPageAccessRows(this.rawRead, slug, sourceId); }
   listMarkdownPageSlugs(sourceId: string) { return collateCommandReadsImpl.listMarkdownPageSlugs(this.rawRead, sourceId); }
   // Identity-downgrade reads and checkpoint row (engine-sql/collate-identity-downgrades.ts), through this engine's executeRaw.

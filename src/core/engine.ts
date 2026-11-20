@@ -4114,8 +4114,6 @@ export interface BrainEngine {
   /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */
   listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]>;
 
-  /** The live pages, in every source and by (source id, slug) bytes, whose readers name exactly `principal`; at most 201 of them (member disable checks 200 and reads one more). */
-  listLivePagesNamingReader(principal: string): Promise<import('./engine-sql/collate-command-reads.ts').LivePageNamingReaderRow[]>;
   /** The pages named `slug` (soft-deleted ones too) with the type, frontmatter and stamped folder rules who-can-read reads: in one source, else in every source by source id bytes. */
   readPageAccessRows(slug: string, sourceId?: string): Promise<import('./engine-sql/collate-command-reads.ts').PageAccessRow[]>;
   /** A source's markdown page slugs (soft-deleted ones too) by byte: the reconcile-links walk. */

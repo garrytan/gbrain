@@ -815,7 +815,6 @@ export const RUST_ENGINE_MEMBERS = {
   listAudienceAccessMembers: 'access_control',
   readAccessGroups: 'access_control',
   listPagesNamingReader: 'access_control',
-  listLivePagesNamingReader: 'pages',
   readPageAccessRows: 'pages',
   listMarkdownPageSlugs: 'pages',
   readSoftDeletedPageAtOrigin: 'pages',

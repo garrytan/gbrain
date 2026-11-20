@@ -223,7 +223,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   // collate_command_reads: page reads of the member-disable check, who-can-read and reconcile-links
-  collate_command_reads: ['listLivePagesNamingReader', 'readPageAccessRows', 'listMarkdownPageSlugs'],
+  collate_command_reads: ['readPageAccessRows', 'listMarkdownPageSlugs'],
   // collate_identity_downgrades: the identity-downgrade record reads and the checkpoint value rows; collate_cycle_window: the cycle window's instant and page window
   collate_identity_downgrades: ['readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues', 'readOpCheckpointValues'],
   collate_cycle_window: ['readCycleListingInstant', 'listSourceChangedPagesAfter'],

@@ -139,7 +139,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
   'listRestatedPrivateCopies', 'countDerivedFactTaint', 'listFactProvenance',
   // Command page reads (engine-sql/collate-command-reads.ts; covered by test/engine-parity/collate-command-listings.test.ts)
-  'listLivePagesNamingReader', 'readPageAccessRows', 'listMarkdownPageSlugs',
+  'readPageAccessRows', 'listMarkdownPageSlugs',
   // Slug reads that order by byte (engine-sql/collate-slug-reads.ts; covered by the collate-*.test.ts parity files)
   'resolveLiveSlugByPath', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies',
   // Identity-downgrade record reads, checkpoint value rows and the cycle window (engine-sql/collate-identity-downgrades.ts, collate-cycle-window.ts; covered by test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts and collate-belief-cycle-walks.test.ts)

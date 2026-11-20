@@ -1,6 +1,6 @@
-//! The page reads three commands made through raw SQL (`src/core/engine-sql/collate-command-reads.ts`):
-//! the member-disable pages check (`listLivePagesNamingReader`), the who-can-read page rows
-//! (`readPageAccessRows`) and the reconcile-links markdown walk (`listMarkdownPageSlugs`).
+//! The page reads two commands made through raw SQL (`src/core/engine-sql/collate-command-reads.ts`):
+//! the who-can-read page rows (`readPageAccessRows`) and the reconcile-links markdown walk
+//! (`listMarkdownPageSlugs`).
 //! PGLite and Postgres run the SQL; this answers the same questions from the store's page records.
 //! Every list is in byte order of its text keys, as the statements' `COLLATE "C"` orders them.
 //! What each member answers: rust/docs/store/collate-command-reads.md.
@@ -10,17 +10,9 @@
 use crate::Store;
 use crate::access_policy::kept_rule_ids;
 use crate::error::Result;
-use crate::facts::privacy::access_readers;
 use crate::pages::{all_pages, read_page};
 use serde::Serialize;
 use serde_json::{Map, Value};
-
-/// A live page by source and slug (`LivePageNamingReaderRow`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct LivePageNamingReaderRow {
-    pub source_id: String,
-    pub slug: String,
-}
 
 /// What who-can-read reads of a page (`PageAccessRow`): `folder_rule_ids` is `null` when no rule is stamped.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -34,30 +26,6 @@ pub struct PageAccessRow {
 }
 
 impl Store {
-    /// The live (not soft-deleted) pages in every source whose normalized readers
-    /// (`gbrain_access_readers`) name exactly `principal`, by (source id, slug) bytes, at most `limit`.
-    pub fn list_live_pages_naming_reader(
-        &self,
-        principal: &str,
-        limit: u32,
-    ) -> Result<Vec<LivePageNamingReaderRow>> {
-        let read = self.read()?;
-        let mut rows: Vec<LivePageNamingReaderRow> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| p.deleted_at_us.is_none())
-            .filter(|p| {
-                access_readers(&p.frontmatter).is_some_and(|r| r.iter().any(|x| x == principal))
-            })
-            .map(|p| LivePageNamingReaderRow {
-                source_id: p.source_id,
-                slug: p.slug,
-            })
-            .collect();
-        rows.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
-        rows.truncate(limit as usize);
-        Ok(rows)
-    }
-
     /// The pages named `slug`, soft-deleted ones too: the one in `source_id` when given (`source_id`
     /// is not empty), else one per source by source id bytes.
     pub fn read_page_access_rows(
