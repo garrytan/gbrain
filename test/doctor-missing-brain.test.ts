@@ -97,3 +97,39 @@ describe('doctor refuses a configured PGLite brain that is not there', () => {
     expect(listing()).toEqual(before);
   }, 180_000);
 });
+
+describe('doctor --fast on a brain whose folder is missing runs exactly as before', () => {
+  let fastHome: string;
+  let fastStore: string;
+
+  beforeAll(async () => {
+    fastHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-missing-fast-'));
+    const init = await runCli(['init', '--pglite', '--no-embedding'], { home: fastHome, timeoutMs: 120_000 });
+    expect(init.exitCode).toBe(0);
+    fastStore = join(fastHome, '.gbrain', 'brain.pglite');
+    renameSync(fastStore, `${fastStore}.moved`);
+  }, 180_000);
+
+  afterAll(() => {
+    try { rmSync(fastHome, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+
+  test('exit 0, the usual fast report with the database checks skipped, no refusal, and no datastore created', async () => {
+    const top = () => readdirSync(join(fastHome, '.gbrain')).sort();
+    const before = top();
+    const r = await runCli(['doctor', '--fast', '--json'], { home: fastHome, timeoutMs: 120_000 });
+    // The same outcome master gives on this brain: --fast never opens the database, so the missing folder changes nothing.
+    expect(r.exitCode).toBe(0);
+    const out = JSON.parse(r.stdout) as Record<string, any>;
+    expect(out.reason).toBeUndefined();
+    expect(out.code).toBeUndefined();
+    expect(Array.isArray(out.checks)).toBe(true);
+    const connection = out.checks.find((c: { name: string }) => c.name === 'connection');
+    expect(connection?.status).toBe('warn');
+    expect(connection?.message).toContain('Skipping DB checks (--fast mode');
+    // Nothing is created where the brain should be. The only entry a fast run may add is doctor's own
+    // audit folder (a skill snapshot, written on master too when the run has a skills dir); it holds no brain data.
+    expect(existsSync(fastStore)).toBe(false);
+    expect(top().filter((e) => !before.includes(e) && e !== 'audit')).toEqual([]);
+  }, 180_000);
+});
