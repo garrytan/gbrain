@@ -72,8 +72,10 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts }> {
   const sessionId = `${CONVERSATION_FACTS_SOURCE_PREFIX}:${page.slug}`;
   let extracted: ExtractedFact[];
+  const owner = await conversationOwner(run.engine, run.sourceId, page);
+  const ownerSpoke = owner.label !== null && seg.messages.some(m => m.speaker === owner.label);
   const input: ExtractInput = { turnText: text, sessionId, source: CONVERSATION_FACTS_SOURCE_PREFIX, engine: run.engine, abortSignal: run.signal,
-    entityHints, entityHintsCap: CONVERSATION_ENTITY_HINTS_CAP };
+    entityHints, entityHintsCap: CONVERSATION_ENTITY_HINTS_CAP, ...(ownerSpoke ? { owner: { label: owner.label!, entity: owner.entity } } : {}) };
   if (run.extractor) {
     extracted = await run.extractor(input);
   } else {
@@ -95,6 +97,8 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
     process.stderr.write(`[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso} `
       + `entity resolution failed for ${JSON.stringify(raw)}: ${message}; preserving fact without an entity target\n`);
   }, unbacked);
+  // GST-3216: the owner entity is the one the owner line names, whether or not its page exists yet; the guard below decides.
+  for (const [i, raw] of raws.entries()) if (raw === owner.entity) extracted[i] = { ...extracted[i]!, entity_slug: owner.entity };
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
   const inferred = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
@@ -108,7 +112,6 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   })));
   // GST-3170: a fact restating a claim its speaker asked to keep quiet is stored private, unless the claim was withdrawn
   // or purged at any visibility: the guards match the row's own visibility, so narrowing must never bring one back.
-  const owner = await conversationOwner(run.engine, run.sourceId, page);
   const guarded = inferred.map((row, i) => guardOwnerFact(row, owner, seg, isNullLikeEntity(extracted[i]!.entity_slug)));
   const quiet = visibility === 'world' ? keepQuietClaims(seg.messages) : [];
   const rows = await Promise.all(guarded.map(async row => keptQuiet(row.fact, quiet)

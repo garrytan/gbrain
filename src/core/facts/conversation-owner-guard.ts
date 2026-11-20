@@ -26,11 +26,15 @@ export const SPEAKER_UNKNOWN_NOTE = 'speaker unknown';
 /** The owner entity a page's facts may land on, and the owner's speaker label when the page proves it (else null). */
 export interface ConversationOwner { entity: string; label: string | null }
 
-export async function conversationOwner(engine: BrainEngine, sourceId: string, page: Pick<Page, 'slug'>): Promise<ConversationOwner> {
+/** The owner entity for a source's pages: the entity of the member the source belongs to, else the brain's owner. */
+export async function sourceOwnerEntity(engine: BrainEngine, sourceId: string): Promise<string> {
   const stamp = await sourceSpeakerOwnerStamp(engine, sourceId);
-  const identity = await ownerIdentity(engine, stamp?.member ? { member: stamp.member } : {});
+  return (await ownerIdentity(engine, stamp?.member ? { member: stamp.member } : {})).entity.slug;
+}
+
+export async function conversationOwner(engine: BrainEngine, sourceId: string, page: Pick<Page, 'slug'>): Promise<ConversationOwner> {
   const [read] = await readSpeakerOwners(engine, [{ source_id: sourceId, slug: page.slug }]);
-  return { entity: identity.entity.slug, label: read?.status === 'trusted' ? read.marker!.label : null };
+  return { entity: await sourceOwnerEntity(engine, sourceId), label: read?.status === 'trusted' ? read.marker!.label : null };
 }
 
 /** One fact row after the guard; `inferred` marks a subject mention inference supplied. */

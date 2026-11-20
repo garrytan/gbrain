@@ -12,9 +12,13 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { runExtractConversationFactsCore } from '../src/commands/extract-conversation-facts.ts';
-import { guardOwnerFact, SPEAKER_UNKNOWN_NOTE } from '../src/core/facts/conversation-owner-guard.ts';
+import { guardOwnerFact, SPEAKER_UNKNOWN_NOTE, type ConversationOwner } from '../src/core/facts/conversation-owner-guard.ts';
+import { extractFactsFromTurnWithOutcome, type ExtractInput } from '../src/core/facts/extract.ts';
+import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { appendContextNote } from '../src/core/facts/subject-infer.ts';
 import { RESERVED_OWNER_SLUG } from '../src/core/identity/owner.ts';
+import { addMember } from '../src/core/access/members.ts';
+import { setOwner } from '../src/core/access/owner.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { renderSessionParts } from '../src/core/transcripts/render.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -26,11 +30,11 @@ const OWNER = RESERVED_OWNER_SLUG;
 let SESSION = '';
 const MEETING = 'meetings/2026-08-03-offsite-planning';
 /** A Claude Code session as the transcripts importer renders it; `owned` gives it the owner basis, so it carries a marker. */
-const session = (owned: boolean) => {
+const session = (owned: boolean, member: string | null = null) => {
   const part = renderSessionParts({ session: { meta: { harness: 'claude-code', sessionId: 'guard-1', ...(owned ? { ownerBasis: 'session_user' as const } : {}) },
     messages: [{ role: 'user', text: 'I moved to Lisbon last month.', timestamp: '2026-01-02T10:00:00.000Z' },
       { role: 'assistant', text: 'Noted. Your sister said you are training for a marathon.', timestamp: '2026-01-02T10:00:05.000Z' }] },
-    redactionCount: 0, imperativesFlagged: 0 }, { sourcePath: '', owner: { member: null } }).parts[0]!;
+    redactionCount: 0, imperativesFlagged: 0 }, { sourcePath: '', owner: { member } }).parts[0]!;
   SESSION = part.slug;
   expect(!!part.frontmatter.speaker_owner).toBe(owned);
   return part.content;
@@ -41,10 +45,32 @@ const meeting = ['---', 'type: meeting', 'title: Offsite planning', 'date: 2026-
   '**Alice Example:** Alice, speaking as your neighbour: my storage unit is at the north depot.',
   '**Bob Example:** Sounds right to me, Alice. My car is a hatchback.', ''].join('\n');
 
+test('the owner line rides the window\'s user message; the system prompt is unchanged', async () => {
+  const sent: Array<{ system: string; content: string }> = [];
+  __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+    sent.push({ system: String(opts.system), content: String((opts.messages[0] as { content: unknown }).content) });
+    const text = '{"facts":[]}';
+    return { text, blocks: [{ type: 'text', text }], stopReason: 'end', model: 'test:stub', providerId: 'test',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } } as ChatResult;
+  });
+  try {
+    const base: ExtractInput = { turnText: '**User:** I moved to Lisbon.', source: 'test', model: 'anthropic:claude-sonnet-4-6' };
+    await extractFactsFromTurnWithOutcome(base);
+    await extractFactsFromTurnWithOutcome({ ...base, owner: { label: 'User', entity: OWNER } });
+    await extractFactsFromTurnWithOutcome({ ...base, owner: { label: 'User', entity: OWNER }, userSpeaker: 'agent-example' });
+  } finally { __setChatTransportForTests(null); resetGateway(); }
+  expect(sent).toHaveLength(3);
+  expect(new Set(sent.map(s => s.system)).size).toBe(1);
+  const line = 'The brain\'s owner is the speaker labelled "User" in this conversation. Set entity to "memory/owner" for that speaker\'s first-person claims about themselves.\n';
+  expect(sent[0]!.content.startsWith('<turn>')).toBe(true);
+  expect(sent[1]!.content).toBe(line + sent[0]!.content);
+  expect(sent[2]!.content).not.toContain('The brain\'s owner is the speaker');
+});
+
 describe('guardOwnerFact', () => {
-  const owner = { entity: OWNER, label: 'User' };
+  const owner: ConversationOwner = { entity: OWNER, label: 'User' };
   const seg = (speaker: string) => ({ messages: [{ speaker, timestamp: '2026-01-02T10:00:00Z', text: 'hello' }] });
-  const fact = (attributed_to: 'user' | 'assistant' | 'other' | null) => ({ fact: 'x', entity_slug: OWNER, attributed_to, context: 'from page' });
+  const fact = (attributed_to: 'user' | 'assistant' | 'other' | null) => ({ fact: 'x', entity_slug: OWNER as string | null, attributed_to, context: 'from page' });
   test('the owner\'s own claim needs a turn by the owner\'s label in the window', () => {
     expect(guardOwnerFact(fact('user'), owner, seg('User'), false).entity_slug).toBe(OWNER);
     expect(guardOwnerFact(fact(null), owner, seg('User'), false).entity_slug).toBe(OWNER);
@@ -79,11 +105,13 @@ for (const backend of testBackends()) describe(`[${backend}] conversation facts 
   const remotePut = (slug: string, content: string) => operations.find(o => o.name === 'put_page')!.handler({
     engine, config: { engine: backend, embedding_disabled: true } as OperationContext['config'], logger: { info() {}, warn() {}, error() {} },
     dryRun: false, remote: true, sourceId: 'default' } as OperationContext, { slug, content });
+  let inputs: ExtractInput[] = [];
   const extract = async (slug: string, facts: Partial<ExtractedFact>[]) => {
+    inputs = [];
     const spy = spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
       await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: [slug], sleepMs: 0, overrideDisabled: true,
-        extractor: async () => facts.map(f => ({ kind: 'fact', confidence: 0.9, entity_slug: null, source: 'test', notability: 'high', ...f }) as ExtractedFact) });
+        extractor: async input => (inputs.push(input), facts).map(f => ({ kind: 'fact', confidence: 0.9, entity_slug: null, source: 'test', notability: 'high', ...f }) as ExtractedFact) });
     } finally { spy.mockRestore(); }
     return engine.executeRaw<{ fact: string; entity_slug: string | null; context: string | null }>(
       `SELECT fact, entity_slug, context FROM facts WHERE source_id = 'default' AND source_markdown_slug = $1
@@ -97,6 +125,17 @@ for (const backend of testBackends()) describe(`[${backend}] conversation facts 
     const rows = await extract(SESSION, [{ fact: 'The owner moved to Lisbon', entity_slug: OWNER, attributed_to: 'user' },
       { fact: 'The owner is training for a marathon', entity_slug: OWNER, attributed_to: 'assistant' }]);
     expect(subjects(rows)).toEqual([[OWNER, false], [OWNER, false]]);
+    expect(inputs.map(i => i.owner)).toEqual([{ label: 'User', entity: OWNER }]);
+  });
+
+  test('with an owner member, the owner\'s facts land on the member page, even before that page exists', async () => {
+    await addMember(engine, 'alice-example');
+    await setOwner(engine, 'alice-example');
+    await transcript(session(true, 'alice-example'));
+    const rows = await extract(SESSION, [{ fact: 'The owner moved to Lisbon', entity_slug: 'memory/members/alice-example', attributed_to: 'user' },
+      { fact: 'The owner moved to Lisbon, again', entity_slug: OWNER, attributed_to: 'user' }]);
+    expect(inputs.map(i => i.owner)).toEqual([{ label: 'User', entity: 'memory/members/alice-example' }]);
+    expect(subjects(rows)).toEqual([['memory/members/alice-example', false], [OWNER, false]]);
   });
 
   test('the same transcript with no marker, or a marker a remote caller wrote: speaker unknown', async () => {
@@ -107,6 +146,7 @@ for (const backend of testBackends()) describe(`[${backend}] conversation facts 
       const rows = await extract(SESSION, [{ fact: 'The owner moved to Lisbon', entity_slug: OWNER, attributed_to: 'user' },
         { fact: 'The owner is training for a marathon', entity_slug: OWNER, attributed_to: 'assistant' }]);
       expect(subjects(rows)).toEqual([[null, true], [null, true]]);
+      expect(inputs.map(i => i.owner)).toEqual([undefined]);
     }
   });
 
