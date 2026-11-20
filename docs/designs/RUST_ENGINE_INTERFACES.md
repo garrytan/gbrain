@@ -1841,6 +1841,9 @@ and write provenance on content rows, and the trust records.
     stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
     (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
     caller's eligibility) honour a read eligibility.
+  - Built: the trust scan's cursor, claimed-source check and id ceilings are typed members
+    (`engine-sql/trust-scan.ts`), served by `trust/scan_state.rs` and `persistence/trust_scan_cursor.rs`, so a scan on a
+    Rust brain stops and resumes as on PGLite.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,

@@ -451,6 +451,7 @@
           "listChronicleEventSlotRows: (sourceId: string, slugs: readonly string[]) => Promise<ChronicleEventSlotRow[]>",
           "listChronicleOwnedHashes: (sourceId: string, pageId: number) => Promise<string[]>",
           "listChunklessPagesWithContent: (opts?: { batchSize?: number; afterPageId?: number; sourceId?: string; }) => Promise<ChunklessPageRow[]>",
+          "listClaimPendingSourceIds: () => Promise<string[]>",
           "listCompactableReceipts: <R = Record<string, unknown>>(retentionDays: number) => Promise<R[]>",
           "listConfigKeys: (prefix: string) => Promise<string[]>",
           "listConsumerOwners: (hostIds: string[]) => Promise<ConsumerOwnerRow[]>",
@@ -1069,6 +1070,8 @@
           "readTransactionSettings: (names: readonly string[]) => Promise<Array<string | null>>",
           "readTrigramCandidates: (sourceId: string, q: TrigramCandidateQuery) => Promise<TrigramCandidateRow[]>",
           "readTrustGeneration: () => Promise<string>",
+          "readTrustScanCeilings: () => Promise<Record<TrustScanTable, number>>",
+          "readTrustScanCursor: () => Promise<unknown>",
           "readUnembeddedPageSummary: (sourceId: string, column: string) => Promise<UnembeddedPageSummary>",
           "readUnfinishedAccessMigration: (sourceId: string) => Promise<AccessMigrationRow | null>",
           "readVersionAttributions: (versions: VersionRef[]) => Promise<VersionAttributionRow[]>",
@@ -1288,7 +1291,8 @@
           "writeSharedSkillPolicy: (write: SharedSkillPolicyWrite) => Promise<void>",
           "writeSharedSkillRevision: (write: SharedSkillRevisionWrite) => Promise<void>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writeTrustScanCursor: (completedKeys: readonly unknown[]) => Promise<void>"
         ],
         "name": "BrainEngine"
       },
@@ -2518,6 +2522,7 @@
           "listChronicleEventSlotRows: (sourceId: string, slugs: readonly string[]) => Promise<ChronicleEventSlotRow[]>",
           "listChronicleOwnedHashes: (sourceId: string, pageId: number) => Promise<string[]>",
           "listChunklessPagesWithContent: (opts?: { batchSize?: number; afterPageId?: number; sourceId?: string; }) => Promise<ChunklessPageRow[]>",
+          "listClaimPendingSourceIds: () => Promise<string[]>",
           "listCompactableReceipts: <R = Record<string, unknown>>(retentionDays: number) => Promise<R[]>",
           "listConfigKeys: (prefix: string) => Promise<string[]>",
           "listConsumerOwners: (hostIds: string[]) => Promise<ConsumerOwnerRow[]>",
@@ -3199,6 +3204,8 @@
           "readTransactionSettings: (names: readonly string[]) => Promise<(string | null)[]>",
           "readTrigramCandidates: (sourceId: string, q: TrigramCandidateQuery) => Promise<TrigramCandidateRow[]>",
           "readTrustGeneration: () => Promise<string>",
+          "readTrustScanCeilings: () => Promise<Record<TrustScanTable, number>>",
+          "readTrustScanCursor: () => Promise<unknown>",
           "readUnembeddedPageSummary: (sourceId: string, column: string) => Promise<UnembeddedPageSummary>",
           "readUnfinishedAccessMigration: (sourceId: string) => Promise<AccessMigrationRow | null>",
           "readVersionAttributions: (versions: VersionRef[]) => Promise<VersionAttributionRow[]>",
@@ -3420,7 +3427,8 @@
           "writeSharedSkillPolicy: (w: SharedSkillPolicyWrite) => Promise<void>",
           "writeSharedSkillRevision: (w: SharedSkillRevisionWrite) => Promise<void>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writeTrustScanCursor: (completedKeys: readonly unknown[]) => Promise<void>"
         ],
         "name": "PostgresEngine",
         "signature": [
@@ -6131,6 +6139,7 @@
           "listChronicleEventSlotRows: (sourceId: string, slugs: readonly string[]) => Promise<ChronicleEventsSql.ChronicleEventSlotRow[]>",
           "listChronicleOwnedHashes: (sourceId: string, pageId: number) => Promise<string[]>",
           "listChunklessPagesWithContent: (opts?: { batchSize?: number; afterPageId?: number; sourceId?: string; }) => Promise<ChunklessPageRow[]>",
+          "listClaimPendingSourceIds: () => Promise<string[]>",
           "listCompactableReceipts: <R = Record<string, unknown>>(retentionDays: number) => Promise<R[]>",
           "listConfigKeys: (prefix: string) => Promise<string[]>",
           "listConsumerOwners: (hostIds: string[]) => Promise<DoctorPersistenceSql.ConsumerOwnerRow[]>",
@@ -6749,6 +6758,8 @@
           "readTransactionSettings: (names: readonly string[]) => Promise<Array<string | null>>",
           "readTrigramCandidates: (sourceId: string, q: TrigramCandidateQuery) => Promise<TrigramCandidateRow[]>",
           "readTrustGeneration: () => Promise<string>",
+          "readTrustScanCeilings: () => Promise<Record<TrustScanTable, number>>",
+          "readTrustScanCursor: () => Promise<unknown>",
           "readUnembeddedPageSummary: (sourceId: string, column: string) => Promise<UnembeddedPageSummary>",
           "readUnfinishedAccessMigration: (sourceId: string) => Promise<AccessMigrationRow | null>",
           "readVersionAttributions: (versions: VersionRef[]) => Promise<VersionAttributionRow[]>",
@@ -6968,7 +6979,8 @@
           "writeSharedSkillPolicy: (write: SharedSkillMembersSql.SharedSkillPolicyWrite) => Promise<void>",
           "writeSharedSkillRevision: (write: SharedSkillMembersSql.SharedSkillRevisionWrite) => Promise<void>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writeTrustScanCursor: (completedKeys: readonly unknown[]) => Promise<void>"
         ],
         "name": "BrainEngine"
       },
@@ -10806,6 +10818,7 @@
           "listChronicleEventSlotRows: (sourceId: string, slugs: readonly string[]) => Promise<chronicleEventsImpl.ChronicleEventSlotRow[]>",
           "listChronicleOwnedHashes: (sourceId: string, pageId: number) => Promise<string[]>",
           "listChunklessPagesWithContent: (opts?: { batchSize?: number; afterPageId?: number; sourceId?: string; }) => Promise<ChunklessPageRow[]>",
+          "listClaimPendingSourceIds: () => Promise<string[]>",
           "listCompactableReceipts: <R = Record<string, unknown>>(retentionDays: number) => Promise<R[]>",
           "listConfigKeys: (prefix: string) => Promise<string[]>",
           "listConsumerOwners: (hostIds: string[]) => Promise<doctorPersistenceImpl.ConsumerOwnerRow[]>",
@@ -11471,6 +11484,8 @@
           "readTransactionSettings: (names: readonly string[]) => Promise<(string | null)[]>",
           "readTrigramCandidates: (sourceId: string, q: entityReadsImpl.TrigramCandidateQuery) => Promise<entityReadsImpl.TrigramCandidateRow[]>",
           "readTrustGeneration: () => Promise<string>",
+          "readTrustScanCeilings: () => Promise<Record<trustTierReads.TrustScanTable, number>>",
+          "readTrustScanCursor: () => Promise<unknown>",
           "readUnembeddedPageSummary: (sourceId: string, column: string) => Promise<appliedWatermarkReadsImpl.UnembeddedPageSummary>",
           "readUnfinishedAccessMigration: (sourceId: string) => Promise<accessSetupImpl.AccessMigrationRow | null>",
           "readVersionAttributions: (versions: VersionRef[]) => Promise<writeAttributionImpl.VersionAttributionRow[]>",
@@ -11692,7 +11707,8 @@
           "writeSharedSkillPolicy: (w: SharedSkillMembersSql.SharedSkillPolicyWrite) => Promise<void>",
           "writeSharedSkillRevision: (w: SharedSkillMembersSql.SharedSkillRevisionWrite) => Promise<void>",
           "writeSyncPassRow: (sourceId: string, incarnation: string, value: { lease_token?: unknown; }, opts?: SyncPassRowWrite) => Promise<boolean>",
-          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
+          "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>",
+          "writeTrustScanCursor: (completedKeys: readonly unknown[]) => Promise<void>"
         ],
         "name": "PGLiteEngine",
         "signature": [

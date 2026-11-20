@@ -8091,6 +8091,7 @@
         "listChronicleEventSlotRows": "none",
         "listChronicleOwnedHashes": "none",
         "listChunklessPagesWithContent": "direct",
+        "listClaimPendingSourceIds": "none",
         "listCompactableReceipts": "none",
         "listConfigKeys": "none",
         "listConsumerOwners": "none",
@@ -8715,6 +8716,8 @@
         "readTransactionSettings": "none",
         "readTrigramCandidates": "none",
         "readTrustGeneration": "none",
+        "readTrustScanCeilings": "none",
+        "readTrustScanCursor": "none",
         "readUnembeddedPageSummary": "none",
         "readUnfinishedAccessMigration": "none",
         "readVersionAttributions": "none",
@@ -8945,7 +8948,8 @@
         "writeSharedSkillPolicy": "none",
         "writeSharedSkillRevision": "none",
         "writeSyncPassRow": "none",
-        "writeTextProjectionSeal": "none"
+        "writeTextProjectionSeal": "none",
+        "writeTrustScanCursor": "none"
       }
     }
   },

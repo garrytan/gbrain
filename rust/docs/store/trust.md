@@ -237,3 +237,25 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
   `introduced_because` read null (TODOS.md `rust-version-change-reason`), and no gap or pruned successor.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
+
+## Trust scan state (`trust::scan_state`, `persistence::trust_scan_cursor`)
+
+The statements `gbrain trust scan` (src/core/eligibility/scan.ts) ran through `executeRaw`, now typed members in
+src/core/engine-sql/trust-scan.ts. A scan on a Rust brain saves its cursor, stops after `maxBatches` and resumes where
+it stopped, as on PGLite; doctor `trust_scan` reads the same cursor. No new key prefix.
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `readTrustScanCursor` | `read_trust_scan_cursor`: the `completed_keys` of the `op_checkpoints` row (`trust_scan`, `v1`), or null | `SELECT completed_keys AS keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2` |
+| `writeTrustScanCursor` | `write_trust_scan_cursor`: the row's keys replaced with the array, in jsonb key order, stamped now | `INSERT INTO op_checkpoints … ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()` |
+| `listClaimPendingSourceIds` | `list_claim_pending_source_ids`: the sources whose config has a `trust_claimed_at` key, `trust_tier` `operator_curated`, a `kind` (`''` when absent) that is not a connector kind and no `trust_claim_lifted_at` key, archived ones included, by id | `SELECT s.id FROM sources s WHERE <claimPendingSql> ORDER BY s.id` |
+| `readTrustScanCeilings` | `read_trust_scan_ceilings`: each of pages, facts, takes and timeline entries' max id over every stored row (soft-deleted pages included), 0 when empty | `SELECT max(id) AS n FROM <table>`, once per table |
+
+- The cursor row is the parent row of the resumable-op checkpoints (rust/docs/store/persistence.md, "Op checkpoints"):
+  the same key and value, so `readOpCheckpointKeys`, `writeOpCheckpointKeys` and `purgeStaleCheckpoints` see it as
+  they see the Postgres row. The SQL texts are scan.ts's, not those members' (they read child paths and return text).
+- The TypeScript member sends the connector kinds (`CONNECTOR_SOURCE_KINDS`), so the list stays in one place.
+- The SQL orders by `s.id COLLATE "C"` and the store sorts the ids by bytes, so every engine lists them in one order
+  whatever the database collation. The order only names the ids in the scan's refusal.
+- Pinned by `test/engine-parity/trust-tier-reads.test.ts` (a scan that stops and resumes; doctor `trust_scan`) on every
+  arm, by `tests/trust_scan_state.rs` and by the `persistence::trust_scan_cursor` unit tests.

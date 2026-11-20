@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1227/1233
+# covered: 1231/1237
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -64,7 +64,7 @@
 # facts_purge: 14/14
 # facts_repair: 10/10
 # facts_trust: 9/9
-# trust_tier_reads: 14/14
+# trust_tier_reads: 18/18
 # derivation_trust: 3/3
 # raw_sql: 4/4
 # code_edges: 9/9
@@ -103,13 +103,13 @@ getPage	pages	yes	120	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	604	yes	yes	yes	serves
+putPage	pages	yes	606	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	192	yes	yes	yes	serves
+softDeletePage	pages	yes	193	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -309,7 +309,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	50	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	52	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	24	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	7	no	yes	yes	serves
@@ -423,7 +423,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	23	no	yes	yes	serves
-setConfig	config	yes	33	no	yes	yes	serves
+setConfig	config	yes	34	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -1086,8 +1086,12 @@ listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	refuses:facts
 countDerivedFactTaint	facts_trust	yes	3	no	yes	yes	serves
 listFactProvenance	facts_trust	yes	2	no	yes	yes	serves
 listCorePageRows	trust_tier_reads	yes	3	no	yes	yes	serves
-listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
-countUnscannedTrustRows	trust_tier_reads	yes	3	no	yes	yes	serves
+listTrustScanRows	trust_tier_reads	yes	4	no	yes	yes	serves
+countUnscannedTrustRows	trust_tier_reads	yes	4	no	yes	yes	serves
+readTrustScanCursor	trust_tier_reads	yes	3	no	yes	yes	serves
+writeTrustScanCursor	trust_tier_reads	yes	2	no	yes	yes	serves
+listClaimPendingSourceIds	trust_tier_reads	yes	3	no	yes	yes	serves
+readTrustScanCeilings	trust_tier_reads	yes	2	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1136,7 +1140,7 @@ hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	4	no	yes	yes	serves
 readTrustGeneration	trust	yes	2	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	18	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	19	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	15	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves

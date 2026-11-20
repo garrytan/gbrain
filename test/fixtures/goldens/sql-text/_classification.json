@@ -79,6 +79,7 @@
       "out-of-scope:timeline-reads (born in engine-sql/timeline-reads.ts; pinned by test/engine-parity/timeline-reads.test.ts)": 9,
       "out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts, test/engine-parity/timeline-held-rows.test.ts, test/engine-parity/take-held-rows.test.ts, test/engine-sql-held-take-rows-golden.test.ts and test/fold-hook-noop-6712.test.ts)": 4,
       "out-of-scope:trust-proposals (born in engine-sql/trust-proposals.ts; pinned by test/engine-parity/trust-proposals.test.ts and test/engine-parity/trust-fence.test.ts)": 7,
+      "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)": 4,
       "out-of-scope:trust-tier-reads (born in engine-sql/trust-tier-reads.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)": 14,
       "out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)": 10,
       "out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)": 10,
@@ -520,6 +521,7 @@
       "listChronicleEventSlotRows": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "listChronicleOwnedHashes": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "listChunklessPagesWithContent": "chunks",
+      "listClaimPendingSourceIds": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)",
       "listCompactableReceipts": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
       "listConfigKeys": "out-of-scope:config",
       "listConsumerOwners": "out-of-scope:doctor-persistence (born in engine-sql/doctor-persistence.ts; pinned by test/engine-parity/doctor-persistence.test.ts)",
@@ -1144,6 +1146,8 @@
       "readTransactionSettings": "out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)",
       "readTrigramCandidates": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "readTrustGeneration": "out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)",
+      "readTrustScanCeilings": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)",
+      "readTrustScanCursor": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)",
       "readUnembeddedPageSummary": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "readUnfinishedAccessMigration": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "readVersionAttributions": "out-of-scope:write-attribution (born in engine-sql/write-attribution.ts; pinned by test/engine-parity/write-attribution.test.ts)",
@@ -1374,7 +1378,8 @@
       "writeSharedSkillPolicy": "out-of-scope:shared-skill-members (born in engine-sql/shared-skill-members.ts; pinned by test/engine-parity/shared-skill-members.test.ts)",
       "writeSharedSkillRevision": "out-of-scope:shared-skill-members (born in engine-sql/shared-skill-members.ts; pinned by test/engine-parity/shared-skill-members.test.ts)",
       "writeSyncPassRow": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
-      "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)"
+      "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)",
+      "writeTrustScanCursor": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)"
     }
   },
   "normalizer": "sql-text-classification-v1"

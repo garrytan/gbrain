@@ -42,6 +42,7 @@ mod eligibility;
 mod fingerprint;
 pub mod proposals;
 mod row_trust;
+pub mod scan_state;
 pub mod tier_reads;
 pub mod valid_time;
 pub mod withdrawals;

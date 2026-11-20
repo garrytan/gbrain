@@ -131,6 +131,7 @@ import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSp
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
+  TrustScanTable,
 } from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -4815,6 +4816,14 @@ export interface BrainEngine {
   listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
   /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */
   countUnscannedTrustRows(spec: UnscannedTrustSpec): Promise<number>;
+  /** The trust scan's cursor (`op_checkpoints` trust_scan/v1): its `completed_keys` JSON, or null when there is none. */
+  readTrustScanCursor(): Promise<unknown>;
+  /** Replace the trust scan's cursor keys and stamp the row now. */
+  writeTrustScanCursor(completedKeys: readonly unknown[]): Promise<void>;
+  /** The claimed sources whose lift has not finished, by id. */
+  listClaimPendingSourceIds(): Promise<string[]>;
+  /** Each table the trust scan reads, with its max id (0 when empty). */
+  readTrustScanCeilings(): Promise<Record<TrustScanTable, number>>;
   /** One page of a source's belief events, with the per-row visibility facts the remote filter reads. */
   readBeliefHistoryRows(spec: BeliefHistoryRowQuery): Promise<Array<Record<string, unknown>>>;
   /** The listed page lifetimes that are live and whose page passes the remote read floor. */

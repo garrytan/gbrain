@@ -423,6 +423,7 @@
         "listChronicleEventSlotRows",
         "listChronicleOwnedHashes",
         "listChunklessPagesWithContent",
+        "listClaimPendingSourceIds",
         "listCompactableReceipts",
         "listConfigKeys",
         "listConsumerOwners",
@@ -1043,6 +1044,8 @@
         "readTransactionSettings",
         "readTrigramCandidates",
         "readTrustGeneration",
+        "readTrustScanCeilings",
+        "readTrustScanCursor",
         "readUnembeddedPageSummary",
         "readUnfinishedAccessMigration",
         "readVersionAttributions",
@@ -1265,7 +1268,8 @@
         "writeSharedSkillPolicy",
         "writeSharedSkillRevision",
         "writeSyncPassRow",
-        "writeTextProjectionSeal"
+        "writeTextProjectionSeal",
+        "writeTrustScanCursor"
       ],
       "PostgresEngine": [
         "_searchKeywordCJK",
@@ -1692,6 +1696,7 @@
         "listChronicleEventSlotRows",
         "listChronicleOwnedHashes",
         "listChunklessPagesWithContent",
+        "listClaimPendingSourceIds",
         "listCompactableReceipts",
         "listConfigKeys",
         "listConsumerOwners",
@@ -2316,6 +2321,8 @@
         "readTransactionSettings",
         "readTrigramCandidates",
         "readTrustGeneration",
+        "readTrustScanCeilings",
+        "readTrustScanCursor",
         "readUnembeddedPageSummary",
         "readUnfinishedAccessMigration",
         "readVersionAttributions",
@@ -2546,7 +2553,8 @@
         "writeSharedSkillPolicy",
         "writeSharedSkillRevision",
         "writeSyncPassRow",
-        "writeTextProjectionSeal"
+        "writeTextProjectionSeal",
+        "writeTrustScanCursor"
       ]
     },
     "subpaths": {
