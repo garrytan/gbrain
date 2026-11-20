@@ -167,7 +167,10 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
   // Cloudflare interstitials — the dominant scraper-junk class.
   {
     name: 'cloudflare_attention_required',
-    pattern: /attention required.*cloudflare/i,
+    // Line-anchored (optional heading/<title> prefix) so prose quoting an
+    // HTTP client error ("API Error: 403 Attention Required! | Cloudflare")
+    // does not match; the interstitial's title/heading starts its line.
+    pattern: /^\s*(?:<title[^>]*>\s*|#+\s*|title:\s*)?attention required.*cloudflare/im,
     applies_to: 'both',
   },
   {
