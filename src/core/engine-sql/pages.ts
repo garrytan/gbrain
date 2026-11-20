@@ -45,6 +45,7 @@ import { withTrustKeep } from '../persistence/context.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
+import { slugStoreScrubber } from './purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
 
@@ -228,7 +229,7 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
     }
     return exec.transaction(async (tx) => {
       const { rows: candidates } = await tx.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}`);
-      const secrets = await pageSecretOccurrences(tx, candidates.map(r => r.id));
+      const secrets = await pageSecretOccurrences(slugStoreScrubber(tx), candidates.map(r => r.id));
       const { rows } = await tx.run<{ slug: string; id: number }>(sqlFragment`
         DELETE FROM pages
          WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}
@@ -238,8 +239,8 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       const gone = new Set(rows.map(r => Number(r.id)));
       await scrubPurgedSlugs(tx, opts.sourceId, deleted);
       await scrubPurgedNameStores(tx, opts.sourceId, deleted);
-      await scrubPurgedSlugStores(tx, opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
-      await scrubPurgedSlugHolds(tx, opts.sourceId, deleted.map(slug => ({ slug })));
+      await scrubPurgedSlugStores(slugStoreScrubber(tx), opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
+      await scrubPurgedSlugHolds(slugStoreScrubber(tx), opts.sourceId, deleted.map(slug => ({ slug })));
       return deleted;
     });
   }
@@ -373,7 +374,7 @@ export async function purgeDeletedPages(
         SELECT DISTINCT m.source_id, encode(m.sha256, 'hex') AS sha FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
         WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - (${hours} || ' hours')::interval${excludedManifest}`);
       const { rows: candidates } = await tx.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - (${hours} || ' hours')::interval`);
-      const secrets = await pageSecretOccurrences(tx, candidates.map(r => r.id));
+      const secrets = await pageSecretOccurrences(slugStoreScrubber(tx), candidates.map(r => r.id));
       const { rows } = await tx.run<{ id: number; slug: string; source_id: string; deleted_at: string }>(sqlFragment`
         DELETE FROM pages
         WHERE deleted_at IS NOT NULL
@@ -405,8 +406,8 @@ export async function purgeDeletedPages(
         const slugs = purged.map(p => p.slug);
         await scrubPurgedSlugs(tx, sourceId, slugs);
         await scrubPurgedNameStores(tx, sourceId, slugs);
-        await scrubPurgedSlugStores(tx, sourceId, slugs, { secretOccurrences: goneSecrets });
-        await scrubPurgedSlugHolds(tx, sourceId, purged);
+        await scrubPurgedSlugStores(slugStoreScrubber(tx), sourceId, slugs, { secretOccurrences: goneSecrets });
+        await scrubPurgedSlugHolds(slugStoreScrubber(tx), sourceId, purged);
       }
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length, pages: rows.map(r => ({ slug: r.slug, source_id: r.source_id, deleted_at: new Date(r.deleted_at) })) };

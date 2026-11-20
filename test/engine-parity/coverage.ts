@@ -190,6 +190,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'settleFactsReconcile', 'lockReconcileRevision', 'selectFactsReconcileDrain', 'listRelinkCandidateRows',
     'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
     'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'listDerivedRows',
+    // the hard delete's slug-keyed stores and write-gate holds (engine-sql/purge-slug-stores.ts)
+    'deletePurgedSlugStoreRows', 'listPageSecretOccurrences', 'deletePurgedSlugHolds',
     // the purge receipt's reads (engine-sql/purge-verify.ts)
     'countPurgeProbe', 'listPurgeProbeItems', 'listBeliefEventValuesAfter', 'listLiveFactContextsAfter', 'listSegmentedProseBodies', 'listPurgeProseSlugs', 'countPagePurgeTombstones', 'readPagePurgeRequest', 'listPurgeEffectStates', 'countPurgeFingerprintRows'],
 

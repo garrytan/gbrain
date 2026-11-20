@@ -235,6 +235,7 @@ test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/purge-slug-stores.test.ts
 test/engine-parity/purge-verify.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts

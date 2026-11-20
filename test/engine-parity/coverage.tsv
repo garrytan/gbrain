@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 950/950
+# covered: 953/953
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -46,7 +46,7 @@
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 14/14
-# facts_purge: 28/28
+# facts_purge: 31/31
 # facts_repair: 10/10
 # facts_trust: 10/10
 # trust_tier_reads: 15/15
@@ -756,6 +756,9 @@ listWithdrawalSlugs	facts_purge	yes	4	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	5	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	7	no	yes	yes	serves
 listDerivedRows	facts_purge	yes	1	no	yes	yes	serves
+deletePurgedSlugStoreRows	facts_purge	yes	2	no	yes	yes	refuses:pages
+listPageSecretOccurrences	facts_purge	yes	2	no	yes	yes	refuses:pages
+deletePurgedSlugHolds	facts_purge	yes	1	no	yes	yes	refuses:pages
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -808,7 +811,7 @@ listSegmentedPages	withdrawal_pages	yes	1	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	1	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	4	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

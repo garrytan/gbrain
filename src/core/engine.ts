@@ -91,6 +91,7 @@ import type {
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { ExtractReceiptSlot, ExtractRollupDelta } from './engine-sql/extract-bookkeeping.ts';
+import type { PurgedSlugStoreRows } from './engine-sql/purge-slug-stores.ts';
 import type { ProposeTakesCandidateScope, ProposeTakesPageRow, TakeProposalClaim, TakeProposalInsert, TakeProposalPageKey, TakeProposalRow, TakeProposalTombstone } from './engine-sql/take-proposals.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
@@ -4495,6 +4496,17 @@ export interface BrainEngine {
   readExtractReceiptSeal(sourceId: string, slug: string, safeVersion: number): Promise<boolean | null>;
   /** Add one extract event's deltas to its `(kind, source_id, day)` extract_rollup_7d row (the pre-v141 statement on request). */
   upsertExtractRollupDay(d: ExtractRollupDelta, opts?: { preV141?: boolean }): Promise<void>;
+  /**
+   * Delete the rows of purged `slugs` in `sourceId` from the stores keyed to a page by slug with no foreign key (take
+   * proposals, open loops, core-edit notices, page and slug aliases, rename history; SQL in
+   * engine-sql/purge-slug-stores.ts). `ifPresent` skips a store the database lacks and reports whether the secret store
+   * exists. Run it on the purge transaction.
+   */
+  deletePurgedSlugStoreRows(sourceId: string, slugs: readonly string[], opts?: { ifPresent?: boolean }): Promise<PurgedSlugStoreRows>;
+  /** The uncommitted page-level secret store occurrences of these pages (read before their rows go). */
+  listPageSecretOccurrences(pageIds: readonly number[]): Promise<Array<{ id: string; page_id: number }>>;
+  /** Delete the write-gate holds of purged slugs (up to each page's `deletedAt` when given) and the holds' receipts. */
+  deletePurgedSlugHolds(sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null }>): Promise<{ write_gate_holds: number; write_gate_receipts: number }>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
