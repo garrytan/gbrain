@@ -69,6 +69,7 @@ src/core/ai/reranker-readiness-engine.ts	load_config	1	W3: AI settings arrive on
 src/core/ai/reranker-readiness-engine.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/apple-contacts/apple-contacts-source.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: a Git-recorded source checks its checkout for a hand-authored page, as people-calendar-sweep.ts does)
 src/core/apple/contacts-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: lstat and read of the 0600 token file the source names)
+src/core/apple/contacts-write-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3278: lstat and read of the 0600 owner key and write token files, the same check as contacts-client.ts)
 src/core/archive-crawler-config.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/atomic-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/attendance-repair.ts	process_env	1	W6: settings plane out of the core
