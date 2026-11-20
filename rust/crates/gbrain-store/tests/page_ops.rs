@@ -939,3 +939,64 @@ fn delete_pages_scrubs_the_deleted_slugs_from_captured_eval_candidates() {
         json!(["notes/b", "notes/a", "notes/shared", "notes/a"])
     );
 }
+
+#[test]
+fn live_page_counts_keep_archived_sources_and_like_meaning() {
+    let dir = TempDir::new("ops-live-counts");
+    let store = open(&dir);
+    source(&store, "old");
+    source(&store, "beta");
+    let typed = |t: &str| json!({ "type": t, "title": "T", "compiled_truth": "t" });
+    put(&store, "people/alice-example", typed("person"));
+    put(&store, "peoplex/odd", typed("person"));
+    put(&store, "notes/a", note("N", "n"));
+    put(&store, "notes/gone", note("G", "g"));
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    put_in(&store, "old", "people/bob-example", typed("person"));
+    put_in(&store, "beta", "notes/z", note("Z", "z"));
+    store.set_source_archived("old", true).unwrap();
+    let rows = store
+        .count_live_pages_by_source_type(&de(json!({})))
+        .unwrap();
+    assert_eq!(
+        Value::Array(rows),
+        json!([
+            { "source_id": "beta", "type": "note", "count": 1 },
+            { "source_id": "default", "type": "note", "count": 1 },
+            { "source_id": "default", "type": "person", "count": 2 },
+            { "source_id": "old", "type": "person", "count": 1 },
+        ]),
+        "source then type order, archived source counted, deleted page not"
+    );
+    let scoped = store
+        .count_live_pages_by_source_type(&de(json!({ "sourceIds": ["old"] })))
+        .unwrap();
+    assert_eq!(
+        Value::Array(scoped),
+        json!([{ "source_id": "old", "type": "person", "count": 1 }])
+    );
+    let prefixes =
+        json!({ "prefixes": ["people/", "people_", "people\\_", "notes/", "missing/", "%"] });
+    assert_eq!(
+        store
+            .count_live_pages_by_slug_prefixes(&de(prefixes))
+            .unwrap(),
+        vec![2, 3, 0, 2, 0, 5],
+        "`_` matches one character, `\\_` only an underscore"
+    );
+    let scoped = json!({ "prefixes": ["people/", "notes/"], "sourceIds": ["default"] });
+    assert_eq!(
+        store
+            .count_live_pages_by_slug_prefixes(&de(scoped))
+            .unwrap(),
+        vec![1, 1]
+    );
+    assert!(
+        store
+            .count_live_pages_by_slug_prefixes(&de(json!({})))
+            .unwrap()
+            .is_empty()
+    );
+}

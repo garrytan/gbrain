@@ -1,10 +1,11 @@
 /**
  * The CLI search and graph reads (BrainEngine scanExactBatch, nextLivePageAfter, listExactIdentityCandidates,
- * rankEntities, readRankCoverage, readExactSnippetChunks, listExactRescanChunks, listExtractionPendingPages), served by gbrain-store `cli_reads::reads`. What the store does not keep
+ * rankEntities, readRankCoverage, readExactSnippetChunks, listExactRescanChunks, listExtractionPendingPages), served by gbrain-store `cli_reads::reads`, and the schema stats
+ * live-page counts (countLivePagesBySourceType, countLivePagesBySlugPrefixes), served by gbrain-store `page_ops::live_counts`. What the store does not keep
  * (trust tiers, page aliases) and what each member answers for it:
  * rust/docs/store/cli-reads-ops.md.
  */
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, RankCoverageRow } from '../../engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, LivePageTypeCountRow, RankCoverageRow } from '../../engine-sql/cli-reads-ops.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../../engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../../search/exact-scan.ts';
@@ -57,6 +58,18 @@ export const rankEntities: StoreMember<[opts: RankEntitiesStatementOpts, timeout
 
 export const listExtractionPendingPages: StoreMember<[opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }], ExtractionPendingRow[]> =
   (brain, opts) => storeCall({ member: 'listExtractionPendingPages' }, () => brain.listExtractionPendingPages(opts));
+
+/** Live pages per (source, type), archived sources included; the store sorts in byte order with untyped last. */
+export const countLivePagesBySourceType: StoreMember<[opts?: { sourceIds?: readonly string[] }], LivePageTypeCountRow[]> = (brain, opts) => {
+  const sent = takeOptions('countLivePagesBySourceType', opts ?? {}, ['sourceIds']);
+  return storeCall({ member: 'countLivePagesBySourceType' }, () => brain.countLivePagesBySourceType(sent));
+};
+
+/** The live-page count of each slug prefix, in order; the store matches `slug LIKE prefix || '%'`. */
+export const countLivePagesBySlugPrefixes: StoreMember<[prefixes: readonly string[], opts?: { sourceIds?: readonly string[] }], number[]> = (brain, prefixes, opts) => {
+  const sent = takeOptions('countLivePagesBySlugPrefixes', opts ?? {}, ['sourceIds']);
+  return storeCall({ member: 'countLivePagesBySlugPrefixes' }, () => brain.countLivePagesBySlugPrefixes({ ...sent, prefixes: [...prefixes] }));
+};
 
 /**
  * rank_entities' remote coverage for one source. `excludePrivate` sends the caller's page policy, so a page the caller

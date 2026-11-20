@@ -41,7 +41,9 @@ use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod live_counts;
 mod retrievals;
+pub use live_counts::LivePageCountQuery;
 pub(crate) use retrievals::remove_page_rows;
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The

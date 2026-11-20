@@ -925,7 +925,6 @@ src/core/schema-pack/page-to-link.ts	execute_raw	1
 src/core/schema-pack/query-cache-invalidator.ts	execute_raw	1
 src/core/schema-pack/retype.ts	execute_raw	3
 src/core/schema-pack/review.ts	execute_raw	2
-src/core/schema-pack/stats.ts	execute_raw	2
 src/core/schema-pack/sync.ts	execute_raw	3
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2

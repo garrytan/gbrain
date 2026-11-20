@@ -5758,6 +5758,8 @@
         "countLabelFacts": "none",
         "countLeasePressure": "none",
         "countLegacyFactsPending": "none",
+        "countLivePagesBySlugPrefixes": "none",
+        "countLivePagesBySourceType": "none",
         "countMcpResolvedTakes": "none",
         "countOffGridTakeWeights": "none",
         "countOnboardSignal": "none",

@@ -77,6 +77,7 @@ pub(crate) use index_build::{
 };
 pub use index_build::{KeywordIndexReport, KeywordIndexState};
 pub(crate) use index_writer::IndexingWriter;
+pub(crate) use title_fuzzy::sql_like;
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
 

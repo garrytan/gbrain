@@ -2,8 +2,9 @@
  * Read-command statements that ran through `engine.executeRaw` from the ops
  * layer (docs/research/rust-cli-executeraw-map.md, "Read-command queries"):
  * search-exact (with its held-snippet chunk reads), wanted, whois,
- * rank-entities (with its remote coverage), extraction-pending and the held
- * fence cells of a world-only fact read (eligibility/stamp.ts heldFenceLines).
+ * rank-entities (with its remote coverage), extraction-pending, the held
+ * fence cells of a world-only fact read (eligibility/stamp.ts heldFenceLines)
+ * and the two live-page counts of schema stats (schema-pack/stats.ts).
  *
  * Every function takes the engine's own `executeRaw`, so each statement runs
  * on exactly the path it ran on before it moved here: on Postgres a
@@ -278,4 +279,46 @@ export async function listWantedPages(raw: EngineRawRead, opts: { sourceId?: str
       existing_matches: row.matches ?? [], first_seen: iso(row.first_seen),
       last_checked: Number.isFinite(new Date(row.last_checked).getTime()) ? iso(row.last_checked) : 'pending' };
   }) };
+}
+
+/** One `(source, type)` group of live pages; `type` is null for an untyped page (`NULLIF(type, '')`). */
+export interface LivePageTypeCountRow {
+  source_id: string;
+  type: string | null;
+  count: number;
+}
+
+/** `source_id = ANY(...)` when the list is not empty; no filter otherwise. Archived sources count: no `sources` join. */
+function liveSourceFilter(sourceIds: readonly string[] | undefined) {
+  return sourceIds && sourceIds.length > 0 ? sqlFragment`AND source_id = ANY(${[...sourceIds]}::text[])` : sqlFragment``;
+}
+
+/**
+ * schema stats: live pages (deleted_at IS NULL) grouped by source and type, in every source of `sourceIds` (all
+ * sources when empty). Rows sort by source, then type with null last, both in byte order.
+ */
+export async function countLivePagesBySourceType(raw: EngineRawRead, opts: { sourceIds?: readonly string[] } = {}): Promise<LivePageTypeCountRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT COALESCE(source_id, 'default') AS source_id,
+              NULLIF(type, '') AS type,
+              COUNT(*)::int AS count
+       FROM pages
+       WHERE deleted_at IS NULL ${liveSourceFilter(opts.sourceIds)}
+       GROUP BY source_id, NULLIF(type, '')
+       ORDER BY source_id COLLATE "C", NULLIF(type, '') COLLATE "C" NULLS LAST`);
+  const rows = await raw<{ source_id: string; type: string | null; count: number | string }>(text, params);
+  return rows.map(r => ({ source_id: r.source_id, type: r.type, count: Number(r.count) }));
+}
+
+/**
+ * schema stats' dead-prefix scan: for each prefix, in order, the live pages whose slug is `LIKE prefix || '%'` (the
+ * prefix keeps LIKE wildcards, as the per-prefix statement bound it), in the sources of `sourceIds` (all when empty).
+ */
+export async function countLivePagesBySlugPrefixes(raw: EngineRawRead, prefixes: readonly string[], opts: { sourceIds?: readonly string[] } = {}): Promise<number[]> {
+  if (prefixes.length === 0) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT (SELECT COUNT(*)::int FROM pages
+                 WHERE deleted_at IS NULL AND slug LIKE p.prefix || '%' ${liveSourceFilter(opts.sourceIds)}) AS count
+       FROM unnest(${[...prefixes]}::text[]) WITH ORDINALITY AS p(prefix, ord)
+       ORDER BY p.ord`);
+  const rows = await raw<{ count: number | string }>(text, params);
+  return rows.map(r => Number(r.count));
 }

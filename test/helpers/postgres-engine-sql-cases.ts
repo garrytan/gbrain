@@ -269,6 +269,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listExactIdentityCandidates': OOS.cliReadsOps,
   'rankEntities': OOS.cliReadsOps,
   'listExtractionPendingPages': OOS.cliReadsOps,
+  'countLivePagesBySourceType': OOS.cliReadsOps,
+  'countLivePagesBySlugPrefixes': OOS.cliReadsOps,
   'listUnattributedFacts': OOS.cliReadsOps,
   'listWantedPages': OOS.cliReadsOps,
   'readRankCoverage': OOS.cliReadsOps,

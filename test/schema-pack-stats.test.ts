@@ -261,16 +261,15 @@ describe('runStatsCore — #2466 catch-narrowing (real count + error surfacing)'
   it('fetchCountRows rethrows a non-missing-table engine error instead of masking it as 0 pages', async () => {
     await withEnv({ GBRAIN_SCHEMA_PACK: undefined }, async () => {
       // No pack → detectDeadPrefixes is skipped, isolating the throw to the
-      // fetchCountRows catch we narrowed. The count query (the GROUP BY one)
-      // throws a column-level error (SQLSTATE 42703) — the exact class the
-      // old bare `catch {}` swallowed into 0 rows; everything else succeeds.
+      // fetchCountRows catch we narrowed. The count read
+      // (countLivePagesBySourceType) throws a column-level error (SQLSTATE
+      // 42703) — the exact class the old bare `catch {}` swallowed into 0
+      // rows; everything else succeeds.
       __setPackLocatorForTests(() => null);
       const boom = Object.assign(new Error('column "type" does not exist'), { code: '42703' });
       const stubEngine = {
-        executeRaw: async (sql: string) => {
-          if (/GROUP BY source_id/.test(sql)) throw boom;  // the fetchCountRows query
-          return [];
-        },
+        countLivePagesBySourceType: async () => { throw boom; },  // the fetchCountRows read
+        countLivePagesBySlugPrefixes: async (prefixes: readonly string[]) => prefixes.map(() => 0),
       } as unknown as PGLiteEngine;
       const ctx = { ...ctxOf(), engine: stubEngine } as unknown as OperationContext;
       await expect(runStatsCore(ctx)).rejects.toThrow('column "type" does not exist');
@@ -284,10 +283,8 @@ describe('runStatsCore — #2466 catch-narrowing (real count + error surfacing)'
       __setPackLocatorForTests(() => null);
       const missing = Object.assign(new Error('relation "pages" does not exist'), { code: '42P01' });
       const stubEngine = {
-        executeRaw: async (sql: string) => {
-          if (/GROUP BY source_id/.test(sql)) throw missing;
-          return [];
-        },
+        countLivePagesBySourceType: async () => { throw missing; },
+        countLivePagesBySlugPrefixes: async (prefixes: readonly string[]) => prefixes.map(() => 0),
       } as unknown as PGLiteEngine;
       const ctx = { ...ctxOf(), engine: stubEngine } as unknown as OperationContext;
       const result = await runStatsCore(ctx);
@@ -299,15 +296,13 @@ describe('runStatsCore — #2466 catch-narrowing (real count + error surfacing)'
   it('detectDeadPrefixes rethrows a non-missing-table error (sibling catch)', async () => {
     await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
       seedTinyPack('tiny', [{ name: 'person', prefix: 'people/' }]);
-      // fetchCountRows (the GROUP BY query) succeeds → []; the per-prefix
-      // dead-prefix LIKE query then throws a non-missing-table error, which
+      // fetchCountRows (the per-type count read) succeeds → []; the
+      // dead-prefix count read then throws a non-missing-table error, which
       // must surface through the narrowed sibling catch.
       const stubEngine = {
         getConfig: async () => null,
-        executeRaw: async (sql: string) => {
-          if (/GROUP BY source_id/.test(sql)) return [];        // count query: empty brain, fine
-          throw Object.assign(new Error('division by zero'), { code: '22012' });  // the LIKE query
-        },
+        countLivePagesBySourceType: async () => [],  // count read: empty brain, fine
+        countLivePagesBySlugPrefixes: async () => { throw Object.assign(new Error('division by zero'), { code: '22012' }); },  // the prefix read
       } as unknown as PGLiteEngine;
       const ctx = { ...ctxOf(), engine: stubEngine } as unknown as OperationContext;
       await expect(runStatsCore(ctx)).rejects.toThrow('division by zero');

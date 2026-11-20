@@ -65,6 +65,8 @@ export const RUST_ENGINE_MEMBERS = {
   listAccessPolicySourceIds: 'access_control',
   listExactIdentityCandidates: 'pages',
   listExtractionPendingPages: 'pages',
+  countLivePagesBySourceType: 'pages',
+  countLivePagesBySlugPrefixes: 'pages',
   slugsEndingIn: 'pages',
   generatedPagesIn: 'pages',
   livePageIdsAt: 'pages',

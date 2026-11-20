@@ -138,6 +138,35 @@ impl Brain {
         })
     }
 
+    /// `countLivePagesBySourceType({ sourceIds? }?)`: `{ source_id, type, count }[]` over the live
+    /// pages of every source, archived ones included.
+    #[napi]
+    pub fn count_live_pages_by_source_type<'env>(
+        &self,
+        env: &'env Env,
+        query: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_live_pages_by_source_type(&arg(query, "countLivePagesBySourceType query")?)
+        })
+    }
+
+    /// `countLivePagesBySlugPrefixes({ prefixes, sourceIds? })`: the live-page count of each slug
+    /// prefix, in order (`slug LIKE prefix || '%'`).
+    #[napi]
+    pub fn count_live_pages_by_slug_prefixes<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_live_pages_by_slug_prefixes(&required(
+                query,
+                "countLivePagesBySlugPrefixes query",
+            )?)
+        })
+    }
+
     /// `getAllSlugs({ sourceId? }?)`: sorted distinct slugs, soft-deleted pages included.
     #[napi]
     pub fn get_all_slugs<'env>(

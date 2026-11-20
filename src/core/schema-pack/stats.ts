@@ -9,7 +9,7 @@
 // `sourceId` (single) OR nothing (aggregate across all sources). Uses
 // the same WHERE shape as the rest of the read-path codebase.
 //
-// PGLite + Postgres parity via `executeRaw`. Soft-deletes filtered.
+// Engine parity through the typed live-page counts. Soft-deletes filtered.
 //
 // Pure core: returns structured data; CLI handler in Phase 4 wraps
 // for human + JSON output, MCP handler in Phase 7 wires it through
@@ -140,42 +140,26 @@ function mergeAggregate(per: PerSourceStats[]): PerSourceStats {
   };
 }
 
+/** The scope as one source list: `sourceIds` when set, else `[sourceId]`, else none (whole brain). */
+function scopeSourceIds(opts: StatsOpts): string[] | undefined {
+  if (opts.sourceIds && opts.sourceIds.length > 0) return opts.sourceIds;
+  return opts.sourceId ? [opts.sourceId] : undefined;
+}
+
 /**
- * Query the DB for stats. Multi-source aware:
- *   - sourceIds[] → WHERE source_id = ANY($1::text[])
- *   - sourceId    → WHERE source_id = $1
- *   - neither     → no source filter (whole brain)
- *
- * Always: `WHERE deleted_at IS NULL`.
+ * Query the DB for stats. Multi-source aware: `sourceIds` wins over
+ * `sourceId`; neither means no source filter (whole brain). Only live
+ * pages count (`deleted_at IS NULL`); archived sources count too.
  *
  * Returns rows grouped by (source_id, type) so we can compute per-source
- * + aggregate in one read.
+ * + aggregate in one read. pages.type is NOT NULL in the schema — empty
+ * string represents "untyped" (legacy + put_page fallback per D12); the
+ * engine reads it as a null type.
  */
 async function fetchCountRows(engine: BrainEngine, opts: StatsOpts): Promise<RawCountRow[]> {
-  let where = 'WHERE deleted_at IS NULL';
-  const params: unknown[] = [];
-  if (opts.sourceIds && opts.sourceIds.length > 0) {
-    where += ` AND source_id = ANY($1::text[])`;
-    params.push(opts.sourceIds);
-  } else if (opts.sourceId) {
-    where += ` AND source_id = $1`;
-    params.push(opts.sourceId);
-  }
-  // pages.type is NOT NULL in the schema — empty string represents
-  // "untyped" (legacy + put_page fallback per D12). Normalize both
-  // empty-string and NULL to the same bucket via NULLIF.
-  const sql = `
-    SELECT
-      COALESCE(source_id, 'default') AS source_id,
-      NULLIF(type, '') AS type,
-      COUNT(*)::text AS cnt
-    FROM pages
-    ${where}
-    GROUP BY source_id, NULLIF(type, '')
-    ORDER BY source_id, NULLIF(type, '') NULLS LAST
-  `;
   try {
-    return await engine.executeRaw<RawCountRow>(sql, params);
+    const rows = await engine.countLivePagesBySourceType({ sourceIds: scopeSourceIds(opts) });
+    return rows.map(r => ({ source_id: r.source_id, type: r.type, cnt: String(r.count) }));
   } catch (err) {
     // ONLY swallow the genuine "pages table doesn't exist yet" case
     // (empty / pre-init brain). #2466: the old bare `catch {}` masked
@@ -191,8 +175,8 @@ async function fetchCountRows(engine: BrainEngine, opts: StatsOpts): Promise<Raw
 }
 
 /**
- * Per-prefix existence check for dead-prefix detection. One COUNT(*)
- * per declared prefix in the active pack. Cheap on small brains;
+ * Per-prefix existence check for dead-prefix detection: one live-page
+ * count per declared prefix in the active pack, in one engine read.
  * Phase 4 CLI offers a `--no-dead-prefix-scan` flag to opt out on
  * brains where this matters.
  */
@@ -201,38 +185,17 @@ async function detectDeadPrefixes(
   pack: { manifest: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } },
   opts: StatsOpts,
 ): Promise<DeadPrefixHint[]> {
-  const hints: DeadPrefixHint[] = [];
-  let sourceWhere = '';
-  const sourceParam: unknown[] = [];
-  if (opts.sourceIds && opts.sourceIds.length > 0) {
-    sourceWhere = ` AND source_id = ANY($2::text[])`;
-    sourceParam.push(opts.sourceIds);
-  } else if (opts.sourceId) {
-    sourceWhere = ` AND source_id = $2`;
-    sourceParam.push(opts.sourceId);
+  const declared = pack.manifest.page_types.flatMap(t => t.path_prefixes.map(prefix => ({ type: t.name, prefix })));
+  let counts: number[];
+  try {
+    counts = await engine.countLivePagesBySlugPrefixes(declared.map(d => d.prefix), { sourceIds: scopeSourceIds(opts) });
+  } catch (err) {
+    // #2466: only skip on the genuine "no pages table yet" case;
+    // rethrow any other engine error so it isn't silently masked.
+    if (isMissingSchemaObject(err, 'table', 'pages')) return [];
+    throw err;
   }
-  for (const t of pack.manifest.page_types) {
-    for (const prefix of t.path_prefixes) {
-      try {
-        const rows = await engine.executeRaw<{ cnt: string }>(
-          `SELECT COUNT(*)::text AS cnt FROM pages
-           WHERE deleted_at IS NULL
-             AND slug LIKE $1${sourceWhere}`,
-          [`${prefix}%`, ...sourceParam],
-        );
-        const cnt = parseInt(rows[0]?.cnt ?? '0', 10) || 0;
-        if (cnt === 0) {
-          hints.push({ type: t.name, prefix });
-        }
-      } catch (err) {
-        // #2466: only skip on the genuine "no pages table yet" case;
-        // rethrow any other engine error so it isn't silently masked.
-        if (isMissingSchemaObject(err, 'table', 'pages')) continue;
-        throw err;
-      }
-    }
-  }
-  return hints;
+  return declared.filter((_, i) => (counts[i] ?? 0) === 0);
 }
 
 /**
