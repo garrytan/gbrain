@@ -15,10 +15,19 @@ function failure(res: Response, error: unknown, stage: string, mutation = false)
     next_action: stage === 'lifecycle' ? 'Inspect this client and review a fresh preview before another mutation.' : 'Inspect the registration and follow the owner administration runbook.' });
 }
 
+/** The inspection columns of every client, newest first, ties by client id in byte order (the engine returns whole rows by name). */
+function inspectionRows(clients: ReadonlyArray<object>): Array<Record<string, unknown>> {
+  const columns = CLIENT_INSPECTION_COLUMNS.split(/[,\s]+/).filter(Boolean);
+  const when = (row: Record<string, unknown>) => new Date(row.created_at as string | Date).getTime();
+  return (clients as Array<Record<string, unknown>>)
+    .map(row => Object.fromEntries(columns.filter(column => column in row).map(column => [column, row[column]])))
+    .sort((a, b) => when(b) - when(a) || (a.client_id as string < (b.client_id as string) ? -1 : a.client_id === b.client_id ? 0 : 1));
+}
+
 export function mountAdminClients(app: Express, requireAdmin: RequestHandler, engine: BrainEngine, endpoint: string): void {
   app.get('/admin/api/clients', requireAdmin, async (_req, res) => {
     try {
-      const rows = await engine.executeRaw(`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`);
+      const rows = inspectionRows(await engine.listOauthClients());
       res.json({ clients: rows.map(row => ({ ...clientMetadata(row), grant: grantFromRow(row),
         created_at: row.created_at, status: row.deleted_at ? 'revoked' : 'active' })) });
     } catch (e) { failure(res, e, 'inspect'); }
