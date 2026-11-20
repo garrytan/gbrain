@@ -47,6 +47,8 @@ export const RUST_ENGINE_MEMBERS = {
   replaceDerivedAliases: 'pages',
   getPageSealState: 'pages',
   refreshPageOrigin: 'pages',
+  readStoredBodyBytes: 'pages',
+  readPageBodySizes: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -72,6 +74,8 @@ export const RUST_ENGINE_MEMBERS = {
   applyIdentityDecisions: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
+  // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).
+  readFieldUsageSamples: 'pages',
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',
@@ -233,6 +237,7 @@ export const RUST_ENGINE_MEMBERS = {
   upsertFile: 'files',
   getFile: 'files',
   listFilesForPage: 'files',
+  listFiles: 'files',
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
@@ -292,6 +297,9 @@ export const RUST_ENGINE_MEMBERS = {
   readCycleLocks: 'minion_queue',
   deleteCycleLock: 'minion_queue',
   deleteCycleLockIfStale: 'minion_queue',
+  listSegmentedPages: 'facts',
+  invalidateWithdrawnPages: 'facts',
+  hasWithdrawnFenceClaim: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 242/242
+# covered: 245/249
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -17,7 +17,7 @@
 # tags: 5/5
 # timeline: 8/8
 # ontology: 4/4
-# raw_files: 5/5
+# raw_files: 5/6
 # takes: 15/15
 # dream: 3/3
 # contradictions: 5/5
@@ -27,11 +27,15 @@
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/6
+# withdrawal_pages: 0/2
+# withdrawal_fence: 0/1
 # import_guards: 9/9
 # cycle_locks: 6/6
 # raw_sql: 4/4
 # code_edges: 5/5
 # eval_capture: 5/5
+# large_page: 2/2
+# field_usage: 1/1
 # owner_only: 1/1
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
@@ -40,21 +44,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	13	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	35	yes	yes	yes	serves
+getPage	pages	yes	36	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	137	yes	yes	yes	serves
+putPage	pages	yes	142	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
 findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	1	yes	yes	yes	refuses:pages
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	refuses:pages
-softDeletePage	pages	yes	36	yes	yes	yes	serves
+softDeletePage	pages	yes	39	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
@@ -166,6 +170,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
+listFiles	raw_files	no	0	no	-	-	-
 addTakesBatch	takes	yes	21	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
 listTakes	takes	yes	12	no	yes	yes	serves
@@ -203,17 +208,17 @@ findCandidateDuplicates	facts	yes	3	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	1	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	4	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	6	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	8	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	15	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	11	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	17	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	5	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
 sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
@@ -242,6 +247,9 @@ unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	1	no	yes	yes	serves
+listSegmentedPages	withdrawal_pages	no	0	no	-	-	-
+invalidateWithdrawnPages	withdrawal_pages	no	0	no	-	-	-
+hasWithdrawnFenceClaim	withdrawal_fence	no	0	no	-	-	-
 readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 getSourceStrictness	import_guards	yes	1	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
@@ -271,6 +279,9 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
+readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
+readPageBodySizes	large_page	yes	1	no	yes	yes	serves
+readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	4	yes	yes	yes	serves
