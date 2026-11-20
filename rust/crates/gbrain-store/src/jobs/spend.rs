@@ -534,6 +534,69 @@ pub(super) fn insert_res(
     save_res(tx, None, &record)
 }
 
+/// One `mcp_spend_reservations` row as the shadow seed copies it. `job_id` is not here: the seed stores NULL.
+pub(crate) struct SeedReservation {
+    pub reservation_id: String,
+    pub client_id: Option<String>,
+    pub budget_key: Option<String>,
+    /// `NUMERIC(12,4)`.
+    pub estimated_cents: f64,
+    pub actual_cents: Option<f64>,
+    pub model: String,
+    pub provider: String,
+    pub status: String,
+    pub created_at: i64,
+    pub settled_at: Option<i64>,
+    pub expires_at: i64,
+    pub estimate_known: bool,
+    pub usage_unknown_reason: Option<String>,
+}
+
+/// The shadow seed (`seed.rs`): stores a reservation with its status and times, and every index key `save_res` writes
+/// for that status. The job is NULL (`minion_jobs` is not seeded). `false` when the reservation id is already stored.
+pub(crate) fn seed_reservation(tx: &mut dyn KvWrite, row: SeedReservation) -> Result<bool> {
+    let id = uuid_bytes(&row.reservation_id)?;
+    if row.client_id.is_some() == row.budget_key.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "mcp_spend_reservations check: exactly one of client_id and budget_key",
+        ));
+    }
+    if !["pending", "settled", "expired"].contains(&row.status.as_str()) {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "mcp_spend_reservations check: status {:?} is not pending, settled or expired",
+                row.status
+            ),
+        ));
+    }
+    if load_res(&*tx, &id)?.is_some() {
+        return Ok(false);
+    }
+    let record = ResRecord {
+        reservation_id: uuid_text(&id),
+        client_id: row.client_id,
+        budget_key: row.budget_key,
+        job_id: None,
+        estimated: numeric_4(row.estimated_cents, "estimated_cents")?,
+        actual: row
+            .actual_cents
+            .map(|c| numeric_4(c, "actual_cents"))
+            .transpose()?,
+        model: row.model,
+        provider: row.provider,
+        status: row.status,
+        created_at: row.created_at,
+        settled_at: row.settled_at,
+        expires_at: row.expires_at,
+        estimate_known: row.estimate_known,
+        usage_unknown_reason: row.usage_unknown_reason,
+    };
+    save_res(tx, None, &record)?;
+    Ok(true)
+}
+
 /// Mark every `pending` reservation past its expiry (`expires_at < now`) `expired`, among those that match the scope.
 pub(super) fn expire_res(tx: &mut dyn KvWrite, now: i64, scope: &ExpireScope) -> Result<i64> {
     let mut due = Vec::new();

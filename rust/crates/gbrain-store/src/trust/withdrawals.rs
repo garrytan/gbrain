@@ -147,6 +147,33 @@ pub(crate) fn withdrawn_claim(
     Ok(false)
 }
 
+/// The shadow seed (`seed.rs`): stores a withdrawal copied from another engine, with the primary's `fact_hash` and
+/// `withdrawn_at` as they are (the hash is not computed again). `false` when the row is already stored.
+pub(crate) fn seed_withdrawal(
+    tx: &mut dyn KvWrite,
+    parts: [&str; 4],
+    withdrawn_at_us: i64,
+) -> Result<bool> {
+    let [source_id, visibility, subject, fact_hash] = parts;
+    let op = "seed fact_withdrawals";
+    no_nul(
+        op,
+        &[
+            ("source_id", source_id),
+            ("visibility", visibility),
+            ("subject", subject),
+            ("fact_hash", fact_hash),
+        ],
+    )?;
+    check_visibility(op, visibility)?;
+    let k = key(&parts);
+    if tx.get(&k)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &k, &WithdrawalRecord { withdrawn_at_us })?;
+    Ok(true)
+}
+
 /// Removes every withdrawal of a source, for the source delete.
 /// Whether a withdrawal of `source_id` covers the page `slug`: its subject is `*` or the slug (the
 /// `withdrawn` column of `listCorePageRows`, src/core/engine-sql/trust-tier-reads.ts).

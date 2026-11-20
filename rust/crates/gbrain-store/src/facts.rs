@@ -48,6 +48,7 @@ mod fence;
 pub mod generations;
 pub mod loops;
 mod page_purges;
+pub(crate) use page_purges::seed_purge;
 mod privacy;
 pub mod purge;
 pub mod reconcile;
