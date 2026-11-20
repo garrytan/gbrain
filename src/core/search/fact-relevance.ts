@@ -289,13 +289,16 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const p = armParams(allSim ? simParams : []);
     const doc = factsFtsDocument('f');
     const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
-    // The WHERE stays the OR query (index-friendly); the ORDER BY puts the facts that hold the most distinct query
-    // terms first, so a frequent term (a person's name) repeated in many facts cannot push out the one fact that
-    // holds them all. Each term is matched as its own plainto_tsquery, so stemming and stopwords follow the brain's config.
-    const coverage = `(SELECT count(*) FROM unnest($${p.length + 3}::text[]) AS qt(w) WHERE ${doc} @@ plainto_tsquery('${getFtsLanguage()}'::regconfig, qt.w))`;
+    // The WHERE stays the OR query on the indexed expression (idx_facts_fts); the ORDER BY puts the facts that hold the
+    // most distinct query terms first, so a frequent term (a person's name) repeated in many facts cannot push out the
+    // one fact that holds them all. Each term is matched as its own plainto_tsquery, so stemming and stopwords follow
+    // the brain's config. The document is computed once per candidate row in the inner select (OFFSET 0 keeps the
+    // planner from inlining it back into every term's match) and the outer select reuses it.
+    const coverage = `(SELECT count(*) FROM unnest($${p.length + 3}::text[]) AS qt(w) WHERE f.fts_doc @@ plainto_tsquery('${getFtsLanguage()}'::regconfig, qt.w))`;
     return customPlan<Row>(engine,
-      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
-       ORDER BY ${coverage} DESC, ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
+      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'}
+         FROM (SELECT f.*, ${doc} AS fts_doc FROM facts f WHERE ${where} AND ${doc} @@ ${tsq} OFFSET 0) f
+        ORDER BY ${coverage} DESC, ts_rank_cd(f.fts_doc, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
       [...p, searched.join(' '), opts.depth.keyword, searched]);
   };
   const nearest = async (): Promise<Row[]> => {

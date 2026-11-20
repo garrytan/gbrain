@@ -374,7 +374,8 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   degraded (a stage that affects recall; a keyword-only brain's configured
   `embed_unavailable` does not count) or thin (no row holds every content term
   of a short query) also runs the `search_exact` literal scan for the terms as a
-  phrase, under the caller's read policy, and merges up to three pages the rows
+  phrase, under the caller's read policy (narrowed first by the chunk full-text
+  index, plus the chunks that have no search vector), and merges up to three pages the rows
   do not hold: into free rows first, and for a thin result over the lowest page
   rows. Merged rows carry `widened: "exact"`, and `_meta.retrieval.exact_widened`
   is `true` when the scan ran. Skipped with paging, filters and dates.

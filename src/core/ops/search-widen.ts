@@ -48,7 +48,7 @@ export async function exactWiden(ctx: OperationContext, p: Record<string, unknow
     if (!phrase || !reason) return unchanged;
     markExactWidened(o.callKey);
     const scan = await scanExactForCaller(ctx, { phrase: phrase.phrase, scope: o.scope, ...(o.scope.minTrust ? { minTrust: o.scope.minTrust } : {}),
-      limit: Math.min(EXACT_MAX_LIMIT, results.length + EXACT_WIDEN_MAX_PAGES), deadlineMs: Date.now() + EXACT_WIDEN_SECONDS * 1000 });
+      limit: Math.min(EXACT_MAX_LIMIT, results.length + EXACT_WIDEN_MAX_PAGES), deadlineMs: Date.now() + EXACT_WIDEN_SECONDS * 1000, ftsTerms: phrase.terms });
     if (!scan.visible.length) return unchanged;
     const chunks = await ctx.engine.executeRaw<{ id: number; page_id: number; chunk_index: number }>(
       `SELECT id, page_id, chunk_index FROM content_chunks WHERE (page_id, chunk_index) IN (SELECT * FROM unnest($1::int[], $2::int[]))`,

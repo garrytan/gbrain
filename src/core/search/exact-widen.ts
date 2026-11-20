@@ -15,7 +15,9 @@
  * marked `widened: 'exact'` and score below the rows they follow; they fill free
  * rows under the caller's row count first, and a thin result (not merely a
  * degraded one) lets them replace up to EXACT_WIDEN_MAX_PAGES of its lowest page
- * rows. This file is the pure part; ops/search-widen.ts runs the scan.
+ * rows. The scan is index-narrowed (`ftsTerms`, search/exact-scan.ts): chunks whose search vector matches the terms,
+ * plus chunks with no vector, so a missing or stale vector is still found while a full-table pattern scan is avoided.
+ * This file is the pure part; ops/search-widen.ts runs the scan.
  */
 import { affectsRecall, type SearchResult } from '../types.ts';
 import { queryTerms } from './fact-relevance.ts';

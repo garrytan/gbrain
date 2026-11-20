@@ -82,6 +82,8 @@ export interface CallerExactScan {
   limit: number;
   afterPageId?: number;
   deadlineMs: number;
+  /** The index-narrowed scan (ExactScanOpts.ftsTerms); only the exact widening sets it. */
+  ftsTerms?: string[];
 }
 
 /**
@@ -110,6 +112,7 @@ export async function scanExactForCaller(ctx: OperationContext, o: CallerExactSc
     limit: o.limit,
     ...(o.afterPageId !== undefined ? { afterPageId: o.afterPageId } : {}),
     deadlineMs: o.deadlineMs,
+    ...(o.ftsTerms?.length ? { ftsTerms: o.ftsTerms } : {}),
   });
   const pattern = phrasePattern(o.phrase);
   const needle = (caseSensitive ? o.phrase.trim() : o.phrase.trim().toLowerCase()).replace(/\s+/g, ' ');

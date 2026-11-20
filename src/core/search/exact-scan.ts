@@ -29,6 +29,9 @@
  * compilation alone took about 1 s per batch on Postgres 16). A statement
  * that times out is retried with half the batch; a single page that still
  * times out is recorded as `scan_timeout` and passed.
+ *
+ * `ftsTerms` (the exact widening of `search` and `query`) swaps the batches for one statement that the chunk
+ * full-text index narrows first, with the chunks that have no search vector scanned literally beside it.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { TrustTier } from '../trust/tier.ts';
@@ -39,6 +42,7 @@ import { buildHardExcludeClause } from './sql-ranking.ts';
 import { escapeLikePattern } from './sql-ranking.ts';
 import { isStatementTimeoutError } from '../retry-matcher.ts';
 import { chunkVisibleFilter, safeChunksFilter, SAFE_FENCE_CHUNKER_VERSION, servedTextProjectionFilter } from './safe-chunks.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 
 export const EXACT_DEFAULT_LIMIT = 100;
 export const EXACT_MAX_LIMIT = 1000;
@@ -70,6 +74,13 @@ export interface ExactScanOpts {
   deadlineMs: number;
   /** Test seam: pages per statement. */
   batchPages?: number;
+  /**
+   * Narrow the scan with the chunk full-text index first (`search_vector @@ plainto_tsquery(<terms>)` AND the literal
+   * match), plus the chunks that have no search vector, scanned literally as a separate UNION branch. One statement,
+   * no page batches, no unreadable-page accounting: for a caller that wants the pages holding a phrase quickly
+   * (search/exact-widen.ts), not an exhaustive answer. Same read policy. `search_exact` never sets it.
+   */
+  ftsTerms?: string[];
 }
 
 export interface ExactMatch {
@@ -111,22 +122,10 @@ interface BatchRow {
   snippets: unknown;
 }
 
-/** One batch statement: every page of the next `batchPages` in scope after `after`, in id order, with its matches or the reason its text could not be read. */
-export function buildExactBatchStatement(opts: ExactScanOpts, after: number, batchPages: number): { sql: string; params: unknown[] } | null {
-  const pattern = phrasePattern(opts.phrase);
-  if (!pattern) return null;
-  const params: unknown[] = [];
-  const add = (v: unknown) => { params.push(v); return '$' + params.length; };
-  const afterP = add(after);
-  const limitP = add(batchPages);
-  const flags = opts.caseSensitive ? "''" : "'i'";
-  const re = add(pattern.regex);
-  const snippetRe = add('.{0,' + EXACT_SNIPPET_CONTEXT + '}' + pattern.regex + '.{0,' + EXACT_SNIPPET_CONTEXT + '}');
-  const like = add('%' + escapeLikePattern(pattern.longest) + '%');
-  const op = opts.caseSensitive ? '~' : '~*';
-  const likeOp = opts.caseSensitive ? 'LIKE' : 'ILIKE';
+/** The page and chunk read policy both scan shapes share, as SQL fragments; `lead` is the first page filter. */
+function scopeFilters(opts: ExactScanOpts, add: (v: unknown) => string, lead?: string) {
   const pageFilters: string[] = [
-    'p.id > ' + afterP + '::int',
+    ...(lead ? [lead] : []),
     'p.deleted_at IS NULL',
     'NOT s.archived',
     quarantineFilterFragment('p'),
@@ -142,6 +141,24 @@ export function buildExactBatchStatement(opts: ExactScanOpts, after: number, bat
   const hardExclude = buildHardExcludeClause('p.slug', opts.excludeSlugPrefixes);
   const safe = opts.remote ? ` AND ${safeChunksFilter('p')}` : '';
   const unsealed = opts.remote ? `WHEN p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} THEN 'unsealed'` : '';
+  return { pageFilters, hardExclude, safe, unsealed };
+}
+
+/** One batch statement: every page of the next `batchPages` in scope after `after`, in id order, with its matches or the reason its text could not be read. */
+export function buildExactBatchStatement(opts: ExactScanOpts, after: number, batchPages: number): { sql: string; params: unknown[] } | null {
+  const pattern = phrasePattern(opts.phrase);
+  if (!pattern) return null;
+  const params: unknown[] = [];
+  const add = (v: unknown) => { params.push(v); return '$' + params.length; };
+  const afterP = add(after);
+  const limitP = add(batchPages);
+  const flags = opts.caseSensitive ? "''" : "'i'";
+  const re = add(pattern.regex);
+  const snippetRe = add('.{0,' + EXACT_SNIPPET_CONTEXT + '}' + pattern.regex + '.{0,' + EXACT_SNIPPET_CONTEXT + '}');
+  const like = add('%' + escapeLikePattern(pattern.longest) + '%');
+  const op = opts.caseSensitive ? '~' : '~*';
+  const likeOp = opts.caseSensitive ? 'LIKE' : 'ILIKE';
+  const { pageFilters, hardExclude, safe, unsealed } = scopeFilters(opts, add, 'p.id > ' + afterP + '::int');
   // Sizes only (octet_length reads the stored length, never the body): does the page have text to index?
   const hasBody = `(octet_length(p.compiled_truth) > 0 OR octet_length(p.timeline) > 0 OR (p.body_storage = 'segmented' AND p.body_bytes > 0))`;
   const sql = `WITH batch AS MATERIALIZED (
@@ -171,8 +188,78 @@ SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type, pp.matching_chunks
   return { sql, params };
 }
 
+/**
+ * The index-narrowed scan (`ftsTerms`): one statement over the pages that hold a chunk the phrase can be in. A chunk is a
+ * candidate when its search vector matches every term (the GIN index on content_chunks.search_vector serves it) or
+ * when it has no search vector at all (scanned literally, in its own UNION branch: an OR in one WHERE sends the planner
+ * to a full scan). Both branches apply the literal match and the whole read policy, so a hit is exactly what the
+ * unindexed scan would return for a chunk with an indexed vector.
+ */
+export function buildExactPrefilteredStatement(opts: ExactScanOpts): { sql: string; params: unknown[] } | null {
+  const pattern = phrasePattern(opts.phrase);
+  if (!pattern || !opts.ftsTerms?.length) return null;
+  const params: unknown[] = [];
+  const add = (v: unknown) => { params.push(v); return '$' + params.length; };
+  const flags = opts.caseSensitive ? "''" : "'i'";
+  const re = add(pattern.regex);
+  const snippetRe = add('.{0,' + EXACT_SNIPPET_CONTEXT + '}' + pattern.regex + '.{0,' + EXACT_SNIPPET_CONTEXT + '}');
+  const like = add('%' + escapeLikePattern(pattern.longest) + '%');
+  const terms = add(opts.ftsTerms.join(' '));
+  const limitP = add(opts.limit + 1);
+  const op = opts.caseSensitive ? '~' : '~*';
+  const likeOp = opts.caseSensitive ? 'LIKE' : 'ILIKE';
+  const { pageFilters, hardExclude, safe } = scopeFilters(opts, add);
+  const branch = (predicate: string) => `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, (regexp_match(cc.chunk_text, ${snippetRe}, ${flags}))[1] AS snippet
+      FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id
+     WHERE ${predicate}
+       AND cc.chunk_text ${likeOp} ${like} ESCAPE '\\' AND cc.chunk_text ${op} ${re}
+       AND ${pageFilters.join('\n       AND ')} ${hardExclude}
+       AND ${chunkVisibleFilter('p', 'cc')}${safe}`;
+  const sql = `WITH hits AS (
+  SELECT u.*, row_number() OVER (PARTITION BY u.page_id ORDER BY u.chunk_index) AS rn FROM (
+    ${branch(`cc.search_vector @@ plainto_tsquery('${getFtsLanguage()}'::regconfig, ${terms})`)}
+    UNION ALL
+    ${branch('cc.search_vector IS NULL')}
+  ) u
+), per_page AS (
+  SELECT h.page_id, count(*)::int AS matching_chunks,
+         json_agg(json_build_object('chunk_index', h.chunk_index, 'chunk_source', h.chunk_source, 'text', h.snippet) ORDER BY h.chunk_index)
+           FILTER (WHERE h.rn <= ${EXACT_SNIPPETS_PER_PAGE}) AS snippets
+    FROM hits h GROUP BY h.page_id
+)
+SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type, pp.matching_chunks, pp.snippets, NULL AS gap
+  FROM per_page pp JOIN pages p ON p.id = pp.page_id ORDER BY p.id LIMIT ${limitP}::int`;
+  return { sql, params };
+}
+
+const asMatch = (row: BatchRow): ExactMatch => {
+  const snippets = (typeof row.snippets === 'string' ? JSON.parse(row.snippets) : row.snippets) as ExactMatch['snippets'] | null;
+  return { page_id: Number(row.page_id), slug: row.slug!, source_id: row.source_id!, title: row.title ?? row.slug!, type: row.type ?? '',
+    matching_chunks: Number(row.matching_chunks), snippets: (snippets ?? []).map(sn => ({ chunk_index: Number(sn.chunk_index), chunk_source: sn.chunk_source, text: sn.text })) };
+};
+
+/** The `ftsTerms` scan: one statement, the matches in page-id order; unreadable pages are not accounted for and nothing resumes. */
+async function runPrefilteredScan(engine: Pick<BrainEngine, 'executeRaw'>, opts: ExactScanOpts): Promise<ExactScanResult> {
+  const empty = (reasons: ExactScanResult['incomplete_reasons']): ExactScanResult => ({ matches: [], complete: reasons.length === 0, incomplete_reasons: reasons, resume_after: null, pages_scanned: 0,
+    unreadable: { total: 0, by_reason: {}, sample: [] } });
+  const stmt = buildExactPrefilteredStatement(opts);
+  const remaining = opts.deadlineMs - Date.now();
+  if (!stmt) return empty([]);
+  if (remaining <= 0) return empty(['deadline']);
+  let rows: BatchRow[];
+  try {
+    rows = await engine.executeRaw<BatchRow>(stmt.sql, stmt.params, { timeoutMs: Math.max(1000, remaining), jitOff: true });
+  } catch (e) {
+    if (!isStatementTimeoutError(e)) throw e;
+    return empty(['deadline']);
+  }
+  const matches = rows.slice(0, opts.limit).map(asMatch);
+  return { ...empty(rows.length > opts.limit ? ['limit'] : []), matches, pages_scanned: matches.length };
+}
+
 /** Runs the scan from `afterPageId` until the scope ends, the limit fills or the deadline passes. */
 export async function runExactScan(engine: Pick<BrainEngine, 'executeRaw'>, opts: ExactScanOpts): Promise<ExactScanResult> {
+  if (opts.ftsTerms?.length) return runPrefilteredScan(engine, opts);
   const matches: ExactMatch[] = [];
   const gaps: Array<{ page_id: number; slug: string; source_id: string; reason: ExactGapReason }> = [];
   let after = opts.afterPageId ?? 0;

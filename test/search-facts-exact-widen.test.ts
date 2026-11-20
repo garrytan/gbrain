@@ -11,6 +11,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
+import { buildExactBatchStatement, buildExactPrefilteredStatement, runExactScan, type ExactScanOpts } from '../src/core/search/exact-scan.ts';
 import { collectFactCandidates } from '../src/core/search/fact-relevance.ts';
 import { FACTS_ARM_DISPLACE_KEY, MAX_FACT_ROWS, QUERY_FACTS_ARM_KEY, SEARCH_FACTS_ARM_KEY } from '../src/core/search/facts-arm.ts';
 import { EXACT_WIDEN_KEY, holdsEveryTerm, mergeExactHits, widenPhrase, widenReason } from '../src/core/search/exact-widen.ts';
@@ -254,6 +255,48 @@ describe('exact widening', () => {
     await reset();
     expect((await run('search', PHRASE, { offset: 1 })).meta.exact_widened).toBeUndefined();
     expect((await run('search', PHRASE, { types: ['note'] })).meta.exact_widened).toBeUndefined();
+  });
+
+  const scanOpts = (over: Partial<ExactScanOpts>): ExactScanOpts => ({ phrase: PHRASE, excludeSlugPrefixes: [], excludePrivate: false, remote: false, sourceId: widenSource, limit: 10, deadlineMs: Date.now() + 20_000, ...over });
+
+  test('the widening scan is narrowed by the chunk full-text index, with a separate branch for chunks that have no vector; search_exact is not', () => {
+    const narrowed = buildExactPrefilteredStatement(scanOpts({ ftsTerms: ['zephyr', 'quartz', 'lantern'] }))!;
+    expect(narrowed.sql).toMatch(/cc\.search_vector @@ plainto_tsquery\('[a-z]+'::regconfig, \$\d+\)/);
+    expect(narrowed.sql).toContain('UNION ALL');
+    expect(narrowed.sql).toContain('cc.search_vector IS NULL');
+    expect(narrowed.sql).not.toMatch(/search_vector[^)]*\bOR\b/);
+    expect(narrowed.params).toContain('zephyr quartz lantern');
+    expect(buildExactPrefilteredStatement(scanOpts({}))).toBeNull();
+    expect(buildExactBatchStatement(scanOpts({ ftsTerms: ['zephyr'] }), 0, 100)!.sql).not.toContain('search_vector');
+  });
+
+  test('the narrowed scan finds a chunk by its vector and a chunk with no vector, and only a literal match, under local and remote policy', async () => {
+    for (const remote of [false, true]) {
+      const viaNull = await runExactScan(engine, scanOpts({ remote, ftsTerms: ['zephyr', 'quartz', 'lantern'] }));
+      expect(viaNull.matches.map(m => m.slug), `no vector, remote=${remote}`).toEqual(['notes/long-plan']);
+      expect(viaNull.matches[0]!.snippets[0]!.text).toContain(PHRASE);
+      const viaVector = await runExactScan(engine, scanOpts({ remote, phrase: 'short plan', ftsTerms: ['short', 'plan'] }));
+      expect(viaVector.matches.map(m => m.slug), `vector, remote=${remote}`).toEqual(['notes/short-plan']);
+      // The terms match the vector of the pages above but not as a phrase: no literal match, no hit.
+      expect((await runExactScan(engine, scanOpts({ remote, phrase: 'plan short', ftsTerms: ['short', 'plan'] }))).matches).toEqual([]);
+    }
+    const plain = await runExactScan(engine, scanOpts({ batchPages: 50 }));
+    expect(plain.matches.map(m => m.slug)).toEqual(['notes/long-plan']);
+  });
+
+  test('a thin search runs the narrowed statement, not the batch scan', async () => {
+    await reset();
+    const seen: string[] = [];
+    const real = engine.executeRaw;
+    (engine as { executeRaw: unknown }).executeRaw = function (this: unknown, sql: string, ...rest: unknown[]) { seen.push(sql); return (real as (...a: unknown[]) => unknown).call(this, sql, ...rest); };
+    try {
+      expect((await run('search', PHRASE)).meta.exact_widened).toBe(true);
+    } finally { (engine as { executeRaw: unknown }).executeRaw = real; }
+    const scans = seen.filter(q => q.includes('regexp_match'));
+    expect(scans).toHaveLength(1);
+    expect(scans[0]).toContain('cc.search_vector @@ plainto_tsquery');
+    expect(scans[0]).toContain('UNION ALL');
+    expect(scans.some(q => q.includes('WITH batch AS'))).toBe(false);
   });
 
   test('the rules: a long query has no phrase, thin means no row holds every term, degraded means a stage that affects recall', () => {
