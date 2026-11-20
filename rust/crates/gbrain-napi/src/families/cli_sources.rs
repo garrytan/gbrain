@@ -70,4 +70,28 @@ impl Brain {
             s.insert_source(&id, &name, local_path.as_deref(), &config)
         })
     }
+
+    /// `deleteSourceRecord(sourceId, expiredArchiveOnly)`: `{ deleted, stranded }`.
+    #[napi]
+    pub fn delete_source_record<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        expired_archive_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_source_record(&source_id, expired_archive_only)
+        })
+    }
+
+    /// `readSourceDeleteImpact(sourceId)`: `{ id, name, pages, chunks, embeddings, files, facts }`
+    /// or `null` for an unknown source.
+    #[napi]
+    pub fn read_source_delete_impact<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_delete_impact(&source_id))
+    }
 }

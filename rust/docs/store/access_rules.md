@@ -24,11 +24,9 @@ prefix covers every slug under it; a page prefix covers only the slug it names. 
 needs its source's policy state (the foreign key). Rule ids, revision numbers and operation ids are unique as the
 primary keys and the unique index make them.
 
-On PGLite and Postgres a source delete cascades to all six tables (`ON DELETE CASCADE` from `sources`). The store has
-no source delete: `deleteSourceRow` (`src/core/source-delete.ts`, used by `gbrain sources remove`, the archive purge
-and the persistence source lifecycle) runs `executeRaw`, which this engine refuses with `engine_capability_missing`
-(`raw_sql`) before any work, so the source and its `z` records stay together. A store source delete must also remove
-every `z 0x01`–`z 0x06` record of the source (`source_prefix(sub, source_id)`).
+On PGLite and Postgres a source delete cascades to all six tables (`ON DELETE CASCADE` from `sources`). The store's
+source delete (`deleteSourceRecord`, [sources.md](sources.md)) removes the source's state record and every `z 0x01`–`z 0x06`
+record under `source_prefix(sub, source_id)` in the same write.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

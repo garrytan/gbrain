@@ -333,6 +333,16 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     Ok(())
 }
 
+/// The files of one source (`SELECT COUNT(*) FROM files WHERE source_id = $1`). Files are keyed by
+/// path, so this scans every file record, as `remove_source_rows` does.
+pub(crate) fn count_source_files(read: &dyn KvRead, source_id: &str) -> Result<u64> {
+    let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;
+    Ok(files
+        .iter()
+        .filter(|(_, f)| f.source_id == source_id)
+        .count() as u64)
+}
+
 impl Store {
     /// `putRawData(slug, source, data, { sourceId? })`: inserts or replaces the raw data of
     /// `(page, source)` and stamps `fetched_at`. `data_json` is `JSON.stringify(data)`. With a

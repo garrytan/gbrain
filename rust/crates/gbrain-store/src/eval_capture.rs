@@ -327,6 +327,21 @@ pub(crate) fn remove_retrieved_slugs(
     Ok(updated)
 }
 
+/// The `scrub_eval_candidates` step of a source delete (`removedSourceScrubCtes`,
+/// `src/core/engine-sql/sources.ts`), run after the source's pages are gone: every candidate that
+/// covers `source_id` drops each retrieved slug no page of its other sources holds.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<u64> {
+    let candidates: Vec<CandidateRecord> = read_all(&*tx, CANDIDATE)?;
+    let mut slugs: Vec<String> = candidates
+        .into_iter()
+        .filter(|c| c.source_ids.iter().any(|s| s.as_deref() == Some(source_id)))
+        .flat_map(|c| c.retrieved_slugs)
+        .collect();
+    slugs.sort();
+    slugs.dedup();
+    remove_retrieved_slugs(tx, source_id, &slugs)
+}
+
 impl Store {
     /// `logEvalCandidate(input)`: inserts one candidate and returns its id. `retrieved_slugs`
     /// keeps, in order, only the slugs a page of `source_ids` holds (any source when it names
@@ -662,6 +677,31 @@ mod tests {
         .unwrap();
         let nulls = store.log_eval_candidate(&input).unwrap();
         assert!(slugs_of(&store, nulls).is_empty());
+    }
+
+    #[test]
+    fn a_source_delete_strips_every_slug_no_other_covered_source_holds() {
+        let (_dir, store) = open();
+        source(&store, "gone");
+        source(&store, "other");
+        for slug in ["a", "b"] {
+            put(&store, "gone", slug);
+        }
+        put(&store, "other", "b");
+        put(&store, "default", "c");
+        let both = log(&store, &["a", "b"], &["gone", "other"]);
+        let not_gone = log(&store, &["b", "c"], &["other", "default"]);
+        store
+            .write(|tx| {
+                for slug in ["a", "b"] {
+                    let page = crate::pages::read_page(&*tx, "gone", slug)?.unwrap();
+                    crate::pages::remove_page(tx, &page)?;
+                }
+                remove_source_rows(tx, "gone")
+            })
+            .unwrap();
+        assert_eq!(slugs_of(&store, both), vec!["b"]);
+        assert_eq!(slugs_of(&store, not_gone), vec!["b", "c"]);
     }
 
     #[test]

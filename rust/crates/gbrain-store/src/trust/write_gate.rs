@@ -497,6 +497,28 @@ fn hold_id_text(target_id: &str) -> Option<u64> {
     (id.to_string() == target_id).then_some(id)
 }
 
+/// Deletes the holds of a source that is deleted, with their dedupe entries and the receipts that
+/// name them (`scrub_write_gate_holds` and `scrub_write_gate_receipts` in `removedSourceScrubCtes`,
+/// `src/core/engine-sql/sources.ts`). Receipts on other targets stay, as on Postgres.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    for hold in all_holds(&*tx)? {
+        if hold.source_id != source_id {
+            continue;
+        }
+        let id = hold.id.to_string();
+        for receipt in receipts_of(&*tx, "write_gate_holds", &id)? {
+            delete_receipt(tx, &receipt)?;
+        }
+        let version = hold.detector_version.to_string();
+        tx.delete(&tagged(
+            HOLD_DEDUPE,
+            &[&hold.source_id, &hold.slug, &hold.fingerprint, &version],
+        ))?;
+        tx.delete(&by_id(HOLD, hold.id))?;
+    }
+    Ok(())
+}
+
 impl Store {
     /// `upsertWriteGateReceipt`: records a flag or quarantine receipt on a row, or refreshes the
     /// one with the same target, content hash and detector version. Returns its id.
@@ -908,6 +930,49 @@ mod tests {
             .unwrap()
             .unwrap();
         p.id.to_string()
+    }
+
+    #[test]
+    fn a_source_delete_drops_its_holds_their_dedupe_entries_and_receipts_only() {
+        let s = store();
+        let doomed = s.upsert_write_gate_hold(hold("fp-1")).unwrap();
+        let other = s
+            .upsert_write_gate_hold(HoldInput {
+                source_id: "kept".into(),
+                ..hold("fp-1")
+            })
+            .unwrap();
+        let id = doomed.to_string();
+        let kept_id = other.to_string();
+        s.upsert_write_gate_receipt(receipt("write_gate_holds", &id, fields("h1", "flag")))
+            .unwrap();
+        s.upsert_write_gate_receipt(receipt("write_gate_holds", &kept_id, fields("h1", "flag")))
+            .unwrap();
+        s.upsert_write_gate_receipt(receipt("facts", &id, fields("h1", "flag")))
+            .unwrap();
+
+        s.write(|tx| remove_source_rows(tx, "default")).unwrap();
+
+        assert_eq!(
+            ids(&s.list_write_gate_hold_rows(&opts("held")).unwrap()),
+            vec![other]
+        );
+        let read = s.read().unwrap();
+        assert!(
+            receipts_of(&*read, "write_gate_holds", &id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            receipts_of(&*read, "write_gate_holds", &kept_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(receipts_of(&*read, "facts", &id).unwrap().len(), 1);
+        drop(read);
+        // The dedupe entry went with the hold: the same key opens a new hold.
+        assert_ne!(s.upsert_write_gate_hold(hold("fp-1")).unwrap(), doomed);
     }
 
     #[test]

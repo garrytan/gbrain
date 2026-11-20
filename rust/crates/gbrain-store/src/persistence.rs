@@ -59,7 +59,7 @@ mod effects;
 mod housekeeping;
 mod idle_probe;
 mod noop_settle;
-mod op_checkpoint;
+pub(crate) mod op_checkpoint;
 mod owner_scans;
 mod projection_queue;
 mod receipt_list;

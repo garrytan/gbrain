@@ -161,6 +161,45 @@ pub(crate) fn delete_op_checkpoint_in(
     delete_op_checkpoint_paths_in(tx, op, fingerprint)
 }
 
+/// The `cursors` step of a source delete (`deleteSourceRecord` in
+/// `src/core/engine-sql/sources.ts`): every `managed-sync` checkpoint whose first completed key
+/// names `source_id` (`completed_keys->0->>'sourceId'`), with its paths.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    const OP: &str = "managed-sync";
+    let prefix = parent_key(OP, "")?;
+    let mut doomed = Vec::new();
+    let mut failure = None;
+    scan_prefix(&*tx, &prefix, false, &mut |k, v| {
+        match serde_json::from_slice::<HousekeepingRow>(v) {
+            Ok(row) => {
+                // `->>` reads a string as its text, any other value as its JSON text, null as NULL.
+                let named = match row
+                    .completed_keys
+                    .get(0)
+                    .and_then(|first| first.get("sourceId"))
+                {
+                    Some(Value::String(s)) => s == source_id,
+                    Some(Value::Null) | None => false,
+                    // Its JSON text, not `Value == str` (which is false for every non-string).
+                    Some(other) => serde_json::to_string(other).is_ok_and(|text| text == source_id),
+                };
+                if named {
+                    doomed.push(String::from_utf8_lossy(&k[prefix.len()..]).into_owned());
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    for fingerprint in doomed {
+        delete_op_checkpoint_in(tx, OP, &fingerprint)?;
+    }
+    Ok(())
+}
+
 /// `deleteOpCheckpointPaths(op, fingerprint)`: the paths only.
 pub(crate) fn delete_op_checkpoint_paths_in(
     tx: &mut dyn KvWrite,
@@ -260,6 +299,58 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_source_delete_drops_the_managed_sync_cursors_whose_first_key_names_it() {
+        let store = store();
+        let put = |op: &str, fingerprint: &str, completed: serde_json::Value| {
+            store
+                .write(|tx| {
+                    crate::put_json(
+                        tx,
+                        &super::parent_key(op, fingerprint)?,
+                        &super::HousekeepingRow {
+                            completed_keys: completed.clone(),
+                            updated_at_us: 1,
+                        },
+                    )
+                })
+                .unwrap();
+            store
+                .append_op_checkpoint_paths(op, fingerprint, &strings(&["p"]))
+                .unwrap();
+        };
+        put(
+            "managed-sync",
+            "f1",
+            json!([{"sourceId": "gone"}, {"sourceId": "kept"}]),
+        );
+        put(
+            "managed-sync",
+            "f2",
+            json!([{"sourceId": "kept"}, {"sourceId": "gone"}]),
+        );
+        put("managed-sync", "f3", json!(["gone"]));
+        put("embed", "f4", json!([{"sourceId": "gone"}]));
+        store
+            .write(|tx| super::remove_source_rows(tx, "gone"))
+            .unwrap();
+        let none = json!({ "keys": [], "corruptParent": false });
+        assert_eq!(
+            store.read_op_checkpoint_keys("managed-sync", "f1").unwrap(),
+            none
+        );
+        for (op, fingerprint) in [
+            ("managed-sync", "f2"),
+            ("managed-sync", "f3"),
+            ("embed", "f4"),
+        ] {
+            assert_ne!(
+                store.read_op_checkpoint_keys(op, fingerprint).unwrap(),
+                none
+            );
+        }
     }
 
     #[test]

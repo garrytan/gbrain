@@ -13,8 +13,9 @@
 //! (`oauth_clients_complete_agent_grant`, src/core/grants/schema.ts), the five value lists and the `sources` foreign
 //! key. A refusal is `constraint_violation` with the Postgres message (`new row for relation "oauth_clients" violates
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
-//! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
-//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps the
+//! Not kept: the `trust_generation_update` trigger and the secondary indexes (a read scans the table). A source
+//! delete runs [`remove_source_rows`]: the `ON DELETE RESTRICT` of `source_id` and the `ON DELETE SET NULL` of
+//! `bound_source_id`. The store keeps the
 //! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does; it keeps
 //! no `oauth_codes`, so that cascade has nothing to remove there.
 
@@ -320,6 +321,31 @@ pub(super) fn load_client(read: &dyn KvRead, client_id: &str) -> Result<Option<C
 pub(super) fn put_client(tx: &mut dyn KvWrite, record: &ClientRecord) -> Result<()> {
     record.check(&*tx)?;
     put_json(tx, &client_key(&record.client_id), record)
+}
+
+/// The `sources` delete side of the client's foreign keys: refuses, as `ON DELETE RESTRICT` does, when a client's
+/// `source_id` names `source_id` (`constraint_violation` with the Postgres message), else clears every
+/// `bound_source_id` that names it (`ON DELETE SET NULL`).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let clients = all_clients(&*tx)?;
+    if clients
+        .iter()
+        .any(|c| c.source_id.as_deref() == Some(source_id))
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"{TABLE}\""
+            ),
+        ));
+    }
+    for mut client in clients {
+        if client.bound_source_id.as_deref() == Some(source_id) {
+            client.bound_source_id = None;
+            put_json(tx, &client_key(&client.client_id), &client)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every client, by client id.

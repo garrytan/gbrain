@@ -34,7 +34,7 @@
 
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::keys;
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::{Store, get_json, put_json};
 use serde::{Deserialize, Serialize};
 
@@ -298,6 +298,23 @@ pub(crate) fn pending_covers(read: &dyn KvRead, source_id: &str, slug: &str) -> 
 /// source holds access state and a rule covers the slug.
 pub(crate) fn stamped(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<bool> {
     Ok(has_state(read, source_id)? && !folder_rules(read, source_id, slug)?.is_empty())
+}
+
+/// Deletes the access state of a source that is deleted (`cascade::remove_source_rows`): its state
+/// key and every rule, pending prefix, revision, page stamp and migration of that source, as the
+/// `access_policy_state` cascade does on Postgres.
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let mut doomed = vec![key(STATE, &[source_id.as_bytes()])];
+    for sub in [RULE, COVERAGE, REVISION, STAMP, MIGRATION] {
+        scan_prefix(&*tx, &source_prefix(sub, source_id), false, &mut |k, _| {
+            doomed.push(k.to_vec());
+            true
+        })?;
+    }
+    for k in doomed {
+        tx.delete(&k)?;
+    }
+    Ok(())
 }
 
 impl Store {

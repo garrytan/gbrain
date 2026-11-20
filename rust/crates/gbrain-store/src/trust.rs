@@ -60,6 +60,7 @@ pub(crate) fn remove_source_rows(
     source_id: &str,
 ) -> crate::Result<()> {
     withdrawals::remove_source_rows(tx, source_id)?;
+    write_gate::remove_source_rows(tx, source_id)?;
     proposals::remove_source_rows(tx, source_id)
 }
 

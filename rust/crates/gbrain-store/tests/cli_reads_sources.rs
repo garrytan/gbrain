@@ -1,11 +1,15 @@
 //! Source-resolution reads: the rows `listLocalPathSources`, `listSourceRoutingRows` and
-//! `countDefaultSourceSplit` answer, matched to the PGLite engine.
+//! `countDefaultSourceSplit` answer, and the source delete with its preview, matched to the PGLite
+//! engine.
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::cli_reads::sources::DefaultSourceSplit;
+use gbrain_store::access_rules::AccessRuleRecord;
+use gbrain_store::cli_reads::sources::{
+    DefaultSourceSplit, SourceDeleteImpact, SourceDeleteResult,
+};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::json;
@@ -180,4 +184,80 @@ fn insert_source_creates_a_source_and_refuses_a_taken_id_or_name() {
     // The first insert is untouched by the refused ones.
     let again = store.get_source_by_id("wiki").unwrap().unwrap();
     assert_eq!(again.name.as_deref(), Some("Wiki"));
+}
+
+fn rule(source_id: &str, rule_id: &str) -> AccessRuleRecord {
+    AccessRuleRecord {
+        source_id: source_id.into(),
+        rule_id: rule_id.into(),
+        prefix: "private/".into(),
+        readable_by: vec!["alice-example".into()],
+        revision: 1,
+        covers_derived: true,
+        created_by: None,
+    }
+}
+
+#[test]
+fn a_source_delete_previews_its_pages_then_removes_them_and_its_access_rules_only() {
+    let dir = TempDir::new("cli-src-delete");
+    let store = open(&dir);
+    source(&store, "doomed", None, json!({}));
+    source(&store, "kept", None, json!({}));
+    page(&store, "doomed", "notes/a");
+    page(&store, "doomed", "notes/b");
+    page(&store, "kept", "notes/a");
+    for id in ["doomed", "kept"] {
+        store.put_access_policy_state(id).unwrap();
+        store.put_access_rule(rule(id, "rule-1")).unwrap();
+    }
+
+    let impact = store.read_source_delete_impact("doomed").unwrap().unwrap();
+    assert_eq!(
+        impact,
+        SourceDeleteImpact {
+            id: "doomed".into(),
+            name: "doomed".into(),
+            pages: 2,
+            chunks: 2,
+            embeddings: 0,
+            files: 0,
+            facts: 0,
+        }
+    );
+    assert_eq!(store.read_source_delete_impact("absent").unwrap(), None);
+
+    let removed = SourceDeleteResult {
+        deleted: true,
+        stranded: 0,
+    };
+    let kept = SourceDeleteResult {
+        deleted: false,
+        stranded: 0,
+    };
+    // The expired-archive form never deletes: the store keeps no archive timestamps.
+    assert_eq!(store.delete_source_record("doomed", true).unwrap(), kept);
+    assert_eq!(
+        store.delete_source_record("doomed", false).unwrap(),
+        removed
+    );
+    assert_eq!(store.delete_source_record("doomed", false).unwrap(), kept);
+    assert_eq!(store.delete_source_record("absent", false).unwrap(), kept);
+
+    assert!(store.get_source("doomed").unwrap().is_none());
+    assert_eq!(store.read_source_delete_impact("doomed").unwrap(), None);
+    assert!(store.get_access_rule("doomed", "rule-1").unwrap().is_none());
+    assert!(!store.is_folder_restricted("doomed", "private/x").unwrap());
+
+    assert!(store.get_source("kept").unwrap().is_some());
+    assert_eq!(
+        store
+            .read_source_delete_impact("kept")
+            .unwrap()
+            .unwrap()
+            .pages,
+        1
+    );
+    assert!(store.get_access_rule("kept", "rule-1").unwrap().is_some());
+    assert_eq!(store.count_default_source_split().unwrap(), split(0, 1, 1));
 }

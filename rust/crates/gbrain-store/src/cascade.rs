@@ -9,10 +9,12 @@
 //!   the chunks whose index the new set does not keep (a kept index keeps its id). A hard page
 //!   delete calls it before `remove_page_rows`.
 //! - `remove_source_rows`: a source delete (`ON DELETE CASCADE` of `sources.id`), for records keyed
-//!   by source rather than by page. The Rust engine does not serve source delete yet, so nothing
-//!   calls it; when core serves it, core removes each page of the source with
-//!   `pages::remove_page` first (the page and chunk hooks fire for those), then calls this list,
-//!   then deletes the source record, all in one write transaction.
+//!   by source rather than by page. `cli_reads::sources::delete_source_record` removes each page of
+//!   the source with `pages::remove_page` first (the page and chunk hooks fire for those), then
+//!   calls this list, then deletes the source record, all in one write transaction. The list also
+//!   runs the source scrubs Postgres states outside the foreign keys (`deleteSourceRecord` in
+//!   `src/core/engine-sql/sources.ts`): write-gate holds, eval candidate slugs and managed-sync
+//!   checkpoints. The OAuth client keys (`RESTRICT`, `SET NULL`) run before the pages go.
 //! - `rename_slug_rows`: a page rename (`updateSlug`), for records keyed by `(source, slug)` rather
 //!   than by page id (PGLite `moveSlugBindings`, `page-state/rename-alias.ts`). The rename caller
 //!   calls it in the rename transaction after `pages::rename_page`, only when the slug changed;
@@ -54,8 +56,6 @@ pub(crate) fn remove_chunk_rows(
     Ok(())
 }
 
-// Core's source delete is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     crate::facts::remove_source_rows(tx, source_id)?;
     crate::aliases::remove_source_rows(tx, source_id)?;
@@ -68,6 +68,9 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::trust::remove_source_rows(tx, source_id)?;
     crate::facts::loops::remove_source_rows(tx, source_id)?;
     crate::generations::remove_source_rows(tx, source_id)?;
+    crate::access_rules::remove_source_rows(tx, source_id)?;
+    crate::eval_capture::remove_source_rows(tx, source_id)?;
+    crate::persistence::op_checkpoint::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 

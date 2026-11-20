@@ -18,6 +18,8 @@ until the first stamp; the import members read and write it ([import-members.md]
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
+| `brain.readSourceDeleteImpact(id)` | `{ id, name, pages, chunks, embeddings, files, facts }` of the source, or null for an unknown id | `readSourceDeleteImpact` (the `sources remove` preview) |
+| `brain.deleteSourceRecord(id, expiredArchiveOnly)` | `{ deleted, stranded }`. One write removes the source, its pages and every record keyed by the source (`cascade::remove_source_rows`). A client whose `source_id` names the source refuses `constraint_violation` with the `oauth_clients_source_id_fkey` message and writes nothing; a client whose `bound_source_id` names it gets NULL. `expiredArchiveOnly` deletes nothing (below) | `deleteSourceRecord` (`deleteSourceRow`: `sources remove`, the archive purge) |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
 to make a source, and the page methods below are source-scoped.
@@ -47,3 +49,7 @@ The source members below behave differently on the Rust engine. Each difference 
   driver's unique-key error (`23505`). Callers treat both as a failed insert.
 - `insertSource` drops a config key set to `undefined`, as the SQL engines' JSON binding does.
   The result is the same on every engine.
+- `deleteSourceRecord` with `expiredArchiveOnly` deletes nothing and reports `deleted: false`. The
+  store keeps no archive timestamps, so no source is an expired archive.
+- `readSourceDeleteImpact` counts `embeddings` as the chunks that carry a vector, as the SQL
+  engines do.

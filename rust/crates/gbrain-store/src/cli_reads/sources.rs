@@ -1,11 +1,13 @@
 //! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows`,
 //! `countDefaultSourceSplit` and `countSourcePages` (SQL in `src/core/engine-sql/sources.ts`).
-//! Each reads one snapshot. `insertSource` is the CLI's plain source insert.
+//! Each reads one snapshot. `insertSource` is the CLI's plain source insert; `deleteSourceRecord`
+//! and `readSourceDeleteImpact` are `sources remove` and its preview.
 
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
+use crate::pages::{PageRecord, remove_page};
 use crate::sources::{
-    DEFAULT_SOURCE, SourceRecord, SourceRow, all_sources, read_source, valid_source_id,
+    DEFAULT_SOURCE, SourceRecord, SourceRow, all_sources, read_source, source_key, valid_source_id,
 };
 use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -238,4 +240,136 @@ impl Store {
             Ok(SourceRow::from(record))
         })
     }
+
+    /// `deleteSourceRecord(id, { expiredArchiveOnly })`: deletes the source with every record
+    /// keyed by it, in one write: each page of the source (soft-deleted ones too) through
+    /// `pages::remove_page`, which fires the page and chunk hooks, then `cascade::remove_source_rows`
+    /// (the `ON DELETE CASCADE` of `sources.id`), then the source record. The store's pages always
+    /// go with their source, so `stranded` is always 0. The store keeps no archive timestamps, so
+    /// it can never prove an archive window elapsed and `expired_archive_only` deletes nothing, as
+    /// the SQL engines do for an archive without real timestamps. An unknown source deletes nothing.
+    pub fn delete_source_record(
+        &self,
+        id: &str,
+        expired_archive_only: bool,
+    ) -> Result<SourceDeleteResult> {
+        let kept = SourceDeleteResult {
+            deleted: false,
+            stranded: 0,
+        };
+        if id.contains('\0') || expired_archive_only {
+            return Ok(kept);
+        }
+        self.write(|tx| {
+            if read_source(&*tx, id)?.is_none() {
+                return Ok(kept);
+            }
+            crate::jobs::oauth_clients::remove_source_rows(tx, id)?;
+            let mut pages = Vec::new();
+            let mut failure = None;
+            scan_prefix(
+                &*tx,
+                &keys::text(keys::PAGE, &[id, ""]),
+                false,
+                &mut |_, v| match serde_json::from_slice::<PageRecord>(v) {
+                    Ok(page) => {
+                        pages.push(page);
+                        true
+                    }
+                    Err(e) => {
+                        failure = Some(e.into());
+                        false
+                    }
+                },
+            )?;
+            if let Some(e) = failure {
+                return Err(e);
+            }
+            for page in &pages {
+                remove_page(tx, page)?;
+            }
+            crate::cascade::remove_source_rows(tx, id)?;
+            tx.delete(&source_key(id))?;
+            Ok(SourceDeleteResult {
+                deleted: true,
+                stranded: 0,
+            })
+        })
+    }
+
+    /// `readSourceDeleteImpact(id)`: the source's id and name with what a delete removes: its
+    /// pages (soft-deleted ones too), their chunks, the chunks with a vector, its files and its
+    /// facts. `None` for an unknown source.
+    pub fn read_source_delete_impact(&self, id: &str) -> Result<Option<SourceDeleteImpact>> {
+        if id.contains('\0') {
+            return Ok(None);
+        }
+        let read = self.read()?;
+        let Some(source) = read_source(&*read, id)? else {
+            return Ok(None);
+        };
+        let mut page_ids = Vec::new();
+        let mut failure = None;
+        scan_prefix(
+            &*read,
+            &keys::text(keys::PAGE, &[id, ""]),
+            false,
+            &mut |_, v| match serde_json::from_slice::<PageId>(v) {
+                Ok(page) => {
+                    page_ids.push(page.id);
+                    true
+                }
+                Err(e) => {
+                    failure = Some(e.into());
+                    false
+                }
+            },
+        )?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        let (mut chunks, mut embeddings) = (0u64, 0u64);
+        for page_id in &page_ids {
+            for chunk in crate::chunks::read_chunks(&*read, *page_id)? {
+                chunks += 1;
+                if chunk.embed.has_vector() {
+                    embeddings += 1;
+                }
+            }
+        }
+        Ok(Some(SourceDeleteImpact {
+            id: source.id.clone(),
+            name: source.name.clone().unwrap_or_default(),
+            pages: page_ids.len() as u64,
+            chunks,
+            embeddings,
+            files: crate::raw_files::count_source_files(&*read, id)?,
+            facts: crate::facts::source_rows(&*read, id)?.len() as u64,
+        }))
+    }
+}
+
+/// What `deleteSourceRecord` did (`SourceDeleteResult` in `src/core/engine-sql/sources.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SourceDeleteResult {
+    pub deleted: bool,
+    pub stranded: u64,
+}
+
+/// `SourceDeleteImpact`: the counts the `sources remove` preview prints.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceDeleteImpact {
+    pub id: String,
+    pub name: String,
+    pub pages: u64,
+    pub chunks: u64,
+    pub embeddings: u64,
+    pub files: u64,
+    pub facts: u64,
+}
+
+/// The id of a page record, read without decoding the rest.
+#[derive(Deserialize)]
+struct PageId {
+    id: u64,
 }
