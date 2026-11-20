@@ -2133,6 +2133,28 @@
         ],
         "flagOnScopes": []
       },
+      "listFiles#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFiles#page_slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFilesForPage#default": {
         "flagOffLanes": [
           "pool"
@@ -4009,6 +4031,7 @@
         "getUnverifiedExtractionPageIds": "none",
         "getVersions": "none",
         "hasSupersedeEdges": "none",
+        "hasWithdrawnFenceClaim": "none",
         "holdSchemaMigrationLock": "none",
         "initSchema": "none",
         "insertFact": "none",
@@ -4016,6 +4039,7 @@
         "insertLocalWriterRow": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
+        "invalidateWithdrawnPages": "none",
         "isFolderRestricted": "none",
         "jitOffRead": "none",
         "keywordBoundedRead": "direct",
@@ -4035,12 +4059,14 @@
         "listFactsBySession": "none",
         "listFactsKeyset": "none",
         "listFactsSince": "none",
+        "listFiles": "none",
         "listFilesForPage": "none",
         "listIdentityDecisions": "none",
         "listLinkSources": "direct",
         "listPages": "direct",
         "listPrefixSampledPages": "direct",
         "listRestrictedIdentityMembers": "none",
+        "listSegmentedPages": "none",
         "listSourceLocalPaths": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
@@ -4076,15 +4102,18 @@
         "putRawData": "none",
         "readCycleLocks": "none",
         "readEmbeddingStateCounts": "direct",
+        "readFieldUsageSamples": "none",
         "readLedgerSource": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",
+        "readPageBodySizes": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPersistenceBrainId": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
+        "readStoredBodyBytes": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
         "reconnect": "none",
