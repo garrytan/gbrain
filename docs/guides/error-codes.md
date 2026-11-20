@@ -1522,7 +1522,7 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`.
 
@@ -3004,7 +3004,7 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository): removing the row alone would come back at the next reconcile while the decision still says the pages are one person. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, or entity_identity_unlink refused to remove a company page the sync linked automatically, so nothing changed. | A confirmed link is the projection of a recorded duplicate decision (kept in git on a brain with a repository), and an automatic company link comes from the pages' shared ids: removing the row alone would come back at the next reconcile or sync while the decision or the ids still say the pages are one person or company. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people or companies and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### identity_member_in_other_group
 
@@ -3855,6 +3855,26 @@ More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-tw
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Sources cannot claim overlapping canonical directories. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### owned_day_secret_held
+
+<a id="owned_day_secret_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A chat day looks like it holds a secret and secrets.on_push is refuse, so its file was not committed; the day is in the database, and the file committed earlier (which passed the scan) stays. | The scan, and push-time redaction under the default secrets.on_push redact, catch known key and token shapes only. A one-time code or password written in plain message text is not caught or redacted, which is why the folder is written only when the checkout pushes to a repository proven private. With refuse, a commit holding a matched key or token would stop every later push from the brain, so that day is kept out of Git. | Nothing to do for the day to be searchable. To commit it, set secrets.on_push back to redact (gbrain config set secrets.on_push redact); the next sync commits it and the push redacts the matched key or token. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#what-a-push-carries](../../docs/guides/apple-setup.md#what-a-push-carries)
+
+### owned_folder_conflict
+
+<a id="owned_folder_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file or folder under .gbrain-owned/ is not what the source that owns it wrote (edited or added by hand, reached through a symlink, or another source's), or a command other than that source tried to read or write it; nothing there was changed. | An owned folder holds the pages one source writes from outside the brain (an iMessage source's chat days). Only that source's writer changes it, and only files whose bytes it recorded, so a hand edit is never overwritten and the default source's sync, import, repairs and commits never pick the folder up. | Move the hand-made file out of .gbrain-owned/ (or restore the committed file with git checkout -- <path>), then run gbrain sync --source <id>. To change a page there, change it in Messages; to stop the source, gbrain sources remove <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#owned_folder_conflict](../../docs/guides/apple-setup.md#owned_folder_conflict)
 
 ### owner_marker_missing
 
