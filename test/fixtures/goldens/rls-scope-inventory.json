@@ -845,6 +845,17 @@
         ],
         "flagOnScopes": []
       },
+      "endLifetime#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "ensureAccessPolicyState#default": {
         "flagOffLanes": [
           "pool"
@@ -4661,6 +4672,28 @@
         ],
         "flagOnScopes": []
       },
+      "mintLifetime#conflict": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "mintLifetime#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "normalizeDerivationClaims#default": {
         "flagOffLanes": [
           "pool"
@@ -5773,6 +5806,17 @@
         ],
         "flagOnScopes": []
       },
+      "readMovedLifetimes#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readNoopEmbeddingCandidates#default": {
         "flagOffLanes": [
           "tx"
@@ -5895,6 +5939,17 @@
         "flagOnScopes": []
       },
       "readOpCheckpointValues#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOpenLifetimes#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6579,6 +6634,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "renameLifetime#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -8092,6 +8158,7 @@
         "disconnectInternal": "none",
         "discoverOntologyDimensions": "none",
         "edgeValidityCounts": "none",
+        "endLifetime": "none",
         "endWakeWatches": "none",
         "engineSql": "none",
         "engineSqlOn": "none",
@@ -8534,6 +8601,7 @@
         "maxFenceRowNum": "none",
         "mergeOntologyFact": "none",
         "migrateFactsToCanonical": "none",
+        "mintLifetime": "none",
         "moveChunkIndexes": "none",
         "moveFactWithdrawalSubject": "none",
         "nextLivePageAfter": "none",
@@ -8692,6 +8760,7 @@
         "readMentionIndexStatus": "none",
         "readMentionLastPass": "none",
         "readMirrorGateRows": "none",
+        "readMovedLifetimes": "none",
         "readNamedEntitySlugs": "none",
         "readNoopEmbeddingCandidates": "none",
         "readNotifierLease": "none",
@@ -8708,6 +8777,7 @@
         "readOpCheckpointKeys": "none",
         "readOpCheckpointRecords": "none",
         "readOpCheckpointValues": "none",
+        "readOpenLifetimes": "none",
         "readOwnerCredentials": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
@@ -8840,6 +8910,7 @@
         "removeTag": "none",
         "removeTimelineRows": "none",
         "removeWakeCron": "none",
+        "renameLifetime": "none",
         "renewConsumerRow": "none",
         "renewEffectClaim": "none",
         "renewJobLease": "none",
