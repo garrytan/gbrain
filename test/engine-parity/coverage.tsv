@@ -94,7 +94,7 @@ getPage	pages	yes	129	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	561	yes	yes	yes	serves
+putPage	pages	yes	562	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -140,9 +140,9 @@ listQuarantinedSlugs	pages	yes	1	no	yes	yes	serves
 readRenameIdentityRows	pages	yes	1	no	yes	yes	serves
 readLiveIdentityHolders	pages	yes	1	no	yes	yes	serves
 advanceSourceCommit	pages	yes	2	no	yes	yes	serves
-listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
+listPrefixSampledPages	pages	yes	3	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
-bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
+bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	1	no	yes	yes	serves
