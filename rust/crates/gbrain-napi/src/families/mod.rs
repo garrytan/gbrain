@@ -35,8 +35,8 @@ mod pages;
 mod repair_reads;
 mod search;
 mod session_state;
-mod slug_reads;
 mod shared_skill_members;
+mod slug_reads;
 mod sources;
 mod tags;
 #[cfg(feature = "test-seeds")]

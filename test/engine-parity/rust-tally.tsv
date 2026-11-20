@@ -105,6 +105,7 @@ test/engine-parity/search.test.ts	17	2
 test/engine-parity/segmented-body.test.ts	16	0
 test/engine-parity/session-state-cap.test.ts	11	0
 test/engine-parity/session-state.test.ts	7	0
+test/engine-parity/shared-skill-members.test.ts	5	1
 test/engine-parity/source-order-callers.test.ts	2	3
 test/engine-parity/source-resolver-reads.test.ts	20	0
 test/engine-parity/spend-log.test.ts	10	0
