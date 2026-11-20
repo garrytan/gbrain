@@ -74,7 +74,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
 
   test('setup installs the plugin for real and OpenClaw loads it with before_prompt_build', async () => {
     const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
-    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000), stdout: r.code === 0 ? '' : r.stdout.slice(-3000) }).toEqual({ code: 0, stderr: '', stdout: '' });
     const resolver = JSON.parse(r.stdout).skill_resolver;
     expect(resolver.error).toBeUndefined();
     expect(resolver.steps.map((s: { step: string }) => s.step)).toEqual(['catalog', 'library', 'state', 'plugin', 'install', 'verify', 'self-test']);
@@ -116,7 +116,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
     expect(turnLines(oc).at(-1)).toMatchObject({ outcome: 'no_match', suggested: [] });
   }, 180_000);
 
-  test('a turn OpenClaw retries after a model error carries one block, for the user message, on every attempt', async () => {
+  test('a turn OpenClaw retries after a model error carries one block, for the user message, on every attempt, and later attempts are logged as retries of the same run', async () => {
     const lines = turnLines(oc).length;
     const message = 'Create and send a customer invoice as a PDF with line items';
     oc.replies.push({ status: 529 }, { status: 529 });
@@ -129,7 +129,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
     const attempts = turnLines(oc).slice(lines);
     console.log('[openclaw-skill-resolver-real] retry attempts: ' + JSON.stringify(attempts.map((l) => l.outcome)));
     expect(attempts.map((l) => [l.outcome, l.suggested])[0]).toEqual(['suggested', ['invoice-example']]);
-    expect(attempts.slice(1).every((l) => l.outcome === 'retry' || (l.outcome === 'no_match' && Array.isArray(l.suggested) && l.suggested.length === 0))).toBe(true);
+    expect(attempts.slice(1).map((l) => l.outcome)).toEqual(['retry', 'retry']);
   }, 180_000);
 
   test('a skills_read of a suggested skill logs a read marked suggested', async () => {

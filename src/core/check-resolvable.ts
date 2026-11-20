@@ -14,7 +14,7 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { basename, join, relative } from 'path';
 import { findResolverFile, findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
 import type { SkillsDirSource } from './repo-root.ts';
-import { loadOrDeriveManifest } from './skill-manifest.ts';
+import { loadOrDeriveManifest, type ManifestEntry } from './skill-manifest.ts';
 import {
   indexResolverTriggers,
   lintRoutingFixtures,
@@ -120,6 +120,7 @@ export interface ResolverEntry {
   skillPath: string;       // e.g., 'skills/query/SKILL.md'
   isGStack: boolean;       // GStack: X entries (external, skip file check)
   section: string;         // e.g., 'Brain operations'
+  listRow?: boolean;       // compact list row (`- **name**: ...`), path derived from the name
 }
 
 /**
@@ -212,7 +213,7 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
       const skillPath = `skills/${skillName}/SKILL.md`;
       // Multiple entries share skillPath; checkResolvable dedupes downstream.
       for (const trigger of triggers) {
-        entries.push({ trigger, skillPath, isGStack: false, section: currentSection });
+        entries.push({ trigger, skillPath, isGStack: false, section: currentSection, listRow: true });
       }
     }
   }
@@ -298,6 +299,28 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
   return refs;
 }
 
+/**
+ * A manifest entry whose SKILL.md is gone is a missing file, not an
+ * unreachable skill (GST-3155). Pushes one missing_file error per such entry
+ * and returns their resolver-form paths (`skills/<path>`).
+ */
+function reportMissingManifestFiles(skillsDir: string, manifest: ManifestEntry[], issues: ResolvableIssue[]): Set<string> {
+  const missing = new Set<string>();
+  for (const skill of manifest) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir; manifest paths are only probed for existence
+    if (existsSync(join(skillsDir, skill.path))) continue;
+    missing.add(`skills/${skill.path}`);
+    issues.push({
+      type: 'missing_file',
+      severity: 'error',
+      skill: skill.name,
+      message: `manifest.json lists '${skill.name}' at '${skill.path}' but the file doesn't exist`,
+      action: `Restore 'skills/${skill.path}' or remove its entry from manifest.json`,
+    });
+  }
+  return missing;
+}
+
 // ---------------------------------------------------------------------------
 // Main function
 // ---------------------------------------------------------------------------
@@ -379,7 +402,8 @@ export function checkResolvable(
   // final tally, THEN construct issues. This lets the severity call factor
   // in how SPARSE trigger coverage is across the whole directory, not just
   // whether this one skill has a trigger.
-  const resolved = manifest.map(skill => {
+  const manifestMissingPaths = reportMissingManifestFiles(skillsDir, manifest, issues);
+  const resolved = manifest.filter(skill => !manifestMissingPaths.has(`skills/${skill.path}`)).map(skill => {
     const expectedPath = `skills/${skill.path}`;
     if (resolverSkillPaths.has(expectedPath)) return { skill, reachable: true };
     // Also check if the skill name appears in any resolver entry
@@ -459,11 +483,11 @@ export function checkResolvable(
     const relPath = entry.skillPath.replace(/^skills\//, '');
     const fullPath = join(skillsDir, relPath);
 
-    if (!existsSync(fullPath)) missingFiles.set(entry.skillPath, fullPath);
+    if (!existsSync(fullPath) && !manifestMissingPaths.has(entry.skillPath)) missingFiles.set(entry.skillPath, fullPath);
 
-    // Check if in manifest
+    // manifest.json stores the frontmatter name, which can differ from the folder.
     const skillName = relPath.replace(/\/SKILL\.md$/, '');
-    const inManifest = manifest.some(s => s.name === skillName);
+    const inManifest = manifest.some(s => s.path === relPath || s.name === skillName);
     if (!inManifest && existsSync(fullPath)) {
       if (entry.source === 'resolver_md') orphans.set(skillName, entry.skillPath);
       else if (!orphans.has(skillName)) orphans.set(skillName, null);

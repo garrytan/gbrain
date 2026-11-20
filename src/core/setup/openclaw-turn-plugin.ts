@@ -18,11 +18,23 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { bunSpawnSync } from '../spawn.ts';
-import { openclawStateDir, renderBrainFirstTurnRule, type BrainFirstAccess } from './brain-first.ts';
+import { openclawConfigPath, openclawStateDir, parseJson5ish, renderBrainFirstTurnRule, type BrainFirstAccess } from './brain-first.ts';
 
 export const OPENCLAW_TURN_PLUGIN_ID = 'gbrain-turn-rule';
 
-export interface OpenclawTurnPluginOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; commands?: string[] }
+export interface OpenclawTurnPluginOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; commands?: string[]; unchanged?: true }
+
+/** Whether OpenClaw's config already loads the plugin at dir, enables it, lets its plugin policy (plugins.enabled, allow, deny) load it and allows it conversation access (so no CLI call is needed). */
+export function openclawPluginRegistered(id: string, dir: string): boolean {
+  try {
+    const cfg = parseJson5ish(readFileSync(openclawConfigPath(), 'utf8')) as { plugins?: { enabled?: unknown; allow?: unknown; deny?: unknown; load?: { paths?: unknown }; entries?: Record<string, { enabled?: unknown; hooks?: { allowConversationAccess?: unknown } }> } } | undefined;
+    const plugins = cfg?.plugins;
+    const entry = plugins?.entries?.[id];
+    const paths = Array.isArray(plugins?.load?.paths) ? plugins!.load!.paths as unknown[] : [];
+    const allowed = plugins?.enabled !== false && !(Array.isArray(plugins?.deny) && plugins!.deny.includes(id)) && !(Array.isArray(plugins?.allow) && plugins!.allow.length > 0 && !plugins!.allow.includes(id));
+    return allowed && !!entry && entry.enabled !== false && entry.hooks?.allowConversationAccess === true && paths.includes(dir);
+  } catch { return false; }
+}
 
 export function openclawTurnPluginDir(): string {
   return join(openclawStateDir(), 'gbrain', OPENCLAW_TURN_PLUGIN_ID);
@@ -54,9 +66,12 @@ export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string
 
 type Run = (argv: string[]) => { ok: boolean; output: string };
 
-function defaultRun(argv: string[]): { ok: boolean; output: string } {
-  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: 120_000 });
-  return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim() };
+/** One openclaw CLI call; a call killed at its timeout ends its output with "timed out after N s", so the failure line names the stall instead of the last thing it printed. */
+export function runOpenclawCli(argv: string[], timeout = 120_000): { ok: boolean; output: string; stdout: string } {
+  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout });
+  const output = `${r.stdout.toString()}${r.stderr.toString()}`.trim();
+  return { ok: r.exitCode === 0, output: r.exitedDueToTimeout ? `${output}
+timed out after ${timeout / 1000} s`.trim() : output, stdout: r.stdout.toString() };
 }
 
 function findOpenclaw(): string | null {
@@ -119,8 +134,9 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
   } catch (e) {
     return { action: 'print', path: dir, detail: `the plugin could not be written to ${dir} (${(e as Error).message})` };
   }
+  if (!changed && openclawPluginRegistered(OPENCLAW_TURN_PLUGIN_ID, dir)) return { action: 'keep', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} (before_prompt_build) at ${dir}, already installed, enabled and allowed in OpenClaw, so no openclaw command ran`, unchanged: true };
   if (!bin) return { action: 'print', path: dir, detail: `plugin written to ${dir}; no openclaw on PATH, so run these on the OpenClaw host, then restart the gateway`, commands: commands.map(shown) };
-  const run = opts.run ?? defaultRun;
+  const run = opts.run ?? runOpenclawCli;
   for (const [i, argv] of commands.entries()) {
     const r = run(argv);
     if (!r.ok) return { action: 'print', path: dir, detail: `\`${shown(argv)}\` failed (${r.output.split('\n').at(-1) ?? 'no output'}); run the rest yourself`, commands: commands.slice(i).map(shown) };
@@ -140,7 +156,7 @@ export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; workspace?: st
   if (opts.dryRun) return { action: 'remove', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} at ${dir}` };
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
   const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force'];
-  const r = bin ? (opts.run ?? defaultRun)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
+  const r = bin ? (opts.run ?? runOpenclawCli)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
   if (!r.ok) return { action: 'print', path: dir, detail: `${dir} left in place (OpenClaw still loads it); ${r.output.split('\n').at(-1)}, so run this on the OpenClaw host, then delete ${dir}`, commands: [shown(uninstall)] };
   try {
     rmSync(dir, { recursive: true, force: true });
