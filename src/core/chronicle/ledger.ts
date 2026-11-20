@@ -153,11 +153,8 @@ export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWri
 }
 
 /** Does an extracted generation with events exist for this page (so an ineligible revision must retire it)? */
-async function hasExtractedEvents(engine: BrainEngine, sourceId: string, pageId: number): Promise<boolean> {
-  const rows = await engine.executeRaw(
-    "SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='extracted' AND cardinality(event_hashes) > 0 LIMIT 1",
-    [sourceId, pageId]);
-  return rows.length > 0;
+function hasExtractedEvents(engine: BrainEngine, sourceId: string, pageId: number): Promise<boolean> {
+  return engine.hasExtractedEvents(sourceId, pageId);
 }
 
 /** Record a skipped decision and schedule retirement of the page's earlier automatic events when it has any. */

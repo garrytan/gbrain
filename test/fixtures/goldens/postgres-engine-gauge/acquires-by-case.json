@@ -230,6 +230,8 @@
     "listFactsKeyset#strictTime": {},
     "listFactsSince#allFilters": {},
     "listFactsSince#default": {},
+    "listFiles#default": {},
+    "listFiles#page_slug": {},
     "listFilesForPage#default": {},
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},

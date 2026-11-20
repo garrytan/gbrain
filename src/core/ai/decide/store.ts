@@ -1,7 +1,9 @@
 /**
  * decide storage: receipts, the spend ledger, calibrations and internal state,
- * read and written through `engine.executeRaw` (the search/telemetry.ts and
- * query-cache.ts pattern), so no BrainEngine method and no engine facade grows.
+ * read and written through the BrainEngine decide-store members (SQL once in
+ * engine-sql/decide-store.ts, a record store on the Rust engine), so a brain that
+ * is not SQL serves them too. This file keeps the buffering, the caches and the
+ * share maths; it holds no SQL.
  *
  * Receipts and spend rows are buffered per process and flushed
  * fire-and-forget off the hot path (threshold or 5 s unref'd timer). The
@@ -12,6 +14,7 @@
  */
 import { createHmac, randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
+import type { DecideCalibration } from '../../engine-sql/decide-store.ts';
 import { engineKey } from '../../engine-key.ts';
 import { registerBackgroundWorkDrainer, type BackgroundWorkDrainMode } from '../../background-work.ts';
 import { isValidOutcome } from './outcomes.ts';
@@ -65,40 +68,6 @@ export interface SpendRow {
 const FLUSH_THRESHOLD_ROWS = 200;
 const FLUSH_INTERVAL_MS = 5_000;
 const EXIT_FLUSH_BOUND_MS = 500;
-
-const RECEIPT_COLUMNS = [
-  ['decision_id', 'text'], ['source_id', 'text'], ['slot', 'text'], ['mode', 'text'], ['provider', 'text'],
-  ['model_alias', 'text'], ['model_resolved', 'text'], ['question_kind', 'text'], ['state_hash', 'text'],
-  ['question_hash', 'text'], ['answer_value', 'real'], ['answer_choice', 'text'], ['confidence', 'real'],
-  ['threshold', 'real'], ['outcome', 'text'], ['subject_ref', 'text'], ['call_site', 'text'], ['lane', 'text'],
-  ['policy_fingerprint', 'text'], ['calibration_ref', 'text'], ['latency_ms', 'int'], ['input_tokens', 'int'],
-  ['error_reason', 'text'], ['protected', 'boolean'], ['min_keep', 'int'], ['rank', 'int'], ['k_used', 'int'],
-  ['remote', 'boolean'], ['run_meta', 'text'],
-] as const;
-
-const SPEND_COLUMNS = [
-  ['request_id', 'text'], ['source_id', 'text'], ['slot', 'text'], ['provider', 'text'], ['model_resolved', 'text'],
-  ['lane', 'text'], ['remote', 'boolean'], ['input_tokens', 'int'], ['cost_usd', 'float8'], ['outcome', 'text'],
-] as const;
-
-/**
- * Multi-row insert via unnest of one array per column (fixed param count).
- * Every column binds as text[] and casts server-side: postgres.js cannot
- * serialize boolean/number arrays for a typed array cast, PGLite can; text
- * arrays behave the same on both engines.
- */
-async function insertRows(engine: BrainEngine, table: string, columns: readonly (readonly [string, string])[], rows: readonly object[], conflict = ''): Promise<void> {
-  if (rows.length === 0) return;
-  const defaults: Record<string, unknown> = { protected: false, remote: false };
-  const params = columns.map(([name]) => rows.map((r) => {
-    const v = (r as Record<string, unknown>)[name];
-    const value = v === undefined ? (defaults[name] ?? null) : v;
-    return value === null ? null : String(value);
-  }));
-  const names = columns.map(([name]) => name).join(', ');
-  const casts = columns.map(([, type], i) => (type === 'text' ? `$${i + 1}::text[]` : `$${i + 1}::text[]::${type}[]`)).join(', ');
-  await engine.executeRaw(`INSERT INTO ${table} (${names}) SELECT * FROM unnest(${casts}) ${conflict}`, params);
-}
 
 class BufferedWriter<T extends object> {
   private rows: T[] = [];
@@ -154,8 +123,8 @@ class BufferedWriter<T extends object> {
   }
 }
 
-const receipts = new BufferedWriter<ReceiptRow>((engine, rows) => insertRows(engine, 'decision_receipts', RECEIPT_COLUMNS, rows));
-const spend = new BufferedWriter<SpendRow>((engine, rows) => insertRows(engine, 'decide_spend', SPEND_COLUMNS, rows, 'ON CONFLICT (request_id) DO NOTHING'));
+const receipts = new BufferedWriter<ReceiptRow>((engine, rows) => engine.insertDecideReceipts(rows));
+const spend = new BufferedWriter<SpendRow>((engine, rows) => engine.insertDecideSpend(rows));
 
 /** Buffer receipts. Throws on an outcome outside the canonical vocabulary (a code bug, caught by tests). */
 export function recordReceipts(engine: BrainEngine, rows: readonly ReceiptRow[]): void {
@@ -204,21 +173,16 @@ export function __resetDecideStoreForTests(): void {
 // (get/list/snapshot/MCP/export) can print it.
 // ---------------------------------------------------------------------------
 
-export async function getDecideState(engine: BrainEngine, key: string): Promise<string | null> {
-  const rows = await engine.executeRaw<{ value: string }>('SELECT value FROM decide_state WHERE key = $1', [key]);
-  return rows[0]?.value ?? null;
+export function getDecideState(engine: BrainEngine, key: string): Promise<string | null> {
+  return engine.readDecideState(key);
 }
 
-export async function setDecideState(engine: BrainEngine, key: string, value: string): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO decide_state (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [key, value],
-  );
+export function setDecideState(engine: BrainEngine, key: string, value: string): Promise<void> {
+  return engine.upsertDecideState(key, value);
 }
 
-export async function deleteDecideState(engine: BrainEngine, key: string): Promise<void> {
-  await engine.executeRaw('DELETE FROM decide_state WHERE key = $1', [key]);
+export function deleteDecideState(engine: BrainEngine, key: string): Promise<void> {
+  return engine.deleteDecideState(key);
 }
 
 const SALT_KEY = 'receipt_hmac_salt';
@@ -229,8 +193,7 @@ export function receiptSalt(engine: BrainEngine): Promise<string> {
   let cached = saltCache.get(engine);
   if (!cached) {
     cached = (async () => {
-      await engine.executeRaw('INSERT INTO decide_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [SALT_KEY, randomBytes(32).toString('hex')]);
-      const value = await getDecideState(engine, SALT_KEY);
+      const value = await engine.ensureDecideState(SALT_KEY, randomBytes(32).toString('hex'));
       if (!value) throw new Error('decide: receipt salt unavailable');
       return value;
     })();
@@ -271,12 +234,8 @@ export async function dailySpend(engine: BrainEngine, now = Date.now()): Promise
   const day = utcDay(now);
   const cached = spendCache.get(engineKey(engine));
   if (cached && cached.day === day && now - cached.at < SPEND_CACHE_MS) return { total: cached.total, remote: cached.remote };
-  const rows = await engine.executeRaw<{ total: number | string | null; remote: number | string | null }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total, COALESCE(SUM(CASE WHEN remote THEN cost_usd ELSE 0 END), 0) AS remote
-       FROM decide_spend WHERE created_at >= $1::timestamptz AND provider LIKE 'typesafe:%'`,
-    [`${day}T00:00:00Z`],
-  );
-  const entry = { day, at: now, total: Number(rows[0]?.total ?? 0), remote: Number(rows[0]?.remote ?? 0) };
+  const sums = await engine.dailyDecideSpend(new Date(`${day}T00:00:00Z`));
+  const entry = { day, at: now, total: sums.total, remote: sums.remote };
   spendCache.set(engineKey(engine), entry);
   return { total: entry.total, remote: entry.remote };
 }
@@ -315,65 +274,37 @@ export interface CalibrationRow {
 
 export type NewCalibration = Omit<CalibrationRow, 'id' | 'created_at' | 'retired_at' | 'qualified_at' | 'qualification' | 'action_precision_lb' | 'policy_fingerprint'>;
 
-const toNum = (v: unknown): number | null => v === null || v === undefined ? null : Number(v);
-const toTime = (v: unknown): string | null => v === null || v === undefined ? null : v instanceof Date ? v.toISOString() : String(v);
+const isoOrNull = (d: Date | null): string | null => (d === null ? null : d.toISOString());
 
-function normalizeCalibration(r: Record<string, unknown>): CalibrationRow {
+function normalizeCalibration(r: DecideCalibration): CalibrationRow {
   return {
-    ...(r as unknown as CalibrationRow),
-    id: Number(r.id),
-    threshold: Number(r.threshold),
-    min_keep: toNum(r.min_keep),
-    metric_value: toNum(r.metric_value),
-    ece: toNum(r.ece),
-    retest_sd: toNum(r.retest_sd),
-    repack_sd: toNum(r.repack_sd),
-    action_precision_lb: toNum(r.action_precision_lb),
-    n: Number(r.n),
-    calibrate_only: r.calibrate_only === true || r.calibrate_only === 't',
-    created_at: toTime(r.created_at)!,
-    retired_at: toTime(r.retired_at),
-    qualified_at: toTime(r.qualified_at),
+    ...r,
+    slot: r.slot as DecideSlot,
+    created_at: r.created_at.toISOString(),
+    retired_at: isoOrNull(r.retired_at),
+    qualified_at: isoOrNull(r.qualified_at),
   };
 }
 
-export async function insertCalibration(engine: BrainEngine, c: NewCalibration): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number | string }>(
-    `INSERT INTO decide_calibrations (slot, call_site, provider, model_resolved, threshold, min_keep, metric, metric_value, ece,
-       retest_sd, repack_sd, n, dataset_hash, split_hash, calibrate_ids_hash, calibrate_only, pack_shape, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
-    [c.slot, c.call_site, c.provider, c.model_resolved, c.threshold, c.min_keep, c.metric, c.metric_value, c.ece,
-      c.retest_sd, c.repack_sd, c.n, c.dataset_hash, c.split_hash, c.calibrate_ids_hash, c.calibrate_only, c.pack_shape, c.notes],
-  );
-  return Number(rows[0]!.id);
+export function insertCalibration(engine: BrainEngine, c: NewCalibration): Promise<number> {
+  return engine.insertDecideCalibration(c);
 }
 
-export async function storeQualification(engine: BrainEngine, id: number, q: { action_precision_lb: number | null; qualification: string; policy_fingerprint: string }): Promise<void> {
-  await engine.executeRaw(
-    'UPDATE decide_calibrations SET action_precision_lb = $2, qualification = $3, policy_fingerprint = $4, qualified_at = now() WHERE id = $1',
-    [id, q.action_precision_lb, q.qualification, q.policy_fingerprint],
-  );
+export function storeQualification(engine: BrainEngine, id: number, q: { action_precision_lb: number | null; qualification: string; policy_fingerprint: string }): Promise<void> {
+  return engine.storeDecideQualification(id, q);
 }
 
 export async function listCalibrations(engine: BrainEngine, filter: { slot?: DecideSlot; includeRetired?: boolean } = {}): Promise<CalibrationRow[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM decide_calibrations
-      WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
-    [filter.slot ?? null, filter.includeRetired ?? false],
-  );
-  return rows.map(normalizeCalibration);
+  return (await engine.listDecideCalibrations(filter)).map(normalizeCalibration);
 }
 
 export async function getCalibration(engine: BrainEngine, id: number): Promise<CalibrationRow | null> {
-  const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM decide_calibrations WHERE id = $1', [id]);
-  return rows[0] ? normalizeCalibration(rows[0]) : null;
+  const row = await engine.getDecideCalibration(id);
+  return row ? normalizeCalibration(row) : null;
 }
 
-export async function setCalibrationRetired(engine: BrainEngine, id: number, retired: boolean): Promise<boolean> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE decide_calibrations SET retired_at = ${retired ? 'now()' : 'NULL'} WHERE id = $1 RETURNING id`, [id]);
-  return rows.length > 0;
+export function setCalibrationRetired(engine: BrainEngine, id: number, retired: boolean): Promise<boolean> {
+  return engine.setDecideCalibrationRetired(id, retired);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,50 +323,20 @@ export interface ReceiptStats {
   input_tokens: number;
 }
 
-export async function receiptStats(engine: BrainEngine, opts: { slot?: DecideSlot; sinceHours: number }): Promise<ReceiptStats[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, mode, outcome, error_reason, COUNT(*)::int AS n, AVG(answer_value)::float8 AS avg_value,
-            percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p50_latency,
-            percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p95_latency,
-            COALESCE(SUM(input_tokens), 0)::int AS input_tokens
-       FROM decision_receipts
-      WHERE created_at >= now() - ($1::int * interval '1 hour') AND ($2::text IS NULL OR slot = $2)
-      GROUP BY slot, mode, outcome, error_reason ORDER BY slot, mode, outcome, error_reason`,
-    [opts.sinceHours, opts.slot ?? null],
-  );
-  return rows.map((r) => ({
-    slot: String(r.slot), mode: String(r.mode), outcome: String(r.outcome), error_reason: r.error_reason === null ? null : String(r.error_reason),
-    n: Number(r.n), avg_value: toNum(r.avg_value), p50_latency: toNum(r.p50_latency), p95_latency: toNum(r.p95_latency), input_tokens: Number(r.input_tokens),
-  }));
+export function receiptStats(engine: BrainEngine, opts: { slot?: DecideSlot; sinceHours: number }): Promise<ReceiptStats[]> {
+  return engine.listDecideReceiptStats(opts);
 }
 
 export interface SlotUsage { slot: string; decisions: number; rows: number; input_tokens: number; errors: number; skipped: number; egress: number }
 
 /** Per-slot decision counts, tokens, errors and egress refusals over the window (status, doctor, cost estimates). */
-export async function slotUsage(engine: BrainEngine, sinceHours = 24): Promise<SlotUsage[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, COUNT(DISTINCT decision_id)::int AS decisions, COUNT(*)::int AS rows,
-            COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-            SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END)::int AS errors,
-            SUM(CASE WHEN outcome = 'skipped' THEN 1 ELSE 0 END)::int AS skipped,
-            SUM(CASE WHEN error_reason LIKE 'egress%' OR error_reason IN ('denied_source','missing_provenance') THEN 1 ELSE 0 END)::int AS egress
-       FROM decision_receipts WHERE created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot ORDER BY slot`,
-    [sinceHours],
-  );
-  return rows.map((r) => ({ slot: String(r.slot), decisions: Number(r.decisions), rows: Number(r.rows), input_tokens: Number(r.input_tokens), errors: Number(r.errors), skipped: Number(r.skipped), egress: Number(r.egress) }));
+export function slotUsage(engine: BrainEngine, sinceHours = 24): Promise<SlotUsage[]> {
+  return engine.decideSlotUsage(sinceHours);
 }
 
 /** Conflict receipts in the window and how many were fact-level `no_entity` skips (facts the sweep cannot judge). */
 export async function conflictNoEntityShare(engine: BrainEngine, sinceHours = 24 * 7): Promise<{ skipped: number; receipts: number; share: number }> {
-  const [row] = await engine.executeRaw<{ receipts: number | string; skipped: number | string }>(
-    `SELECT COUNT(*)::int AS receipts,
-            COUNT(*) FILTER (WHERE outcome = 'skipped' AND error_reason = 'no_entity')::int AS skipped
-       FROM decision_receipts WHERE slot = 'conflict' AND created_at >= now() - ($1::int * interval '1 hour')`,
-    [sinceHours],
-  );
-  const receipts = Number(row?.receipts ?? 0);
-  const skipped = Number(row?.skipped ?? 0);
+  const { receipts, skipped } = await engine.decideConflictNoEntityCounts(sinceHours);
   return { skipped, receipts, share: receipts > 0 ? Number((skipped / receipts).toFixed(4)) : 0 };
 }
 
@@ -448,50 +349,24 @@ export interface ReplayReceipt {
   outcome: string;
 }
 
-export async function replayReceipts(engine: BrainEngine, slot: DecideSlot, sinceHours: number): Promise<ReplayReceipt[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT decision_id, answer_value, protected, rank, min_keep, outcome FROM decision_receipts
-      WHERE slot = $1 AND created_at >= now() - ($2::int * interval '1 hour') AND outcome IN ('kept','pruned','margin_hold','pass','reject','quarantine','insufficient_context')
-      ORDER BY decision_id, rank`,
-    [slot, sinceHours],
-  );
-  return rows.map((r) => ({
-    decision_id: String(r.decision_id), answer_value: toNum(r.answer_value), protected: r.protected === true || r.protected === 't',
-    rank: toNum(r.rank), min_keep: toNum(r.min_keep), outcome: String(r.outcome),
-  }));
+export function replayReceipts(engine: BrainEngine, slot: DecideSlot, sinceHours: number): Promise<ReplayReceipt[]> {
+  return engine.listDecideReplayReceipts(slot, sinceHours);
 }
 
 /** Most recent resolved model per (slot) over the window, for alias calibration lookup and drift. */
 export async function recentResolvedModels(engine: BrainEngine, sinceHours = 24): Promise<Array<{ slot: string; provider: string; model_resolved: string; n: number; last_at: string }>> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, provider, model_resolved, COUNT(*)::int AS n, MAX(created_at) AS last_at FROM decision_receipts
-      WHERE model_resolved IS NOT NULL AND created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot, provider, model_resolved ORDER BY MAX(created_at) DESC`,
-    [sinceHours],
-  );
-  return rows.map((r) => ({ slot: String(r.slot), provider: String(r.provider), model_resolved: String(r.model_resolved), n: Number(r.n), last_at: toTime(r.last_at)! }));
+  const rows = await engine.listDecideResolvedModels(sinceHours);
+  return rows.map((r) => ({ ...r, last_at: r.last_at.toISOString() }));
 }
 
 /** Decisions whose rows carried more than one resolved model (alias rollout), per slot. */
-export async function mixedModelDecisions(engine: BrainEngine, sinceHours = 24): Promise<Array<{ slot: string; n: number }>> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, COUNT(*)::int AS n FROM decision_receipts
-      WHERE created_at >= now() - ($1::int * interval '1 hour') AND error_reason = 'mixed_model'
-      GROUP BY slot`,
-    [sinceHours],
-  );
-  return rows.map((r) => ({ slot: String(r.slot), n: Number(r.n) }));
+export function mixedModelDecisions(engine: BrainEngine, sinceHours = 24): Promise<Array<{ slot: string; n: number }>> {
+  return engine.listDecideMixedModelDecisions(sinceHours);
 }
 
 /** Delete receipts older than the retention window (proposals are never pruned). */
-export async function pruneReceipts(engine: BrainEngine, retentionDays: number): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number | string }>(
-    `WITH gone AS (DELETE FROM decision_receipts WHERE created_at < now() - ($1::int * interval '1 day') RETURNING 1)
-     SELECT COUNT(*)::int AS n FROM gone`,
-    [retentionDays],
-  );
-  await engine.executeRaw(`DELETE FROM decide_spend WHERE created_at < now() - ($1::int * interval '1 day')`, [Math.max(retentionDays, 31)]);
-  return Number(rows[0]?.n ?? 0);
+export function pruneReceipts(engine: BrainEngine, retentionDays: number): Promise<number> {
+  return engine.pruneDecideReceipts(retentionDays);
 }
 
 /** Cycle purge hook: prune receipts past decide.receipts.retention_days (default 7). */

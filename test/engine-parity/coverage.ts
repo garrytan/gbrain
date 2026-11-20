@@ -68,7 +68,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'getUnverifiedExtractionPageIds', 'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages'],
   tags: ['addTag', 'removeTag', 'getTags', 'pruneFrontmatterTags', 'addPageTagsById'],
   timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
-    'getLastSeen', 'upsertEventProjection'],
+    'getLastSeen', 'upsertEventProjection',
+    'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered', 'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates', 'storedTimelineRowsByPageIds'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles'],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
@@ -103,6 +104,29 @@ export const FAMILIES: Record<string, readonly string[]> = {
   large_page: ['readStoredBodyBytes', 'readPageBodySizes'],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
   field_usage: ['readFieldUsageSamples'],
+  // the decide proposal tables (engine-sql/decide-proposals.ts)
+  decide_proposals: [
+    'applyDecideReviewQueue', 'applyDecideSweepDeferred', 'getDecideProposal', 'getDecideReviewProposal',
+    'insertDecideProposal', 'insertDecideReviewProposal', 'listDecideProposalIds', 'listDecideProposals',
+    'listDecideProposedPairs', 'listDecideReviewProposalIds', 'listDecideReviewProposals', 'listDueDecideReviewQueue',
+    'listDueDecideSweepDeferred', 'readProposalReviewRates', 'transitionDecideProposal', 'transitionDecideReviewProposal'],
+  // the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
+  decide_store: [
+    'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage', 'deleteDecideState', 'ensureDecideState',
+    'getDecideCalibration', 'insertDecideCalibration', 'insertDecideReceipts', 'insertDecideSpend',
+    'listDecideCalibrations', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideReplayReceipts',
+    'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
+    'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState'],
+  // open_loops: the loop upsert, list and close statements (engine-sql/open-loops.ts)
+  open_loops: [
+    'closeOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop'],
+  // write_misc: the small write-side reads (engine-sql/write-misc.ts)
+  write_misc: [
+    'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
+    'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
+    'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
+    'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
+    'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent'],
   owner_only: ['ownerOnlyMarkTriggers'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
 };

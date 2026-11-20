@@ -138,6 +138,29 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
   // GST-3032 owner-only delete triggers (src/core/engine-sql/owner-only-marks.ts; covered by test/owner-only-removal-lineage.test.ts)
   'ownerOnlyMarkTriggers',
+  // Decide proposal tables (src/core/engine-sql/decide-proposals.ts; covered by test/engine-parity/decide-proposals.test.ts)
+  'applyDecideReviewQueue', 'applyDecideSweepDeferred', 'getDecideProposal', 'getDecideReviewProposal',
+  'insertDecideProposal', 'insertDecideReviewProposal', 'listDecideProposalIds', 'listDecideProposals',
+  'listDecideProposedPairs', 'listDecideReviewProposalIds', 'listDecideReviewProposals', 'listDueDecideReviewQueue',
+  'listDueDecideSweepDeferred', 'readProposalReviewRates', 'transitionDecideProposal', 'transitionDecideReviewProposal',
+  // Decide state, spend, receipts and calibrations (src/core/engine-sql/decide-store.ts; covered by test/engine-parity/decide-store.test.ts)
+  'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage', 'deleteDecideState', 'ensureDecideState',
+  'getDecideCalibration', 'insertDecideCalibration', 'insertDecideReceipts', 'insertDecideSpend',
+  'listDecideCalibrations', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideReplayReceipts',
+  'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
+  'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState',
+  // Open loops (src/core/engine-sql/open-loops.ts; covered by test/engine-parity/open-loops.test.ts)
+  'closeOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop',
+  // Timeline reads (src/core/engine-sql/timeline-reads.ts; covered by test/engine-parity/timeline-reads.test.ts)
+  'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered',
+  'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates',
+  'storedTimelineRowsByPageIds',
+  // Small write-side reads (src/core/engine-sql/write-misc.ts; pinned by test/write-misc-sql-pin.test.ts)
+  'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
+  'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
+  'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
+  'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
+  'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent',
 ];
 
 /**
@@ -166,6 +189,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'connectWithHeldLock',
   // #9227: whether this engine holds the datastore lock; the PGLite abandoned-claim release rests on it.
   'holdsDatastoreLock',
+  // The unscoped engine-sql executors the timeline reads and the write-side reads run through.
+  'timelineRead', 'writeMiscReads',
 ];
 
 /**
