@@ -99,8 +99,8 @@ async function pendingSlugs(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: s
       SELECT p.slug FROM pages p WHERE p.source_id = $1
       UNION SELECT f.entity_slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.expired_at IS NULL AND f.entity_slug IS NOT NULL
       UNION SELECT f.source_markdown_slug FROM facts f WHERE f.source_id = $1 AND f.dimension IS NOT NULL AND f.row_num IS NULL AND f.expired_at IS NULL AND f.source_markdown_slug IS NOT NULL
-    ) s WHERE s.slug > $3 AND NOT (s.slug = ANY($4::text[])) AND NOT EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = $1 AND e.slug = s.slug AND e.event_type = 'baseline' AND e.cause->>'run' = $2)
-    ORDER BY s.slug LIMIT ${BASELINE_BATCH}`, [sourceId, runId, after, skip]);
+    ) s WHERE s.slug COLLATE "C" > $3 AND NOT (s.slug = ANY($4::text[])) AND NOT EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = $1 AND e.slug = s.slug AND e.event_type = 'baseline' AND e.cause->>'run' = $2)
+    ORDER BY s.slug COLLATE "C" LIMIT ${BASELINE_BATCH}`, [sourceId, runId, after, skip]);
   return rows.map(r => r.slug);
 }
 

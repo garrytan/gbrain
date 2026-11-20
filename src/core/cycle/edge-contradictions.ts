@@ -219,7 +219,7 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
          AND (${pendingCutoff}::timestamptz IS NULL OR f.links_extracted_at >= ${pendingCutoff}::timestamptz)
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-      ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`);
+      ORDER BY l.from_page_id, l.link_type COLLATE "C", l.last_start NULLS FIRST, t.slug COLLATE "C"`);
   const rows = await engine.executeRaw<CandidateRow>(sql.text, sql.params);
   const groups = new Map<string, SubjectGroup>();
   for (const r of rows) {

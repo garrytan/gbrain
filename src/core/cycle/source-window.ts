@@ -57,8 +57,8 @@ export async function listSourceChangedPages(engine: BrainEngine, sourceId: stri
   const limit = sourceWindow.pageLimit;
   const rows = await engine.executeRaw<{ slug: string; updated_at: string }>(
     `SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at FROM pages
-      WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug) > ($2::text::timestamptz, $3::text))
-      ORDER BY updated_at, slug LIMIT $4`,
+      WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug COLLATE "C") > ($2::text::timestamptz, $3::text))
+      ORDER BY updated_at, slug COLLATE "C" LIMIT $4`,
     [sourceId, since, slug, limit + 1]);
   const window = { since: { at: since, slug }, slugs: rows.slice(0, limit).map(row => row.slug) };
   if (!at) return { ...window, next: undefined };

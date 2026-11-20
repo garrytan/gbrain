@@ -785,8 +785,8 @@ export async function runPhantomRedirectPass(
          AND deleted_at IS NULL
          AND slug NOT LIKE '%/%'
          AND slug <> ALL($3::text[])
-         AND slug > $4
-       ORDER BY slug ASC
+         AND slug COLLATE "C" > $4
+       ORDER BY slug COLLATE "C" ASC
        LIMIT $2`,
       [sourceId, limit + 1, held, after],
     );

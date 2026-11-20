@@ -99,7 +99,7 @@ export async function dedupePatternClaimSources(engine: BrainEngine, maintenance
       WHERE source_id = $1 AND slug LIKE $2 AND deleted_at IS NULL AND jsonb_typeof(frontmatter->'${CLAIMS_KEY}') = 'array'
         AND EXISTS (SELECT 1 FROM jsonb_array_elements(frontmatter->'${CLAIMS_KEY}') AS c
                      WHERE jsonb_typeof(c.value->'sources') = 'array' AND jsonb_array_length(c.value->'sources') > 1)
-      ORDER BY slug`,
+      ORDER BY slug COLLATE "C"`,
     [sourceId, `${outputSlugPrefix}/%`]);
   const rewritten: string[] = [];
   const held: string[] = [];
