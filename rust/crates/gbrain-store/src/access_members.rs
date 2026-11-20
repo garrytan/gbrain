@@ -36,7 +36,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MEMBER: u8 = 0x01;
 const GROUP: u8 = 0x02;
@@ -112,12 +112,13 @@ pub struct AccessMemberInsert {
     pub groups: Vec<String>,
 }
 
-/// `readAccessMembers(lookup)`: one member by exact id (any status), or every member, removed ones
-/// only with `includeRemoved`.
+/// `readAccessMembers(lookup)`: one member by exact id (any status); every member that declares
+/// exactly `email` (any status), by id; or every member, removed ones only with `includeRemoved`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AccessMemberLookup {
     pub id: Option<String>,
+    pub email: Option<String>,
     pub include_removed: bool,
 }
 
@@ -468,9 +469,15 @@ impl Store {
         for (group, member) in all_group_members(&*read)? {
             groups.entry(member).or_default().push(group);
         }
-        let members = match &lookup.id {
-            Some(id) => read_member(&*read, id)?.into_iter().collect(),
-            None => all_members(&*read)?
+        // By email every match is listed, as `ACCESS_MEMBER_SQL.by_email` does: the caller refuses an
+        // email several members declare, so the lookup never picks one of them.
+        let members = match (&lookup.id, &lookup.email) {
+            (Some(id), _) => read_member(&*read, id)?.into_iter().collect(),
+            (None, Some(email)) => all_members(&*read)?
+                .into_iter()
+                .filter(|m| m.email.as_deref() == Some(email.as_str()))
+                .collect::<Vec<_>>(),
+            (None, None) => all_members(&*read)?
                 .into_iter()
                 .filter(|m| lookup.include_removed || m.tombstoned_at_us.is_none())
                 .collect::<Vec<_>>(),
@@ -486,6 +493,18 @@ impl Store {
         Ok(Value::Array(rows))
     }
 
+    /// `readAccessGroupIds(ids)`: which of `ids` name an existing group, each once, in byte order.
+    pub fn read_access_group_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut found = BTreeSet::new();
+        for id in ids {
+            if !id.contains('\0') && read.get(&group_key(id))?.is_some() {
+                found.insert(id.clone());
+            }
+        }
+        Ok(found.into_iter().collect())
+    }
+
     /// `readAccessMemberIdByEmail(email)`: the id of the member that declares `email`, or null.
     pub fn read_access_member_id_by_email(&self, email: &str) -> Result<Option<String>> {
         email_owner(&*self.read()?, email, "")
@@ -498,5 +517,59 @@ impl Store {
             .filter(|m| m.disabled_at_us.is_none() && m.tombstoned_at_us.is_none())
             .map(|m| m.id)
             .collect())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::store;
+
+    fn plant(store: &Store, id: &str, email: &str) {
+        // The email index refuses a second declaring member, so the record is written past it, as a
+        // row a pre-index brain could hold.
+        store
+            .write(|tx| {
+                put_json(
+                    tx,
+                    &member_key(id),
+                    &MemberRecord {
+                        id: id.into(),
+                        display_name: None,
+                        email: Some(email.into()),
+                        kind: "person".into(),
+                        labelled_only: false,
+                        disabled_at_us: None,
+                        tombstoned_at_us: None,
+                        created_at_us: 1,
+                        updated_at_us: 1,
+                    },
+                )
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn read_access_members_by_email_lists_every_member_that_declares_it() {
+        let store = store();
+        plant(&store, "bob", "shared@example.test");
+        plant(&store, "alice", "shared@example.test");
+        plant(&store, "carol", "other@example.test");
+        let lookup = AccessMemberLookup {
+            email: Some("shared@example.test".into()),
+            ..Default::default()
+        };
+        let rows = store.read_access_members(&lookup).unwrap();
+        let ids: Vec<&str> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["alice", "bob"]);
+        let none = AccessMemberLookup {
+            email: Some("Shared@example.test".into()),
+            ..Default::default()
+        };
+        assert_eq!(store.read_access_members(&none).unwrap(), json!([]));
     }
 }

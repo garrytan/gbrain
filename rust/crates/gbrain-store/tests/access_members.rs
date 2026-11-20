@@ -19,6 +19,7 @@ fn add(store: &Store, id: &str, email: Option<&str>, groups: &[&str]) -> Value {
 fn rows(store: &Store, include_removed: bool) -> Vec<Value> {
     let lookup = AccessMemberLookup {
         id: None,
+        email: None,
         include_removed,
     };
     store
@@ -32,6 +33,7 @@ fn rows(store: &Store, include_removed: bool) -> Vec<Value> {
 fn one(store: &Store, id: &str) -> Value {
     let lookup = AccessMemberLookup {
         id: Some(id.into()),
+        email: None,
         include_removed: false,
     };
     store.read_access_members(&lookup).unwrap()[0].clone()
@@ -261,4 +263,23 @@ fn group_writes_add_remove_and_cascade() {
     assert_eq!(one(&store, "bob-example")["groups"], json!([]));
     // The group is gone, so adding to it creates it again.
     assert!(store.add_access_group_members("team-a", &[]).unwrap());
+}
+
+#[test]
+fn group_ids_name_the_groups_that_exist_once_each_in_byte_order() {
+    let dir = TempDir::new("access-members");
+    let store = open(&dir);
+    add(&store, "alice-example", None, &["team-b", "team-a"]);
+    let ask = |ids: &[&str]| {
+        let ids: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+        store.read_access_group_ids(&ids).unwrap()
+    };
+    // A member id is not a group, a missing group is not named, and a repeated id is named once.
+    assert_eq!(
+        ask(&["team-b", "alice-example", "team-z", "team-a", "team-b"]),
+        ["team-a", "team-b"]
+    );
+    assert!(ask(&[]).is_empty());
+    store.delete_access_group("team-a").unwrap();
+    assert_eq!(ask(&["team-a", "team-b"]), ["team-b"]);
 }

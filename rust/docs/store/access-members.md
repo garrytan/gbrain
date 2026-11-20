@@ -30,8 +30,12 @@ there is no reverse index.
 | `removeAccessGroupMembers(groupId, memberIds)` | null | `DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2` per member |
 | `deleteAccessGroup(id)` | null | `DELETE FROM access_groups WHERE id = $1`; its group members go with it (`ON DELETE CASCADE`) |
 | `readAccessMemberIdByEmail(email)` | the member id, or null | `SELECT id FROM access_members WHERE email = $1` |
-| `readAccessMembers({ id } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
+| `readAccessMembers({ id } \| { email } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted; by email, every member that declares exactly it, removed or not, by id (the caller refuses an email several members declare) | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
+| `readAccessGroupIds(ids)` | the ids that name an existing group, each once, in byte order | `engine-sql/access-control.ts` `AUDIENCE_GROUPS_SQL` (`SELECT id FROM access_groups WHERE id = ANY($1)`) |
 | `listActiveAccessMembers()` | the member ids neither disabled nor removed, by id | `engine-sql/write-misc.ts` |
+| `listAudienceAccessMembers()` | the ids of the enabled, untombstoned members of kind `audience`, by id (read through `readAccessMembers`) | `engine-sql/access-control.ts` `AUDIENCE_KIND_MEMBERS_SQL` |
+| `readAudiencePrincipals(memberIds, groupIds)` | the enabled, untombstoned members among `memberIds`, each with its groups, and the existing groups among `groupIds` (`readAccessMembers` and `readAccessGroupIds`); an empty list reads nothing | `engine-sql/access-control.ts` `AUDIENCE_MEMBERS_SQL`, `AUDIENCE_GROUPS_SQL` |
+| `readLiveMember(via, key)` | the enabled, untombstoned member the id (`member`) or the edge-trimmed config value (`stdio_config`) names, with its groups, or null; a token or a client names no member here (the store keeps no binding of either), so `legacy_token` and `oauth_client` answer null | `engine-sql/access-control.ts` `LIVE_MEMBER_SQL` |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction
 does.

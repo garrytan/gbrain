@@ -108,7 +108,7 @@ impl Brain {
         self.run(env, move |s| s.delete_access_group(&id))
     }
 
-    /// `readAccessMembers({ id? , includeRemoved? })`: `AccessMemberRow[]`.
+    /// `readAccessMembers({ id } | { email } | { includeRemoved })`: `AccessMemberRow[]`.
     #[napi]
     pub fn read_access_members<'env>(
         &self,
@@ -120,6 +120,16 @@ impl Brain {
                 required(lookup, "readAccessMembers lookup")?;
             s.read_access_members(&lookup)
         })
+    }
+
+    /// `readAccessGroupIds(ids)`: the ids that name an existing group, in byte order.
+    #[napi]
+    pub fn read_access_group_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_group_ids(&ids))
     }
 
     /// `readAccessMemberIdByEmail(email)`: the member id, or null.

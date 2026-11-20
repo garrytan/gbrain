@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath and getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember and listPagesNamingReader; SQL in engine-sql/access-control.ts). The source read, the path attach and the pages naming a reader are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAccessCredentials and listPagesNamingReader; SQL in engine-sql/access-control.ts; the member reads are in access-members.ts). The source read, the path attach and the pages naming a reader are served by
  * gbrain-store `write_misc`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, PageNamingReaderRow, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AppliedPolicyRevision, FolderAccessRows, PageNamingReaderRow, MayActForVia } from '../../engine-sql/access-control.ts';
 import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -72,10 +72,7 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
  */
 export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [];
 
-/** The store keeps no access members, so none is active. */
-export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
-
-/** The store keeps no access members, so none carries the labelled-only grant and a write skips the labelled-only checks. */
+/** No store write sets a member's labelled-only grant, so none carries it and a write skips the labelled-only checks. */
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
@@ -132,26 +129,8 @@ export const readMemoryProposal: StoreMember<[principalKind: string, principalId
 /** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
 export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;
 
-/**
- * The store keeps no access members and no groups (see listActiveAccessMembers), so no audience entry names an enabled
- * member or an existing group: each reads as unknown, as on a brain with none.
- */
-export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], groupIds: readonly string[]], AudiencePrincipalRows> = async () => ({ members: [], groups: [] });
-
-/** The store keeps no access members (see listActiveAccessMembers), so no id names a member and the list is empty. */
-export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async () => [];
-
 /** The store keeps no access tokens and no OAuth clients (see readMayActFor), so no name or member binding names a live credential. */
 export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
-
-/** The store keeps no access members (see listActiveAccessMembers), so no member is of kind audience. */
-export const listAudienceAccessMembers: StoreMember<[], string[]> = async () => [];
-
-/**
- * The store keeps no access members (see listActiveAccessMembers), so no id, config key, token or client names a live
- * member: the identity is empty, as for an unbound caller on a brain with none.
- */
-export const readLiveMember: StoreMember<[via: LiveMemberVia, key: string], LiveMemberRow | null> = async () => null;
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so none is pending: count 0, no oldest age. */
 export const readPendingProposalSummary: StoreMember<[], PendingProposalRow | null> = async () => ({ n: 0, oldest: null });
