@@ -364,14 +364,16 @@ fn member_access_allows(
     derived: bool,
     owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
-    // `satisfiedFor(identity)`: the record's folder access holds for the record's own identity.
-    let folders = if !identity.is_empty() && identity == policy.identity.as_slice() {
-        FolderAccess {
-            satisfied: &policy.satisfied_rule_ids,
-            coverage: &policy.folder_coverage,
-        }
+    // `satisfiedFor(identity)`: the record's satisfied rules hold for the record's own identity.
+    // Its folder coverage (`coverageSql`) holds for every identity, the empty one too.
+    let satisfied: &[String] = if !identity.is_empty() && identity == policy.identity.as_slice() {
+        &policy.satisfied_rule_ids
     } else {
-        FolderAccess::default()
+        &[]
+    };
+    let folders = FolderAccess {
+        satisfied,
+        coverage: &policy.folder_coverage,
     };
     Ok(
         readers_allowed(read, page, identity, folders, policy.open, derived)?
@@ -909,6 +911,38 @@ mod tests {
         assert!(!origin_closed(&*read, &raw).unwrap());
         assert!(origin_closed(&*read, &queued).unwrap());
         assert!(!origin_closed(&*read, &open_page).unwrap());
+    }
+
+    /// `coverageSql` reads the record's coverage whatever identity the page is judged by: a page
+    /// under a covered prefix, or in a wholly covered source, is hidden from the empty identity too.
+    #[test]
+    fn the_record_coverage_hides_a_page_from_the_empty_identity_too() {
+        let store = store();
+        let note = put(&store, "notes/n");
+        let wiki = put(&store, "wiki/w");
+        let read = store.read().unwrap();
+        let policy = |prefix: &str| PrivacyPolicy {
+            folder_coverage: vec![FolderCoverage {
+                source_id: "default".into(),
+                prefix: prefix.into(),
+            }],
+            owner_only: OwnerOnlyForm::Off,
+            ..PrivacyPolicy::default()
+        };
+        assert!(page_hidden(&*read, &note, &policy("notes/")).unwrap());
+        assert!(!page_hidden(&*read, &wiki, &policy("notes/")).unwrap());
+        assert!(page_hidden(&*read, &wiki, &policy("")).unwrap());
+        assert!(
+            !page_hidden(
+                &*read,
+                &note,
+                &PrivacyPolicy {
+                    owner_only: OwnerOnlyForm::Off,
+                    ..PrivacyPolicy::default()
+                }
+            )
+            .unwrap()
+        );
     }
 
     #[test]

@@ -87,7 +87,8 @@ caller reads:
   the caller's satisfied rule ids (`satisfiedRuleIds`, `source:rule_id`) and its record's coverage (`folderCoverage`).
   A stamped page passes the full form only when the caller satisfies every rule that covers it and no coverage entry
   covers it; the unrestricted short form passes no stamped page. The satisfied rules count only for the caller's own
-  identity, never for the empty identity that judges a provenance page;
+  identity, never for the empty identity that judges a provenance page. The coverage counts for every identity, the
+  empty one too, as `coverageSql` reads it from the record and not from the identity;
 - a page under a pending prefix is hidden in the full form, as the coverage conjuncts of `folderRulesAllowedSql` hide
   it;
 - as a fact's origin or a derivative's input, a rule stored with `covers_derived: false` does not count
