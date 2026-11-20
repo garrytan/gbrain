@@ -50,14 +50,14 @@ export interface WithdrawalDiscoveryRows {
 
 export type WithdrawalDiscoveryKind = WithdrawalDiscoveryRead['kind'];
 
-const SAMPLE_SLUGS_SQL = `SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug LIMIT 20`;
+const SAMPLE_SLUGS_SQL = `SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C" LIMIT 20`;
 
 const SPLIT_FENCE_SLOTS_SQL = `SELECT m.page_id,p.slug,m.region,
         (s->>'open_start')::bigint::text AS open_start,sum((s->>'end')::bigint-(s->>'start')::bigint)::text AS bytes
       FROM page_body_manifest m JOIN pages p ON p.id=m.page_id CROSS JOIN LATERAL jsonb_array_elements(m.facts_slots) s
       WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb AND s ? 'open_start'
-        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region,(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
-      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region,(s->>'open_start')::bigint LIMIT $6`;
+        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region COLLATE "C",(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
+      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region COLLATE "C",(s->>'open_start')::bigint LIMIT $6`;
 
 const CLAIM_KEYS_SQL = `WITH w AS (
       SELECT w.visibility,w.fact_hash,COALESCE(w.subject,'*') AS subject,gbrain_fact_normalize(COALESCE(w.claim,
