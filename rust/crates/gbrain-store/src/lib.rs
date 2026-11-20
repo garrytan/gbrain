@@ -70,6 +70,7 @@ pub mod raw_files;
 pub mod relations;
 pub mod salience;
 pub mod session_state;
+pub mod slug_reads;
 pub mod stats;
 pub mod takes;
 pub mod telemetry;

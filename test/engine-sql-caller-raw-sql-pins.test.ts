@@ -559,6 +559,59 @@ const PINS: Pin[] = [
        ORDER BY client_id COLLATE "C"`],
   },
   {
+    from: 'src/core/sync-git.ts:143 resolveSlugsForRemovedPaths unscoped lane, at dded7edc51',
+    case: { method: 'resolveLiveSlugByPath', variant: 'default', run: e => e.resolveLiveSlugByPath('notes/a.md') },
+    texts: [`SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
+            ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 1`],
+  },
+  {
+    from: 'src/core/ops/links.ts:397 hintScopedLinkMiss, at dded7edc51',
+    case: { method: 'listUnarchivedSlugSources', variant: 'default', run: e => e.listUnarchivedSlugSources('notes/a') },
+    texts: [`SELECT DISTINCT p.source_id COLLATE "C" AS source_id FROM pages p JOIN sources s ON s.id = p.source_id
+       WHERE p.slug = $1 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE
+       ORDER BY p.source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/schema-pack/review.ts:146 findTypeOrphans type counts, at dded7edc51',
+    case: { method: 'countLivePageTypes', variant: 'sourceIds', run: e => e.countLivePageTypes({ sourceIds: ['default'] }) },
+    texts: ['SELECT type, count(*)::text AS n FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) GROUP BY type'],
+  },
+  {
+    from: 'src/core/schema-pack/review.ts:146 findTypeOrphans type counts, at dded7edc51',
+    case: { method: 'countLivePageTypes', variant: 'sourceId', run: e => e.countLivePageTypes({ sourceId: 'default' }) },
+    texts: ['SELECT type, count(*)::text AS n FROM pages WHERE deleted_at IS NULL AND source_id = $1 GROUP BY type'],
+  },
+  {
+    from: 'src/core/schema-pack/review.ts:146 findTypeOrphans type counts, at dded7edc51',
+    case: { method: 'countLivePageTypes', variant: 'all', run: e => e.countLivePageTypes({}) },
+    texts: ['SELECT type, count(*)::text AS n FROM pages WHERE deleted_at IS NULL GROUP BY type'],
+  },
+  {
+    from: 'src/core/schema-pack/review.ts:160 findTypeOrphans orphan rows, at dded7edc51',
+    case: { method: 'listTypeOrphanPages', variant: 'sourceIds', run: e => e.listTypeOrphanPages({ scope: { sourceIds: ['default'] }, types: ['legacy'], limit: 100 }) },
+    texts: [`SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
+      WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND (type IS NULL OR type = '' OR type = ANY($2::text[]))
+      ORDER BY source_id COLLATE "C", slug COLLATE "C"
+      LIMIT 100`],
+  },
+  {
+    from: 'src/core/schema-pack/review.ts:160 findTypeOrphans orphan rows, at dded7edc51',
+    case: { method: 'listTypeOrphanPages', variant: 'sourceId', run: e => e.listTypeOrphanPages({ scope: { sourceId: 'default' }, types: [], limit: 5 }) },
+    texts: [`SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
+      WHERE deleted_at IS NULL AND source_id = $1 AND (type IS NULL OR type = '' OR type = ANY($2::text[]))
+      ORDER BY source_id COLLATE "C", slug COLLATE "C"
+      LIMIT 5`],
+  },
+  {
+    from: 'src/core/export-snapshot.ts:45 readExportPages, at dded7edc51',
+    case: { method: 'readExportPageRows', variant: 'default', run: e => e.readExportPageRows(['1', '2']) },
+    texts: [`WITH export_page AS MATERIALIZED (
+    SELECT * FROM pages WHERE id = ANY($1::bigint[])
+  ) SELECT p.*,
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
+    FROM export_page p WHERE p.deleted_at IS NULL`],
+  },
+  {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
     texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],

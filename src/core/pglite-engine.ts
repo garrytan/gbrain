@@ -290,6 +290,7 @@ import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
+import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { assertSchemaNotAhead } from './schema-client-behind.ts';
 import { wellFormedJson } from './text-safe.ts';
@@ -1531,6 +1532,11 @@ export class PGLiteEngine implements BrainEngine {
   private get rawRead(): cliReadsOpsImpl.EngineRawRead { return (sql, params) => this.executeRaw(sql, params); }
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number) { return cliReadsOpsImpl.scanExactBatch(this.rawRead, opts, afterPageId, batchPages, timeoutMs); }
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.rawRead, afterPageId); }
+  resolveLiveSlugByPath(path: string) { return collateSlugReadsImpl.resolveLiveSlugByPath(this.rawRead, path); }
+  listUnarchivedSlugSources(slug: string) { return collateSlugReadsImpl.listUnarchivedSlugSources(this.rawRead, slug); }
+  countLivePageTypes(scope: collateSlugReadsImpl.TypeScope) { return collateSlugReadsImpl.countLivePageTypes(this.rawRead, scope); }
+  listTypeOrphanPages(opts: Parameters<typeof collateSlugReadsImpl.listTypeOrphanPages>[1]) { return collateSlugReadsImpl.listTypeOrphanPages(this.rawRead, opts); }
+  readExportPageRows(ids: readonly string[]) { return collateSlugReadsImpl.readExportPageRows(this.rawRead, ids); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.rawRead, opts, timeoutMs); }

@@ -115,14 +115,12 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return e.message;
   });
 
-  parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'listUnarchivedSlugSources'] }, async (engine, backend) => {
     await seed(engine, backend);
     for (const id of MIXED_SOURCES) {
       await engine.putPage('notes/target', { type: 'note', title: 't', compiled_truth: 't', timeline: '' }, { sourceId: id });
       await engine.addLink(SLUG, 'notes/target', 'ctx', 'mentions', undefined, undefined, undefined, { fromSourceId: id, toSourceId: id });
     }
-    // The hint swallows a failed lookup, so read raw SQL once first: the Rust arm stops here on its refusal.
-    await engine.executeRaw('SELECT 1');
     const warned: string[] = [];
     const ctx = ctxFor(engine, { logger: { info() {}, warn: (m: string) => { warned.push(m); }, error() {} } as never });
     const op = operations.find(o => o.name === 'get_links')!;

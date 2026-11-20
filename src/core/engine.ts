@@ -3452,6 +3452,16 @@ export interface BrainEngine {
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
   /** The first live page after `afterPageId` in id order, in any source, or null. */
   nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
+  /** The slug of the live page that records `path` as its origin, across every source: the lowest source id by byte, then the lowest slug; null when none does (sync-git.ts, the unscoped removed-path lane). */
+  resolveLiveSlugByPath(path: string): Promise<string | null>;
+  /** The ids of the unarchived sources that hold a live page at `slug`, in byte order (the scoped get_links miss hint, ops/links.ts). */
+  listUnarchivedSlugSources(slug: string): Promise<string[]>;
+  /** How many live pages in scope carry each stored type (`schema review-orphans`, schema-pack/review.ts). The row order is open. */
+  countLivePageTypes(scope: { sourceId?: string; sourceIds?: string[] }): Promise<Array<{ type: string | null; n: string }>>;
+  /** The live pages in scope with an empty type or one of `types`, by source id then slug in byte order, up to `limit` (`schema review-orphans`). */
+  listTypeOrphanPages(opts: { scope: { sourceId?: string; sourceIds?: string[] }; types: readonly string[]; limit: number }): Promise<Array<{ slug: string; source_id: string; type: string | null }>>;
+  /** The live pages whose id is in `ids` with their tags in byte order, in no fixed order (export-snapshot.ts `readExportPages`). */
+  readExportPageRows(ids: readonly string[]): Promise<Array<{ page: Page; tags: string[] }>>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
   /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */

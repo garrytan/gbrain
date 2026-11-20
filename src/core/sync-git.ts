@@ -140,12 +140,8 @@ export async function resolveSlugsForRemovedPaths(
         // row's record must not name a slug for the delete side to act on),
         // and the pick is ORDER BY-deterministic when a multi-source brain
         // holds several rows for the same source_path.
-        const rows = await engine.executeRaw<{ slug: string }>(
-          `SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
-            ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 1`,
-          [p],
-        );
-        if (rows.length > 0 && rows[0].slug) exact.set(p, rows[0].slug);
+        const slug = await engine.resolveLiveSlugByPath(p);
+        if (slug) exact.set(p, slug);
       } catch {
         // Best-effort.
       }

@@ -27,6 +27,7 @@ mod page_visibility;
 mod pages;
 mod search;
 mod session_state;
+mod slug_reads;
 mod sources;
 mod tags;
 mod timeline;

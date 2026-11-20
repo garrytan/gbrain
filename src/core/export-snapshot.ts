@@ -1,7 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { overlayWithdrawalBody } from './facts/withdrawal-overlay.ts';
 import type { PageWithdrawal } from './page-state/types.ts';
-import { rowToPage } from './utils.ts';
 import { EXPORT_PAYLOAD_LIMIT } from './export-stage.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
 import { openSegmentedBody, readBodyRange, type BodyLedger } from './page-body/read-range.ts';
@@ -42,17 +41,12 @@ export async function readExportPage(tx: BrainEngine, key: { id: string; source_
  */
 export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id: string; source_id: string; slug: string }>, withdrawals: ExportWithdrawal[]): Promise<ExportSnapshot[]> {
   if (!keys.length) return [];
-  const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
-    SELECT * FROM pages WHERE id = ANY($1::bigint[])
-  ) SELECT p.*,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
-    FROM export_page p WHERE p.deleted_at IS NULL`,
-  [keys.map(key => key.id)]);
-  const byId = new Map(rows.map(row => [String(row.id), row]));
+  const rows = await tx.readExportPageRows(keys.map(key => key.id));
+  const byId = new Map(rows.map(row => [String(row.page.id), row]));
   const snapshots = keys.map(key => {
     const row = byId.get(String(key.id));
-    if (!row || row.source_id !== key.source_id || row.slug !== key.slug) throw new Error('Export snapshot unexpectedly lost a selected page.');
-    return { page: rowToPage(row), tags: row.export_tags as string[] };
+    if (!row || row.page.source_id !== key.source_id || row.page.slug !== key.slug) throw new Error('Export snapshot unexpectedly lost a selected page.');
+    return { page: row.page, tags: row.tags };
   });
   const fenced = snapshots.flatMap(({ page }) => {
     if (isSegmentedPage(page) || !(page.compiled_truth.includes('gbrain:facts:begin') || page.timeline.includes('gbrain:facts:begin'))) return [];

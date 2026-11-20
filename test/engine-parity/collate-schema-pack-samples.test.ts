@@ -11,7 +11,7 @@
  *  - Why existing coverage misses it: the schema-pack tests use slugs that sort the same in every locale, and CI's
  *    Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
- *  - Seam: pages are written with putPage; the orphan case blanks their type with harness-only SQL. No schema pack is
+ *  - Seam: pages are written with putPage (the orphan case writes them with an empty type). No schema pack is
  *    active, so the cores take their pack-less path. Every core reads raw SQL, so the Rust arm stops on its raw_sql
  *    refusal.
  */
@@ -38,10 +38,10 @@ function ctxFor(engine: BrainEngine): OperationContext {
     logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
 }
 
-async function pages(engine: BrainEngine, sourceId = 'default') {
+async function pages(engine: BrainEngine, sourceId = 'default', type = TYPE) {
   await engine.putPage(TARGET, { type: 'note', title: 'target', compiled_truth: 'target', timeline: '' }, { sourceId });
   for (const slug of MIXED_SLUGS) {
-    await engine.putPage(slug, { type: TYPE, title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter: { canonical: TARGET } }, { sourceId });
+    await engine.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter: { canonical: TARGET } }, { sourceId });
   }
 }
 
@@ -52,12 +52,11 @@ describe('schema-pack previews list pages by byte', () => {
     expect(result.per_rule[0]!.sample_slugs).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('findTypeOrphans lists sources, then slugs, by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findTypeOrphans lists sources, then slugs, by byte', { methods: ['putPage', 'countLivePageTypes', 'listTypeOrphanPages'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
-      await pages(engine, id);
+      await pages(engine, id, '');
     }
-    await engine.executeRaw(`UPDATE pages SET type = '' WHERE type = $1`, [TYPE]);
     const result = await findTypeOrphans(engine, null, { sourceIds: MIXED_SOURCES }, 100);
     expect(result.orphans.map(o => [o.source_id, o.slug])).toEqual(byteOrder(MIXED_SOURCES).flatMap(id => BYTE_SLUGS.map(slug => [id, slug])));
   });
