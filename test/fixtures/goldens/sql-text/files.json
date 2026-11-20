@@ -22,8 +22,8 @@
             "params": [
               "number"
             ],
-            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files ORDER BY page_slug, filename, id LIMIT $1",
-            "textSha256": "c94ea68f11077b39e94b595c609107e4ad76655dc32d85f6643880b1ab291ff4"
+            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files ORDER BY page_slug COLLATE \"C\", filename COLLATE \"C\", id LIMIT $1",
+            "textSha256": "0afa63d6ae77b79895b8dc2bffa93eb469d70e0960822f8dc1129c65f22e1815"
           }
         ],
         "page_slug": [
@@ -33,8 +33,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files WHERE page_slug = $1 ORDER BY filename, id LIMIT $2",
-            "textSha256": "aa23d63bcab5097bbb03b0026ff39b0de03c3fd0b325008cc35025f9ee225c18"
+            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files WHERE page_slug = $1 ORDER BY filename COLLATE \"C\", id LIMIT $2",
+            "textSha256": "26e5ede89124705790dc52d596d683100ebeeb1ed30034befc0e2e5963f74ccb"
           }
         ]
       },
