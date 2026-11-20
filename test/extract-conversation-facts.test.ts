@@ -50,6 +50,7 @@ import { loadOpCheckpoint } from '../src/core/op-checkpoint.ts';
 import { runIngestFacts } from '../src/core/transcripts/ingest-facts.ts';
 import { runTranscripts } from '../src/commands/transcripts.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
+import { SLOT_TAG_SYSTEM } from '../src/core/facts/slot-tagging.ts';
 
 // ---------------------------------------------------------------------------
 // pageTypesForAllowed — logical→concrete page-type expansion.
@@ -386,6 +387,11 @@ describe('runExtractConversationFactsCore', () => {
           model: opts.model!,
           providerId: 'stub',
         };
+      }
+      // GBRA-574: the stub's company gets a name key, so each window also makes a slot-tagging call; it tags nothing.
+      if (opts.system === SLOT_TAG_SYSTEM) {
+        return { text: '{"slots":[]}', blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'stub:stub', providerId: 'stub' };
       }
       mainChatCalls++;
       if (chatFailure) throw chatFailure;

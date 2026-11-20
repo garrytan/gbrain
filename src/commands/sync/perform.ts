@@ -18,6 +18,7 @@ import type { OperationContext } from '../../core/ops/contract.ts';
 import { refreshProjectionStatistics } from '../../core/search/projection-statistics.ts';
 import { withRefreshingLock, LockUnavailableError, LockStolenError, syncLockId } from '../../core/db-lock.ts';
 import { readSyncAnchor } from '../../core/sync-anchor.ts';
+import { assertNotOwnedRoot } from '../../core/owned-folder/paths.ts';
 import { recordUpstreamObservation } from '../../core/sync-upstream.ts';
 import { assertSyncApplicable } from '../../core/sync-applicability.ts';
 import { performPlainDirectorySync, plainDirectorySyncRoot } from './plain-directory.ts';
@@ -27,15 +28,26 @@ import type { SyncOpts, SyncResult } from '../sync.ts';
 import type { IdleSkip } from '../../core/persistence/sync-idle-skips.ts';
 import { runConnectorSync } from './connector.ts';
 import { performSyncInner } from './incremental.ts';
+import { syncIdentityDecisions } from '../../core/entities/identity-decisions.ts';
 import { isConnectorSourceKind } from '../../core/persistence/connector-kinds.ts';
 import { ignoredPrivacyLabelRunNotice } from '../../core/search/ignored-privacy-labels.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   const since = opts.dryRun ? null : await syncStartedAt(engine);
   const result = await routeSync(engine, opts);
+  if (!opts.dryRun && result.status !== 'dry_run') await syncIdentityDecisions(engine, opts.sourceId ?? 'default', serr, result.status === 'first_sync' ? 'all' : await changedSlugs(engine, opts.sourceId ?? 'default', result, since));
   if (!since || result.privacy_label_notice || result.status === 'up_to_date' || result.status === 'dry_run') return result;
   const notice = await ignoredPrivacyLabelRunNotice(engine, opts.sourceId ?? 'default', result.pagesAffected?.length ? { slugs: result.pagesAffected } : { since }, 'sync');
   return notice ? { ...result, privacy_label_notice: notice } : result;
+}
+
+/** The pages a sync changed: its list, or for a managed or plain-folder sync, which keeps none, the source's pages updated since it started. */
+async function changedSlugs(engine: BrainEngine, sourceId: string, result: SyncResult, since: string | null): Promise<readonly string[] | 'all'> {
+  if (result.pagesAffected.length || !since || result.status === 'up_to_date') return result.pagesAffected;
+  try {
+    const pages = await engine.listPages({ sourceId, updated_after: since, includeDeleted: true, listColumnsOnly: true, sort: 'slug', limit: 1000 });
+    return pages.length === 1000 ? 'all' : pages.map(p => p.slug);
+  } catch { return result.pagesAffected; }
 }
 
 /** GST-2462: the database clock when a sync starts; a managed sync lists no pages, so its notice reads the pages updated since. */
@@ -80,10 +92,13 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
     if (connector) return connector;
   }
   if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+  if (opts.repoPath) assertNotOwnedRoot(opts.repoPath, 'gbrain sync refuses the root');
   const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
+  if (plainRoot) assertNotOwnedRoot(plainRoot, 'gbrain sync refuses the root');
   if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
   if (managed) return performManagedBranch(engine, opts);
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (filesystemRoot) assertNotOwnedRoot(filesystemRoot, 'gbrain sync refuses the root');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
     let entered = false;
     let result: SyncResult | undefined;

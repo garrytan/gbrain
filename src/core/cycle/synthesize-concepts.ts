@@ -20,7 +20,7 @@
 //      For T3/T4: deterministic stub narrative.
 //   6. Write concept-typed pages with the synthesis mode made explicit.
 
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -41,6 +41,7 @@ import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import { conceptProvenanceCovers, conceptPublicationHold, stripFenceSections } from './concept-publication.ts';
 import { conceptWriter, type ConceptWrite } from './concept-writes.ts';
+import { heldConceptRebuild, keptReason, submitHeldConceptPurge, type ConceptRebuild, type RebuildKept } from '../persistence/concept-rebuild.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
 import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
@@ -138,7 +139,7 @@ export interface SynthesizeConceptsOpts {
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
-  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; visibility?: Visibility }>;
+  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; visibility?: Visibility; revision?: string }>;
 }
 
 interface AtomGroup {
@@ -147,6 +148,8 @@ interface AtomGroup {
   atomSlugs: string[];
   atomTitles: string[];
   atomBodies: string[];
+  /** #9653: each member's knowledge_revision when its body was read (a held concept's rebuild refuses if it moved). */
+  atomRevisions: Array<string | undefined>;
   /** #5525: strictest effective visibility of the member atoms. */
   visibility: Visibility;
   tier: 'T1' | 'T2' | 'T3' | 'T4';
@@ -165,6 +168,14 @@ Output ONLY the summary paragraph (3-5 sentences). No headers, no JSON,
 no preamble. Write in plain English, present-tense voice. Synthesize what
 the atoms collectively SAY about the concept; don't enumerate the atoms.`;
 
+/** #9653: the rebuild of a held concept tombstone, or null; a held concept kept hidden is added to `kept` with why. */
+async function conceptRebuildFor(engine: BrainEngine, sourceId: string, snapshot: PageSnapshot, group: AtomGroup, dryRun: boolean,
+  kept: RebuildKept[]): Promise<ConceptRebuild | null> {
+  const held = dryRun ? null : await heldConceptRebuild(engine, sourceId, snapshot, group.atomSlugs, group.atomRevisions, group.visibility);
+  if (held && 'kept' in held) kept.push(held.kept);
+  return held && 'rebuild' in held ? held.rebuild : null;
+}
+
 export async function runPhaseSynthesizeConcepts(
   engine: BrainEngine,
   opts: SynthesizeConceptsOpts = {},
@@ -179,13 +190,14 @@ export async function runPhaseSynthesizeConcepts(
         slug: string;
         title: string;
         compiled_truth: string;
+        revision: string;
         frontmatter: { concepts?: string[]; imported_from?: string };
         private: boolean;
       }>(
         // Codex P2: scoped to the cycle source — the provenance edges below
         // are pinned to it, so a brain-global scan grouped same-slug atoms
         // from OTHER sources into this source's concepts.
-        `SELECT slug, title, compiled_truth, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
+        `SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = $1
@@ -199,6 +211,7 @@ export async function runPhaseSynthesizeConcepts(
           slug: r.slug,
           title: r.title,
           body: r.compiled_truth,
+          revision: r.revision,
           concept_refs: r.frontmatter!.concepts!,
           visibility: r.private ? 'private' as const : 'world' as const,
         }));
@@ -219,13 +232,14 @@ export async function runPhaseSynthesizeConcepts(
 
   // 2. Group atoms by concept stem (#6161 human redirects, then #5965 spelling folds; see resolveAtomConceptStems); one atom counts once per concept.
   const { atomStems, foldedSpellings } = await resolveAtomConceptStems(engine, opts.sourceId ?? 'default', atoms);
-  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
+  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; revisions: Array<string | undefined>; visibilities: Visibility[] }>();
   for (const [i, atom] of atoms.entries()) {
     for (const conceptSlug of atomStems[i]!) {
-      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
+      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], revisions: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
+      existing.revisions.push(atom.revision);
       // An atom with no recorded visibility is private (derived pages fail closed).
       existing.visibilities.push(atom.visibility ?? 'private');
       groups.set(conceptSlug, existing);
@@ -244,6 +258,7 @@ export async function runPhaseSynthesizeConcepts(
       atomSlugs: data.slugs,
       atomTitles: data.titles,
       atomBodies: data.bodies,
+      atomRevisions: data.revisions,
       visibility: strictestVisibility(data.visibilities),
       tier,
     });
@@ -335,6 +350,9 @@ export async function runPhaseSynthesizeConcepts(
   const publicationPending: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
   const skippedDeleted: string[] = [];
+  const rebuilds: ConceptWrite[] = [];
+  const rebuildDeferred: Array<{ concept: string; reason: string }> = [];
+  const rebuildKept: RebuildKept[] = [];
   const skippedUnchanged: string[] = [];
   const provenanceRestored: string[] = [];
   const rehashed: string[] = [];
@@ -368,8 +386,11 @@ export async function runPhaseSynthesizeConcepts(
     // A concept page this phase did not write belongs to a human (or another
     // writer). Check before any spend; never replace its body.
     const existingSnapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default', includeDeleted: true });
-    if (existingSnapshot?.page.deleted_at) { skippedDeleted.push(conceptSlug); continue; } // #6161: a deleted concept is never resurrected
-    const existing = existingSnapshot?.page ?? null;
+    // #6161: a deleted concept is never resurrected, except (#9653) one hidden only by an input purge and carrying nothing
+    // stated: after the model call its tombstone is purged and a fresh page written from the current members (concept-rebuild.ts).
+    const rebuild = existingSnapshot?.page.deleted_at ? await conceptRebuildFor(engine, src, existingSnapshot, group, !!opts.dryRun, rebuildKept) : null;
+    if (existingSnapshot?.page.deleted_at && !rebuild) { skippedDeleted.push(conceptSlug); continue; }
+    const existing = rebuild ? null : existingSnapshot?.page ?? null;
     if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
       skippedHumanOwned.push(conceptSlug);
       continue;
@@ -405,7 +426,7 @@ export async function runPhaseSynthesizeConcepts(
       continue;
     }
     // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
-    if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
+    if (!rebuild && await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
     const held = existing && conceptPublicationHold(existing); // checked before any spend
     if (held) { publicationHeld.push({ concept: group.conceptSlug, reason: held }); continue; }
     // A page hashed by the pre-D-N3 formula (full atom bodies) whose inputs are
@@ -505,12 +526,17 @@ export async function runPhaseSynthesizeConcepts(
       keptExistingNarrative.push(conceptSlug);
       continue;
     }
+    // #9653: a failed synthesis never rebuilds a held concept; it stays hidden and held for the next cycle.
+    if (rebuild && synthesisMode !== 'llm' && synthesisMode !== 'deterministic_tier') { rebuildDeferred.push({ concept: conceptSlug, reason: 'the synthesis did not produce a narrative; retried next run' }); continue; }
     if (!grandfathered) synthesisModeCounts[synthesisMode]++;
 
     await stopIfAborted();
     if (!opts.dryRun) {
+      // #9653: managed, the tombstone's retention purge commits before the fresh page is queued; otherwise nothing more is written.
+      const purged = rebuild && maintenance ? await submitHeldConceptPurge(engine, maintenance, src, conceptSlug, rebuild) : true;
+      if (purged !== true) { rebuildDeferred.push({ concept: conceptSlug, reason: purged }); continue; }
       // #5525: tighten-only — a concept already private stays private.
-      const prior = await engine.getPage(conceptSlug, { sourceId: src });
+      const prior = rebuild ? null : await engine.getPage(conceptSlug, { sourceId: src });
       const visibility = strictestVisibility([group.visibility, prior?.frontmatter?.visibility === 'private' ? 'private' : 'world']);
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
@@ -530,9 +556,10 @@ export async function runPhaseSynthesizeConcepts(
       // edge is durable, because a later private flip reaches it through them.
       // GBRA-60: one whose edges already cover every member publishes once, at
       // world, so a strict source never commits an intermediate private page.
-      const covered = visibility === 'world' && await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs);
+      const covered = !rebuild && visibility === 'world' && await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs);
       const write: ConceptWrite = { concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, visibility, covered, synthesisMode, synthesized, narrative,
-        revision: existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '' };
+        revision: rebuild ? null : existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '', ...(rebuild ? { rebuild: maintenance ? { purgedMembers: rebuild.members } : rebuild } : {}) };
+      if (rebuild) rebuilds.push(write);
       // GBRA-60: a managed run's concepts publish in batches (concept-writes.ts), each one publication group on Postgres.
       await stopIfAborted();
       await (maintenance ? writer.queue(write) : writer.publish(write));
@@ -588,6 +615,7 @@ export async function runPhaseSynthesizeConcepts(
     });
   }
 
+  const rebuilt = rebuilds.filter(write => write.rebuilt).map(write => write.conceptSlug);
   return reportDerivedWriteThrough({
     phase: 'synthesize_concepts',
     status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || publicationPending.length > 0
@@ -599,6 +627,9 @@ export async function runPhaseSynthesizeConcepts(
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
       (budgetCapped > 0 ? ` (${budgetCapped} over the $${budgetCap.toFixed(2)} budget → template fallback)` : '') +
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
+      (rebuilt.length > 0 ? ` (${rebuilt.length} hidden by an input purge rebuilt)` : '') +
+      (rebuildDeferred.length > 0 ? ` (${rebuildDeferred.length} hidden by an input purge left hidden for the next run)` : '') +
+      (rebuildKept.length > 0 ? ` (${rebuildKept.length} hidden by an input purge kept hidden: ${rebuildKept.map(keptReason).join('; ')})` : '') +
       (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : '') +
       (skippedUnchanged.length > 0 ? ` (${skippedUnchanged.length} unchanged)` : '') +
       (rehashed.length > 0 ? ` (${rehashed.length} rehashed without synthesis)` : '') +
@@ -619,6 +650,9 @@ export async function runPhaseSynthesizeConcepts(
       warnings,
       skipped_human_owned: skippedHumanOwned,
       skipped_deleted: skippedDeleted,
+      rebuilt,
+      rebuild_deferred: rebuildDeferred,
+      rebuild_kept: rebuildKept,
       skipped_unchanged: skippedUnchanged,
       provenance_restored: provenanceRestored,
       rehashed,

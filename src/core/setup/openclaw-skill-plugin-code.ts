@@ -8,7 +8,7 @@
  * changes the plugin code itself.
  */
 
-export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 1;
+export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 3;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
@@ -92,7 +92,7 @@ const LOADER_JS = String.raw`// Managed by gbrain setup openclaw; a re-run rewri
 import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -215,6 +215,7 @@ function textOf(content) {
 }
 
 function turnText(event) {
+  if (event && typeof event.prompt === 'string' && event.prompt.trim()) return event.prompt.trim();
   if (event && typeof event.currentUserMessage === 'string') return event.currentUserMessage.trim();
   const msgs = event && Array.isArray(event.messages) ? event.messages : [];
   for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i] && msgs[i].role === 'user') return textOf(msgs[i].content).trim();
@@ -306,9 +307,14 @@ async function resolveTurn(event, ctx, opts) {
     const sender = senderOf(event, ctx);
     if (sender === null || !a.owner_sender_ids.includes(sender)) return finish({ outcome: 'skipped_sender' });
   }
-  const turnId = (event && (event.currentUserMessageId || event.messageId)) || createHash('sha256').update(text).digest('hex').slice(0, 16);
+  const runId = ctx && typeof ctx.runId === 'string' && ctx.runId ? ctx.runId : null;
+  const turnId = (event && (event.currentUserMessageId || event.messageId)) || (runId ? 'run:' + runId : createHash('sha256').update(text).digest('hex').slice(0, 16));
   const memoKey = agentId + '\0' + sessionKey + '\0' + turnId;
-  if (memo.has(memoKey)) return finish({ outcome: 'retry' }, arm === 'live' ? memo.get(memoKey) : '');
+  if (memo.has(memoKey)) {
+    const prior = memo.get(memoKey);
+    const carried = !!prior.block && (prior.text !== text || (Array.isArray(event && event.messages) && event.messages.some((m) => m && textOf(m.content).includes(prior.block))));
+    return finish({ outcome: 'retry' }, arm === 'live' && !carried ? prior.block : '');
+  }
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
@@ -328,9 +334,10 @@ async function resolveTurn(event, ctx, opts) {
   const outcome = names.length ? 'suggested' : reply.no_skill_reason || (reply.budget_exhausted ? 'budget' : reply.deduped ? 'deduped' : 'no_match');
   const deliver = arm === 'live' && reply.block ? reply.block : '';
   let active = true;
-  try { if (ctx && typeof ctx.assertActive === 'function') ctx.assertActive(); } catch { active = false; }
+  const invocation = ctx && typeof ctx.assertActive === 'function' ? ctx : ctx && ctx.hookInvocation;
+  try { if (invocation && typeof invocation.assertActive === 'function') invocation.assertActive(); } catch { active = false; }
   if (active && !opts.selfTest) w.postMessage({ type: 'commit', id: reply.id }); else w.postMessage({ type: 'discard', id: reply.id });
-  if (deliver) remember(memo, memoKey, deliver, MEMO_MAX);
+  if (deliver || active) remember(memo, memoKey, { block: deliver, text }, MEMO_MAX);
   return finish({ outcome: arm === 'live' || !names.length ? outcome : 'would_suggest', suggested: names, strengths: reply.strengths, code: reply.code || null }, deliver);
 }
 
@@ -385,7 +392,7 @@ export default {
     on('after_compaction', onCompaction);
     on('skill_changed', onSkillChanged);
     const s = readState();
-    if (s) ensureWorker(s);
+    if (s && existsSync(WORKER_URL)) ensureWorker(s);
   },
   async selfTest(agentId, message) {
     const s = readState();

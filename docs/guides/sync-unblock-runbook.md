@@ -279,6 +279,10 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
   `gbrain repair content --source <id>` previews it. A hold the lane will not
   decide is `needs_human` with the paragraph in `human_reason`
   ([held files](repair.md#held-files)).
+- `file_drift` on a read-only mirror: the held pages settle together with
+  one approval. Preview the whole class and approve its hash
+  ([whole class](repair.md#whole-class)); a page the preview lists as
+  `kept_newer_page` or `kept_protected_parts` stays held for a person.
 - `file_drift_mirror_database_only`: on a read-only mirror
   (`gbrain sources mirror-readonly <id>`) a file gone upstream whose page was
   edited in gbrain stays held and its page stays live and database-only, since

@@ -1,36 +1,29 @@
 /**
  * Finds, checks and loads the Rust engine addon. Only the `rust` engine's open path may import it, lazily,
- * so a PGLite or Postgres brain never loads it, never reaches the network for it and never creates
- * `<gbrain home>/engines/`. The engine shell calls {@link loadRustEngineAddon}.
+ * so a PGLite or Postgres brain never loads it and never creates `<gbrain home>/engines/`. The engine shell calls
+ * {@link loadRustEngineAddon}.
  *
  * Order:
  *   1. GBRAIN_RUST_ENGINE_ADDON (an absolute path to a build you made with `bun run rust:build`) is the development
  *      override. It skips only the release checksum pin; engine_abi and target are still checked.
- *   2. An addon already at `<home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest
- *      of this gbrain version loads with no network.
- *   3. Otherwise it is fetched (addon-fetch.ts), checked, and loaded.
+ *   2. An addon at `<home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this
+ *      gbrain version (`<home>/engines/rust/manifest-<version>.json`) loads. Nothing in gbrain writes that cache yet:
+ *      fetching the release addon into it comes later, with content-addressed paths.
+ *   3. Otherwise it refuses with rust_engine_addon_missing (not_installed). It never reaches the network.
  *
  * Every failure is `rust_engine_addon_missing` or `rust_engine_addon_mismatch`, raised before the brain is touched.
  * The addon is loaded with process.dlopen from a computed path: a literal `require('x.node')` would be bundled
  * into compiled executables, and the addon must not be inside them.
  */
-import { existsSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
-import { dirname, isAbsolute } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { gbrainPath } from '../config.ts';
 import { VERSION } from '../../version.ts';
+import { defaultComputeDigest } from '../binary-self-update.ts';
 import { OperationError } from '../ops/contract.ts';
 import { addonMismatch, addonMissing } from './addon-errors.ts';
-import { RELEASE_ADDON_TARGETS, RUST_ENGINE_ABI, type RustAddonManifest } from './addon-manifest.ts';
+import { parseRustAddonManifest, RELEASE_ADDON_TARGETS, RUST_ENGINE_ABI, type RustAddonManifest } from './addon-manifest.ts';
 import { detectAddonTarget } from './addon-target.ts';
-import {
-  addonPath,
-  defaultAddonFetchDeps,
-  fetchAddon,
-  fetchManifest,
-  readCachedManifest,
-  writeCachedManifest,
-  type AddonFetchDeps,
-} from './addon-fetch.ts';
 
 /** What the loader reads from the addon; the crate's exports (rust/crates/gbrain-napi) beyond these are for the engine. */
 export interface RustAddon {
@@ -42,30 +35,52 @@ export interface RustAddon {
   [name: string]: unknown;
 }
 
-export interface RustAddonLoaderDeps extends AddonFetchDeps {
+export interface RustAddonLoaderDeps {
   env: Record<string, string | undefined>;
   /** gbrain home's `engines/rust` directory. */
   rustDir: string;
-  /** The running gbrain version; the release tag is `v<version>`. */
+  /** The running gbrain version; the cached manifest must name it. */
   version: string;
   /** This platform's addon target name, or null when it cannot be identified. */
   target: string | null;
+  /** SHA-256 of a file, lowercase hex. */
+  computeDigest(path: string): string;
   dlopen(path: string): unknown;
 }
 
 export function defaultRustAddonLoaderDeps(): RustAddonLoaderDeps {
   return {
-    ...defaultAddonFetchDeps,
     env: process.env,
     rustDir: gbrainPath('engines', 'rust'),
     version: VERSION,
     target: detectAddonTarget(),
+    computeDigest: defaultComputeDigest,
     dlopen(path) {
       const module = { exports: {} as unknown };
       process.dlopen(module as NodeJS.Module, path);
       return module.exports;
     },
   };
+}
+
+/** `<home>/engines/rust/manifest-<version>.json`: the release manifest that names the cached addon. */
+function cachedManifestPath(rustDir: string, version: string): string {
+  return join(rustDir, `manifest-${version}.json`);
+}
+
+/** `<home>/engines/rust/<engine_build>/<target>.node` */
+function addonPath(rustDir: string, engineBuild: string, target: string): string {
+  return join(rustDir, engineBuild, `${target}.node`);
+}
+
+/** Reads the cached manifest, or null when it is absent, unreadable or for another version. */
+function readCachedManifest(rustDir: string, version: string): RustAddonManifest | null {
+  try {
+    const manifest = parseRustAddonManifest(readFileSync(cachedManifestPath(rustDir, version), 'utf8'));
+    return manifest && manifest.gbrain_version === version ? manifest : null;
+  } catch {
+    return null;
+  }
 }
 
 interface Expected {
@@ -93,17 +108,10 @@ function load(path: string, expected: Expected, deps: RustAddonLoaderDeps): Rust
   return addon;
 }
 
-/** Removes the directories a failed fetch created under the gbrain home, when they are empty. */
-function pruneNew(dirs: string[]): void {
-  for (const dir of dirs.reverse()) {
-    try {
-      if (readdirSync(dir).length === 0) rmdirSync(dir);
-    } catch {
-      // Gone already, or not ours to remove.
-    }
-  }
-}
-
+/**
+ * Loads the addon: the development override, else the cached addon whose SHA-256 matches the cached manifest.
+ * It is async because the release fetch that comes later is; today it never waits on anything.
+ */
 export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}): Promise<RustAddon> {
   const deps: RustAddonLoaderDeps = { ...defaultRustAddonLoaderDeps(), ...overrides };
 
@@ -122,41 +130,22 @@ export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}
     throw addonMissing('unsupported_target', `No Rust engine addon is published for ${target ?? 'this platform'}; releases carry ${RELEASE_ADDON_TARGETS.join(' and ')}.`);
   }
 
-  // An addon already in place that matches the cached manifest loads with no network call.
   const cached = readCachedManifest(deps.rustDir, deps.version);
   const entry = cached?.targets[target];
-  if (cached && entry) {
-    const path = addonPath(deps.rustDir, cached.engine_build, target);
-    if (existsSync(path)) {
-      let digest: string | null = null;
-      try {
-        digest = deps.computeDigest(path);
-      } catch {
-        // Unreadable: fall through to a fetch.
-      }
-      if (digest === entry.sha256) return load(path, { target, manifest: cached }, deps);
-    }
+  const path = cached && entry ? addonPath(deps.rustDir, cached.engine_build, target) : null;
+  if (!cached || !entry || !path || !existsSync(path)) {
+    throw addonMissing('not_installed', `No Rust engine addon for gbrain v${deps.version} on ${target} is installed in ${deps.rustDir}. Set GBRAIN_RUST_ENGINE_ADDON to a build from bun run rust:build.`);
   }
-
-  const enginesDir = dirname(deps.rustDir);
-  const newDirs = [enginesDir, deps.rustDir].filter((d) => !existsSync(d));
+  let digest: string;
   try {
-    const { manifest, text, assets } = await fetchManifest(deps.rustDir, deps.version, deps);
-    const path = await fetchAddon(deps.rustDir, manifest, assets, target, deps);
-    let addon: RustAddon;
-    try {
-      addon = load(path, { target, manifest }, deps);
-    } catch (err) {
-      // The file hashed and attested correctly yet is not usable here, so it must not stay where the next start would find it.
-      rmSync(path, { force: true });
-      throw err;
-    }
-    writeCachedManifest(deps.rustDir, deps.version, text);
-    return addon;
+    digest = deps.computeDigest(path);
   } catch (err) {
-    pruneNew([...newDirs]);
-    throw err;
+    throw addonMismatch('digest', `The Rust engine addon at ${path} could not be read to check its SHA-256: ${err instanceof Error ? err.message : String(err)}.`);
   }
+  if (digest !== entry.sha256) {
+    throw addonMismatch('digest', `The Rust engine addon at ${path} has SHA-256 ${digest}; the gbrain v${deps.version} manifest names ${entry.sha256}.`);
+  }
+  return load(path, { target, manifest: cached }, deps);
 }
 
 /** The two refusal codes {@link loadRustEngineAddon} reports; nothing else is ever caught. */
@@ -169,7 +158,7 @@ export type RustEngineAddonLoad =
 
 /**
  * The engine shell's entry point to the addon: {@link loadRustAddon} as a result, never a throw, for the two refusal
- * codes. Any other error (a bug, not a refusal) is re-thrown unchanged. It is async because a first use may fetch.
+ * codes. Any other error (a bug, not a refusal) is re-thrown unchanged.
  */
 export async function loadRustEngineAddon(overrides: Partial<RustAddonLoaderDeps> = {}): Promise<RustEngineAddonLoad> {
   try {

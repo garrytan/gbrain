@@ -62,6 +62,13 @@ export function parseJournalConfigValue(key:string,value:string):number {
 export const JOURNAL_LIMITS_SQL=`SELECT key,value FROM config WHERE key LIKE 'persistence.limits.%' OR key IN ('${PAGE_BODY_CONFIG_KEYS.segmentedStorage}','${PAGE_BODY_CONFIG_KEYS.maxBytes}')
     UNION ALL SELECT NULL,CASE WHEN (SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass('pages_segmented_body_bytes_idx')) IS TRUE
       THEN (SELECT max(body_bytes) FROM pages WHERE body_storage='segmented')::text ELSE 'unindexed' END`;
+/**
+ * Requests a writer admits at once when it lets them settle before admitting more: half the principal's outstanding-request
+ * cap, at most 64, so other writers of the same principal keep room (repair windows; #9708 maintenance batches).
+ */
+export async function outstandingAdmissionWindow(engine:SqlEngine & { kind?: string }):Promise<number> {
+  return Math.max(1,Math.min(64,Math.floor((await readJournalLimits(engine)).principalOutstanding/2)));
+}
 export async function readJournalLimits(engine:SqlEngine & { kind?: string },overrides?:Partial<JournalLimits>):Promise<JournalLimits> {
   const rows=await engine.executeRaw<{key:string|null;value:string|null}>(JOURNAL_LIMITS_SQL);
   const kind=engine.kind === 'pglite' ? 'pglite' : 'postgres';

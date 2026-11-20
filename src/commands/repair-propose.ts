@@ -32,6 +32,8 @@ import { membersReadLineageOn } from '../core/access/lineage.ts';
 import { membersReadOpen, openPageSql, withOpenScope } from '../core/access/open-pages.ts';
 import { gitRootAbove } from './access-serves.ts';
 import { READERS_MAX_PAGES } from '../core/repair/readers.ts';
+import { callReadersFor, parseCallAttendees } from '../core/meetings/attendees.ts';
+import { boundedBodyPrefixSql } from '../core/page-window/bounded-lead.ts';
 
 export const PROPOSAL_FIELDS = ['participants', 'attendees', 'to', 'from', 'cc'] as const;
 export const PROPOSAL_DIR = 'visibility-proposals';
@@ -63,6 +65,8 @@ export interface VisibilityProposal {
 }
 
 const LINEAGE_COST = 'Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller except the owner, unless access.members_read_lineage is on (gbrain access members-read-lineage on lets the members a page lists read them too).';
+const CALL_PARTIAL = 'an imported call: proposed above with the owner and its matched attendees; these names match no enabled member, so add any who should read it by hand';
+const CALL_NO_OWNER = 'an imported call, and no owner is set, so no reader set can name the owner (gbrain access owner set <member>)';
 const UNCARRIED_SLUG = 'the slug starts with # or has surrounding spaces or a line break, so a slugs file cannot carry it; label it with --slug';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -111,16 +115,18 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
   assertOutsideGit(dir);
   const view = await ownerView(engine);
   const owner = view.owner;
-  const byEmail = new Map((await listMembers(engine)).filter(m => m.status === 'enabled' && m.email).map(m => [m.email!, m.id]));
+  const allMembers = await listMembers(engine);
+  const byEmail = new Map(allMembers.filter(m => m.status === 'enabled' && m.email).map(m => [m.email!, m.id]));
   const rows = await withOpenScope(engine, {}, async (scope, bounded) => {
     const sources = opts.source ? [opts.source] : scope.sources;
     if (!sources.length) return [];
-    const found = await bounded(e => e.executeRaw<{ source: string; slug: string; type: string | null; visible: unknown; fields: Record<string, unknown> | null }>(
+    const found = await bounded(e => e.executeRaw<{ source: string; slug: string; type: string | null; visible: unknown; fields: Record<string, unknown> | null; call_head: string | null }>(
       `SELECT p.source_id AS source, p.slug, p.type, (${privacyPartSql('p')}) AS visible,
-              jsonb_strip_nulls(jsonb_build_object(${PROPOSAL_FIELDS.map(f => `'${f}', p.frontmatter->'${f}'`).join(', ')})) AS fields
+              jsonb_strip_nulls(jsonb_build_object(${PROPOSAL_FIELDS.map(f => `'${f}', p.frontmatter->'${f}'`).join(', ')})) AS fields,
+              CASE WHEN p.frontmatter ? 'call_import' AND NOT (p.frontmatter ?| $2::text[]) THEN left(${boundedBodyPrefixSql('p')}, 8192) END AS call_head
          FROM pages p
         WHERE ${openPageSql('p')} AND p.source_id = ANY($1::text[])
-          AND (p.frontmatter ?| $2::text[] OR p.type = ANY($3::text[]))
+          AND (p.frontmatter ?| $2::text[] OR p.type = ANY($3::text[]) OR p.frontmatter ? 'call_import')
         ORDER BY p.source_id, p.slug`, [sources, [...PROPOSAL_FIELDS], [...SENSITIVE_PAGE_TYPES]]));
     return found.filter(row => membersReadOpen(scope, row.source, row.visible));
   });
@@ -130,6 +136,19 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
   let considered = 0;
   const ownerFirst = owner ? `${owner},` : '';
   for (const row of rows) {
+    if (row.call_head !== null && row.call_head !== undefined) {
+      considered++;
+      if (row.slug.trim() !== row.slug || row.slug.startsWith('#') || /[\r\n]/.test(row.slug)) { unmatched.push({ source: row.source, slug: row.slug, addresses: [], reason: UNCARRIED_SLUG }); continue; }
+      const call = callReadersFor(parseCallAttendees(row.call_head), owner ?? '', allMembers);
+      if (!owner) { unmatched.push({ source: row.source, slug: row.slug, addresses: call.unmatched, reason: CALL_NO_OWNER }); continue; }
+      const readers = [owner, ...call.readers.slice(1).sort()];
+      const key = JSON.stringify([row.source, readers]);
+      const g = groups.get(key) ?? { source: row.source, readers, slugs: [] };
+      groups.set(key, g);
+      g.slugs.push(row.slug);
+      if (call.unmatched.length) unmatched.push({ source: row.source, slug: row.slug, addresses: call.unmatched, reason: CALL_PARTIAL });
+      continue;
+    }
     const listed = PROPOSAL_FIELDS.flatMap(f => entries(row.fields?.[f]));
     if (!listed.length) {
       if (!row.type || !SENSITIVE_PAGE_TYPES.includes(row.type)) continue;
@@ -192,10 +211,17 @@ export function proposalLines(p: VisibilityProposal, limit = 20): string[] {
   else if (!p.owner) lines.push('  No owner is set (gbrain access owner set <member>), so each reader set names only the matched members.');
   if (p.sets.length) lines.push('', `Reader sets (slugs files in ${p.dir}). Preview each, then run the --apply --expect <hash> it prints:`);
   for (const s of p.sets) lines.push(`  ${s.source}: ${plural(s.pages, 'page')} -> ${s.readers.join(', ')}`, `    ${s.command}`);
-  if (p.unmatched.length) {
-    lines.push('', `Unmatched (${p.unmatched.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (gbrain access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
-    for (const u of p.unmatched.slice(0, limit)) lines.push(u.reason ? `  ${u.source}:${JSON.stringify(u.slug)} (${u.reason})` : `  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
-    if (p.unmatched.length > limit) lines.push(`  ... and ${p.unmatched.length - limit} more (--json lists every one)`);
+  const partial = p.unmatched.filter(u => u.reason === CALL_PARTIAL);
+  const unproposed = p.unmatched.filter(u => u.reason !== CALL_PARTIAL);
+  if (partial.length) {
+    lines.push('', `Proposed with names left out (${partial.length}): these calls are in a reader set above, and these names match no enabled member. Declare the right member's email (gbrain access member set <id> --email <address>) and preview again, or add who should read the call by hand:`);
+    for (const u of partial.slice(0, limit)) lines.push(`  ${u.source}:${JSON.stringify(u.slug)} (${u.addresses.join(', ')})`);
+    if (partial.length > limit) lines.push(`  ... and ${partial.length - limit} more (--json lists every one)`);
+  }
+  if (unproposed.length) {
+    lines.push('', `Unmatched (${unproposed.length}): nothing is proposed for these. Where an address names no enabled member's declared email, declare it on the right member (gbrain access member set <id> --email <address>) and preview again; otherwise label these by hand:`);
+    for (const u of unproposed.slice(0, limit)) lines.push(u.reason ? `  ${u.source}:${JSON.stringify(u.slug)} (${u.reason}${u.addresses.length ? `: ${u.addresses.join(', ')}` : ''})` : `  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
+    if (unproposed.length > limit) lines.push(`  ... and ${unproposed.length - limit} more (--json lists every one)`);
   }
   if (p.folders.length) {
     lines.push('', 'DM, chat and mail pages with no address list, by folder. Name who reads each folder (each command previews; --yes applies):');

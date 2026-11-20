@@ -1,6 +1,7 @@
 /**
- * GBRA-574 B2: conversation fact slots. The conversation extractor may tag a fact with one slot, a (dimension, value)
- * pair on the ontology columns facts already has, from a closed vocabulary of single-valued dimensions. Nothing closes
+ * GBRA-574 B2: conversation fact slots. A second call after extraction (slot-tagging.ts) may tag a fact with one slot,
+ * a (dimension, value) pair on the ontology columns facts already has, from a closed vocabulary of single-valued
+ * dimensions. Nothing closes
  * a slot value in storage: the query facts block derives each value's validity window at read time from the slot's
  * chronology (deriveSlotEnds), so re-extracting pages in any order yields the same windows.
  */

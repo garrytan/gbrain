@@ -208,7 +208,7 @@
             "details": {
               "audience": "personal",
               "audience_reasons": [
-                "no shared declaration; 0 non-automation client(s) active in 30d"
+                "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
               ],
               "backstop_visibility": "private",
               "capture_lanes": {
@@ -1383,6 +1383,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain has no members (gbrain access member add <id>).",
+            "name": "access_pages_read_by_nobody",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -1401,7 +1410,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 185/185 public tables",
+            "message": "RLS enabled on 190/190 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1428,6 +1437,16 @@
           },
           {
             "category": "ops",
+            "details": {
+              "closed": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+            "name": "owner_only_marks_triggers",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "The database encoding is UTF8",
             "name": "database_encoding",
@@ -1450,7 +1469,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 185 table(s) the applied migrations create exist.",
+            "message": "All 190 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -2872,6 +2891,7 @@
               "behind": [],
               "docs": "docs/guides/conversation-archive.md#doctor",
               "enabled": true,
+              "enabled_by": "default",
               "harnesses": [
                 {
                   "harness": "claude-code",
@@ -2917,6 +2937,7 @@
                 }
               ],
               "held": [],
+              "reason": "on by default on a personal brain",
               "source_id": "conversations",
               "stale_days": 2
             },
@@ -3173,40 +3194,35 @@
             },
             "elapsed_ms": "<volatile>",
             "fix": {
-              "actor": "agent",
+              "actor": "host_admin",
               "argv": [
-                "gbrain",
-                "export",
-                "--source",
-                "default",
-                "--dir",
-                "<BACKUP_DIR>/default",
-                "--brain",
-                "host"
+                "pg_dump",
+                "--format",
+                "custom",
+                "--file",
+                "<DUMP_FILE>",
+                "--dbname",
+                "<DATABASE_URL>"
               ],
-              "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
-              "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+              "command": "pg_dump --format custom --file '<DUMP_FILE>' --dbname '<DATABASE_URL>'",
+              "consent": [
+                "credentials"
+              ],
+              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/memory-boundaries.md#full-backup",
               "inputs": [
                 {
-                  "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
-                  "name": "BACKUP_DIR"
+                  "how": "A new file outside the brain, in a directory only the user can read.",
+                  "name": "DUMP_FILE"
+                },
+                {
+                  "how": "The brain's Postgres connection, preferably service=<name> from a pg_service file so no password lands in the command line.",
+                  "name": "DATABASE_URL"
                 }
               ],
-              "next": "run",
+              "next": "tell_user_to_run",
               "requires_exclusive": false,
-              "verify": {
-                "argv": [
-                  "gbrain",
-                  "doctor",
-                  "--only",
-                  "backup_coverage",
-                  "--json",
-                  "--brain",
-                  "host"
-                ]
-              },
-              "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
+              "user_message": "This brain lives in Postgres, so back it up with a database dump of its database: `pg_dump --format custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. Restore it into a new, empty database with `pg_restore --no-owner --dbname <NEW_DATABASE_URL> <DUMP_FILE>`, then run `gbrain init --url <NEW_DATABASE_URL>` under a separate GBRAIN_HOME, which opens the restored brain. `gbrain export` is not a backup: an import of it puts every page in one source and keeps no members, tokens or facts.",
+              "why": "A database dump keeps every source, page, fact, member, token and folder rule of a Postgres brain; a Markdown export keeps pages only."
             },
             "message": "Not urgent yet: the brain holds 23 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 3 knowledge asset(s) lack verified recovery: default (not_a_git_repo), plain (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
             "name": "backup_coverage",
@@ -4442,6 +4458,32 @@
           {
             "category": "brain",
             "details": {
+              "counts": {
+                "by_class": {
+                  "clean": 0,
+                  "conflict": 0,
+                  "likely": 0,
+                  "thin": 0,
+                  "weak": 0
+                },
+                "by_kind": {
+                  "conflict": 0,
+                  "cross_source": 0,
+                  "in_source": 0,
+                  "thin": 0
+                },
+                "crowded_key_values": 0
+              },
+              "groups": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No likely duplicate person or company pages.",
+            "name": "entity_duplicates",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -4540,6 +4582,53 @@
             "elapsed_ms": "<volatile>",
             "message": "Every fact line on 0 facts page(s) carries a date.",
             "name": "facts_undated_lines",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "backup": {
+                "backend": false,
+                "carried_by": "database_backup",
+                "last_failure": null,
+                "last_success": null
+              },
+              "by_rule": {},
+              "checkouts": [],
+              "docs": "docs/guides/secret-store.md#health-and-backups",
+              "entries": 0,
+              "keys": {
+                "current": null,
+                "escrow_exported": [],
+                "in_use": [],
+                "missing": [],
+                "origin": "none",
+                "present": []
+              },
+              "occurrences": 0,
+              "spooled": 0,
+              "unreferenced": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The secret store holds no entries.",
+            "name": "secret_store",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "entity_basis": "reserved_page",
+              "identifier_kinds": [],
+              "identifier_shared": 0,
+              "identifiers": 0,
+              "owner_member_set": false,
+              "person_types_unavailable": false,
+              "several_pages": false,
+              "unbound_google_sources": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+            "name": "owner_identity",
             "status": "ok"
           },
           {
@@ -5693,7 +5782,7 @@
             "details": {
               "audience": "personal",
               "audience_reasons": [
-                "no shared declaration; 0 non-automation client(s) active in 30d"
+                "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
               ],
               "backstop_visibility": "private",
               "capture_lanes": {
@@ -6868,6 +6957,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain has no members (gbrain access member add <id>).",
+            "name": "access_pages_read_by_nobody",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -6886,7 +6984,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 185/185 public tables",
+            "message": "RLS enabled on 190/190 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6913,6 +7011,16 @@
           },
           {
             "category": "ops",
+            "details": {
+              "closed": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+            "name": "owner_only_marks_triggers",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "The database encoding is UTF8",
             "name": "database_encoding",
@@ -6935,7 +7043,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 185 table(s) the applied migrations create exist.",
+            "message": "All 190 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -8357,6 +8465,7 @@
               "behind": [],
               "docs": "docs/guides/conversation-archive.md#doctor",
               "enabled": true,
+              "enabled_by": "default",
               "harnesses": [
                 {
                   "harness": "claude-code",
@@ -8402,6 +8511,7 @@
                 }
               ],
               "held": [],
+              "reason": "on by default on a personal brain",
               "source_id": "conversations",
               "stale_days": 2
             },
@@ -8658,40 +8768,35 @@
             },
             "elapsed_ms": "<volatile>",
             "fix": {
-              "actor": "agent",
+              "actor": "host_admin",
               "argv": [
-                "gbrain",
-                "export",
-                "--source",
-                "default",
-                "--dir",
-                "<BACKUP_DIR>/default",
-                "--brain",
-                "host"
+                "pg_dump",
+                "--format",
+                "custom",
+                "--file",
+                "<DUMP_FILE>",
+                "--dbname",
+                "<DATABASE_URL>"
               ],
-              "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
-              "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+              "command": "pg_dump --format custom --file '<DUMP_FILE>' --dbname '<DATABASE_URL>'",
+              "consent": [
+                "credentials"
+              ],
+              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/memory-boundaries.md#full-backup",
               "inputs": [
                 {
-                  "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
-                  "name": "BACKUP_DIR"
+                  "how": "A new file outside the brain, in a directory only the user can read.",
+                  "name": "DUMP_FILE"
+                },
+                {
+                  "how": "The brain's Postgres connection, preferably service=<name> from a pg_service file so no password lands in the command line.",
+                  "name": "DATABASE_URL"
                 }
               ],
-              "next": "run",
+              "next": "tell_user_to_run",
               "requires_exclusive": false,
-              "verify": {
-                "argv": [
-                  "gbrain",
-                  "doctor",
-                  "--only",
-                  "backup_coverage",
-                  "--json",
-                  "--brain",
-                  "host"
-                ]
-              },
-              "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
+              "user_message": "This brain lives in Postgres, so back it up with a database dump of its database: `pg_dump --format custom --file <DUMP_FILE> --dbname <DATABASE_URL>`, kept private (it holds every page, fact, member and token); `pg_restore --list <DUMP_FILE>` reads it back. Restore it into a new, empty database with `pg_restore --no-owner --dbname <NEW_DATABASE_URL> <DUMP_FILE>`, then run `gbrain init --url <NEW_DATABASE_URL>` under a separate GBRAIN_HOME, which opens the restored brain. `gbrain export` is not a backup: an import of it puts every page in one source and keeps no members, tokens or facts.",
+              "why": "A database dump keeps every source, page, fact, member, token and folder rule of a Postgres brain; a Markdown export keeps pages only."
             },
             "message": "Not urgent yet: the brain holds 23 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 3 knowledge asset(s) lack verified recovery: default (not_a_git_repo), plain (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
             "name": "backup_coverage",
@@ -9939,6 +10044,32 @@
           {
             "category": "brain",
             "details": {
+              "counts": {
+                "by_class": {
+                  "clean": 0,
+                  "conflict": 0,
+                  "likely": 0,
+                  "thin": 0,
+                  "weak": 0
+                },
+                "by_kind": {
+                  "conflict": 0,
+                  "cross_source": 0,
+                  "in_source": 0,
+                  "thin": 0
+                },
+                "crowded_key_values": 0
+              },
+              "groups": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No likely duplicate person or company pages.",
+            "name": "entity_duplicates",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -10037,6 +10168,53 @@
             "elapsed_ms": "<volatile>",
             "message": "Every fact line on 0 facts page(s) carries a date.",
             "name": "facts_undated_lines",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "backup": {
+                "backend": false,
+                "carried_by": "database_backup",
+                "last_failure": null,
+                "last_success": null
+              },
+              "by_rule": {},
+              "checkouts": [],
+              "docs": "docs/guides/secret-store.md#health-and-backups",
+              "entries": 0,
+              "keys": {
+                "current": null,
+                "escrow_exported": [],
+                "in_use": [],
+                "missing": [],
+                "origin": "none",
+                "present": []
+              },
+              "occurrences": 0,
+              "spooled": 0,
+              "unreferenced": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The secret store holds no entries.",
+            "name": "secret_store",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "entity_basis": "reserved_page",
+              "identifier_kinds": [],
+              "identifier_shared": 0,
+              "identifiers": 0,
+              "owner_member_set": false,
+              "person_types_unavailable": false,
+              "several_pages": false,
+              "unbound_google_sources": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+            "name": "owner_identity",
             "status": "ok"
           },
           {

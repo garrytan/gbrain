@@ -29,12 +29,16 @@ import { parseMeetingsSourceConfig } from '../meetings/source-config.ts';
 import type { MeetingsSourceConfig } from '../meetings/types.ts';
 import { parseSlackSourceConfig } from '../slack/source-config.ts';
 import type { SlackSourceConfig } from '../slack/types.ts';
+import { parseIMessageSourceConfig } from '../imessage/source-config.ts';
+import type { IMessageSourceConfig } from '../imessage/types.ts';
+import { parseAppleContactsSourceConfig } from '../apple-contacts/source-config.ts';
+import type { AppleContactsSourceConfig } from '../apple-contacts/types.ts';
 import { assertNever } from '../types.ts';
 
 import type { ConnectorKind } from './connector-kinds.ts';
 
 export { CONNECTOR_KINDS_SQL, CONNECTOR_SOURCE_KINDS, isConnectorSourceKind, type ConnectorKind } from './connector-kinds.ts';
-export type ConnectorConfig = GoogleSourceConfig | GitHubSourceConfig | MeetingsSourceConfig | SlackSourceConfig;
+export type ConnectorConfig = GoogleSourceConfig | GitHubSourceConfig | MeetingsSourceConfig | SlackSourceConfig | IMessageSourceConfig | AppleContactsSourceConfig;
 type LeafClass = 'identity' | 'excluded';
 /** An identity leaf left out of the digest while it holds the default it was introduced with (#6561). */
 interface ElidedLeaf { elideWhen: unknown }
@@ -47,7 +51,8 @@ const underAuto = (config: GitHubSourceConfig): LeafClass => config.scope === 'a
  * output and fails on a leaf missing here; an unlisted leaf still joins the
  * identity at runtime, never the exclusion list.
  */
-export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLeaf>; github: Record<string, Rule>; meetings: Record<string, LeafClass>; slack: Record<string, LeafClass> } = {
+export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLeaf>; github: Record<string, Rule>; meetings: Record<string, LeafClass>; slack: Record<string, LeafClass>;
+  imessage: Record<string, LeafClass>; 'apple-contacts': Record<string, LeafClass> } = {
   google: {
     account: 'identity', services: 'identity', historyDays: 'identity', futureDays: 'identity', calendarId: 'identity', dir: 'identity',
     contactsDir: { elideWhen: DEFAULT_CONTACTS_DIR },
@@ -68,6 +73,17 @@ export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLe
     channels: 'identity', historyDays: 'identity', lookbackDays: 'identity', timezone: 'identity', record: 'identity', dir: 'identity', privateOnly: 'identity', skip: 'identity',
     // Where the token lives, the schedule and the per-run request cap never change what a sweep reads; the account pin covers a swapped token.
     tokenEnv: 'excluded', syncIntervalMin: 'excluded', maxRequests: 'excluded',
+  },
+  imessage: {
+    historyDays: 'identity', lookbackDays: 'identity', timezone: 'identity',
+    // Where the helper token lives and the schedule never change what a sweep reads.
+    tokenEnv: 'excluded', syncIntervalMin: 'excluded',
+  },
+  'apple-contacts': {
+    contactsDir: 'identity', record: 'identity', dir: 'identity',
+    // How the box reaches the helper (address, port, proxy), where the token file lives and the schedule never change
+    // which Contacts store a sweep reads.
+    helperHost: 'excluded', helperPort: 'excluded', proxy: 'excluded', tokenFile: 'excluded', syncIntervalMin: 'excluded',
   },
 };
 
@@ -118,6 +134,8 @@ export function parseConnectorConfig(kind: ConnectorKind, raw: Record<string, un
     case 'github': return parseGitHubSourceConfig(raw, localPath ?? '');
     case 'meetings': return parseMeetingsSourceConfig(raw, localPath ?? '');
     case 'slack': return parseSlackSourceConfig(raw, localPath ?? '');
+    case 'imessage': return parseIMessageSourceConfig(raw);
+    case 'apple-contacts': return parseAppleContactsSourceConfig(raw);
     default: return assertNever(kind);
   }
 }

@@ -272,18 +272,24 @@ async function authorizeStoredTakeHolders(engine: SqlEngine, row: WriteRequest):
 /**
  * #6007: one access check answers identical read-only statements once (the
  * current and the stored authority read the same writer row and visibility).
- * The memo lives for that single check and holds no locking reads.
+ * The memo lives for that single check and holds no locking reads. The typed
+ * brain-identity and unlocked writer-row reads are memoized the same way.
  */
 function onceReads(engine: BrainEngine): BrainEngine {
-  const reads = new Map<string, Promise<unknown[]>>();
+  const reads = new Map<string, Promise<unknown>>();
+  const memo = <T>(id: string, run: () => Promise<T>): Promise<T> => {
+    let read = reads.get(id) as Promise<T> | undefined;
+    if (!read) { read = run(); reads.set(id, read); read.catch(() => reads.delete(id)); }
+    return read;
+  };
   return new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       if (/\bFOR (?:SHARE|UPDATE)\b/i.test(sql)) return target.executeRaw(sql, params, opts);
-      const id = JSON.stringify([sql, params ?? null]);
-      let read = reads.get(id);
-      if (!read) { read = target.executeRaw(sql, params, opts); reads.set(id, read); read.catch(() => reads.delete(id)); }
-      return read;
+      return memo(JSON.stringify([sql, params ?? null]), () => target.executeRaw(sql, params, opts));
     };
+    if (key === 'readPersistenceBrainId') return () => memo('typed:brain', () => target.readPersistenceBrainId());
+    if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
+      : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

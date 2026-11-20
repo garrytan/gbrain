@@ -667,6 +667,27 @@ vars — incident-time escape hatches, not everyday knobs.
    consumer claims) is reported in `sync_blocked` as
    [`refresh_sync_timeout`](write-refusals.md#refresh_sync_timeout) and
    catches up on its next sync.
+   While it holds the refresh lock, a member's sync derives links only for the
+   pages that refresh imported. Once every lock is released, the same run spends
+   the rest of the sync's link budget (1,000 pages and 5 minutes, less what the
+   imports used) on the source's stale-link backlog. So an uncontended run drains
+   as much backlog as a plain `gbrain sync` does, but other refreshes of the
+   checkout no longer wait on it. Refreshes drain a source's backlog one at a time
+   per brain: a refresh that finds another refresh's drain of the same brain's
+   source running skips its own (a plain
+   `gbrain sync` derives its own share without that lock). `--json` lists each
+   member's drain in `link_backlog`: `outcome` is `drained` (with `pages`
+   derived and `remaining`), `skipped` or `failed` (with `message`). A failed
+   drain never fails the refresh, and `gbrain extract --stale --source-id <id>`
+   runs the backlog on demand (`--dry-run --json` reports its size as
+   `stale_pages`).
+   `--json` also reports where the run's time went. `phase_ms` holds whole
+   milliseconds for each phase the run reached: `fetch`, `precheck` (which
+   includes `fetch`), `drain` (waiting for queued writes), `merge` (the fence
+   and fast-forward), `sync` (the member imports), `tail` (their post-import
+   step) and `backlog` (the drain after the lock). `lock_held_ms` is how long
+   the run held the refresh lock, and is absent when the run never took it.
+   `GBRAIN_DEBUG=1` prints the same line on stderr.
    A refresh whose process died (a crash, a replaced container) does not
    wedge the checkout: the owner finishes what it can on its own, and the next
    `gbrain sources refresh <source-id>` on the owner host finishes the rest

@@ -64,6 +64,7 @@ export function isSensitiveConfigKey(key: string): boolean {
 const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
+  'secrets.on_push', // GST-2988: every publisher reads it engine-free (git/redact-unpushed.ts onPushMode)
   'backup.check_enabled',
   'backup.check_interval_days',
   // #4748: resolveMcpInstructions reads ONLY the file plane (all three MCP
@@ -574,6 +575,14 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
           'gbrain config set push.allow_unverified_remote false',
       );
     }
+  } else if (key === 'secrets.on_push') {
+    if (value !== 'redact' && value !== 'refuse') {
+      console.error(`[config] ${key} must be redact (the default: secrets in unpushed commits are replaced by store markers before the push) or refuse (the push is held instead)`);
+      process.exit(1);
+    }
+    cfg.secrets = { ...(cfg.secrets ?? {}), on_push: value };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json)`);
   } else if (key === 'backup.check_enabled') {
     const on = isConfigTruthy(value);
     cfg.backup = { ...(cfg.backup ?? {}), check_enabled: on };

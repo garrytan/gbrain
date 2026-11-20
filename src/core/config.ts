@@ -39,6 +39,8 @@ export interface GBrainConfig {
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
   hooks?: { stop_push_debounce_min?: number | string };
+  /** GST-2988: what a publish does with secrets in unpushed commits (file plane: engine-free publishers read it); default redact. */
+  secrets?: { on_push?: 'redact' | 'refuse' };
   /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
   /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
@@ -732,8 +734,8 @@ export function loadConfig(): GBrainConfig | null {
   const dbUrl = effectiveEnvDatabaseUrl();
 
   if (!fileConfig && !dbUrl) return null;
-  // GBRA-377: a file holding only skills.resolver settings is no brain; every other file keeps its file-plane reads.
-  if (!dbUrl && fileConfig && Object.keys(fileConfig).every((k) => k === 'skills')) return null;
+  // GBRA-377: a file holding only skills.resolver settings (or GST-2988's secrets.on_push) is no brain; every other file keeps its file-plane reads.
+  if (!dbUrl && fileConfig && Object.keys(fileConfig).every((k) => k === 'skills' || k === 'secrets')) return null;
 
   // Infer engine type. A DATABASE_URL-style env var is always a Postgres
   // connection target and must override a file-backed PGLite engine
@@ -1319,6 +1321,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // `config set` — engine-free hook/push children read loadConfigFileOnly).
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
+  'secrets.on_push', // GST-2988 file plane: redact (default) or refuse secrets in unpushed commits at publish (git/redact-unpushed.ts)
   // File-plane backup-check keys (routed to ~/.gbrain/config.json by `config
   // set` — the engine-free render sites read loadConfigFileOnly). Default ON /
   // 30 days; interval clamps to >=1 day at read time (backup/status-file.ts).
@@ -1533,7 +1536,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.default_visibility',
   'storage.git_lfs', // G7a: a git-canonical door commit under a Git LFS rule commits the LFS pointer; default off refuses it (persistence/git-declared.ts)
   'visibility.honor_aliases', // remote page reads honor `access`/`confidentiality` aliases on pages without `visibility`; default on, false opts out (search/private-visibility.ts)
-  'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
+  'facts.entity_inference', 'facts.unbacked_entity_keys', // #5836 subject inference kill switch (subject-infer.ts); GBRA-574 conversation name keys (entities/resolve-on-save.ts)
   'facts.candidate_fusion', // C2: 'rrf_free' (default, cosine arm) | 'interleave' (cosine + keyword; facts/single-prepare.ts)
   'facts.supersession_thresholds', // JSON {"provider:model@dims": number | "off"} (facts/supersession-threshold.ts)
   'facts.page_write_notability_filter', // #6231: tiers page-write extraction keeps (facts/notability-filter.ts)

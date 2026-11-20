@@ -128,7 +128,7 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 |---|---|---|---|---|---|---|
 | A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`, `leaver`, `audience_target`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -333,6 +333,126 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
+
+### apple_contacts_config
+
+<a id="apple_contacts_config"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An apple-contacts source has no helper host, or a proxy that is not socks5h://host:port, so nothing was imported. | The source reaches GBrain Helper only at the host and port its config names, directly or through a socks5h proxy that resolves the host name; a proxy URL may not carry credentials, and a bad one is refused rather than skipped. | Re-add the source: gbrain sources add <id> --kind apple-contacts --helper-host <host> [--proxy socks5h://<host>:<port>] --token-file <path>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_config](../../docs/guides/apple-contacts.md#apple_contacts_config)
+
+### apple_contacts_delete_floor
+
+<a id="apple_contacts_delete_floor"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An Apple Contacts run would have deleted more than 20% of the contacts the source owns, or all of them, so no contact was deleted: a full read wrote nothing and kept its cursor, an incremental run kept the deletions pending. | A revoked Contacts grant or a half-synced Contacts store looks like mass deletion; the run refuses the deletions whole instead of retiring pages. Pending deletions cancel when the contacts come back. GBRAIN_ALLOW_MASS_RECONCILE=1 lets a real large deletion through; deleting every contact never passes. | Check Contacts on the Mac and that GBrain Helper can read it, then run gbrain sync --source <id> again; if the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_delete_floor](../../docs/guides/apple-contacts.md#apple_contacts_delete_floor)
+
+### apple_contacts_disabled
+
+<a id="apple_contacts_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper has its Contacts source turned off, so nothing was imported. | The helper serves a source only while its config enables it; only the Mac owner changes that config. | On the Mac, set sources.contacts.enabled to true in GBrain Helper's config.json, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_disabled](../../docs/guides/apple-contacts.md#apple_contacts_disabled)
+
+### apple_contacts_helper_error
+
+<a id="apple_contacts_helper_error"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper answered the Contacts route with a status gbrain does not expect (or kept returning snapshot pages), so the run stopped with its cursor unchanged. | Only 200, 401, 403, 410 and 503 have a defined meaning on the route; anything else may be a helper bug or a version gap, so nothing more is written. | Check that GBrain Helper and the GBrain CLI are both up to date, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_helper_error](../../docs/guides/apple-contacts.md#apple_contacts_helper_error)
+
+### apple_contacts_not_allowed
+
+<a id="apple_contacts_not_allowed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper cannot read Contacts because the owner has not allowed it on the Mac, so nothing was imported. | macOS lets an app read Contacts only after the user clicks OK on its prompt or switches it on in System Settings; only the user can do that. | Ask the user to click OK on the "GBrain Helper would like to access your contacts" prompt, or switch GBrain Helper on in System Settings > Privacy & Security > Contacts, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_not_allowed](../../docs/guides/apple-contacts.md#apple_contacts_not_allowed)
+
+### apple_contacts_token_file
+
+<a id="apple_contacts_token_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The token file an apple-contacts source names is missing, unreadable, not a regular file, readable by group or others, or does not hold an accessToken, so nothing was imported. | The read:contacts token is read only from that 0600 file, never from the environment, a flag or a URL, so a symlink or a loose mode is refused before the file is read. | Write {"accessToken":"<token>"} to the file the source names, owned by the user that runs gbrain, chmod 600, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_token_file](../../docs/guides/apple-contacts.md#apple_contacts_token_file)
+
+### apple_contacts_unauthorized
+
+<a id="apple_contacts_unauthorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper refused the Apple Contacts token (401, or 403 insufficient_scope), so nothing was imported. | The Contacts route answers only a token the helper issued with the read:contacts scope. | Put a token the helper issued with the read:contacts scope in the source's token file (chmod 600), then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_unauthorized](../../docs/guides/apple-contacts.md#apple_contacts_unauthorized)
+
+### apple_contacts_unreachable
+
+<a id="apple_contacts_unreachable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper did not answer the Contacts route (503, a timeout or no connection) after retries at 1, 4 and 15 seconds, so the run stopped with its cursor unchanged. | The helper runs on the owner's Mac, which may be asleep or off the network; the next scheduled pull picks up where this one stopped. | Check that the Mac is awake, GBrain Helper is running and any proxy is up, then run gbrain sync --source <id>. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_unreachable](../../docs/guides/apple-contacts.md#apple_contacts_unreachable)
+
+### apple_full_disk_access_pending
+
+<a id="apple_full_disk_access_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper is running but cannot read Messages because Full Disk Access is off for it, so nothing was imported. | macOS lets an app read the Messages database only after the user switches it on in System Settings; only the user can do that, and a grant can be turned off again later. | Ask the user to open System Settings > Privacy & Security > Full Disk Access and switch on GBrain Helper, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_full_disk_access_pending](../../docs/guides/apple-setup.md#apple_full_disk_access_pending)
+
+### apple_helper_not_running
+
+<a id="apple_helper_not_running"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Nothing answered on the GBrain Helper's loopback port (the helper is stopped, the Mac is asleep, or apple.helper.port is not set), so nothing was imported. | An imessage source reads only from the helper on the same Mac over 127.0.0.1; it never opens the Messages database itself. | Start GBrain Helper on this Mac and check gbrain config get apple.helper.port names its port, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_helper_not_running](../../docs/guides/apple-setup.md#apple_helper_not_running)
+
+### apple_helper_unauthorized
+
+<a id="apple_helper_unauthorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper refused the token gbrain sent, or gbrain has no helper token, so nothing was imported. | The helper answers only a request that carries one of its own tokens with the read:imessage scope; the token is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_IMESSAGE_TOKEN, else the 0600 file ~/.gbrain/connectors/imessage.json. | Save the helper's current token where GBrain reads it, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_helper_unauthorized](../../docs/guides/apple-setup.md#apple_helper_unauthorized)
+
+### apple_schema_mismatch
+
+<a id="apple_schema_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper does not recognise the layout of the Messages database (macOS may have changed it), so nothing was imported. | The helper reads only the tables and columns it knows; it refuses a changed database rather than guess at it. | Update GBrain and the GBrain Helper to their newest versions, then run gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple-setup.md#apple_schema_mismatch)
 
 ### approval_required
 
@@ -833,6 +953,36 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 | Google connect credential error: claim already used. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### class_apply_busy
+
+<a id="class_apply_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another apply of the same whole-class file-drift manifest is running, so this run wrote nothing. | One whole-class apply per manifest at a time keeps its progress record and request ids consistent; a second apply would race the first over the same pages. | Wait for the running apply to finish. If it was stopped, rerun the same apply command once its lock expires (the message names when); it resumes at the next window and applies no page twice. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
+
+### class_capacity_exceeded
+
+<a id="class_capacity_exceeded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A whole-class file-drift preview found that the reconcile backups its apply would retain exceed the brain's recovery-bytes limit, so nothing was written. | Every page the apply replaces keeps a private reconcile backup, and those backups are bounded by persistence.limits.brain_recovery_bytes; an apply that ran out of room would stop partway through the class. | Show the user the bytes needed and the limit the message names. Raising persistence.limits.brain_recovery_bytes is their call; otherwise settle a smaller class with --only / --skip. Run: gbrain config get persistence.limits.brain_recovery_bytes | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
+
+### class_manifest_stale
+
+<a id="class_manifest_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The whole-class file-drift manifest no longer matches the hash passed with --expect or the pins its preview saved, so nothing was written. | The apply replaces exactly the pages the user approved; a manifest that was edited, partly written, removed, or previewed for another selection is not that approval. | Run the fresh preview the message prints, show the user its card, and apply its new hash after they agree. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
 
 ### client_behind
 
@@ -1437,6 +1587,40 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### dedupe_decision_store_mismatch
+
+<a id="dedupe_decision_store_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+
+### dedupe_group_not_confirmable
+
+<a id="dedupe_group_not_confirmable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`.
+
+### dedupe_group_unknown
+
+<a id="dedupe_group_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe confirm or reject was given a group id that neither the current preview nor any recorded decision names, so nothing was written. | A group id is a hash of its member pages: a page added, removed or renamed since the preview was read changes or removes the id, and acting on a different set than the one read could join or split the wrong pages. | Read the current groups with gbrain dedupe --preview (or gbrain dedupe confirm for the confirm list) and use an id it prints. Run: gbrain dedupe --preview | agent | `repeat the read that failed` | 1 | no |
+
+### dedupe_page_changed
+
+<a id="dedupe_page_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe reject recorded the decision, but a page changed while its distinct_from line was being written, so that page was not edited. | The distinct_from edit is published through the page door against the revision it read, so a concurrent edit is never overwritten. | Run the same gbrain dedupe reject command again; the decision is already recorded and only the page edit is retried. Run: gbrain dedupe --preview | agent | `repeat the read that failed` | 1 | no |
 
 ### deep_health_probe_failed
 
@@ -2734,6 +2918,58 @@ More: [docs/guides/write-refusals.md#guest_readers_invalid](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#guest_source_database_only](../../docs/guides/write-refusals.md#guest_source_database_only)
 
+### handover_member_enabled
+
+<a id="handover_member_enabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain access member handover was asked for a member that is still enabled, so nothing was previewed or written. | A handover moves pages away from the member; while it still reads, it would lose its own pages. | Switch the member off first with gbrain access member disable <id>, then preview the handover. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_owner_unset
+
+<a id="handover_owner_unset"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A handover group goes to the owner (the default for kept pages and folder rules), but this brain names no owner, so nothing was previewed. | Without an owner the default would leave the pages readable by no member. | Name the owner with gbrain access owner set <member>, or give the group to a member with --set kept=<member>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_partial
+
+<a id="handover_partial"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A handover apply wrote some of its items and skipped or failed others (a page changed since the preview, or a write failed); the written items stay in place and the handover row records each outcome. | Each item is written through its own door and rechecked first, so one changed page never blocks the rest; rerunning the same apply resumes from the recorded items. | Read the skipped items in detail, then rerun the same apply command (same --expect); items already written count as done. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_rules_held
+
+<a id="handover_rules_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source the handover changes folder rules on already has a widening change waiting for approval, so the handover wrote nothing. | Approving a rule change installs every change waiting for that source, and a handover approves only what its preview showed. | Preview and approve or drop the waiting change with gbrain access apply --source <id>, then preview the handover again. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
+### handover_undo_member_disabled
+
+<a id="handover_undo_member_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An undo of a handover was asked for while its member is disabled or removed, so nothing was written. | Undo restores the readers the member had; while it is off, that would leave its pages readable by no member again. Removed ids are never reused, so a removed member's handover cannot be undone. | Enable the member again with gbrain access member enable <id>, then preview the undo. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `disabled`, `removed`.
+
+More: [docs/guides/member-handover.md#refusals](../../docs/guides/member-handover.md#refusals)
+
 ### harness_hook_duplicates
 
 <a id="harness_hook_duplicates"></a>
@@ -2841,6 +3077,22 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The request_id already belongs to a different accepted operation. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### identity_link_owned_by_dedupe
+
+<a id="identity_link_owned_by_dedupe"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, or entity_identity_unlink refused to remove a company page the sync linked automatically, so nothing changed. | A confirmed link is the projection of a recorded duplicate decision (kept in git on a brain with a repository), and an automatic company link comes from the pages' shared ids: removing the row alone would come back at the next reconcile or sync while the decision or the ids still say the pages are one person or company. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people or companies and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+
+### identity_member_in_other_group
+
+<a id="identity_member_in_other_group"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page of the group already belongs to another identity group, so gbrain dedupe confirm wrote nothing. | A page belongs to at most one identity group; confirming would move it out of the group someone already made. | Add the other pages to that group with gbrain dedupe confirm <group-id> --join <entity_id>, or remove the page from it first. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### independent_principal_required
 
@@ -3684,6 +3936,26 @@ More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-tw
 |---|---|---|---|---|---|---|
 | Sources cannot claim overlapping canonical directories. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### owned_day_secret_held
+
+<a id="owned_day_secret_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A chat day looks like it holds a secret and secrets.on_push is refuse, so its file was not committed; the day is in the database, and the file committed earlier (which passed the scan) stays. | The scan, and push-time redaction under the default secrets.on_push redact, catch known key and token shapes only. A one-time code or password written in plain message text is not caught or redacted, which is why the folder is written only when the checkout pushes to a repository proven private. With refuse, a commit holding a matched key or token would stop every later push from the brain, so that day is kept out of Git. | Nothing to do for the day to be searchable. To commit it, set secrets.on_push back to redact (gbrain config set secrets.on_push redact); the next sync commits it and the push redacts the matched key or token. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#what-a-push-carries](../../docs/guides/apple-setup.md#what-a-push-carries)
+
+### owned_folder_conflict
+
+<a id="owned_folder_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file or folder under .gbrain-owned/ is not what the source that owns it wrote (edited or added by hand, reached through a symlink, or another source's), or a command other than that source tried to read or write it; nothing there was changed. | An owned folder holds the pages one source writes from outside the brain (an iMessage source's chat days). Only that source's writer changes it, and only files whose bytes it recorded, so a hand edit is never overwritten and the default source's sync, import, repairs and commits never pick the folder up. | Move the hand-made file out of .gbrain-owned/ (or restore the committed file with git checkout -- <path>), then run gbrain sync --source <id>. To change a page there, change it in Messages; to stop the source, gbrain sources remove <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#owned_folder_conflict](../../docs/guides/apple-setup.md#owned_folder_conflict)
+
 ### owner_marker_missing
 
 <a id="owner_marker_missing"></a>
@@ -3700,7 +3972,7 @@ More: [docs/guides/write-refusals.md#owner_marker_missing](../../docs/guides/wri
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
+| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. On a Rust brain the same two reasons come from the owner socket (`<database_path>/.gbrain-owner.sock`): `not_sent` means the call never reached the owner (no owner or client role within 5 seconds, or the owner had already exited), so a retry is safe; `outcome_unknown` means the owner exited while the call ran, so a write may or may not have committed and the caller reads before it retries. No client takes the brain over. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `binding_missing`, `incarnation_changed`, `coordination_path_missing`, `local_path_missing`, `not_sent`, `outcome_unknown`.
 
@@ -3781,6 +4053,14 @@ More: [docs/guides/windowed-reads.md#page_shrink_refused](../../docs/guides/wind
 | The whole page does not fit one result on this connection, so get_page did not return its body. | A result is measured as the complete encoded frame; a body over the connection's cap (mcp.max_result_bytes_stdio, 4 MiB; mcp.max_result_bytes_http, 1 MiB) would be cut or rejected by the client. Nothing was truncated: windowed reads cover the whole page in pieces. | Read the outline (body: 'outline'), then windows (body: 'window' with lines, bytes, around_chunk_id or the returned next_cursor). To replace the page, edit it with edit_page and the revision from body: 'none'. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#page_too_large_for_inline](../../docs/guides/windowed-reads.md#page_too_large_for_inline)
+
+### param_not_on_surface
+
+<a id="param_not_on_surface"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller passed a parameter that its tool surface leaves out of the tool's schema; nothing ran. | The tool surface the brain operator set for a connection (verbs, starter, full) limits the parameters it may pass as well as the tools it may call, so a starter client cannot reach behaviour such as include_deleted that only the full surface offers. | Repeat the call without that parameter, or widen the surface with request_tools when the fix offers it. | agent | `repeat the read that failed` | 1 | no |
 
 ### parse_error
 
@@ -4154,6 +4434,26 @@ More: [docs/guides/shared-checkout-git.md#publish_scan_unreadable](../../docs/gu
 
 More: [docs/guides/shared-checkout-git.md#publish_secret_found](../../docs/guides/shared-checkout-git.md#publish_secret_found)
 
+### publish_secret_rebuild_race
+
+<a id="publish_secret_rebuild_race"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| HEAD moved 3 times while a publish was redacting the unpushed commits (a writer that does not take the commit lock), so nothing was rewritten or pushed; the next publish tries again. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Let the next publish retry it; if it repeats, find the writer that commits without gbrain git commit-push. Run: gbrain git redact-unpushed --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_rebuild_race](../../docs/guides/shared-checkout-git.md#publish_secret_rebuild_race)
+
+### publish_secret_rebuild_unbounded
+
+<a id="publish_secret_rebuild_unbounded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Redacting the unpushed commits ran past the publish's time budget (often a checkout with no remote-tracking ref, so its whole history is unpushed); nothing was rewritten or pushed, and the publish retries in the background with a longer budget. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Run the read-only preview to see how many commits it covers; fetch the remote so a remote-tracking ref bounds the range. Run: gbrain git redact-unpushed --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded](../../docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded)
+
 ### pull_blocked_local_changes
 
 <a id="pull_blocked_local_changes"></a>
@@ -4213,6 +4513,18 @@ More: [docs/guides/write-refusals.md#purge_replay_incomplete](../../docs/guides/
 | The content matches a purged fact, take or page in this source, so it was not saved. | A purge leaves a text-free tombstone (the claim fingerprint or the page content hash) so stale files, re-syncs, reverts and re-extraction cannot bring purged content back. | Do not retry the same content. Write it in new words if it is still true, or ask the user to clear the tombstone on the brain host (gbrain pages purges list, then gbrain pages unpurge <slug> for a page). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
+
+### push_credential_refused
+
+<a id="push_credential_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Git host refused the push for the credential git used ("Repository not found", HTTP 404, or HTTP 403); the commit is durable locally and nothing was pushed or retried. | A host answers "Repository not found" to an account that cannot see a private repository, and 403 to one that may not write to it. The same credential is refused on every attempt, so a retry only hides the fault while commits stay on this machine; which credential git uses is the user's configuration, and gbrain never changes it. | Relay the message to the user: it names the credential helpers git asked (with the scope and file that configure each), which one answered and its account login. Once they make git use a credential for an account that can push there, run gbrain git commit-push --push-only. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `not_found`, `forbidden`.
+
+More: [docs/guides/shared-checkout-git.md#push_credential_refused](../../docs/guides/shared-checkout-git.md#push_credential_refused)
 
 ### push_unconfirmed
 
@@ -4818,9 +5130,9 @@ More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, build provenance, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum it published, is loaded. A file that fails the check is deleted when it was just fetched, and a file already in place is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
 
-Reasons: `digest`, `attestation`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 ### rust_engine_addon_missing
 
@@ -4828,9 +5140,27 @@ Reasons: `digest`, `attestation`, `engine_abi`, `engine_build`, `target`, `load_
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine is selected (engine: rust), but its addon could not be found or fetched on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file, fetched once into the gbrain home the first time the rust engine is selected and checked against the release checksums before it loads. Without a verified addon the engine cannot open, and gbrain refuses before touching the brain. | Run the command again once github.com is reachable (the addon is fetched and checked on first use), or point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
-Reasons: `unsupported_target`, `release_unavailable`, `manifest_unavailable`, `asset_unavailable`, `download_failed`, `attestation_unavailable`, `override_not_found`.
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+
+### rust_store_locked
+
+<a id="rust_store_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust store could not be opened directly because another opener already has it open, so nothing was opened or written. | A Rust brain store has one opener at a time. A Rust engine does not hit this: its `connect()` makes a second process or engine a client of the owner over `<database_path>/.gbrain-owner.sock`. It comes from a direct store open (a tool or test that opens the store without the engine) while the owner holds it. | Open the brain through the Rust engine so the call goes through the owner, or stop the process that holds the store, then try again. | user | `gbrain doctor --json` | 1 | yes |
+
+### rust_store_unreadable
+
+<a id="rust_store_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Rust engine could not read or write this brain's store directory (its format is one this gbrain does not read, its records failed their integrity check, or the disk failed), so the call did not complete and nothing past the last committed write changed. | The store checks its FORMAT file before it opens its records, and it verifies its records as it reads them. It stops rather than guess. | Check that the brain directory is the one you meant and that the disk is healthy. For a format from a newer gbrain, upgrade gbrain. For damaged records, restore the brain from a backup. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `format_unknown`, `store_corrupt`, `store_io`.
 
 ### schedule_install_failed
 
@@ -4940,6 +5270,46 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
 
+### secret_reveal_forbidden
+
+<a id="secret_reveal_forbidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This connection may not read originals from the secret store: its grant does not name reveal_secret, or it cannot read any page that holds the marker. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/secret-store.md#reading-an-original](../../docs/guides/secret-store.md#reading-an-original)
+
+### secret_store_key_mismatch
+
+<a id="secret_store_key_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A secret store entry did not authenticate under its key: the row was changed or moved, so its original is not returned. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
+
+### secret_store_key_missing
+
+<a id="secret_store_key_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The secret store key an entry or a backup was sealed with is not on this host (the keyring or GBRAIN_SECRET_STORE_KEY), so its original cannot be read here; or this host has no store key at all, so gbrain secrets backup uploads nothing (a backup is sealed under an existing key and never makes one). | Only the operator of the brain host can change what blocks this. | Import the key's escrow copy with gbrain secrets key import <file> --passphrase-stdin, or set GBRAIN_SECRET_STORE_KEY to the key the other host uses. Run: gbrain secrets key status --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/secret-store.md#keys](../../docs/guides/secret-store.md#keys)
+
+### secret_store_unwritable
+
+<a id="secret_store_unwritable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The secret store could not keep an original value, so nothing that would have lost it was written. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/secret-store.md#when-an-original-cannot-be-kept](../../docs/guides/secret-store.md#when-an-original-cannot-be-kept)
+
 ### segmented_mirror_writer_gate
 
 <a id="segmented_mirror_writer_gate"></a>
@@ -5017,6 +5387,14 @@ More: [docs/guides/write-refusals.md#settle_mismatch](../../docs/guides/write-re
 | gbrain setup does not wire this harness yet; its guide has the manual connection steps. | Only harnesses with a supported row in the setup capability table are wired automatically, so setup never guesses another host's config format. | Correct the request using the message above, then retry. Run: gbrain setup --help | agent | `repeat the read that failed` | 2 | no |
 
 More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair.md#setup-harness-unsupported)
+
+### setup_history_choice_required
+
+<a id="setup_history_choice_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
 
 ### setup_hosted_connection
 
@@ -5234,13 +5612,23 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
+### skill_resolver_host_hidden
+
+<a id="skill_resolver_host_hidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| OpenClaw now hides some skills the plugin still suggests from the agent's model (ineligible on this host, outside the agent's skill filter, or model invocation off). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only, which re-reads OpenClaw's skill list and stops suggesting them without installing anything. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_host_hidden](../../docs/guides/skill-resolver.md#skill_resolver_host_hidden)
+
 ### skill_resolver_host_load_cut
 
 <a id="skill_resolver_host_load_cut"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot), so setup leaves them out of the agent's suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot in openclaw.json, or split the skill root, then run setup again. | agent | `repeat the read that failed` | 1 | no |
+| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so setup leaves them out of the agent's suggestions and doctor warns when the plugin still offers one. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot and skills.limits.maxSkillsLoadedPerSource in openclaw.json, or split the skill root, then run gbrain setup openclaw --skills-index-only. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_host_load_cut](../../docs/guides/skill-resolver.md#skill_resolver_host_load_cut)
 
@@ -5604,7 +5992,7 @@ More: [docs/guides/write-refusals.md#source_writer_restricted](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page search returns (for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
+| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page every reader of that source can read (pages kept to named readers or private do not count; for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages](../../docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages)
 
@@ -5976,7 +6364,7 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The operation did not finish within its time bound. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 124 | yes |
+| The operation did not finish within its time bound. | On a Rust brain client, a call through the owner socket carries its deadline and `reason` says how far it got: `not_sent` (never reached the owner) and `not_started` (waited in the owner queue and never ran) are safe to retry; `outcome_unknown` (the owner started it) means a write may or may not have committed, so read before you retry. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 124 | yes |
 
 ### topology_change_required
 
@@ -6204,7 +6592,7 @@ More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that gbrain.yml at HEAD declares, or .gitignore does not ignore it. | The next sync deletes the page of a file that leaves Git outside a declared storage.db_only dir, and a file .gitignore does not ignore can be committed again by any later commit. | Declare the folder under storage.db_only in gbrain.yml and add its <dir>/ line to .gitignore, commit both with gbrain git commit-push -m <msg> -- gbrain.yml .gitignore, then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
+| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that the source's gbrain.yml (in the folder the source is rooted in) declares at HEAD and on disk, .gitignore does not ignore it, it is a symbolic link out of the dir, it is a Markdown page whose slug falls outside the dir, or it is a code-extension file that is a page, or that a code-importing source's sync imports as one, or that the source's last finished sync has not seen at its current version; or the brain, which records the source's folder, could not be read, which refuses every file. | The next sync deletes the page of a file that leaves Git unless sync keeps it as database-only, which it decides by page slug, and a file .gitignore does not ignore can be committed again by any later commit. | Follow the fix the refusal prints for each file: declare the folder under storage.db_only in the gbrain.yml the refusal names and its <dir>/ line in .gitignore (commit both with gbrain git commit-push -m <msg> -- <that gbrain.yml> .gitignore), add the .gitignore line, declare the slug spelling, keep code-file pages tracked, run gbrain sync --source <id> for code files sync has not seen yet, or retry once the brain is free; then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#untrack](../../docs/guides/shared-checkout-git.md#untrack)
 
@@ -6415,6 +6803,16 @@ More: [docs/guides/wakeshift.md#shared-brains](../../docs/guides/wakeshift.md#sh
 | Wakeshift could not be reached or answered with a server error or rate limit; nothing was watched. | gbrain makes one request with a 10 s timeout and never retries inside a tool call, so a slow or down Wakeshift never holds the call. | Retry in a minute, or call wait_job to wait without Wakeshift. | agent | `gbrain doctor --json` | 1 | yes |
 
 More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#troubleshooting)
+
+### whole_class_prefer_unsupported
+
+<a id="whole_class_prefer_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair file-drift --whole-class settles only --prefer file on held side unknown, database or both, so a --prefer database or deleted-side selection was refused before anything was read. | Letting the database win rewrites files, and each deleted-side state is its own decision; neither is settled for a whole class with one approval. | Preview that selection one window at a time with the per-window command the message names (--held --side <side> --prefer <side>, without --whole-class). Run: gbrain sources status '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#whole-class](../../docs/guides/repair.md#whole-class)
 
 ### withdrawal_capacity
 

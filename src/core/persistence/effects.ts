@@ -349,6 +349,7 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
     if (target === null) return;
     const commits = new Map<string, string>();
     const outcome = await publishGitEffect(root, target, opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner, effect.data.expected_hash, commits);
+    await (await import('../git/redact-finish.ts')).settleIfRedacted(engine, root, outcome);
     await completeEffect(engine, effect, commits.has(target) ? { ...outcome, commit: commits.get(target) } : outcome);
     return;
   }
@@ -358,7 +359,9 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
     // #7089: a page an earlier attempt committed but failed to push may since have been skipped (its file removed or
     // edited), so a walk that ends while the root is ahead of its upstream pushes before it completes.
     const durable = hardened ?? (await gitDurabilityPolicy(binding, root)).durable;
-    await completeEffect(engine, effect, durable && await gitRootAhead(root, opts.signal) ? await pushGitRoot(root, opts.signal) : {});
+    const pushed = durable && await gitRootAhead(root, opts.signal) ? await pushGitRoot(root, opts.signal) : {};
+    await (await import('../git/redact-finish.ts')).settleIfRedacted(engine, root, pushed);
+    await completeEffect(engine, effect, pushed);
     return;
   }
   attempt.target = snapshot.page.slug;
@@ -761,7 +764,7 @@ async function settleDerivedFailures(engine: BrainEngine, derived: DerivedFailur
 /** Waits that say nothing about the target never count toward parking. */
 const CONTENTION_CODES = ['projection_pending', 'revision_conflict', 'writer_busy', 'writer_pool_capacity', 'git_index_locked'];
 // #6305: writer_lock_unavailable is this process failing to open the lock file, not the effect failing; it never parks the effect.
-const DEPENDENCY_CODES = ['recovery_required', 'owner_marker_missing', 'owner_unavailable', 'write_claim_lost', 'queue_capacity', 'write_quota_exhausted', 'write_capacity_backpressure', 'writer_lock_unavailable'];
+const DEPENDENCY_CODES = ['publish_secret_rebuild_unbounded', 'recovery_required', 'owner_marker_missing', 'owner_unavailable', 'write_claim_lost', 'queue_capacity', 'write_quota_exhausted', 'write_capacity_backpressure', 'writer_lock_unavailable'];
 
 /**
  * A scan sets its failing target aside and moves on; a single-target effect,
@@ -1130,6 +1133,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       if (!lock) throw writerBusy(items[0]!.effect);
       pushed = await pushGitRoot(root, opts.signal);
     } catch (error) { failure = error; } finally { await lock?.release(); }
+    await (await import('../git/redact-finish.ts')).settleIfRedacted(engine, root, pushed);
     for (const { effect, outcome, target } of items) {
       try {
         if (!pushed) throw failure;

@@ -1,0 +1,85 @@
+name: Apple helper
+
+# Builds and tests the macOS helper under apple/helper/ (Swift), then runs the
+# headless signing probe (apple/helper/scripts/signing-probe.sh), whose answer
+# lands in the job summary. Not a required check, and kept out of test.yml so
+# full-suite reuse is unchanged for every other change. Uses no secrets.
+
+on:
+  pull_request:
+    branches: [master]
+    # Event parity (docs/ci-event-parity.md): path-gated named exception; covered by the master push run on the same paths.
+    paths:
+      - 'apple/**'
+      - '.github/workflows/apple-helper.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'apple/**'
+      - '.github/workflows/apple-helper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  helper:
+    name: Apple helper (macOS 26)
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apple/helper
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcode-select -p
+          swift --version
+      - name: Bundle property lists parse
+        run: plutil -lint Bundle/Info.plist Bundle/io.gbrain.apple-helper.plist Bundle/gbrain-apple-helper.entitlements
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Signing probe
+        timeout-minutes: 15
+        working-directory: .
+        run: bash apple/helper/scripts/signing-probe.sh
+      - name: Install script
+        timeout-minutes: 20
+        working-directory: .
+        run: |
+          set -euo pipefail
+          app="$HOME/Applications/GBrain Helper.app"
+          helper="$app/Contents/MacOS/gbrain-apple-helper"
+          keychain="$HOME/Library/Keychains/gbrain-helper-signing.keychain-db"
+          designated() { codesign -d -r- "$app" 2>&1 | grep '^designated'; }
+          bash apple/helper/scripts/install.sh
+          first="$(designated)"
+          "$helper" init --port 18790
+          bash apple/helper/scripts/install.sh
+          [ "$(designated)" = "$first" ]
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:18790/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18790/health
+          bash apple/helper/scripts/install.sh --repair
+          [ "$(designated)" = "$first" ]
+          refused() {
+            if bash apple/helper/scripts/install.sh 2>"$RUNNER_TEMP/refusal.txt"; then return 1; else code=$?; fi
+            cat "$RUNNER_TEMP/refusal.txt"
+            [ "$code" = "$1" ] && grep -q "$2" "$RUNNER_TEMP/refusal.txt" && [ "$(designated)" = "$first" ]
+          }
+          mv "$keychain" "$RUNNER_TEMP/kept.keychain-db"
+          refused 1 "its signing keychain .* is gone"
+          mv "$RUNNER_TEMP/kept.keychain-db" "$keychain"
+          password_file="$HOME/Library/Application Support/GBrain Helper/signing-keychain-password"
+          mv "$password_file" "$RUNNER_TEMP/kept-password"
+          refused 78 "its password file .* is missing"
+          mv "$RUNNER_TEMP/kept-password" "$password_file"
+          bash apple/helper/scripts/install.sh --repair
+          [ "$(designated)" = "$first" ]

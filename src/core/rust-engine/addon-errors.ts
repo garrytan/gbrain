@@ -8,12 +8,12 @@ import { CODES } from '../error-registry.ts';
 export type AddonMissingReason = (typeof CODES)['rust_engine_addon_missing']['reasons'][number];
 export type AddonMismatchReason = (typeof CODES)['rust_engine_addon_mismatch']['reasons'][number];
 
-/** Selected, but the addon cannot be found or fetched, or no addon is published for this target. */
+/** Selected, but no addon for this release is installed, the override path is missing, or no addon is published for this target. */
 export function addonMissing(reason: AddonMissingReason, message: string) {
   return opError('rust_engine_addon_missing', message, CODES.rust_engine_addon_missing.suggestion, { reason });
 }
 
-/** The addon is there but is not the build this release names (checksum, provenance, engine_abi, engine_build, target). */
+/** The addon is there but is not the build this release names (checksum, engine_abi, engine_build, target), or it does not load. */
 export function addonMismatch(reason: AddonMismatchReason, message: string) {
   return opError('rust_engine_addon_mismatch', message, CODES.rust_engine_addon_mismatch.suggestion, { reason });
 }

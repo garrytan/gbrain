@@ -1,46 +1,23 @@
 /**
- * GBRA-574 B2: the conversation extractor's per-fact slot (dimension, value) on the ontology columns.
+ * GBRA-574: the conversation extractor's main call sends the historical prompt and response schema, with no slot.
  *
- * Protects: only a caller that asks for slots (the conversation extractor) gets the slot clause and schema field; every
- * other caller's system prompt stays byte-identical to the historical one (pinned by hash) and its schema has no slot;
- * the parser keeps a slot in the closed vocabulary (location, employer, role, after the dimension aliases) and drops an
- * unknown dimension, an empty or over-long value, and a slot on a fact with no entity, always keeping the fact.
- * Seams: gateway chat transport stub (no provider call).
+ * Protects: asking the main extraction call for a per-fact slot made it save fewer facts (about 15% fewer wishes,
+ * preferences and ideas on two public dev worlds), so the call's system prompt stays byte-identical to the historical one
+ * for every variant (pinned by hash), its schema has no slot field, and a slot the model returns anyway is never stored.
+ * Regression: a conversation extraction call that carries slot text or a slot field.
+ * Slots come from the separate tagging call (slot-tagging.test.ts); the stub answers it with no slot.
+ * Seams: gateway chat transport stub (no provider call), PGLite with no git repository.
  */
 import { createHash } from 'node:crypto';
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { configureGateway, resetGateway, __setChatTransportForTests } from '../../src/core/ai/gateway.ts';
-import type { ChatOpts, ChatResult } from '../../src/core/ai/gateway.ts';
-import { buildExtractorSystem, extractFactsFromTurnWithOutcome, type ExtractInput } from '../../src/core/facts/extract.ts';
-
-function chatResult(text: string): ChatResult {
-  return {
-    text, blocks: [{ type: 'text', text }], stopReason: 'end',
-    usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
-    model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic',
-  } as ChatResult;
-}
-
-beforeEach(() => {
-  resetGateway();
-  __setChatTransportForTests(null);
-  configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: { ANTHROPIC_API_KEY: 'sk-ant-test' } });
-});
-afterAll(() => {
-  __setChatTransportForTests(null);
-  configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { ...process.env } });
-});
-
-async function run(input: Partial<ExtractInput>, reply: unknown) {
-  const seen: ChatOpts[] = [];
-  __setChatTransportForTests(async (opts) => { seen.push(opts); return chatResult(JSON.stringify(reply)); });
-  const outcome = await extractFactsFromTurnWithOutcome({ turnText: 'Alice Example (2026-03-10): I work at Acme Example now.', source: 'test:slots',
-    variant: {}, embedding: null, ...input } as ExtractInput);
-  return { seen, outcome };
-}
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { runExtractConversationFactsCore } from '../../src/commands/extract-conversation-facts.ts';
+import { __setChatTransportForTests, resetGateway, type ChatOpts, type ChatResult } from '../../src/core/ai/gateway.ts';
+import { buildExtractorSystem } from '../../src/core/facts/extract.ts';
+import { SLOT_TAG_SYSTEM } from '../../src/core/facts/slot-tagging.ts';
+import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
-/** buildExtractorSystem on master before GBRA-574 B2, by (admitsLow, variant). */
+/** buildExtractorSystem before GBRA-574 B2, by (admitsLow, variant). */
 const HISTORICAL: Array<[boolean, { dateGrounding?: boolean; attribution?: boolean }, string]> = [
   [true, {}, 'a4b468b86e867f3703a4c834583f5ac9a99f47ff4f0c50484fdd6b22706465c7'],
   [true, { dateGrounding: true }, 'd49e4a26fe594b8a4445172c736b1c7407af9fb55c20c7f7f9dce05e068bcd64'],
@@ -51,92 +28,62 @@ const HISTORICAL: Array<[boolean, { dateGrounding?: boolean; attribution?: boole
   [false, { attribution: true }, '364637bf592f858bad211525a4dcb9c2fd15e3ea8cba2af90acb109e1cd7875a'],
   [false, { dateGrounding: true, attribution: true }, '3b15e8a337a2557ed4b81255cf27a386069490d6209567c753942d310064eb25'],
 ];
+const HISTORICAL_HASHES = new Set(HISTORICAL.map(([, , hash]) => hash));
 
-describe('slot prompt', () => {
-  test('every prompt variant without slots is byte-identical to the historical one', () => {
+const PAGE = 'conversations/2026-03-10/chat-example';
+const BODY = [
+  '**user** (2026-03-10 9:00 AM): Alice Example joined Acme Example as head of design last week.',
+  '**assistant** (2026-03-10 9:01 AM): Good news for her.',
+  '**user** (2026-03-10 9:02 AM): I want a quieter desk lamp for the study.',
+].join('\n');
+
+let engine: PGLiteEngine;
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+  await engine.setConfig('facts.extraction_enabled', 'true');
+  await engine.setConfig('facts.default_visibility', 'world');
+  await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
+  await engine.putPage('people/alice-example', { type: 'person' as never, title: 'Alice Example', compiled_truth: '# Alice Example', timeline: '', frontmatter: {} });
+  await engine.putPage(PAGE, { type: 'conversation' as never, title: 'Conversation 2026-03-10', compiled_truth: BODY, timeline: '', frontmatter: { date: '2026-03-10' } });
+}, 60_000);
+afterAll(async () => { await engine.disconnect(); });
+afterEach(() => { __setChatTransportForTests(null); resetGateway(); });
+
+describe('conversation extraction main call', () => {
+  test('every prompt variant is byte-identical to the historical one', () => {
     for (const [admitsLow, variant, hash] of HISTORICAL) expect(sha(buildExtractorSystem(admitsLow, variant))).toBe(hash);
   });
 
-  test('a caller that does not ask for slots sends the historical prompt and a schema without a slot', async () => {
-    const { seen } = await run({}, { facts: [] });
-    expect(sha(seen[0]!.system as string)).toBe(HISTORICAL[0]![2]);
-    expect(JSON.stringify(seen[0]!.responseSchema)).not.toContain('slot');
-  });
-
-  test('a caller that asks for slots gets the historical prompt plus the slot clause, and a nullable slot in the schema', async () => {
-    const { seen } = await run({ slots: true } as Partial<ExtractInput>, { facts: [] });
-    const system = seen[0]!.system as string;
-    expect(system.startsWith(buildExtractorSystem(true, {}))).toBe(true);
-    expect(system.length).toBeGreaterThan(buildExtractorSystem(true, {}).length);
-    expect(system).toContain('"slot"');
-    for (const d of ['location', 'employer', 'role']) expect(system).toContain(d);
-    // About 150 tokens (4 characters a token): the clause stays short.
-    expect(system.length - buildExtractorSystem(true, {}).length).toBeLessThan(1000);
-    expect(JSON.stringify(seen[0]!.responseSchema)).toContain('"slot"');
-  });
-});
-
-describe('slot parsing', () => {
-  const fact = (text: string, slot: unknown, entity: string | null = 'people/alice-example') =>
-    ({ fact: text, kind: 'fact', entity, confidence: 1, notability: 'high', slot });
-
-  test('keeps a valid slot (aliases normalized, value trimmed) and drops every invalid one, keeping each fact', async () => {
-    const { outcome } = await run({ slots: true } as Partial<ExtractInput>, { facts: [
-      fact('Alice Example works at Acme Example.', { dimension: 'Company', value: '  Acme Example ' }),
-      fact('Alice Example lives in Springfield.', { dimension: 'location', value: 'Springfield' }),
-      fact('Alice Example is the head of design.', { dimension: 'job title', value: 'head of design' }),
-      fact('Alice Example plays chess.', { dimension: 'hobby', value: 'chess' }),
-      fact('Alice Example moved somewhere.', { dimension: 'location', value: '   ' }),
-      fact('Alice Example has a very long title.', { dimension: 'role', value: 'x'.repeat(81) }),
-      fact('Someone works at Acme Example.', { dimension: 'employer', value: 'Acme Example' }, null),
-      fact('Alice Example likes tea.', null),
-    ] });
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok) return;
-    const slots = outcome.facts.map(f => [f.fact, (f as { dimension?: string | null }).dimension ?? null, (f as { value?: string | null }).value ?? null]);
-    expect(slots).toEqual([
-      ['Alice Example works at Acme Example.', 'employer', 'Acme Example'],
-      ['Alice Example lives in Springfield.', 'location', 'Springfield'],
-      ['Alice Example is the head of design.', 'role', 'head of design'],
-      ['Alice Example plays chess.', null, null],
-      ['Alice Example moved somewhere.', null, null],
-      ['Alice Example has a very long title.', null, null],
-      ['Someone works at Acme Example.', null, null],
-      ['Alice Example likes tea.', null, null],
-    ]);
-  });
-
-  test('reads the compact array form and a fact with no slot key, and still reads the object form', async () => {
-    const bare = (text: string) => ({ fact: text, kind: 'fact', entity: 'people/alice-example', confidence: 1, notability: 'high' });
-    const { seen, outcome } = await run({ slots: true } as Partial<ExtractInput>, { facts: [
-      fact('Alice Example works at Acme Example.', ['employer', 'Acme Example']),
-      fact('Alice Example lives in Springfield.', { dimension: 'location', value: 'Springfield' }),
-      bare('Alice Example likes tea.'),
-      fact('Alice Example plays chess.', ['hobby', 'chess']),
-      fact('Alice Example is a role.', ['role']),
-      fact('Alice Example is numbered.', ['role', 7]),
-    ] });
-    expect(seen[0]!.system as string).toContain('"slot":["');
-    expect(seen[0]!.system as string).not.toContain('"slot":null');
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok) return;
-    expect(outcome.facts.map(f => [f.fact, (f as { dimension?: string | null }).dimension ?? null, (f as { value?: string | null }).value ?? null])).toEqual([
-      ['Alice Example works at Acme Example.', 'employer', 'Acme Example'],
-      ['Alice Example lives in Springfield.', 'location', 'Springfield'],
-      ['Alice Example likes tea.', null, null],
-      ['Alice Example plays chess.', null, null],
-      ['Alice Example is a role.', null, null],
-      ['Alice Example is numbered.', null, null],
-    ]);
-  });
-
-  test('an 80-character value is kept', async () => {
-    const { outcome } = await run({ slots: true } as Partial<ExtractInput>, { facts: [fact('Alice Example has a long title.', { dimension: 'role', value: 'y'.repeat(80) })] });
-    expect(outcome.ok && (outcome.facts[0] as { value?: string }).value).toBe('y'.repeat(80));
-  });
-
-  test('a caller that did not ask for slots stores none, even when the model returns one', async () => {
-    const { outcome } = await run({}, { facts: [fact('Alice Example works at Acme Example.', { dimension: 'employer', value: 'Acme Example' })] });
-    expect(outcome.ok && (outcome.facts[0] as { dimension?: string | null }).dimension).toBeFalsy();
+  test('sends the historical prompt and a schema with no slot, and stores no slot the model returns anyway', async () => {
+    const seen: ChatOpts[] = [];
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      if (opts.system === SLOT_TAG_SYSTEM) return { text: '{"slots":[]}', blocks: [{ type: 'text', text: '{"slots":[]}' }], stopReason: 'end', model: 'test:stub',
+        providerId: 'test', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } } as ChatResult;
+      seen.push(opts);
+      const text = JSON.stringify({ facts: [
+        { fact: 'Alice Example joined Acme Example as head of design.', kind: 'fact', entity: 'people/alice-example', confidence: 1,
+          notability: 'high', slot: ['role', 'head of design'] },
+        { fact: 'User wants a quieter desk lamp for the study.', kind: 'preference', entity: null, confidence: 1, notability: 'high' },
+      ] });
+      return { text, blocks: [{ type: 'text', text }], stopReason: 'end', model: 'test:stub', providerId: 'test',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } } as ChatResult;
+    });
+    const spy = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: [PAGE], sleepMs: 0, overrideDisabled: true });
+    } finally { spy.mockRestore(); }
+    expect(seen.length).toBeGreaterThan(0);
+    for (const opts of seen) {
+      expect(HISTORICAL_HASHES.has(sha(opts.system as string))).toBe(true);
+      expect(opts.system as string).not.toContain('slot');
+      expect(JSON.stringify(opts.responseSchema ?? null)).not.toContain('slot');
+    }
+    const rows = await engine.executeRaw<{ fact: string; dimension: string | null }>(
+      'SELECT fact, dimension FROM facts WHERE source_markdown_slug = $1 ORDER BY id', [PAGE]);
+    expect(rows.map(row => row.fact)).toEqual([
+      'Alice Example joined Acme Example as head of design.', 'User wants a quieter desk lamp for the study.', 'EXTRACTION_COMPLETE']);
+    for (const row of rows) expect(row.dimension).toBeNull();
   });
 });

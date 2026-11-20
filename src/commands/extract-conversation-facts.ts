@@ -64,7 +64,7 @@
  *   `--override-disabled` to force-run.
  */
 
-import { extractExitCode, extractRunStatus, recordFailedPage } from '../core/facts/conversation-run-status.ts';
+import { extractExitCode, extractRunStatus, listRunPage, recordFailedPage, unparsedCause } from '../core/facts/conversation-run-status.ts';
 import type { BrainEngine, NewFact } from '../core/engine.ts';
 import type { Page } from '../core/types.ts';
 import {
@@ -109,7 +109,7 @@ import {
   mergeSaveTimeResolutionCounts,
 } from '../core/entities/resolve-on-save.ts';
 import { conversationEntityHints } from '../core/facts/conversation-entity-hints.ts';
-import { extractConversationWindow, nonExtractableAuditFact, outcomeSession, regularPageVersionToken, terminalAuditFact } from '../core/facts/conversation-window-extract.ts';
+import { extractConversationWindowOrHalves, nonExtractableAuditFact, outcomeSession, regularPageVersionToken, terminalAuditFact, type DeclinedWindow } from '../core/facts/conversation-window-extract.ts';
 export { segmentObservationDate } from '../core/facts/conversation-window-extract.ts';
 import { processSegmentedConversationPage, type GrammarPreview } from '../core/facts/conversation-incremental.ts';
 import { BUILTIN_PATTERNS } from '../core/conversation-parser/builtins.ts';
@@ -214,7 +214,7 @@ export {
 } from '../core/facts/conversation-windows.ts';
 import type { ConversationMessage } from '../core/facts/conversation-types.ts';
 import {
-  DEFAULT_SEGMENT_GAP_MINUTES, MAX_PAGE_SEGMENT_GAP_MINUTES, splitIntoSegments, renderSegmentForExtraction,
+  DEFAULT_SEGMENT_GAP_MINUTES, MAX_PAGE_SEGMENT_GAP_MINUTES, splitIntoSegments,
 } from '../core/facts/conversation-windows.ts';
 
 /**
@@ -327,6 +327,10 @@ export interface ExtractConversationFactsResult {
   pages_failed: number;
   /** The failed pages (first 50) with the error each one hit; they stay unfinished and retry next run. */
   failed_pages: Array<{ slug: string; error: string }>;
+  /** GST-3251: the pages counted in pages_skipped_unparsed (first 50), each with why no speaker turns parsed. */
+  unparsed_pages: Array<{ slug: string; cause: string }>;
+  /** GST-3251: windows the model declined after one retry as halves (first 50); their pages stay unfinished (failed_pages). */
+  declined_windows: Array<{ slug: string } & DeclinedWindow>;
   /**
    * Pages whose built-in parse returned `no_match` and whose messages were
    * recovered by the explicitly enabled LLM fallback.
@@ -352,10 +356,11 @@ export interface ExtractConversationFactsResult {
   facts_inserted: number;
   /** #7438: extracted claims left out because they match a purge tombstone (the rest of the page still publishes). */
   facts_skipped_purged?: number;
-  /** Entity values that reached the shipped deterministic fallback slug path. */
-  fallback_slugify_count: number;
+  /** Entity values that reached the shipped deterministic fallback slug path; GBRA-574 `unbacked_keys` of them kept a name key with no page. */
+  fallback_slugify_count: number; unbacked_keys?: number;
   /** Entity values kept raw after a best-effort resolution failure. */
   resolution_errors: number;
+  /** GBRA-574: windows whose slot-tagging call failed; their facts were kept without slots (--force tags them again). */ slot_tagging_failed?: number;
   /** Managed brains: pages whose publication was accepted but is still pending (retried next run). */
   pages_pending?: number;
   /** Managed brains: pages whose extraction generation is blocked until the page changes (no model call). */
@@ -927,7 +932,11 @@ async function processPage(
   if (segments.length === 0) {
     state.result.pages_skipped++;
     if (!declinedUnrecognizedSpeaker && !skip) {
-      if (messages.length === 0) state.result.pages_skipped_unparsed++;
+      if (messages.length === 0) {
+        const cause = unparsedCause(parseResult, Boolean(state.llmFallbackModel));
+        state.result.pages_skipped_unparsed++; listRunPage(state.result.unparsed_pages, { slug: page.slug, cause });
+        process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: no speaker turns parsed (${cause}); retried next run\n`);
+      }
       else if (allSegments.length === 0) state.result.pages_skipped_insufficient_turns++;
       else state.result.pages_skipped_since++;
     }
@@ -984,23 +993,38 @@ async function processPage(
   const factVisibility = await tightenToStoredPage(state.engine, state.sourceId, state.factVisibility, page);
   const entityHints = await conversationEntityHints(state.engine, state.sourceId, page.slug, factVisibility); // #6731
 
+  const declined: DeclinedWindow[] = [];
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
     if (state.signal?.aborted) throw new Error('aborted');
 
-    const text = renderSegmentForExtraction(page.title || page.slug, seg);
-    const window = await extractConversationWindow(state, page, seg, text, rowNum, entityHints);
+    const window = await extractConversationWindowOrHalves(state, page, seg, rowNum, entityHints);
+    declined.push(...window.declined);
     state.result.segments_processed++;
     segmentsThisPage++;
     state.result.facts_extracted += window.extracted;
     pageRows.push(...window.rows);
     rowNum += window.extracted;
     mergeSaveTimeResolutionCounts(pageResolution, window.resolution);
-    state.result.fallback_slugify_count += window.resolution.fallback_slugify_count;
+    state.result.fallback_slugify_count += window.resolution.fallback_slugify_count; if (window.resolution.unbacked_key_count) state.result.unbacked_keys = (state.result.unbacked_keys ?? 0) + window.resolution.unbacked_key_count;
     state.result.resolution_errors += window.resolution.resolution_errors;
 
     newestEnd = seg.endIso;
     if (state.sleepMs > 0) await sleep(state.sleepMs);
+  }
+
+  // GST-3251: a declined window leaves the page unfinished (no terminal row, no checkpoint) so the next run retries it;
+  // an unmanaged brain publishes the other windows' facts as a partial batch, which retires no prior facts. A managed
+  // brain publishes nothing: its committed batch would replay the generation without a model call, never retrying.
+  if (declined.length > 0) {
+    for (const window of declined) listRunPage(state.result.declined_windows, { slug: page.slug, ...window });
+    const published = !state.managed && pageRows.length > 0 ? await publishPageFacts(state, page.slug, pageRows, 'partial') : null;
+    state.result.facts_inserted += published?.facts_inserted ?? 0; state.result.orphan_facts_cleaned += published?.deleted ?? 0;
+    const note = `the extraction model declined ${declined.length} window(s): ${declined.map(w => `${w.start}..${w.end} (${w.reason})`).join(', ')}; `
+      + `${state.managed ? 'no facts were published (managed brain)' : `${published?.facts_inserted ?? 0} new fact(s) from the other windows were published`}; the page stays unfinished and retries next run`;
+    state.result.pages_failed++; recordFailedPage(state.result, page.slug, note);
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: ${note}; retry: gbrain extract-conversation-facts --source-id ${state.sourceId} --slug ${page.slug}\n`);
+    return { newEndIso: null };
   }
 
   // Eng-v2 C7 / E16: write terminal audit row after all segments commit
@@ -1067,7 +1091,7 @@ export function emptyExtractConversationFactsResult(): ExtractConversationFactsR
     pages_considered: 0, pages_processed: 0, pages_skipped: 0, pages_skipped_unparsed: 0, pages_skipped_type_mismatch: 0,
     pages_skipped_insufficient_turns: 0, pages_skipped_since: 0, pages_skipped_too_large: 0, pages_skipped_disappeared: 0,
     pages_skipped_completed: 0, pages_skipped_non_extractable: 0, pages_marked_non_extractable: 0, pages_skipped_unrecognized_speaker: 0,
-    pages_failed: 0, failed_pages: [], pages_llm_fallback: 0, pages_lock_skipped: 0, orphan_facts_cleaned: 0, segments_processed: 0,
+    pages_failed: 0, failed_pages: [], unparsed_pages: [], declined_windows: [], pages_llm_fallback: 0, pages_lock_skipped: 0, orphan_facts_cleaned: 0, segments_processed: 0,
     facts_extracted: 0, facts_inserted: 0, fallback_slugify_count: 0, resolution_errors: 0,
   };
 }
@@ -1797,14 +1821,17 @@ export async function runExtractConversationFacts(
       aggregate.pages_skipped_unrecognized_speaker += perSource.pages_skipped_unrecognized_speaker;
       aggregate.pages_failed += perSource.pages_failed;
       for (const failed of perSource.failed_pages) recordFailedPage(aggregate, failed.slug, failed.error);
+      for (const unparsed of perSource.unparsed_pages) listRunPage(aggregate.unparsed_pages, unparsed);
+      for (const declined of perSource.declined_windows) listRunPage(aggregate.declined_windows, declined);
       aggregate.pages_llm_fallback += perSource.pages_llm_fallback;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
       aggregate.facts_inserted += perSource.facts_inserted;
-      aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
+      aggregate.fallback_slugify_count += perSource.fallback_slugify_count; if (perSource.unbacked_keys) aggregate.unbacked_keys = (aggregate.unbacked_keys ?? 0) + perSource.unbacked_keys;
       aggregate.resolution_errors += perSource.resolution_errors;
+      if (perSource.slot_tagging_failed) aggregate.slot_tagging_failed = (aggregate.slot_tagging_failed ?? 0) + perSource.slot_tagging_failed;
       if (perSource.pages_pending) aggregate.pages_pending = (aggregate.pages_pending ?? 0) + perSource.pages_pending;
       if (perSource.pages_blocked) aggregate.pages_blocked = (aggregate.pages_blocked ?? 0) + perSource.pages_blocked;
       if (perSource.pages_detection_ambiguous) aggregate.pages_detection_ambiguous = (aggregate.pages_detection_ambiguous ?? 0) + perSource.pages_detection_ambiguous;
@@ -1890,11 +1917,12 @@ export async function runExtractConversationFacts(
       console.log(`  Cleaned ${aggregate.orphan_facts_cleaned} orphan fact(s) from prior partial runs (D11 replay safety).`);
     }
     if (aggregate.fallback_slugify_count > 0) {
-      console.log(`  Preserved ${aggregate.fallback_slugify_count} fact(s) without an entity target after unresolved fallback_slugify.`);
+      console.log(`  Preserved ${aggregate.fallback_slugify_count - (aggregate.unbacked_keys ?? 0)} fact(s) without an entity target after unresolved fallback_slugify${aggregate.unbacked_keys ? `; kept ${aggregate.unbacked_keys} under a name key with no page (facts.unbacked_entity_keys)` : ''}.`);
     }
     if (aggregate.resolution_errors > 0) {
       console.log(`  Preserved ${aggregate.resolution_errors} fact(s) without an entity target after best-effort resolution errors.`);
     }
+    if (aggregate.slot_tagging_failed) console.log(`  Kept the facts of ${aggregate.slot_tagging_failed} window(s) without slots after slot tagging failed; --force tags them again.`);
     if (anyBudgetExhausted) {
       console.log(unpricedModels.size > 0
         ? `  no_pricing: ${[...unpricedModels].join(', ')}. Raising --max-cost-usd cannot resolve missing pricing.`

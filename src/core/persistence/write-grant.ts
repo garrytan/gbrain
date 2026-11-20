@@ -8,6 +8,15 @@ export function grantedWriteSource(ctx: OperationContext): string {
 }
 
 /**
+ * GST-2898: the opening of a write refusal for a source the caller reads but does not write ("This connection reads
+ * company but writes only to private-alice-example. "), or '' for any other source, so a source the caller cannot read
+ * keeps the same envelope whether it exists or not.
+ */
+export function readsButWritesOnly(ctx: OperationContext, named: string, writeSource: string): string {
+  return named !== writeSource && ctx.auth?.allowedSources?.includes(named) ? `This connection reads ${named} but writes only to ${writeSource}. ` : '';
+}
+
+/**
  * GBRA-200: the refusal for a write naming a source outside the caller's write grant. It names the sources the
  * caller's own grant lets it write (`writable_source_ids`, empty when the grant holds a sentinel) and never another
  * source, so the envelope is identical whether the named source exists or not. `retry`, when given, is the same

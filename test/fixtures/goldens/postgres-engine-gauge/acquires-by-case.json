@@ -23,6 +23,12 @@
     "addTimelineEntry#default": {},
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeTraversalCache#allSources": {
+      "raw": 1
+    },
+    "clearCodeTraversalCache#sourceId": {
+      "raw": 1
+    },
     "consolidateFact#default": {},
     "countChunklessPagesWithContent#default": {},
     "countChunklessPagesWithContent#sourceId": {},
@@ -127,6 +133,9 @@
     },
     "getChunksWithEmbeddings#default": {},
     "getChunksWithEmbeddings#sourceId+includeUnsealed": {},
+    "getCodeTraversalCache#default": {
+      "raw": 1
+    },
     "getContradictionCacheEntry#default": {},
     "getEdgesByChunk#default": {},
     "getEdgesByChunk#in+edgeType": {},
@@ -158,6 +167,9 @@
     "getScorecard#sourceId": {},
     "getSince#default": {},
     "getSince#kind+sourceId": {},
+    "getSource#default": {
+      "raw": 1
+    },
     "getTags#default": {},
     "getTags#excludePrivate+liveOnly": {},
     "getTags#sourceIds": {},
@@ -216,6 +228,8 @@
     "listEnrichCandidates#default": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
+    "listEntityKeyRows#after": {},
+    "listEntityKeyRows#default": {},
     "listFactsByEntity#allFilters": {},
     "listFactsByEntity#default": {},
     "listFactsBySession#allFilters": {},
@@ -225,6 +239,8 @@
     "listFactsKeyset#strictTime": {},
     "listFactsSince#allFilters": {},
     "listFactsSince#default": {},
+    "listFiles#default": {},
+    "listFiles#page_slug": {},
     "listFilesForPage#default": {},
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
@@ -244,6 +260,7 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listSourceLocalPaths#default": {},
     "listStaleChunks#default": {
       "raw": 1
     },
@@ -286,6 +303,9 @@
     },
     "purgeDeletedPages#default": {},
     "purgeDeletedPages#dryRun": {},
+    "putCodeTraversalCache#default": {
+      "raw": 1
+    },
     "putContradictionCacheEntry#default": {},
     "putPage#blankBody": {
       "raw": 5,
@@ -324,11 +344,11 @@
       "tx": 1
     },
     "replaceDerivedLinks#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "replaceDerivedLinksBatch#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "resolveSlugWithAlias#default": {},
@@ -351,6 +371,14 @@
     },
     "revertToVersion#default": {},
     "revertToVersion#sourceId": {},
+    "sealChunks#default": {
+      "raw": 4,
+      "tx": 1
+    },
+    "sealChunks#expectedRevision": {
+      "raw": 4,
+      "tx": 1
+    },
     "searchKeyword#cjk": {
       "raw": 2,
       "tx": 1
@@ -409,7 +437,7 @@
     "traversePathsDetailed#out+sourceId+linkType": {},
     "updatePageContextualRetrievalState#default": {},
     "updateSlug#moved": {
-      "raw": 17,
+      "raw": 18,
       "tx": 1
     },
     "updateSlug#noop": {

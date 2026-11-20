@@ -21,7 +21,8 @@ import type {
 } from '../types.ts';
 import { affectsRecall } from '../types.ts';
 export { resolveDateBoundary, resolveSearchDateBounds } from './date-bounds.ts';
-import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
+import { hasReadPolicy } from './read-policy-sql.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { embedQuery } from '../embedding.ts';
 import { loadEmbeddingQueryPrefix } from './query-prefix.ts';
 import { deferUntilResponse, registerBackgroundWorkDrainer } from '../background-work.ts';
@@ -680,7 +681,8 @@ export async function runPostFusionStages(
   if (aliasCanonicals) {
     try {
       applyAliasResolvedBoost(results, await aliasCanonicals);
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       // Non-fatal; preserves the per-stage contract.
     }
   }
@@ -694,7 +696,8 @@ export async function runPostFusionStages(
   // edges (or a pre-links schema) finds 0 rows / throws and no-ops.
   try {
     stampSuperseded(results, await supersededBy);
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     // Non-fatal; preserves the per-stage contract.
   }
 }
@@ -731,12 +734,8 @@ export function _resetSupersedeProbeForTests(): void {
   supersedeEdgeProbe = new WeakMap();
 }
 
-/**
- * The supersede-edge probe. `link_type` stays a literal so the planner matches the partial index
- * idx_links_supersedes_to (migration links_supersedes_index) by its predicate; a bind parameter can leave a generic plan that does not, and with no matching row the
- * probe would read the whole composite links index (test/e2e/supersedes-probe-index-postgres.test.ts).
- */
-export const SUPERSEDE_EDGE_PROBE_SQL = `SELECT 1 AS one FROM links WHERE link_type = 'supersedes' LIMIT 1`;
+/** The supersede-edge probe statement (engine-sql/search-reads.ts); exported for the Postgres index test. */
+export { SUPERSEDE_EDGE_PROBE_SQL } from '../engine-sql/search-reads.ts';
 
 async function hasAnySupersedeEdges(
   engine: import('../engine.ts').BrainEngine,
@@ -744,11 +743,11 @@ async function hasAnySupersedeEdges(
   const cached = supersedeEdgeProbe.get(engine);
   if (cached && Date.now() - cached.at < SUPERSEDE_PROBE_TTL_MS) return cached.exists;
   try {
-    const rows = await engine.executeRaw<{ one: number }>(SUPERSEDE_EDGE_PROBE_SQL);
-    const exists = rows.length > 0;
+    const exists = await engine.hasSupersedeEdges();
     supersedeEdgeProbe.set(engine, { at: Date.now(), exists });
     return exists;
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     // Fail-open; not cached so a transient error doesn't pin the gate open.
     return true;
   }
@@ -798,33 +797,13 @@ async function readSupersededBy(
   );
   if (pageIds.length === 0) return supersededBy;
   if (!(await hasAnySupersedeEdges(engine))) return supersededBy;
-  const params: unknown[] = [pageIds];
-  const fromFilter = pageReadFilter('pf', policy, params, !!policy);
-  const toFilter = pageReadFilter('pt', policy, params, !!policy);
-  const originFilter = policy ? `(l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages origin WHERE origin.id = l.origin_page_id AND ${pageReadFilter('origin', policy, params, true)}))` : 'TRUE';
-  let rows: Array<{ to_page_id: number; by_slug: string }> = [];
   try {
-    rows = await engine.executeRaw<{ to_page_id: number; by_slug: string }>(
-      `SELECT DISTINCT l.to_page_id, pf.slug AS by_slug
-         FROM links l
-         JOIN pages pf ON pf.id = l.from_page_id
-         JOIN pages pt ON pt.id = l.to_page_id
-        WHERE l.link_type = 'supersedes'
-          AND pf.deleted_at IS NULL
-          AND pf.source_id = pt.source_id
-          AND l.to_page_id = ANY($1::bigint[])
-          AND ${fromFilter} AND ${toFilter} AND ${originFilter}`,
-      params,
-    );
-  } catch {
+    return await engine.supersedingPageSlugs(pageIds, policy);
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     // Pre-links schema or SQL miss; no-op.
     return supersededBy;
   }
-  for (const row of rows) {
-    const id = Number(row.to_page_id);
-    if (!supersededBy.has(id)) supersededBy.set(id, row.by_slug);
-  }
-  return supersededBy;
 }
 
 function stampSuperseded(results: SearchResult[], supersededBy: Map<number, string>): void {

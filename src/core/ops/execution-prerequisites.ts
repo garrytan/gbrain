@@ -35,7 +35,16 @@ export const EXECUTION_PREREQUISITES: Readonly<Record<string, ExecutionPrerequis
   join_brain: MEMBERSHIP_APPROVAL,
   sync_brain_skills: MEMBERSHIP_APPROVAL,
   leave_brain: MEMBERSHIP_APPROVAL,
+  // GST-2988: reading an original from the secret store is approved by name, token by token.
+  reveal_secret: {
+    kind: 'explicit_operation_approval',
+    fix: 'The brain owner approves reveal_secret by name in the grant\'s operation snapshot (gbrain auth rescope --token <name> --refresh-operations --add reveal_secret); a grant with no snapshot never reaches it.',
+  },
 };
+
+/** GST-2988: operations --all-new never adds; the owner names each one with --add. */
+const NAMED_ADD_ONLY: ReadonlySet<string> = new Set(['reveal_secret']);
+export const addedOnlyByName = (operation: string): boolean => NAMED_ADD_ONLY.has(operation);
 
 /** Operations a grant reaches only when its operation snapshot names them (never through a missing snapshot). */
 export function requiresExplicitApproval(operation: string): boolean {

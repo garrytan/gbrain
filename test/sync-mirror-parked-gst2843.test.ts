@@ -216,29 +216,32 @@ describe.each(testBackends())('GST-2843: the held comparison on a read-only mirr
     expect(git(root, 'status', '--porcelain')).toBe('');
   }, { databaseUrl, setup: heldSetup }), 240_000);
 
-  test('GST-2869: on a mirror the comparison names no file-drift preview, and the route it names resolves the page once the source is writable', () => managedBrain(async ({ engine, root }) => {
+  test('GST-2869 / whole-class: on a mirror the comparison names the whole-class preview of the side, and a page still resolves once the source is writable', () => managedBrain(async ({ engine, root }) => {
     await heldPages(engine, root);
     const compared = await repair(engine, { held: true }) as Plan;
     const why = Object.fromEntries((compared.details!.pages as Array<{ slug: string; would: string; why: string }>).map(page => [page.slug, page.why]));
     for (const slug of ['notes/newer-file', 'notes/newer-page']) {
-      expect(why[slug]).not.toContain('gbrain repair file-drift');
-      expect(why[slug]).toContain('gbrain sources mirror-writable default');
+      expect(why[slug]).toContain('gbrain repair file-drift --source default --held --side unknown --prefer file --whole-class');
+      expect(why[slug]).toContain('database-only');
     }
+    expect(why['notes/newer-page']).toContain('kept_newer_page');
     const next = (compared.details!.next_actions ?? []) as string[];
-    expect(next.join('\n')).not.toContain('--prefer file');
-    expect(next.join('\n')).toContain('gbrain sources mirror-writable default');
+    expect(next.join('\n')).toContain('--prefer file --whole-class');
     await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": false}'::jsonb WHERE id='default'`);
     expect(classes(await repair(engine, { slugs: ['notes/newer-file'], prefer: 'file' }))).toEqual({ 'notes/newer-file': 'prefer_file' });
   }, { databaseUrl, setup: heldSetup }), 240_000);
-  test('GST-2869: on a mirror a held deleted page whose file differs names the writable route, not a --prefer preview', () => managedBrain(async ({ engine }) => {
+  test('GST-2869: on a mirror a held deleted page whose file differs names keeping the deletion first and the writable route second, never a --prefer file preview', () => managedBrain(async ({ engine }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await mirror(engine);
     await seedHold(engine, 'notes/same', { side: 'deleted', state: 'tombstone_edited' });
     const compared = await repair(engine, { held: true }) as Plan;
     const [page] = (compared.details!.pages as Array<{ slug: string; would: string; why: string }>).filter(found => found.slug === 'notes/same');
     expect(page!.would).toBe('needs_human');
-    expect(page!.why).not.toContain('--prefer');
-    expect(page!.why).toContain('gbrain sources mirror-writable default');
+    const keep = 'this source is a read-only mirror: to keep the deletion, preview gbrain repair file-drift --source default --held --side deleted --state tombstone_edited --prefer database ';
+    expect(page!.why).toContain(`so a person decides; ${keep}`);
+    expect(page!.why).not.toContain('--prefer file');
+    expect(page!.why).not.toContain('--whole-class');
+    expect(page!.why.indexOf('gbrain sources mirror-writable default')).toBeGreaterThan(page!.why.indexOf(keep));
   }, { databaseUrl, setup: heldSetup }), 240_000);
 });
 

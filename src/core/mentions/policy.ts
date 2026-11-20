@@ -69,21 +69,21 @@ const POLICY_KEYS = ['auto_link', 'mentions.auto_link', 'mentions.entity_types',
 
 /**
  * The policy keys from the request's config snapshot when one is open (no statement, #6721), else in one
- * config read when the engine can run SQL (the write path counts statements), else one read per key.
+ * config read when the engine has the typed keyed read (the write path counts statements), else one read per key.
  */
-async function readPolicyKeys(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'executeRaw' | 'kind'>>): Promise<Array<string | null>> {
+async function readPolicyKeys(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'getConfigValues'>>): Promise<Array<string | null>> {
   const held = await requestConfigRows(engine);
   if (held) return POLICY_KEYS.map(k => held[k] ?? null);
-  if (engine.executeRaw && (engine.kind === 'pglite' || engine.kind === 'postgres')) {
+  if (engine.getConfigValues) {
     try {
-      const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[...POLICY_KEYS]]);
+      const rows = await engine.getConfigValues(POLICY_KEYS);
       return POLICY_KEYS.map(k => rows.find(r => r.key === k)?.value ?? null);
     } catch { /* fall back to per-key reads */ }
   }
   return Promise.all(POLICY_KEYS.map(k => engine.getConfig(k)));
 }
 
-export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'executeRaw' | 'kind'>>): Promise<MentionPolicy> {
+export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'getConfigValues'>>): Promise<MentionPolicy> {
   const [global, own, types, ignore, excludeSlugs, aliasDeny, multiword, siblings] = await readPolicyKeys(engine);
   const typeAdds: string[] = [];
   const typeRemoves: string[] = [];

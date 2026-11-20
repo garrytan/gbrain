@@ -1,7 +1,8 @@
 /**
  * Conversation archive pages written while a brain was personal name no readers. The commands that turn the brain
- * shared (gbrain access member add and member enable to a second enabled member, gbrain config set brain.audience
- * shared, gbrain access owner set on a shared brain) keep those pages to the owner at once, so a second member never
+ * shared (gbrain access member add and member enable to a second enabled member, the same add and enable through the
+ * admin API, gbrain access serves several, gbrain config set brain.audience shared, gbrain access owner set on a shared
+ * brain) keep those pages to the owner at once, so a second member never
  * reads them remotely in the window before the next archive run or maintenance pass (maintenance.auto is off here).
  * Each case drives the brain shared through the CLI handler alone, then reads over the http dispatch as the second
  * member, as the owner and with an unbound token. In the owner set case the second member is added first on a brain
@@ -10,6 +11,8 @@
  * audience recorded personal, so the source's next run re-scopes what the run in flight wrote with no readers. Repo-less; synthetic values only.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import express from 'express';
+import cookieParser from 'cookie-parser';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
@@ -27,6 +30,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { ARCHIVE_TIMEZONE_KEY, archiveRescopeSkipped, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { runAccess } from '../src/commands/access.ts';
 import { runConfig } from '../src/commands/config.ts';
+import { mountAdminAccess } from '../src/commands/serve-http-access.ts';
+import { createRequireAdmin } from '../src/commands/serve-http-admin-api.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -62,8 +67,10 @@ const readsFor = (slug: string, canary: string): Array<[string, string, Record<s
   ['recall (since)', 'recall', { since: '2000-01-01' }],
 ];
 
-type Trigger = 'member add' | 'member enable' | 'config set brain.audience' | 'owner set' | 'member add during an archive run';
-const TRIGGERS: Trigger[] = ['member add', 'member enable', 'config set brain.audience', 'owner set', 'member add during an archive run'];
+type Trigger = 'member add' | 'member enable' | 'config set brain.audience' | 'owner set' | 'member add during an archive run'
+  | 'access serves several' | 'admin member add' | 'admin member enable';
+const TRIGGERS: Trigger[] = ['member add', 'member enable', 'config set brain.audience', 'owner set', 'member add during an archive run',
+  'access serves several', 'admin member add', 'admin member enable'];
 
 for (const kind of testBackends()) {
   for (const trigger of TRIGGERS) {
@@ -74,6 +81,7 @@ for (const kind of testBackends()) {
       const pages: Array<{ slug: string; canary: typeof CANARIES[number] }> = [];
       const tokens: Record<string, string> = {};
       const ownerBefore: Record<string, boolean> = {};
+      let adminAnswer: Record<string, unknown> | undefined;
       const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
       const inHome = <T>(fn: () => Promise<T>) => withEnv({ GBRAIN_HOME: home }, fn);
 
@@ -115,7 +123,7 @@ for (const kind of testBackends()) {
         await setArchiveEnabled(engine, true);
 
         await addMember(engine, OWNER);
-        if (trigger === 'member enable') { await addMember(engine, OTHER); await disableMember(engine, OTHER); }
+        if (trigger === 'member enable' || trigger === 'admin member enable') { await addMember(engine, OTHER); await disableMember(engine, OTHER); }
         if (trigger !== 'owner set') await setOwner(engine, OWNER);
 
         const reader = staticReader('openclaw', [
@@ -146,6 +154,24 @@ for (const kind of testBackends()) {
             expect(stderr.join('\n')).toContain('pages archived so far are kept to the owner, but an archive run that started while this brain was personal is writing source ' + SRC + ' now');
           }
           if (trigger === 'member enable') await runAccess(engine, ['member', 'enable', OTHER]);
+          if (trigger === 'access serves several') await runAccess(engine, ['serves', 'several', '--members', OTHER, '--yes', '--json']);
+          if (trigger === 'admin member add' || trigger === 'admin member enable') {
+            const app = express();
+            app.use(cookieParser());
+            mountAdminAccess(app, createRequireAdmin(new Map([['owner-session', Date.now() + 3_600_000]])), engine);
+            const server = app.listen(0, '127.0.0.1');
+            await new Promise<void>(r => server.once('listening', () => r()));
+            try {
+              const res = await fetch('http://127.0.0.1:' + (server.address() as { port: number }).port + '/admin/api/access/members', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: 'gbrain_admin=owner-session' },
+                body: JSON.stringify({ action: trigger === 'admin member add' ? 'add' : 'enable', id: OTHER }),
+              });
+              adminAnswer = await res.json() as Record<string, unknown>;
+            } finally {
+              server.closeAllConnections();
+              await new Promise<void>(r => server.close(() => r()));
+            }
+          }
           if (trigger === 'config set brain.audience') await runConfig(engine, ['set', 'brain.audience', 'shared']);
           if (trigger === 'owner set') {
             const stderr: string[] = [];
@@ -176,6 +202,7 @@ for (const kind of testBackends()) {
         }
         expect(await inHome(() => archiveRescopeSkipped(engine))).toBeNull();
         expect(await engine.getConfig('transcripts.archive.audience.' + SRC)).toBe('shared');
+        if (trigger.startsWith('admin ')) expect(adminAnswer).toMatchObject({ applied: true, archive_rescope: [{ source_id: SRC, skipped: null }] });
       }, 60_000);
 
       test('the second member reads nothing from the personal-era pages through get_page, search, query or recall', async () => {

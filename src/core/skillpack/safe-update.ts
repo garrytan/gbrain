@@ -41,6 +41,7 @@ import { loadSkillTriggerIndex } from '../skill-trigger-index.ts';
 import { checkResolvable, type ResolvableIssue } from '../check-resolvable.ts';
 import { OperationError } from '../ops/contract.ts';
 import { confinedSkillChildWrite } from './writer-guard.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 import {
   backupFile, backupsRoot, hashTarget, newJournalId, pendingJournals, planRestore, pruneJournals, readJournal, sha256, undoFile, writeJournal,
   type Journal, type JournalFile, type JournalSkill, type RestorePlanFile,
@@ -515,7 +516,7 @@ export async function recordScaffoldBases(skillsRoot: string, files: readonly Sc
   for (const f of files) {
     if (f.sharedDep || f.pairedSource || (!f.source && f.outcome !== 'wrote_new')) continue;
     const rel = relative(root, skillsRootKey(f.target)).split(sep).join('/');
-    if (!rel || rel.startsWith('..') || !rel.includes('/')) continue;
+    if (!rel || relativeEscapesRoot(rel) || !rel.includes('/')) continue;
     const current = hashTarget(f.target);
     const expected = f.source ? sha256(readFileSync(f.source)) : current;
     if (current === null || current !== expected) continue;

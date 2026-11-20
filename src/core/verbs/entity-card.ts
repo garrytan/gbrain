@@ -27,6 +27,7 @@ import type { ReadEligibility } from '../eligibility/policy.ts';
 import { trustFields } from '../eligibility/labels.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { loadPageTrust } from '../eligibility/stamp.ts';
+import { storedEdge, worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
@@ -46,6 +47,7 @@ import { readRowReferences, referencesUnavailableNotice, type RecordGroupView, t
 import type { Notice } from '../agent-output.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
 
 const EDGE_CAP = 10;
@@ -205,6 +207,11 @@ export interface EntityCardResult {
 
 export interface EntityCardOpts {
   remote: boolean;
+  /**
+   * GST-2957: the reader's OperationContext.remote, for the edges' stored link contexts (worldLinkContexts). context_pack
+   * builds cards with `remote` set for any caller without include_private; absent, `remote` stands for it.
+   */
+  readerRemote?: boolean;
   /**
    * #6723: the sources to resolve the name in, probed in this order (home
    * first); the first source with a hit owns the card and every read behind
@@ -500,11 +507,11 @@ export async function buildEntityCard(
   }
 
   const { row, runnersUp, match } = selected;
-  const { card, facts: factRows } = await assembleCard(engine, hitSource, row, opts.remote, scope.excludePrivate, opts.eligibility ?? {});
+  const { card, facts: factRows } = await assembleCard(engine, hitSource, row, opts.remote, scope.excludePrivate, opts.eligibility ?? {}, opts.readerRemote ?? opts.remote);
   if (match) card.match = match;
   if (opts.includeReferences) {
     Object.assign(card, await cardReferences(engine, hitSource, row, opts, scope.excludePrivate, scope.entityTypes),
-      await readCardIdentity(engine, hitSource, row, { excludePrivate: scope.excludePrivate, excludeQuarantined: opts.omitQuarantined === true, surfaceCeiling: opts.surfaceCeiling, aka: card.aka }));
+      await readCardIdentity(engine, hitSource, row, { excludePrivate: scope.excludePrivate, excludeQuarantined: opts.omitQuarantined === true, surfaceCeiling: opts.surfaceCeiling, aka: card.aka, hideHeld: (await import('../search/private-visibility.ts')).worldOnlyFacts(opts.remote) }));
     await attachCardRecords(engine, hitSource, card, opts, scope.excludePrivate);
     if (await nameVariantsEnabled(engine)) {
       const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
@@ -579,12 +586,14 @@ async function assembleCard(
   remote: boolean,
   excludePrivate: boolean,
   eligibility: ReadEligibility,
+  readerRemote: boolean,
 ): Promise<{ card: EntityCard; facts: FactRow[] }> {
   const pageSlug = row.slug;
-  const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
+  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateFactFilterForReader, worldOnlyFacts } = await import('../search/private-visibility.ts');
+  const worldOnly = worldOnlyFacts(remote);
+  const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
   const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
-  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateFactFilterForCaller } = await import('../search/private-visibility.ts');
   const inboundPrivacy = (excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
     : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
@@ -607,6 +616,7 @@ async function assembleCard(
   // applies, so a private or derived page never surfaces its slug, its
   // links.context sentence, or a count. An edge whose origin page is deleted
   // (or, for an untrusted caller, in another source) is left out the same way.
+  let endedFacts = 0;
   const [aka, outLinks, inEdges, backlinkCount, timeline, facts, activeFactCount] = await Promise.all([
     readAka(engine, sourceId, pageSlug),
     engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
@@ -645,6 +655,13 @@ async function assembleCard(
       eligibility,
     })))
       .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
+      // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+      .then(async rows => {
+        const current = await applySlotEnds(engine, { sourceId, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged }, rows,
+          { activeOnly: true, entities: [{ source_id: sourceId, slugs: factSlugs }] });
+        endedFacts = rows.length - current.length;
+        return current;
+      })
       .catch(() => [] as FactRow[]),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger
@@ -656,7 +673,7 @@ async function assembleCard(
         `SELECT COUNT(*) AS n
            FROM facts
           WHERE source_id = $1 AND entity_slug = ANY($2::text[])
-            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}
+            AND expired_at IS NULL${worldOnly ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateFactFilterForReader('facts')}` : ''}
             AND ${projectionEligibleSql('facts', 'facts', eligibility)}`,
         [sourceId, factSlugs],
       )
@@ -675,10 +692,11 @@ async function assembleCard(
       ...(last ? { since: last.from, until: last.until } : {}),
     };
   };
-  const outCandidates = (outLinks as Array<Link & Partial<TemporalAnnotation>>)
-    .filter(l => l.link_source !== 'mentions')
+  const outCandidates = (await worldLinkContexts(engine, readerRemote, (outLinks as Array<Link & Partial<TemporalAnnotation>>)
+    .filter(l => l.link_source !== 'mentions'), storedEdge))
     .map(l => edgeOf(l, 'out', l.to_slug));
-  const inCandidates = inEdges.map(l => edgeOf(l as typeof l & Partial<TemporalAnnotation>, 'in', l.from_slug));
+  const inCandidates = (await worldLinkContexts(engine, readerRemote, inEdges, l => ({ from: { sourceId, slug: l.from_slug }, to: { sourceId, slug: pageSlug }, linkType: l.link_type })))
+    .map(l => edgeOf(l as typeof l & Partial<TemporalAnnotation>, 'in', l.from_slug));
   const edges: EntityCardEdge[] = [
     ...[...outCandidates].sort((a, b) => rank(a) - rank(b)),
     ...[...inCandidates].sort((a, b) => rank(a) - rank(b)),
@@ -780,7 +798,7 @@ async function assembleCard(
     open_threads: openThreads,
     edges,
     backlink_count: backlinkCount,
-    active_fact_count: activeFactCount ?? facts.length,
+    active_fact_count: activeFactCount === null ? facts.length : Math.max(0, activeFactCount - endedFacts),
     ...(relationshipNote ? { relationship_note: relationshipNote } : {}),
     ...(facts.length ? { recent_facts: facts.slice(0, RECENT_FACTS_CAP).map(f => ({
       id: String(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from ? toIso(f.valid_from as Date | string) : null,

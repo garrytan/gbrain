@@ -79,7 +79,7 @@ function participantsOf(messages: readonly ConversationMessage[]): string[] {
   return out;
 }
 
-function segmentOf(messages: ConversationMessage[]): ConversationSegment {
+export function segmentOf(messages: ConversationMessage[]): ConversationSegment {
   return {
     messages,
     startIso: messages[0].timestamp,

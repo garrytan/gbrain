@@ -161,3 +161,20 @@ describe('one eligibility function (E13/E11/C13/C14)', () => {
     expect(decideChronicle({ page, authority: null, noExtract: false, enabled: true, settings, now }).reason).toBe('too_short');
   });
 });
+
+describe('managed add_link (#9636)', () => {
+  test('a link added before the first extraction carries the pending decision to the new revision, so the phase still extracts it', () => brain(async ({ engine, ctx }) => {
+    const { runPhaseChronicle } = await import('../src/core/cycle/chronicle.ts');
+    await engine.setConfig('chronicle.auto_settle_seconds', '0');
+    await put(ctx, 'people/alice-example', '---\ntype: person\ntitle: Alice Example\n---\nSynthetic test person.');
+    await put(ctx, 'meetings/link-example', meeting());
+    const before = (await engine.getPage('meetings/link-example', { sourceId: 'default' }))!;
+    await operationsByName.add_link.handler(ctx, { from: 'meetings/link-example', to: 'people/alice-example', context: 'Synthetic participant' });
+    expect((await engine.getPage('meetings/link-example', { sourceId: 'default' }))!.content_hash).not.toBe(before.content_hash);
+    await engine.executeRaw("UPDATE chronicle_page_state SET next_attempt_at=now()-interval '1 second', decided_at=now()-interval '1 hour' WHERE state='pending'");
+    let judged = 0;
+    await runPhaseChronicle(engine, { judge: async () => { judged++; return { events: [] }; } });
+    expect(judged).toBe(1);
+  }), 120_000);
+});
+

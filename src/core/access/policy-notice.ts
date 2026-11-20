@@ -16,6 +16,26 @@ const READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'lis
 
 export function accessPolicyNotices(op: string, ctx: OperationContext): Notice[] {
   if (ctx.remote === false || !READ_OPS.has(op)) return [];
+  return [...readSharedNotices(ctx), ...folderPolicyNotices(ctx)];
+}
+
+/**
+ * GST-2898: the credential's read-shared switch is on but the shared set could not be read at verification, so this
+ * call read the credential's stored sources only. Never a silent narrowing.
+ */
+function readSharedNotices(ctx: OperationContext): Notice[] {
+  if (ctx.auth?.readSharedUnresolved !== true) return [];
+  return [{
+    code: 'read_shared_unresolved',
+    kind: 'degraded',
+    why: 'This connection reads every shared source, but the list of shared sources could not be read, so this answer comes from its own listed sources only. '
+      + 'A missing page is not proof the brain has nothing on it. Tell the user; the brain host checks the database (command in fix).',
+    fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'host_admin', requires_exclusive: false,
+      why: 'Read-only: reports why the sources table could not be read on the brain host.' },
+  }];
+}
+
+function folderPolicyNotices(ctx: OperationContext): Notice[] {
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return [];
   try {

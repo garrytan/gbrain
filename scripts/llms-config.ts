@@ -38,7 +38,9 @@ export const SECTIONS: DocSection[] = [
   {
     heading: "Choose your agent setup",
     entries: [
-      { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives." },
+      // Linked, not inlined: AGENTS.md (inlined) already routes agents to this guide, and
+      // inlining it left llms-full.txt within a few bytes of FULL_SIZE_BUDGET.
+      { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives.", includeInFull: false },
       // Linked, not inlined: these three guides only apply inside Grok Bot, Muse or another
       // hosted agent, and AGENTS.md (inlined) routes those agents to them. Dropping them from the
       // bundle freed about 48 KB of FULL_SIZE_BUDGET.

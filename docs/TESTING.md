@@ -49,12 +49,12 @@ not grant access. No Ubicloud API token is passed to workflow jobs.
 
 | Workload | Runner | Capacity |
 | --- | --- | --- |
-| Unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, persistence soak, reconciliation crashes and read latency, native Linux cells, OpenClaw startup, JSONB parity, PR serial pool, E2E backend matrix, Tier 2, coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
-| Nightly coverage serial pool, `verify`, PgBouncer/RLS deployment matrix, E2E graduation shards | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
+| PgBouncer/RLS deployment matrix, unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, read latency, native Linux cells, OpenClaw startup, JSONB parity, PR serial pool, E2E backend matrix, Tier 2, coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Nightly coverage serial pool, `verify`, E2E graduation shards | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
 | E2E Tier 1 (its CLI `init` spawns exceed their timeouts on 4 vCPUs), label-gated and nightly heavy-tests jobs | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
 | Label-gated heavy test suite | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
 | Native ARM64 glibc and musl tests | `ubicloud-standard-4-arm-ubuntu-2404` | 4 vCPU |
-| Selected E2E (one Bun process each), planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+| Selected E2E (one Bun process each), persistence soak, reconciliation crashes, planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
 
 macOS and Windows matrices stay on GitHub-hosted runners. Release building and
 publishing also stay unchanged. The pinned upstream OSV reusable workflow does
@@ -69,7 +69,11 @@ rose from 542s to 608s and made Test the critical path. On matched
 VMs a unit shard takes the same time on 4, 8 and 16 vCPUs; the serial pool and
 `verify` take the same time on 8 and 16 vCPUs (serial shard 2: 222s and 224s;
 277s on 4); the 2,500-write PGLite soak averages 1.3-1.8 busy cores and takes
-523s on 4 vCPUs and 500s on 16. Selected E2E workers run one file at a time and
+523s on 4 vCPUs and 500s on 16. Persistence-validation's soak, reconciliation
+and PgBouncer/RLS lanes moved down one size after three paired runs (GST-3002):
+the soak's peak memory stayed under 25% of 8 GB and its slowest arm (postgres)
+went from a 5.2 to a 10.0 minute median, still shorter than the run's longest
+job, Managed-sync convergence at about 17 minutes. Selected E2E workers run one file at a time and
 fit on 2 vCPUs. Re-measure (`ubi-runner.sh run -s standard-N`) before resizing a
 runner: more CPU does not shorten a single-process job; critical path
 comes first, vCPU-minutes second.
@@ -537,6 +541,28 @@ above, and each E2E file keeps a PGLite arm in the unit lane.
   after a conversion; only `sql-text/_driver.json` moves (tagged ->
   `runUnsafe`).
 
+### Rust parity arm (opt-in)
+
+Every `test/engine-parity/` file can add a Rust engine to its arms, next to PGLite and (with `DATABASE_URL`) Postgres.
+Nothing selects the Rust engine outside the test, and without the flag the suite runs as before.
+
+```bash
+bun run rust:build                                              # writes the addon under rust/target/addon
+GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; run each file in its own process, as CI does
+```
+
+- The flag must be exactly `1`. With it set and no addon, the run fails instead of skipping. Point
+  `GBRAIN_TEST_RUST_ENGINE_ADDON` at another addon file to use one you built elsewhere (`bunfig.toml` strips
+  `GBRAIN_RUST_ENGINE_ADDON` from a test run, so that name does nothing here).
+- A case that reaches a member or an option the Rust engine refuses must end on the typed `engine_capability_missing`
+  refusal. Every other case must return what PGLite returns.
+- A case that differs on purpose gets a row in `test/rust-expected-divergence/<family>.tsv` (parity file, case name,
+  normaliser from `DIVERGENCE_NORMALIZERS` in `test/engine-parity/rust-arm.ts`, reason). Rust must still return a value, both
+  answers must be equal after the normaliser, and when the case starts to match PGLite the run fails until the row is
+  removed. A thrown error never passes. `search.tsv` is empty today.
+- Rules: `test/engine-parity/rust-arm.ts` header; what the engine serves and refuses: `docs/ENGINES.md` ("What a Rust
+  brain serves now").
+
 ### Native writer locks
 
 Native lock tests, the eight-target `native-locks.yml` matrix, compiled smokes and the OpenClaw native-host
@@ -660,7 +686,7 @@ evidence for a change before it merges. `test.yml`'s security matrix,
 
 ### Keeping CI partitions balanced
 
-Required CI runs 36 weighted unit workers, four serial workers with bounded
+Required CI runs 40 weighted unit workers, four serial workers with bounded
 per-file pools, and up to eight selected E2E workers. E2E selection and exclusions
 run once before setup; the resulting file lists are frozen and executed against
 separate Postgres services. An explicit empty selection launches no tests;
@@ -735,7 +761,8 @@ closed to the whole corpus. `scripts/e2e-matrix.ts` then drops
 `E2E_EXCLUSIONS`, the files a named job owns, printing each owner: Tier 1's
 named files, `tier1-backend-matrix` for every `test/e2e/` row of
 `scripts/e2e-backend-matrix.txt` (direct Postgres and PgBouncer, so a
-Selected E2E direct-only run would duplicate it), persistence-validation.yml and the live-key lanes.
+Selected E2E direct-only run would duplicate it), persistence-validation.yml, the
+`openclaw-skill-resolver` job (it needs the OpenClaw CLI) and the live-key lanes.
 `test/scripts/e2e-wiring.test.ts` requires every excluded file to have a named
 owner. Locally, `ci:local:diff` and `ci:ubicloud:diff` run gitleaks and
 `scripts/ci-doc-checks.sh` (llms freshness, KEY_FILES byte caps, documented
@@ -1040,7 +1067,7 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs 36 `scripts/test-shard.sh` shards, two per runner, split by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job, plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 18`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify`, `typecheck` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips. Only a master push and the remote gate reuse results: those of a passed full run of the exact tree (`scripts/ci-reuse.ts`). CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs 40 `scripts/test-shard.sh` shards, two per runner, split by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job, plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 18`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify`, `typecheck` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips. Only a master push and the remote gate reuse results: those of a passed full run of the exact tree (`scripts/ci-reuse.ts`). CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses the same weighted partitioner as CI and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Each shard runs its complete ordered selection with a fresh Bun process per file, without adding workers. Later groups still run after failures; missing summaries or file-completion evidence fail the shard. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 `test/scripts/run-unit-shard.test.ts` pins what the local loop includes, and
@@ -1072,8 +1099,8 @@ normalizes `COVERAGE_DIR` to an absolute path before moving `HOME`, and
 coverage lane). Both names avoid the `GBRAIN_` prefix so the env scrub keeps
 them.
 
-**Two corpora.** `prCorpus` is the 42 coverage-collecting lanes in
-`test.yml` (36 unit shards, 4 serial partitions, `slow-entity-resolve-perf` and
+**Two corpora.** `prCorpus` is the 46 coverage-collecting lanes in
+`test.yml` (40 unit shards, 4 serial partitions, `slow-entity-resolve-perf` and
 `slow-brainbench-e2e`), identical on every PR; the gates run against it.
 `fullCorpus` is the nightly (or manual `full_corpus=true`) set in `e2e.yml`:
 `coverage-full-{unit,serial,slow,e2e}` plus `coverage-full-report`, every lane
@@ -1133,10 +1160,10 @@ spawned CLI processes undercounts, and `src/cli.ts` carries a permanent
 record; the summary lists those as a count and a sorted list, never a
 percentage.
 
-**Local smoke** (one shard of 36; this checks the plumbing, not the number):
+**Local smoke** (one shard of 40; this checks the plumbing, not the number):
 
 ```bash
-COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 36 \
+COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 40 \
   && bun scripts/merge-lcov.ts --out-lcov .coverage/merged.lcov --out-json .coverage/summary.json .coverage \
   && bun scripts/render-coverage-summary.ts --summary .coverage/summary.json --structural scripts/structural-suites.tsv
 ```
@@ -1450,6 +1477,13 @@ the keys and run them.
 When asked to "run all E2E tests" or "run tests", that means ALL tiers:
 - Tier 1: `bun run test:e2e` (mechanical, sync, upgrade — no API keys needed)
 - Tier 2: `test/e2e/skills.test.ts` (requires OpenAI + Anthropic + openclaw CLI)
+- OpenClaw skill resolver: `test/e2e/openclaw-skill-resolver-real.test.ts` (keyless; needs the
+  openclaw CLI, from `GBRAIN_TEST_OPENCLAW_SKILL_BIN` or PATH). It drives the resolver plugin through a
+  real gateway, Telegram channel turns and cron turns included. CI runs it in e2e.yml's
+  `openclaw-skill-resolver` job (full-corpus profile, one cell per OpenClaw version); the
+  labelled-set bench is `scripts/bench/openclaw-skill-resolver-real.ts`, run by hand
+  (workflow_dispatch) after a resolver change through `openclaw-skill-resolver-bench.yml`.
+  It has no schedule.
 - Always spin up the test DB, source zshrc, run everything, tear down.
 
 Real-agent door suites (`test/e2e/install-real-*.serial.test.ts`) run in

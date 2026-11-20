@@ -55,7 +55,7 @@ run() { # dir module cfg -> runs TLC on a private copy, so its states/ directory
   # again and again while it runs. The two-write liveness config (469,848 distinct states, both properties, 4 cores):
   # 18 min 27 s without it, 12 min 31 s and 13 min 44 s in two runs with it; split by property, as the nightly runs it,
   # 9 and 10 min with it. Safety-only configs are unaffected.
-  (cd "$work" && "$timeout_bin" --kill-after=10 "$limit" java ${TLC_JAVA_OPTS:--XX:+UseParallelGC} -Djava.io.tmpdir="$work/tmp" \
+  (cd "$work" && "$timeout_bin" --kill-after=10 "$limit" java -Dtlc2.tool.queue.DiskStateQueue.BufSize=1048576 ${TLC_JAVA_OPTS:--XX:+UseParallelGC} -Djava.io.tmpdir="$work/tmp" \
      -cp "$jar" tlc2.TLC -workers "$workers" -lncheck final -config "$cfg" -metadir "$work/states" "$module.tla") > "$work/tlc.log" 2>&1 || rc=$?
   echo "$rc" > "$work/rc"
 }
