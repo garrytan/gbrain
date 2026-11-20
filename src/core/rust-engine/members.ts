@@ -1341,6 +1341,8 @@ export const RUST_ENGINE_MEMBERS = {
   mintBeliefLifetime: 'belief_ledger',
   renameBeliefLifetime: 'belief_ledger',
   readMovedBeliefLifetimes: 'belief_ledger',
+  readBeliefStateRows: 'belief_ledger',
+  readBeliefFactsById: 'belief_ledger',
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
   listPageRefsByIds: 'pages',

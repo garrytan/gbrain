@@ -254,7 +254,6 @@ src/core/belief/preimages.ts	execute_raw	2
 src/core/belief/purge-mirror.ts	execute_raw	24
 src/core/belief/purge.ts	execute_raw	19
 src/core/belief/retier.ts	execute_raw	3
-src/core/belief/state.ts	execute_raw	4
 src/core/belief/writers.ts	execute_raw	2
 src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1

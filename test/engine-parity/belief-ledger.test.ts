@@ -28,6 +28,8 @@ import { renameLifetime, resolveLifetimes } from '../../src/core/belief/lifetime
 import { readBeliefHistory } from '../../src/core/belief/history.ts';
 import { COVERAGE_KEY, fieldHash } from '../../src/core/belief/keys.ts';
 import { disableBeliefLedger, enableBeliefLedger, latestCoverage } from '../../src/core/belief/coverage.ts';
+import { lockedBeliefBatch } from '../../src/core/belief/writers.ts';
+import { readBeliefState } from '../../src/core/belief/state.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -373,6 +375,56 @@ describe('engine parity: belief ledger writes', () => {
       expect(answer.causes.map(c => c.event_type)).toEqual(['coverage.started', 'coverage.complete']);
       expect({ stopped, stoppedAgain, afterStop: answer.afterStop, missing }).toEqual({ stopped: true, stoppedAgain: false,
         afterStop: { type: 'coverage.stopped', sameRun: true }, missing: 'source not found: no-such-source' });
+      return answer;
+    },
+  );
+
+  parityTest(
+    'enableBeliefLedger on a source with pages baselines each page\'s facts, takes, links and transitions, and a covered write records its fact',
+    { methods: ['transaction', 'lockPageKeys', 'readLedgerSource', 'insertBeliefEvents', 'markBeliefCommits', 'listBeliefBaselinePending',
+      'readBeliefHistoryRows', 'readBeliefStateRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const on = { sourceId: 'work' };
+      const a = await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'alpha body', timeline: '' }, on);
+      await engine.putPage('people/b-example', { type: 'person', title: 'B', compiled_truth: 'bravo body', timeline: '' }, on);
+      await engine.insertFacts([{ fact: 'Alpha ships in March.', entity_slug: 'people/b-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact',
+        visibility: 'world', source: 'fence', confidence: 0.8 }] as never, { source_id: 'work' });
+      await engine.insertFact({ fact: 'Bravo  likes TEA!', entity_slug: 'people/b-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'work' });
+      await engine.addTakesBatch([{ page_id: a.id, row_num: 1, claim: 'Alpha will win.', kind: 'take', holder: 'people/b-example', weight: 0.7, since_date: '2026-01-02' }]);
+      await engine.addLink('notes/a', 'people/b-example', 'mentions B', 'mentions', 'markdown', 'notes/a', undefined, { fromSourceId: 'work', toSourceId: 'work', originSourceId: 'work' });
+      await engine.writeManualLinkTransitions({ from: 'notes/a', to: 'people/b-example', linkType: 'works_with', sourceId: 'work' }, [{ kind: 'start', occurred_on: '2026-02-03' }]);
+      const enabled = await enableBeliefLedger(engine, 'work');
+      await engine.transaction(tx => lockedBeliefBatch(tx, { sourceId: 'work', slugs: ['people/b-example'], op: 'test_write', remote: false },
+        () => tx.insertFact({ fact: 'Bravo moved to Lisbon.', entity_slug: 'people/b-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'work' })));
+      const rows = await engine.readBeliefHistoryRows({ sourceId: 'work', slug: null, subjectKey: null, afterId: 0, limit: 100, recordedAfter: null, recordedUntil: null,
+        subjectKeys: null, beforeId: null, descending: false } as never);
+      const parse = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v) as Record<string, unknown> | null;
+      // Ids, revisions, lifetimes and now() timestamps differ between arms; the rest of each event and state row is compared.
+      const strip = (v: Record<string, unknown> | null) => v && Object.fromEntries(Object.entries(v).map(([k, x]) =>
+        [k, k === 'valid_from' || k === 'revision_after' ? typeof x : x]));
+      const events = rows.map(r => ({ type: r.event_type, kind: r.subject_kind, slug: r.slug, tier: r.trust_tier, visibility: r.visibility, op: parse(r.cause)?.op,
+        value: r.subject_kind === 'coverage' ? null : strip(parse(r.value)), fp: r.claim_fp ?? null }))
+        .sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1);
+      const state = await readBeliefState(engine, 'work', ['notes/a', 'people/b-example', 'notes/none']);
+      const ids = new Map(state.pages.map(p => [p.id, p.slug]));
+      const end = (e: { id: number; slug: string; source_id: string } | null) => e && { slug: e.slug, source_id: e.source_id };
+      const shaped = {
+        pages: state.pages.map(p => ({ ...p, id: p.slug, revision: typeof p.revision, incarnation: typeof p.incarnation, content_hash: typeof p.content_hash }))
+          .sort((x, y) => x.id < y.id ? -1 : 1),
+        facts: state.facts.map(f => ({ ...f, id: typeof f.id, entity_page_id: f.entity_page_id == null ? null : ids.get(f.entity_page_id), valid_from: typeof f.valid_from }))
+          .sort((x, y) => x.fact < y.fact ? -1 : 1),
+        takes: state.takes.map(k => ({ ...k, id: typeof k.id, page_id: ids.get(k.page_id) })),
+        links: state.links.map(l => ({ ...l, id: typeof l.id, from: end(l.from), to: end(l.to), origin: end(l.origin) })),
+        transitions: state.transitions.map(x => ({ ...x, id: typeof x.id, from: end(x.from), to: end(x.to), origin: end(x.origin) })),
+        writerTier: state.writerTier,
+      };
+      const answer = { enabled: { ...enabled, runId: 'uuid' }, events, state: shaped };
+      expect(answer.enabled).toMatchObject({ resumed: false, pages: 2, complete: true, unkeyable: [] });
+      expect(events.filter(e => e.type === 'baseline').map(e => e.kind).sort()).toEqual(['fact', 'page', 'page']);
+      expect(events.find(e => e.kind === 'page' && e.slug === 'notes/a')?.value?.counts).toEqual({ facts: 1, links: 1, takes: 1, link_transitions: 1 });
+      expect(events.filter(e => e.op === 'test_write').map(e => [e.type, e.kind])).toEqual([['fact.asserted', 'fact']]);
+      expect([shaped.facts.length, shaped.takes.length, shaped.links.length, shaped.transitions.length]).toEqual([3, 1, 1, 1]);
       return answer;
     },
   );

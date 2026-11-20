@@ -3,6 +3,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as BeliefLedgerSql from './engine-sql/belief-ledger.ts';
+import type * as BeliefStateSql from './engine-sql/belief-state.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
@@ -4542,6 +4543,10 @@ export interface BrainEngine {
   renameBeliefLifetime(lifetime: string, slug: string, pageId: number): Promise<void>;
   /** The open lifetime of each of `pageIds` whose page still has the lifetime's slug. No set order. */
   readMovedBeliefLifetimes(pageIds: readonly number[]): Promise<BeliefLedgerSql.BeliefMovedLifetimeRow[]>;
+  /** The raw state of belief streams in one read (belief/state.ts shapes it): pages, write counters, facts, takes, owned links and transitions, their endpoints and the writer tier. Restores `plan_cache_mode` to `input.planModePrev` (null: no net change). */
+  readBeliefStateRows(input: BeliefStateSql.BeliefStateRowsInput): Promise<BeliefStateSql.BeliefStateRows>;
+  /** Fact rows by id in the state read's columns, for a guard event whose row is outside the batch's streams. No set order. */
+  readBeliefFactsById(ids: readonly number[]): Promise<Array<Record<string, unknown>>>;
 
   /**
    * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the

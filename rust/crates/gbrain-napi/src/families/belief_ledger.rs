@@ -1,7 +1,8 @@
 //! The belief ledger's writes and the reads its append makes: events, commit marks, page
 //! lifetimes, suppressions and purge tombstones (src/core/engine-sql/belief-ledger.ts); and its
 //! history and source reads (engine-sql/trust-tier-reads.ts, engine-sql/belief.ts); and the
-//! coverage reads of its activation (engine-sql/belief-ledger.ts, belief/coverage.ts).
+//! coverage reads of its activation (engine-sql/belief-ledger.ts, belief/coverage.ts); and its
+//! state reads (engine-sql/belief-state.ts, belief/state.ts).
 //!
 //! One `#[napi] impl Brain` block; each method decodes its JSON arguments, runs one
 //! `gbrain_store::trust::belief_*` call on the pool through `Brain::run` and resolves plain JSON.
@@ -19,6 +20,7 @@ use gbrain_store::trust::belief_events::{EventInsert, TombstoneQuery};
 use gbrain_store::trust::belief_history::{HistoryQuery, VisibleLifetimesQuery};
 use gbrain_store::trust::belief_lifetimes::{LifetimeMint, LifetimePair};
 use gbrain_store::trust::belief_redactions::{RedactionInsert, RedactionQuery, RedactionRelease};
+use gbrain_store::trust::belief_state::BeliefStateQuery;
 
 /// `listBeliefBaselinePending`'s arguments.
 #[derive(Deserialize)]
@@ -226,6 +228,30 @@ impl Brain {
         subject_key: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_covered_sources(&subject_key))
+    }
+
+    /// `readBeliefStateRows({ sourceId, slugs, pageIds, knownFp, visibility })`: resolves the
+    /// streams' rows (pages, facts, takes, links, transitions, endpoints).
+    #[napi]
+    pub fn read_belief_state_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: BeliefStateQuery = required(args, "readBeliefStateRows args")?;
+            s.read_belief_state_rows(&q)
+        })
+    }
+
+    /// `readBeliefFactsById(ids)`: resolves the fact rows among `ids`.
+    #[napi]
+    pub fn read_belief_facts_by_id<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_belief_facts_by_id(&ids))
     }
 
     /// `readLatestBeliefCoverage(sourceId)`: resolves the newest coverage event, or null.

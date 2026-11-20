@@ -724,7 +724,7 @@ pub(crate) fn entity_rows(
     rows_under(read, &text_key(BY_ENTITY, &[source_id, entity]))
 }
 
-fn page_rows(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<FactRecord>> {
+pub(crate) fn page_rows(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_PAGE, &[source_id, slug]))
 }
 

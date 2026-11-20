@@ -259,14 +259,14 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   `version_history_gap_at`.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
 
-## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`, `trust::belief_history`, `trust::belief_coverage`)
+## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`, `trust::belief_history`, `trust::belief_coverage`, `trust::belief_state`)
 
 The store keeps the belief ledger's four tables (src/core/belief/schema.ts) and serves the eleven statements of
 src/core/engine-sql/belief-ledger.ts as store members (src/core/rust-engine/store-members/belief-ledger.ts), the
 history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`), the source probes (`readLedgerSource`,
-`listCoveredSources`) and the coverage reads src/core/belief/coverage.ts makes (`trust::belief_coverage`). The
-history and source reads keep no keys of their own (`trust::belief_history`); the coverage reads use the baseline
-index.
+`listCoveredSources`), the coverage reads src/core/belief/coverage.ts makes (`trust::belief_coverage`) and the
+state reads of src/core/engine-sql/belief-state.ts (`trust::belief_state`). The history, source and state reads keep
+no keys of their own; the coverage reads use the baseline index.
 
 | Key | Value | PGLite row or index |
 | --- | --- | --- |
@@ -334,6 +334,15 @@ because enable refused on this engine before it, so no store could hold a baseli
   unexpired page-less database-only facts (their entity) and of unexpired slot facts with no row (their page), less
   the run's baselined slugs and the skip list, up to the limit. The source row lock `enableBeliefLedger` and
   `disableBeliefLedger` take is `lockSourceRow`, a plain read here: the store runs one write transaction at a time.
+- The state reads (`trust::belief_state`): `readBeliefStateRows` reads each stream of the source (a listed slug, or a
+  listed page id in the source): its live or soft-deleted page, the unexpired fence facts it projects and the
+  unexpired database-only facts about it, its takes, the links and transitions whose origin, else from, page it is,
+  and those rows' endpoint pages with their source incarnation. A page's `visible` is judged by the no-caller page
+  policy and `large` is a segmented body or an inline body over the creation limit. The store keeps no
+  per-transaction write counters, so `counts` and `entity_pages` are null and every part is read, as on a database
+  with `track_counts` off. The member adds the transaction's `gbrain.write_trust_tier` and restores the plan mode the
+  batch probe replaced. Transitions are found by a scan of every transition record (no owner index), as
+  `links_touching_page` does. `readBeliefFactsById` answers the listed fact rows that exist.
 - No table has a foreign key, so a source delete keeps the ledger's rows, as Postgres does; a source created again
   has another incarnation, and the reads by incarnation do not see the old rows. The suppression and claim reads are
   by source id and do see them, as on Postgres.

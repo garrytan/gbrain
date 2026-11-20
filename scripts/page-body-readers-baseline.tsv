@@ -76,7 +76,7 @@ src/core/belief/purge.ts	pagePurgeClaims	field	STREAM	segmented version: NULL bo
 src/core/belief/purge.ts	pagePurgeClaims	sql	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
 src/core/belief/purge.ts	registerVersionCarriers	field	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
 src/core/belief/purge.ts	registerVersionCarriers	sql	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
-src/core/belief/state.ts	readBeliefState	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
+src/core/engine-sql/belief-state.ts	readBeliefStateRows	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
 src/core/brainstorm/domain-bank.ts	fetchFar	field	LEAD	
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	field	LEAD	
 src/core/by-mention.ts	scanStaleMentions	sql	STREAM	

@@ -588,6 +588,21 @@ fn scan_tag<T: DeserializeOwned>(read: &dyn KvRead, tag: u8) -> Result<Vec<(Vec<
     decode_all(raw)
 }
 
+/// Every transition whose origin is one of `pages`, or whose from page is one when it has no
+/// origin, in id order (`OWNED_ROWS` of belief/state.ts over `link_transitions`).
+pub(crate) fn transitions_owned_by(
+    read: &dyn KvRead,
+    pages: &BTreeSet<u64>,
+) -> Result<Vec<TransitionRecord>> {
+    let mut out: Vec<TransitionRecord> = scan_tag::<TransitionRecord>(read, TRANSITION)?
+        .into_iter()
+        .map(|(_, t)| t)
+        .filter(|t| pages.contains(&t.origin_page_id.unwrap_or(t.from_page_id)))
+        .collect();
+    out.sort_by_key(|t| t.id);
+    Ok(out)
+}
+
 /// The source the relationship's rows are keyed by: its from page's source.
 fn key_source(read: &dyn KvRead, from_page_id: u64) -> Result<Option<String>> {
     Ok(read_page_by_id(read, from_page_id)?.map(|p| p.source_id))

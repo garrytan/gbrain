@@ -4,10 +4,18 @@
  * belief ledger"). Each member sends the arguments of its BrainEngine member as one JSON value.
  *
  * `readBeliefTombstones` answers the fact half from the fact purge ledger and the take half from the take purge ledger.
+ * The state reads (`readBeliefStateRows`, `readBeliefFactsById`; trust/belief_state.rs) read every part: the store keeps
+ * no per-transaction write counters, so `counts` is null, as on a database with `track_counts` off.
  */
+import type { RustEngine } from '../../rust-engine.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { BeliefCoverageRow } from '../../engine-sql/belief-ledger.ts';
+import type { BeliefStateRows, BeliefStateRowsInput } from '../../engine-sql/belief-state.ts';
+import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { pagePolicyFlags } from './private-provenance.ts';
+import { applyTransactionSettings, readTransactionSettings } from './transactions.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -66,3 +74,19 @@ export const renameBeliefLifetime: Member<'renameBeliefLifetime'> = (brain, life
 
 export const readMovedBeliefLifetimes: Member<'readMovedBeliefLifetimes'> = (brain, pageIds) =>
   storeCall({ member: 'readMovedBeliefLifetimes' }, () => brain.readMovedBeliefLifetimes([...pageIds]));
+
+/**
+ * The streams' raw state. A page's `visible` is judged by the no-caller page policy (`privatePagesFilterFragment`), as
+ * the SQL read is. The writer tier is the transaction's `gbrain.write_trust_tier`; `planModePrev` is restored as the SQL
+ * read restores it (null: the read switched and restored the mode itself, no net change).
+ */
+export const readBeliefStateRows = async function readBeliefStateRows(this: RustEngine, brain: StoreBrain, input: BeliefStateRowsInput): Promise<BeliefStateRows> {
+  const rows = await storeCall({ member: 'readBeliefStateRows', sourceId: input.sourceId }, () => brain.readBeliefStateRows({ sourceId: input.sourceId,
+    slugs: [...input.slugs], pageIds: [...input.pageIds], knownFp: input.knownFp, visibility: pagePolicyFlags(privatePagesFilterFragment('p')) })) as BeliefStateRows;
+  const [writerTier] = await readTransactionSettings.call(this, brain, ['gbrain.write_trust_tier']);
+  if (input.planModePrev != null) await applyTransactionSettings.call(this, brain, ['plan_cache_mode'], [input.planModePrev]);
+  return { ...rows, writer_tier: writerTier ?? null };
+};
+
+export const readBeliefFactsById: Member<'readBeliefFactsById'> = async (brain, ids) =>
+  ids.length ? storeCall({ member: 'readBeliefFactsById' }, () => brain.readBeliefFactsById([...ids])) : [];
