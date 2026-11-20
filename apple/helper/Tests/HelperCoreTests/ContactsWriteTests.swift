@@ -10,7 +10,7 @@ final class FakeWriteStore: ContactsWriteStore {
     var allowed = ContactsAccess.allowed
     var saves: [CardEdit] = []
     var failNext = false
-    var saves = 0
+    var saveCount = 0
     var failAtSave: Int? = nil
     var lie = false
     var exports = 0
@@ -30,8 +30,8 @@ final class FakeWriteStore: ContactsWriteStore {
     func groupExists(_ name: String) throws -> Bool { groups.contains(name) }
 
     func save(_ edit: CardEdit) throws -> String {
-        saves += 1
-        if saves == failAtSave { throw Problem.internalError }
+        saveCount += 1
+        if saveCount == failAtSave { throw Problem.internalError }
         if failNext { failNext = false; throw Problem.internalError }
         saves.append(edit)
         if lie { return { switch edit { case .create: return "made-x"; case .setField(let id, _, _), .addValue(let id, _, _, _), .removeValue(let id, _, _, _), .addToGroup(let id, _, _), .removeFromGroup(let id, _), .delete(let id): return id } }() }
