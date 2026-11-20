@@ -203,6 +203,17 @@ describe('gbrain engine status', () => {
     expect(existsSync(missing)).toBe(false);
   }, 60_000);
 
+  withAddon('--probe with the built addon and an EMPTY directory as the rust store: data_dir_missing, no store files made', () => {
+    const dir = join(home, 'empty-store');
+    mkdirSync(dir);
+    writeConfig({ engine: 'rust', database_path: dir });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'data_dir_missing' });
+    expect(existsSync(join(dir, 'records.redb'))).toBe(false);
+    expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
+  }, 60_000);
+
   withAddon('--probe with the built addon and an existing rust store: ok, through a typed read (no raw SQL refusal)', () => {
     const store = join(home, 'brain.rust');
     writeConfig({ engine: 'rust', database_path: store });

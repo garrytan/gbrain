@@ -22,6 +22,7 @@ import { inspectGraduationPath } from '../core/persistence/graduation-custody.ts
 import { readGraduationManifestSummary } from '../core/persistence/graduation-serve-guard.ts';
 import type { GraduationPathState } from '../core/persistence/engine-graduation.types.ts';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { OperationError } from '../core/ops/contract.ts';
 
 import {
@@ -214,8 +215,9 @@ async function runProbe(
   }
   const started = Date.now();
   const engine = await createEngine(engineConfig);
-  // Opening a Rust store creates it, like PGLite: a missing store is reported (after the addon check), never made.
-  if (engineKind === 'rust' && dataDir && !existsSync(dataDir)) return { ok: false, note: 'data_dir_missing' };
+  // Opening a Rust store creates it, like PGLite: a path holding no store (no records.redb) is reported after the
+  // addon check, never made.
+  if (engineKind === 'rust' && dataDir && !existsSync(join(dataDir, 'records.redb'))) return { ok: false, note: 'data_dir_missing' };
   try {
     // SINGLE attempt, ONE connection — the driver's connect_timeout bounds
     // it (never a custom race), and a status probe must never run the

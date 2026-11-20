@@ -8,7 +8,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: source isolation of CLI reads on a Rust brain when the user selected a source.
- * 2. Fails when: makeContext swallows the capability refusal again and the read runs unscoped (exit 0).
+ * 2. Fails when: makeContext swallows the capability refusal again and the read runs unscoped (exit 0), including when
+ *    the source comes from a registered local_path rather than an explicit selection.
  * 3. Existing coverage: test/source-resolver*.test.ts covers the tiers on PGLite, where the lookup succeeds; the Rust
  *    CLI parity suite clears GBRAIN_SOURCE, so it never selects a source.
  * 4. Seams: none. It runs the real CLI and needs the addon `bun run rust:build` writes; it skips without it
@@ -20,6 +21,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
+import { openRustEngine } from '../src/core/rust-engine.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const TARGET = detectAddonTarget();
@@ -83,6 +86,17 @@ describe('a selected source on a Rust brain', () => {
 
   withAddon('GBRAIN_SOURCE: the command refuses with the typed capability refusal instead of reading every source', () => {
     const r = run(['stats', '--json'], { GBRAIN_SOURCE: 'other' });
+    expect(r.status).not.toBe(0);
+    expect(refusal(r)).toMatchObject({ code: 'engine_capability_missing' });
+  }, 60_000);
+
+  withAddon('a registered local_path source holding the cwd: the command refuses instead of reading every source', async () => {
+    // Seed the source in process (the CLI cannot add one on Rust yet), then close the store for the CLI.
+    const engine = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } }), databasePath: join(root, 'db') });
+    await engine.connect({ engine: 'pglite', database_path: join(root, 'db') } as never);
+    await engine.openStore('test').brain.upsertSource({ id: 'work', name: 'work', local_path: cwd, config: {} });
+    await engine.disconnect();
+    const r = run(['stats', '--json']);
     expect(r.status).not.toBe(0);
     expect(refusal(r)).toMatchObject({ code: 'engine_capability_missing' });
   }, 60_000);
