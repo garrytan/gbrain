@@ -128,3 +128,48 @@ fn a_removed_member_keeps_its_links_as_postgres_does() {
     store.tombstone_access_member("alice-example").unwrap();
     assert!(store.read_access_member_link("qm", "U1").unwrap().is_some());
 }
+
+#[test]
+fn a_linked_member_reads_with_its_groups_only_while_enabled() {
+    let dir = TempDir::new("member-links-linked");
+    let store = open(&dir);
+    let spec: AccessMemberInsert =
+        serde_json::from_value(json!({ "id": "alice-example", "groups": ["team-b", "team-a"] }))
+            .unwrap();
+    store.insert_access_member(&spec).unwrap();
+    add(&store, "bob-example");
+    store
+        .insert_access_member_link("qm", "person-1", "alice-example")
+        .unwrap();
+    store
+        .insert_access_member_link("qm", "person-2", "bob-example")
+        .unwrap();
+    assert_eq!(
+        store.read_linked_member("qm", "person-1").unwrap(),
+        Some(json!({ "id": "alice-example", "groups": ["team-a", "team-b"] }))
+    );
+    assert_eq!(
+        store.read_linked_member("qm", "person-2").unwrap(),
+        Some(json!({ "id": "bob-example", "groups": [] }))
+    );
+    // Matched exactly: another system, another case or no link reads nothing.
+    assert_eq!(store.read_linked_member("other", "person-1").unwrap(), None);
+    assert_eq!(store.read_linked_member("qm", "PERSON-1").unwrap(), None);
+    assert_eq!(store.read_linked_member("qm", "person-3").unwrap(), None);
+    // A disabled member reads nothing until it is enabled; a removed member reads nothing.
+    store
+        .set_access_member_disabled("alice-example", true)
+        .unwrap();
+    assert_eq!(store.read_linked_member("qm", "person-1").unwrap(), None);
+    store
+        .set_access_member_disabled("alice-example", false)
+        .unwrap();
+    assert!(
+        store
+            .read_linked_member("qm", "person-1")
+            .unwrap()
+            .is_some()
+    );
+    store.tombstone_access_member("bob-example").unwrap();
+    assert_eq!(store.read_linked_member("qm", "person-2").unwrap(), None);
+}
