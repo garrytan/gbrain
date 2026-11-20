@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -22,6 +22,16 @@ import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
 import { parseBenchmarkEngineKind, createBenchmarkBrain, RustEngineAddonUnavailableError } from '../src/eval/longmemeval/harness.ts';
+import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
+import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+
+const TARGET = detectAddonTarget();
+const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
+const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
+  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
+}
+const withAddon = test.skipIf(!HAVE_ADDON);
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'gbrain-shadow-unit-'));
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
@@ -354,9 +364,11 @@ describe('child loop', () => {
     return { dir, control, summary: readShadowSummary(dir) };
   }
 
-  test('the Rust engine shell records capability_missing for every read', async () => {
+  test('a read the Rust engine refuses records capability_missing', async () => {
+    const refuse = async () => { throw Object.assign(new Error('not served'), { code: 'engine_capability_missing', reason: 'raw_sql' }); };
     const r = await run([event('getPage', ['a'], { slug: 'a' }), event('searchKeyword', ['q'], [])], {
       loadAddon: async () => ({ ok: true, addon: { target: 'linux-x64-glibc', engineAbi: 1 } as never }),
+      openEngine: () => ({ connect: async () => {}, disconnect: async () => {}, getPage: refuse, searchKeyword: refuse }) as never,
     });
     expect(r.summary.by_op.getPage).toEqual({ capability_missing: 1 });
     expect(r.summary.by_op.searchKeyword).toEqual({ capability_missing: 1 });
@@ -366,6 +378,17 @@ describe('child loop', () => {
     // Content-free: no slug or query in the ledger.
     expect(JSON.stringify(rows)).not.toContain('"a"');
     expect(r.control[0]).toBe('{"t":"hb"}\n');
+    rmSync(r.dir, { recursive: true, force: true });
+  });
+
+  test('an addon the engine cannot open records error with an open_failed reason for every read', async () => {
+    // A stand-in addon object has no native store, so the real engine's connect throws before any read.
+    const r = await run([event('getPage', ['a'], { slug: 'a' })], {
+      loadAddon: async () => ({ ok: true, addon: { target: 'linux-x64-glibc', engineAbi: 1 } as never }),
+    });
+    expect(r.summary.by_op.getPage).toEqual({ error: 1 });
+    const ledger = readdirSync(join(r.dir, 'ledger'));
+    expect(readFileSync(join(r.dir, 'ledger', ledger[0]), 'utf8')).toContain('open_failed:');
     rmSync(r.dir, { recursive: true, force: true });
   });
 
@@ -456,10 +479,21 @@ describe('eval --engine rust', () => {
     expect(err.message).toContain('ABI 2, expected 1.');
   });
 
-  test('with an addon the run opens a throwaway Rust store and stops at the schema capability', async () => {
+  test('an addon the engine cannot open stops the run with that error, not an addon refusal', async () => {
     const err = await createBenchmarkBrain('rust', {
       loadAddon: async () => ({ ok: true, addon: { target: 'linux-x64-glibc', engineAbi: 1 } as never }),
     }).catch((e) => e);
-    expect(err?.code).toBe('engine_capability_missing');
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(RustEngineAddonUnavailableError);
+  });
+
+  withAddon('with the built addon the run opens a throwaway Rust store and removes it on disconnect', async () => {
+    const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const engine = await createBenchmarkBrain('rust', { loadAddon: async () => ({ ok: true, addon }) as never });
+    const store = (engine as unknown as { databasePath: string }).databasePath;
+    expect((engine as unknown as { kind: string }).kind).toBe('rust');
+    expect(existsSync(store)).toBe(true);
+    await engine.disconnect();
+    expect(existsSync(store)).toBe(false);
   });
 });

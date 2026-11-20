@@ -47,18 +47,25 @@ export interface ShadowState {
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
 export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'>): { engine: string; identity: string } | null {
-  const engine = config.engine ?? (config.database_url ? 'postgres' : 'pglite');
-  if (engine === 'postgres') {
-    if (!config.database_url) return null;
-    try {
-      const url = new URL(config.database_url);
-      return { engine, identity: `postgres://${url.hostname}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}` };
-    } catch {
-      return null;
+  const engine: NonNullable<EngineConfig['engine']> = config.engine ?? (config.database_url ? 'postgres' : 'pglite');
+  switch (engine) {
+    case 'postgres': {
+      if (!config.database_url) return null;
+      try {
+        const url = new URL(config.database_url);
+        return { engine, identity: `postgres://${url.hostname}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}` };
+      } catch {
+        return null;
+      }
+    }
+    case 'pglite':
+      if (!config.database_path) return null;
+      return { engine, identity: `pglite:${resolve(config.database_path)}` };
+    default: {
+      const unreachable: never = engine;
+      return unreachable;
     }
   }
-  if (!config.database_path) return null;
-  return { engine, identity: `pglite:${resolve(config.database_path)}` };
 }
 
 /** `<engine>-<12 hex>`, the directory name of a brain's shadow state. */
