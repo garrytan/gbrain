@@ -258,6 +258,18 @@ fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
     Ok(next)
 }
 
+/// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
+/// seed, which copies rows with their ids).
+#[allow(dead_code)] // the seed groups that copy job-family rows call it; drop this once they do
+pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    if get_json::<i64>(tx, &k)?.unwrap_or(0) < id {
+        put_json(tx, &k, &id)?;
+    }
+    Ok(())
+}
+
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {

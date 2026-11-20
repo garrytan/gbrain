@@ -17,9 +17,14 @@
 //! seed could not carry. See rust/docs/store/seed.md.
 
 mod core;
+mod decide;
 mod decode;
+mod history;
+mod privacy;
+mod spend;
 #[cfg(test)]
 mod tests;
+mod wake;
 
 pub use decode::SeedRow;
 
@@ -38,7 +43,14 @@ pub const MANIFEST: &str = "shadow_seed";
 
 /// The relations a seed copies, in the order the caller imports them: each group's relations in
 /// its own order, groups in this order. A relation names only rows of relations before it.
-const GROUPS: &[&[(&str, &Relation)]] = &[core::RELATIONS];
+const GROUPS: &[&[(&str, &Relation)]] = &[
+    core::RELATIONS,
+    privacy::RELATIONS,
+    history::RELATIONS,
+    spend::RELATIONS,
+    decide::RELATIONS,
+    wake::RELATIONS,
+];
 
 /// One relation of the seed plan.
 #[derive(Debug, Clone, PartialEq, Serialize)]
