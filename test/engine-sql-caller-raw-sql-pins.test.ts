@@ -856,10 +856,13 @@ const PINS: Pin[] = [
         AND slug = ANY($3::text[])`],
   },
   {
+    // An equivalent statement: the caller sent `slug IN ($1, ...)`, 200 slugs to a statement; the member binds every slug
+    // as one array (`slug = ANY($1::text[])`), so its text does not change with the number of slugs. A slug named twice
+    // reads its pages once, where two chunks could read them twice.
     from: 'src/core/link-reconciliation.ts:442 lookupRefsForSlugs (the links and timeline pass\'s page refs, at 932324b281)',
     case: { method: 'listPageRefsForSlugs', variant: 'default', run: e => e.listPageRefsForSlugs(['a', 'b']) },
     texts: [`SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN ($1, $2)`],
+        WHERE deleted_at IS NULL AND slug = ANY($1::text[])`],
   },
   {
     from: 'src/core/access/open-pages.ts:187 openPages (the open-page count, rendered in the pinned access context)',

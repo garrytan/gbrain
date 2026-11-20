@@ -27,7 +27,7 @@ import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { runMaintenanceSweep } from '../../src/core/sweep.ts';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -163,6 +163,42 @@ describe('engine parity: maintenance sweep reads', () => {
       expect(linkTotal).toBeGreaterThan(0);
       expect(timelineTotal).toBeGreaterThan(0);
       return { links, timeline, linkTotal, timelineTotal, sweeps, stored };
+    },
+  );
+
+  // The links pass's page refs read every source, skip a soft-deleted page, and read a page once when its slug is named
+  // twice (one bound array, not chunks of 200). The caller builds sets and maps, so the order is no contract.
+  parityTest(
+    'listPageRefsForSlugs reads the live pages of every source once for a slug named twice, and nothing for an empty list',
+    { methods: ['putPage', 'softDeletePage', 'getPage', 'listPageRefsForSlugs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const put = (slug: string, sourceId: string, type: string) => engine.putPage(slug,
+        { type, title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter: {} }, { sourceId });
+      await put('people/a-example', 'default', 'person');
+      await put('people/a-example', 'other', 'person');
+      await put('companies/widget-co', 'default', 'company');
+      await put('notes/gone', 'default', 'note');
+      await engine.softDeletePage('notes/gone');
+      // The revision is a fresh id on each arm: compare it to the page's own, not across arms.
+      const refs = async (slugs: string[]) => {
+        const out: string[] = [];
+        for (const r of await engine.listPageRefsForSlugs(slugs)) {
+          const page = await engine.getPage(r.slug, { sourceId: r.source_id });
+          out.push(`${r.source_id}|${r.slug}|${r.type}|${r.knowledge_revision === page?.knowledge_revision}`);
+        }
+        return out.sort();
+      };
+      // More than 200 slugs, with `people/a-example` named on each side of slug 200 (where the old chunks split).
+      const filler = Array.from({ length: 220 }, (_, i) => `missing/x-${i}`);
+      const slugs = ['people/a-example', 'companies/widget-co', ...filler.slice(0, 198), 'people/a-example', 'notes/gone',
+        ...filler.slice(198)];
+      const named = await refs(slugs);
+      const empty = await engine.listPageRefsForSlugs([]);
+      expect(named).toEqual(['default|companies/widget-co|company|true', 'default|people/a-example|person|true',
+        'other|people/a-example|person|true']);
+      expect(empty).toEqual([]);
+      return { named, empty, sent: slugs.length };
     },
   );
 });
