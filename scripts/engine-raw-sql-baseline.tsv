@@ -788,7 +788,6 @@ src/core/persistence/topology-locks.ts	execute_raw	20
 src/core/persistence/topology-receipts.ts	execute_raw	13
 src/core/persistence/topology-recovery.ts	execute_raw	17
 src/core/persistence/topology-transaction.ts	execute_raw	1
-src/core/persistence/transfer-administration.ts	execute_raw	1
 src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/twin-merge.ts	execute_raw	16
 src/core/persistence/unbound-source.ts	execute_raw	4

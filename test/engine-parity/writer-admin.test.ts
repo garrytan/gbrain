@@ -167,6 +167,14 @@ describe('writer administration', () => {
     const stillDraining = (await engine.getWorktreeBinding('work', host))?.state;
     const wrongManifest = await refusal(runPersistenceAdministration(engine, 'writer_transfer_accept', {
       source_id: 'work', path: successor, expected_epoch: prepared.owner_epoch, manifest: 'f'.repeat(64), ...await reviewed(engine, 'writer_transfer_accept') }));
+    // The accept dry run reads the prepared manifest through the typed member (its scope picks the successor's hash).
+    const manifestReads: string[] = [];
+    const readManifest = engine.readWorktreeManifest;
+    (engine as { readWorktreeManifest: BrainEngine['readWorktreeManifest'] }).readWorktreeManifest = (id: string) => { manifestReads.push(id); return readManifest.call(engine, id); };
+    let preview: { dry_run?: boolean; manifest_matches?: boolean; expected_epoch?: string };
+    try { preview = await accept({ dry_run: true }) as typeof preview; } finally { (engine as { readWorktreeManifest: BrainEngine['readWorktreeManifest'] }).readWorktreeManifest = readManifest; }
+    const dryRun = { dry_run: preview.dry_run, manifest_matches: preview.manifest_matches, expected_epoch: preview.expected_epoch,
+      read_through_member: manifestReads.length === 1 && manifestReads[0] === claimed.worktree_id };
     const accepted = await accept(await reviewed(engine, 'writer_transfer_accept')) as {
       transferred: boolean; binding: { owner_epoch: string; state: string; local_path: string; owner_host_id: string; prepared_at: string | null };
       content_receipts?: { source_id: string; from: string | null; to: string }[] };
@@ -175,7 +183,7 @@ describe('writer administration', () => {
     const replay = await refusal(accept(await reviewed(engine, 'writer_transfer_accept')));
     const kept = await engine.readWorktreeManifest(claimed.worktree_id);
     const answers = {
-      staleAccept, stillDraining, wrongManifest,
+      staleAccept, stillDraining, wrongManifest, dryRun,
       manifest: { kept: kept?.digest === prepared.manifest.digest, missing: await engine.readWorktreeManifest('00000000-0000-4000-8000-000000000000') },
       accepted: { transferred: accepted.transferred, owner_epoch: accepted.binding.owner_epoch, state: accepted.binding.state,
         at_successor: accepted.binding.local_path === realpathSync(successor), owner_is_this_host: accepted.binding.owner_host_id === host,
@@ -187,6 +195,7 @@ describe('writer administration', () => {
     };
     expect(answers).toEqual({
       staleAccept: 'writer_admin_state_changed', stillDraining: 'draining', wrongManifest: 'writer_manifest_mismatch',
+      dryRun: { dry_run: true, manifest_matches: true, expected_epoch: '1', read_through_member: true },
       manifest: { kept: true, missing: null },
       accepted: { transferred: true, owner_epoch: '2', state: 'active', at_successor: true, owner_is_this_host: true, prepared_at_kept: true },
       receipts: [{ source_id: 'work', from_old: true, to_successor: true }],
