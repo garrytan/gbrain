@@ -516,6 +516,7 @@ export async function runImport(
     console.error(`Import target is not readable: ${dirArg} (${e instanceof Error ? e.message : String(e)})`);
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
+  const ownedRefusal = (await import('./import-source-refusal.ts')).ownedFolderImportRefusal(dir); if (ownedRefusal) throw new ImportAbortError(ownedRefusal.message, 1, undefined, ownedRefusal);
   if (args.includes('--calls')) return (await import('./import-calls.ts')).runCallImport(engine, dir, args, { sourceId, json: jsonOutput });
 
   const managedImport = await readManagedMode(engine);
