@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 810/810
+# covered: 815/815
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -45,6 +45,7 @@
 # doctor_reads: 1/1
 # core_notices: 1/1
 # git_gap_census: 5/5
+# direction_evidence: 5/5
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
 # doctor_pages: 19/19
@@ -558,6 +559,11 @@ readGitGapNewestWindow	git_gap_census	yes	1	no	yes	yes	refuses:pages
 listGitGapPageKeys	git_gap_census	yes	1	no	yes	yes	refuses:pages
 countGitGapRowsWithoutFile	git_gap_census	yes	1	no	yes	yes	refuses:facts
 countGitGapSourceRows	git_gap_census	yes	1	no	yes	yes	refuses:facts
+listEvidenceVersionOrigins	direction_evidence	yes	1	no	yes	yes	refuses:page_versions
+readEvidencePageStates	direction_evidence	yes	1	no	yes	yes	refuses:pages
+listEvidenceVersionMeta	direction_evidence	yes	1	no	yes	yes	refuses:page_versions
+readEvidenceVersionBodies	direction_evidence	yes	1	no	yes	yes	refuses:page_versions
+markMirrorReadOnlyPage	direction_evidence	yes	1	no	yes	yes	refuses:pages
 readIgnoredPrivacyLabelCounts	doctor_derived	yes	1	no	yes	yes	refuses:health
 countSafeIndexPending	doctor_derived	yes	1	no	yes	yes	serves
 countCredentialProjectionPending	doctor_derived	yes	1	no	yes	yes	refuses:health
@@ -819,7 +825,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
-readSourceState	write_misc	yes	2	no	yes	yes	serves
+readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves

@@ -34,17 +34,15 @@ export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, 
  * legacy disk writers (write-through, fact fences, timeline, forget, unfenced facts) skip on it as managed publication does.
  */
 export async function readOnlyCheckout(engine: SqlEngine, sourceId: string): Promise<'mirror_read_only' | 'url_clone' | null> {
-  const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
+  const row = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId);
   if (!row) return null;
-  const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
-  if (String(config.mirror_read_only) === 'true') return 'mirror_read_only';
+  if (String(row.config.mirror_read_only) === 'true') return 'mirror_read_only';
   return await urlCloneReadOnly(engine, sourceId, row) ? 'url_clone' : null;
 }
 
 /** Marks a page this publication stored database-only because its source is a read-only mirror and it has no recorded file. */
 export async function classifyMirrorPage(tx: SqlEngine, row: { source_id: string; slug: string }): Promise<void> {
-  await tx.executeRaw(`UPDATE pages SET database_only_reason='mirror_read_only'
-    WHERE source_id=$1 AND slug=$2 AND database_only_reason IS NULL AND NULLIF(source_path,'') IS NULL`, [row.source_id, row.slug]);
+  await (tx as unknown as Pick<BrainEngine, 'markMirrorReadOnlyPage'>).markMirrorReadOnlyPage(row.source_id, row.slug);
 }
 
 export async function isMirrorOnlyPage(engine: SqlEngine, sourceId: string, slug: string): Promise<boolean> {

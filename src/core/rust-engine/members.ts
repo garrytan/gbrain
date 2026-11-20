@@ -897,6 +897,12 @@ export const RUST_ENGINE_MEMBERS = {
   listGitGapPageKeys: 'pages',
   countGitGapRowsWithoutFile: 'facts',
   countGitGapSourceRows: 'facts',
+  // The store keeps no database_only_reason and does not serve the direction-evidence read: refused by name (rust/docs/store/direction-evidence.md).
+  listEvidenceVersionOrigins: 'page_versions',
+  readEvidencePageStates: 'pages',
+  listEvidenceVersionMeta: 'page_versions',
+  readEvidenceVersionBodies: 'page_versions',
+  markMirrorReadOnlyPage: 'pages',
   listTrustScanRows: 'facts',
   countUnscannedTrustRows: 'facts',
   readBeliefHistoryRows: 'belief_ledger',

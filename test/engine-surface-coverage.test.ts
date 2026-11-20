@@ -124,6 +124,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listPendingCoreNotices',
   // Git-gap census (engine-sql/git-gap-census.ts; covered by test/engine-parity/git-gap-census.test.ts)
   'readGitGapSource', 'readGitGapNewestWindow', 'listGitGapPageKeys', 'countGitGapRowsWithoutFile', 'countGitGapSourceRows',
+  // Direction evidence (engine-sql/direction-evidence.ts; covered by test/engine-parity/direction-evidence.test.ts)
+  'listEvidenceVersionOrigins', 'readEvidencePageStates', 'listEvidenceVersionMeta', 'readEvidenceVersionBodies', 'markMirrorReadOnlyPage',
   // Doctor derived reads (engine-sql/doctor-derived.ts; covered by test/engine-parity/doctor-derived.test.ts)
   'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner', 'listRecordedTombstones',
   'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch', 'listAtomFenceCandidates', 'readPageCompiledTruths',

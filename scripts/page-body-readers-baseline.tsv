@@ -188,6 +188,8 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/direction-evidence.ts	listEvidenceVersionMeta	sql	META	moved from persistence/git-gap.ts readDirectionEvidence unchanged: octet_length metadata and a readable flag (inline, not deleted, body present); no body is returned
+src/core/engine-sql/direction-evidence.ts	readEvidenceVersionBodies	sql	INLINE	moved from persistence/git-gap.ts readDirectionEvidence unchanged: readDirectionEvidence asks only for versions listEvidenceVersionMeta marked readable (inline), so segmented versions are skipped
 src/core/engine-sql/doctor-derived.ts	ATOM_FENCE_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
 src/core/engine-sql/doctor-derived.ts	BUDGET_AGE_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
 src/core/engine-sql/doctor-derived.ts	BUDGET_LIMITED_SOURCE_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
@@ -476,7 +478,6 @@ src/core/persistence/file-wins-content.ts	fileWinsContent	field	INLINE	compares 
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	call:serializePageToMarkdown	INLINE	a segmented page's struck file streams through unreadPageFile (its segments under the ledger plus the withdrawal) and returns before this render
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	field	INLINE	the inline body materializedPage returns; a segmented page streams through unreadPageFile and returns before this read
 src/core/persistence/git-gap.ts	readDirectionEvidence	field	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
-src/core/persistence/git-gap.ts	readDirectionEvidence	sql	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-maintenance.ts	formatManagedStaleExtraction	field	NONE	not the page body: result.timeline counter

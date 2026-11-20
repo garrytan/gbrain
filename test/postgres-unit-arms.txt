@@ -136,6 +136,7 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-notices.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/direction-evidence.test.ts
 test/engine-parity/doctor-acc.test.ts
 test/engine-parity/doctor-checkpoints.test.ts
 test/engine-parity/doctor-derived.test.ts
@@ -178,6 +179,7 @@ test/engine-parity/link-read-options.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/mirror-read-only.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts

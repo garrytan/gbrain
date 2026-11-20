@@ -25,6 +25,7 @@ import { reconcileFileReading } from './reconcile-state.ts';
 import { SYNC_READ_BOUND } from './sync-blobs.ts';
 import { RestoreTargetError, restoreFilePath } from '../restore-target.ts';
 import type { SlugRootMode } from '../sync-anchor.ts';
+import type { EvidenceVersionBody, EvidenceVersionMeta } from '../engine-sql/direction-evidence.ts';
 
 /** Why a page has no tracked file on purpose, in the order `declaredDatabaseOnly` tests them. */
 export const DECLARED_CLASSES = ['mirror_source', 'database_only_source', 'private', 'alias_private', 'lineage_private', 'database_only', 'db_only_prefix', 'derive_folder', 'git_ignored'] as const;
@@ -397,9 +398,9 @@ export function decideDirection(row: string, head: string | null, versions: Read
   return { kind: 'no_evidence', basis: 'no_shared_state', blob: null, version: null };
 }
 
-type VersionRow = { id: number; page_id: string; compiled_truth: string; frontmatter: unknown; timeline: string | null; title: string | null; type: string | null; tags: unknown };
+type VersionRow = EvidenceVersionBody;
 /** A version the evidence read lists: `readable` when it is an inline, live snapshot with a body (its digest can be computed). */
-type VersionMeta = { id: number | string; page_id: string; bytes: number | string; readable: boolean };
+type VersionMeta = EvidenceVersionMeta;
 /** At most this many version body bytes are held at once (a larger version is read alone). */
 const VERSION_READ_BYTES = 32 * 1024 * 1024;
 const json = <T>(value: unknown, fallback: T): T => value == null ? fallback : typeof value === 'string' ? JSON.parse(value) as T : value as T;
@@ -418,8 +419,7 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
   if (!subjects.length) return out;
   const gitPath = (rel: string) => scope ? `${scope}/${rel}` : rel;
   const ids = subjects.map(subject => subject.id);
-  const origins = await engine.executeRaw<{ page_id: string; slug: string; source_path: string }>(`SELECT DISTINCT v.page_id::text AS page_id, p.slug, v.source_path
-    FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE v.page_id = ANY(string_to_array($1::text, ',')::int[]) AND v.source_path IS NOT NULL AND v.source_path <> ''`, [ids.join(',')]);
+  const origins = await engine.listEvidenceVersionOrigins(ids);
   const paths = new Map(subjects.map(subject => [subject.id, new Set([gitPath(subject.rel)])]));
   for (const origin of origins) {
     try {
@@ -450,23 +450,18 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
     const segmentedSizes = new Map<string, Map<string, number> | null>();
     for (const subject of batch) if (subject.segmented) segmentedSizes.set(subject.id, await readBlobSizes(root, older(subject).list.map(entry => entry.oid)));
     const read = await engine.transaction(async tx => {
-      await tx.executeRaw('SET TRANSACTION READ ONLY');
-      const rows = await tx.executeRaw<{ id: string; revision: string | null; gap: boolean }>(`SELECT id::text, knowledge_revision::text AS revision, version_history_gap_at IS NOT NULL AS gap
-        FROM pages WHERE id = ANY(string_to_array($1::text, ',')::bigint[]) AND deleted_at IS NULL`, [batch.map(subject => subject.id).join(',')]);
+      await tx.beginSnapshotRead({ readOnly: true });
+      const rows = await tx.readEvidencePageStates(batch.map(subject => subject.id));
       const live = new Map(rows.map(row => [row.id, row.revision])), gaps = new Set(rows.filter(row => row.gap).map(row => row.id));
       const current = batch.filter(subject => live.has(subject.id) && live.get(subject.id) === subject.revision);
       const snapshots = await readExportPages(tx, current.map(subject => ({ id: subject.id, source_id: sourceId, slug: subject.slug })), withdrawals);
-      const versions = current.length ? await tx.executeRaw<VersionMeta>(`SELECT id, page_id::text AS page_id, COALESCE(octet_length(compiled_truth), 0) + COALESCE(octet_length(timeline), 0) AS bytes,
-          (COALESCE(body_storage,'inline')='inline' AND NOT COALESCE(is_deleted, false) AND compiled_truth IS NOT NULL) AS readable FROM (SELECT v.id, v.page_id, v.compiled_truth, v.timeline, v.body_storage,
-          v.is_deleted, row_number() OVER (PARTITION BY v.page_id ORDER BY v.id DESC) AS rank FROM page_versions v WHERE v.page_id = ANY(string_to_array($1::text, ',')::int[])) ranked
-          WHERE rank <= $2 ORDER BY page_id, id DESC`, [current.map(subject => subject.id).join(','), EVIDENCE_DEPTH]) : [];
+      const versions: VersionMeta[] = await tx.listEvidenceVersionMeta(current.map(subject => subject.id), EVIDENCE_DEPTH);
       const snapshotOf = new Map(current.map((subject, i) => [subject.id, snapshots[i]!]));
       const digests = new Map<string, string>(), wanted = versions.filter(row => row.readable);
       for (let from = 0; from < wanted.length;) {
         let to = from, bytes = 0;
         while (to < wanted.length && (to === from || bytes + Number(wanted[to]!.bytes) <= VERSION_READ_BYTES)) bytes += Number(wanted[to++]!.bytes);
-        const rows = await tx.executeRaw<VersionRow>(`SELECT id, page_id::text AS page_id, compiled_truth, frontmatter, timeline, title, type, tags FROM page_versions
-          WHERE id = ANY(string_to_array($1::text, ',')::int[])`, [wanted.slice(from, to).map(row => row.id).join(',')]);
+        const rows: VersionRow[] = await tx.readEvidenceVersionBodies(wanted.slice(from, to).map(row => row.id));
         for (const row of rows) {
           const page = snapshotOf.get(row.page_id)!.page;
           digests.set(String(row.id), digest(contentCanonical({ type: (row.type ?? page.type) as Page['type'], title: row.title ?? page.title, compiled_truth: row.compiled_truth,

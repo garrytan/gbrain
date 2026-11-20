@@ -37,6 +37,7 @@ import { DOCTOR_CHECKPOINT_MEMBERS } from './engine-sql/doctor-checkpoints.ts';
 import { DOCTOR_SRC_MEMBERS } from './engine-sql/doctor-sources.ts';
 import { CORE_NOTICE_MEMBERS } from './engine-sql/core-notices.ts';
 import { GIT_GAP_CENSUS_MEMBERS } from './engine-sql/git-gap-census.ts';
+import { DIRECTION_EVIDENCE_READS } from './engine-sql/direction-evidence.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -101,7 +102,7 @@ const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows'
 /** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_ACC_MEMBERS,
-  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...CORE_NOTICE_MEMBERS, ...GIT_GAP_CENSUS_MEMBERS,
+  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...CORE_NOTICE_MEMBERS, ...GIT_GAP_CENSUS_MEMBERS, ...DIRECTION_EVIDENCE_READS,
 ]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;

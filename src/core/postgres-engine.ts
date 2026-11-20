@@ -181,6 +181,7 @@ import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
 import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
 import * as coreNoticesImpl from './engine-sql/core-notices.ts';
 import * as gitGapCensusImpl from './engine-sql/git-gap-census.ts';
+import * as directionEvidenceImpl from './engine-sql/direction-evidence.ts';
 import type { GitGapKeyWindow } from './engine-sql/git-gap-census.ts';
 import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
@@ -1189,6 +1190,11 @@ export class PostgresEngine implements BrainEngine {
   listGitGapPageKeys(sourceId: string, window: GitGapKeyWindow, limit: number) { return gitGapCensusImpl.listGitGapPageKeys(this.executeRaw.bind(this), sourceId, window, limit); }
   countGitGapRowsWithoutFile(sourceId: string, slugs: readonly string[], pageIds: readonly string[]) { return gitGapCensusImpl.countGitGapRowsWithoutFile(this.executeRaw.bind(this), sourceId, slugs, pageIds); }
   countGitGapSourceRows(sourceId: string, opts: { derivedLinkSources: readonly string[]; holdOp: string }) { return gitGapCensusImpl.countGitGapSourceRows(this.executeRaw.bind(this), sourceId, opts); }
+  listEvidenceVersionOrigins(pageIds: readonly string[]) { return directionEvidenceImpl.listEvidenceVersionOrigins(this.executeRaw.bind(this), pageIds); }
+  readEvidencePageStates(pageIds: readonly string[]) { return directionEvidenceImpl.readEvidencePageStates(this.executeRaw.bind(this), pageIds); }
+  listEvidenceVersionMeta(pageIds: readonly string[], depth: number) { return directionEvidenceImpl.listEvidenceVersionMeta(this.executeRaw.bind(this), pageIds, depth); }
+  readEvidenceVersionBodies(versionIds: readonly (string | number)[]) { return directionEvidenceImpl.readEvidenceVersionBodies(this.executeRaw.bind(this), versionIds); }
+  markMirrorReadOnlyPage(sourceId: string, slug: string) { return directionEvidenceImpl.markMirrorReadOnlyPage(this.autocommitSql, sourceId, slug); }
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts).
   readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.executeRaw.bind(this), opts); }

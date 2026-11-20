@@ -14,6 +14,7 @@ import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
 import type * as CoreNoticesSql from './engine-sql/core-notices.ts';
 import type * as GitGapCensusSql from './engine-sql/git-gap-census.ts';
+import type * as DirectionEvidenceSql from './engine-sql/direction-evidence.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
@@ -4197,6 +4198,18 @@ export interface BrainEngine {
   countGitGapRowsWithoutFile(sourceId: string, slugs: readonly string[], pageIds: readonly string[]): Promise<{ facts: number; timeline_entries: number }>;
   /** A source's rows with no Git home, its open holds of `holdOp` by code and its parked targets (groups sort bytewise). */
   countGitGapSourceRows(sourceId: string, opts: { derivedLinkSources: readonly string[]; holdOp: string }): Promise<GitGapCensusSql.GitGapSourceRows>;
+
+  // Direction evidence (engine-sql/direction-evidence.ts): the database side of persistence/git-gap.ts readDirectionEvidence and the mirror page mark.
+  /** The distinct recorded file paths of the versions of `pageIds`, with each page's slug. */
+  listEvidenceVersionOrigins(pageIds: readonly string[]): Promise<DirectionEvidenceSql.EvidenceVersionOrigin[]>;
+  /** The live pages among `pageIds`: knowledge revision (text) and version-history gap flag. */
+  readEvidencePageStates(pageIds: readonly string[]): Promise<DirectionEvidenceSql.EvidencePageState[]>;
+  /** The newest `depth` versions of each of `pageIds` (by page, newest first), with size and body readability. */
+  listEvidenceVersionMeta(pageIds: readonly string[], depth: number): Promise<DirectionEvidenceSql.EvidenceVersionMeta[]>;
+  /** The body fields of the versions `versionIds` names. */
+  readEvidenceVersionBodies(versionIds: readonly (string | number)[]): Promise<DirectionEvidenceSql.EvidenceVersionBody[]>;
+  /** Marks a page with no reason and no recorded file `database_only_reason='mirror_read_only'`; the number changed (0 or 1). */
+  markMirrorReadOnlyPage(sourceId: string, slug: string): Promise<number>;
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
   /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */

@@ -155,6 +155,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   core_notices: ['listPendingCoreNotices'],
   // git_gap_census: the git-gap census reads sources git-gap and doctor db_ahead_of_git ran through executeRaw (engine-sql/git-gap-census.ts)
   git_gap_census: ['readGitGapSource', 'readGitGapNewestWindow', 'listGitGapPageKeys', 'countGitGapRowsWithoutFile', 'countGitGapSourceRows'],
+  // direction_evidence: the direction-evidence reads git-gap readDirectionEvidence ran through executeRaw and the mirror page mark (engine-sql/direction-evidence.ts)
+  direction_evidence: ['listEvidenceVersionOrigins', 'readEvidencePageStates', 'listEvidenceVersionMeta', 'readEvidenceVersionBodies', 'markMirrorReadOnlyPage'],
   // doctor_derived: the derived-state reads doctor checks, repair scans and the purge ran through executeRaw (engine-sql/doctor-derived.ts)
   doctor_derived: [
     'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner',
