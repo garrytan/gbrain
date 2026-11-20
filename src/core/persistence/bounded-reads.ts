@@ -99,7 +99,7 @@ export function isSharedReadFailure(error: unknown): boolean {
  */
 export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
-  'readDatabaseClock', 'readMentionLastPass', 'findExactBasenameCandidates']);
+  'readDatabaseClock', 'readMentionLastPass', 'findExactBasenameCandidates', 'listLinkEndpointPages']);
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {

@@ -21,7 +21,6 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { PINNED_QUESTION_MARKER } from '../questions/identity.ts';
 import { isFactEntityPage } from '../entities/resolve.ts';
-import { pageReadFilter } from './read-policy-sql.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { containsTokenRun, isTitleMentionedInQuery, tokenizeTitle } from './title-match.ts';
 import { enforceTokenBudget } from './token-budget.ts';
@@ -75,14 +74,9 @@ interface EntityCandidate { id: number; slug: string; title: string; type: strin
  * ("Acme" inside "Acme Labs"). Zero or several entities: null.
  */
 export async function namedEntity(engine: BrainEngine, query: string, scope: PageReadScope): Promise<EntityCandidate | null> {
-  const params: unknown[] = [query.toLowerCase()];
-  const filter = pageReadFilter('p', scope, params, true);
-  // The title match runs first over bare rows; the read filter (page visibility subqueries) then sees only the matches.
-  const rows = await engine.executeRaw<EntityCandidate>(
-    `WITH titled AS MATERIALIZED (SELECT id FROM pages WHERE title IS NOT NULL AND length(title) >= 3 AND strpos($1, lower(title)) > 0)
-     SELECT p.id, p.slug, p.title, p.type, p.source_id FROM pages p
-     WHERE p.id IN (SELECT id FROM titled) AND ${filter}
-     ORDER BY p.source_id, p.slug LIMIT 50`, params);
+  // Only the keys pageReadFilter reads: the token budget and safe-chunk flag of the anchoring options are not a page filter.
+  const { sourceId, sourceIds, excludePrivate, minTrust, suppressFlagged } = scope;
+  const rows = await engine.listPagesTitledIn(query.toLowerCase(), { sourceId, sourceIds, excludePrivate, minTrust, suppressFlagged });
   const matches = rows.filter(r => isFactEntityPage(r.slug, r.type) && isTitleMentionedInQuery(query, r.title));
   const outer = matches.filter(m => !matches.some(o => o !== m && o.title.length > m.title.length && containsTokenRun(tokenizeTitle(o.title), tokenizeTitle(m.title))));
   return outer.length === 1 ? { ...outer[0]!, id: Number(outer[0]!.id) } : null;

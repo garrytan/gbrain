@@ -10,6 +10,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { scanOverwrittenEdits, type OverwriteSourceScan } from '../../../core/persistence/overwritten-edits.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#overwritten-edits';
 /** Slugs listed per source. */
@@ -19,7 +20,7 @@ async function runOverwrittenEdits(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const engine = connectedEngine(ctx);
-    const sourceIds = ctx.sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sourceIds = ctx.sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const scans: OverwriteSourceScan[] = [];
     for (const sourceId of sourceIds) scans.push(await scanOverwrittenEdits(engine, sourceId));
     const high = scans.reduce((sum, scan) => sum + scan.high, 0);

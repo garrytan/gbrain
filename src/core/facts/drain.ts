@@ -121,12 +121,9 @@ export function dailySpentUsd(state: FactsDrainState, now = Date.now()): number 
 export interface FactsDrainBacklog { waiting: number; delayed: number; active: number }
 
 export async function factsDrainBacklog(engine: BrainEngine): Promise<FactsDrainBacklog> {
-  const rows = await engine.executeRaw<{ status: string; n: number }>(
-    `SELECT status, count(*)::int AS n FROM minion_jobs
-      WHERE name = $1 AND queue = $2 AND status IN ('waiting', 'delayed', 'active') GROUP BY status`,
-    [FACTS_DRAIN_JOB, FACTS_DRAIN_QUEUE]);
+  const rows = await engine.countJobsByStatus({ name: FACTS_DRAIN_JOB, queue: FACTS_DRAIN_QUEUE, statuses: ['waiting', 'delayed', 'active'] });
   const out: FactsDrainBacklog = { waiting: 0, delayed: 0, active: 0 };
-  for (const r of rows) out[r.status as keyof FactsDrainBacklog] = Number(r.n);
+  for (const r of rows) out[r.status as keyof FactsDrainBacklog] = r.count;
   return out;
 }
 
@@ -187,12 +184,8 @@ function findError<T>(err: unknown, match: (e: unknown) => e is T): T | null {
 async function estimateBacklogUsd(engine: BrainEngine, model: string, backlog: number, maxTokens: number): Promise<number | null> {
   const { reservationCostUsd } = await import('../budget/reservation-cost.ts');
   const { MAX_TURN_TEXT_CHARS } = await import('./extract.ts');
-  const [row] = await engine.executeRaw<{ chars: number | null }>(
-    `SELECT avg(LEAST(length(p.compiled_truth), $3))::float AS chars FROM minion_jobs j
-       JOIN pages p ON p.slug = j.data->>'slug' AND p.source_id = COALESCE(j.data->>'sourceId', 'default')
-      WHERE j.name = $1 AND j.queue = $2 AND j.status IN ('waiting', 'delayed')`,
-    [FACTS_DRAIN_JOB, FACTS_DRAIN_QUEUE, MAX_TURN_TEXT_CHARS]).catch(() => [{ chars: null }]);
-  const inputTokens = Math.ceil((row?.chars ?? MAX_TURN_TEXT_CHARS / 2) / 4) + PROMPT_OVERHEAD_TOKENS;
+  const chars = await engine.readQueuedPageChars({ name: FACTS_DRAIN_JOB, queue: FACTS_DRAIN_QUEUE, maxChars: MAX_TURN_TEXT_CHARS }).catch(() => null);
+  const inputTokens = Math.ceil((chars ?? MAX_TURN_TEXT_CHARS / 2) / 4) + PROMPT_OVERHEAD_TOKENS;
   const perJob = reservationCostUsd(model, 'chat', inputTokens, Math.min(maxTokens, 300));
   return perJob === null ? null : perJob * backlog;
 }

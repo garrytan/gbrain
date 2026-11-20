@@ -1,5 +1,4 @@
 import type { PageReadScope } from '../core/types.ts';
-import { pageReadFilter } from '../core/search/read-policy-sql.ts';
 /**
  * gbrain orphans — Surface disconnected pages.
  *
@@ -30,9 +29,9 @@ import {
   type OrphanPolicyOverrides,
   type OrphanPageMeta,
 } from '../core/orphan-policy.ts';
-import { quarantineFilterFragment } from '../core/quarantine.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { pageSortedRows, topCounts, type ListingPage } from '../core/bounded-listing.ts';
+import { sourceConfigText, sourceRecordsRawConfig } from '../core/source-rows.ts';
 import { nextListingCommand, parseListingFlags } from '../core/bounded-listing-cli.ts';
 import { withReadMeta } from '../core/read-heartbeat.ts';
 
@@ -65,8 +64,8 @@ export const CONNECTOR_RENDER_TYPES = new Set(['email', 'meeting']);
  * islanded render is expected and is reported apart rather than as an orphan.
  */
 export async function loadConnectorSourceIds(engine: BrainEngine): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ id: string; kind: string | null }>(`SELECT id, config->>'kind' AS kind FROM sources`);
-  return new Set(rows.filter(r => isConnectorSourceKind(r.kind)).map(r => r.id));
+  const rows = await sourceRecordsRawConfig(engine, { includeArchived: true });
+  return new Set(rows.filter(r => isConnectorSourceKind(sourceConfigText(r.config, 'kind'))).map(r => r.id));
 }
 
 // --- Filter logic ---
@@ -169,15 +168,10 @@ export async function findOrphans(
     // total_linkable and suppressing orphan warnings. `getAllSlugs` is NOT
     // used here because it does not filter soft-deleted rows; `total` must
     // match `findOrphanPages`'s `deleted_at IS NULL` candidate universe.
-    const liveParams: unknown[] = [];
-    const scopeClause = ` AND ${pageReadFilter('pages', opts, liveParams)}`;
     // #4280: carry type + quarantine metadata so the denominator applies the
     // same served-memory policy as the orphan list itself.
-    const liveRows = await engine.executeRaw<{ slug: string; type: string | null; quarantined: boolean }>(
-      `SELECT slug, type, (NOT ${quarantineFilterFragment('pages')}) AS quarantined
-         FROM pages WHERE deleted_at IS NULL${scopeClause}`,
-      liveParams,
-    );
+    const { includePseudo: _pseudo, mode: _mode, scopeInbound: _inbound, ...readScope } = opts;
+    const liveRows = await engine.listLivePageSummaries(readScope);
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0

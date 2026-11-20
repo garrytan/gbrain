@@ -132,7 +132,7 @@ async function readRemoteCoverage(ctx: OperationContext, sourceIds: string[] | u
   try {
     const versionTs = await effectiveLinkExtractorWatermark(ctx.engine);
     const policy = includeMentions ? await readMentionPolicy(ctx.engine) : null;
-    const ids = sourceIds ?? (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map(r => r.id);
+    const ids = sourceIds ?? (await ctx.engine.listSourceRecords()).filter(r => r.archived !== true).map(r => r.id).sort();
     if (ids.length > COVERAGE_SOURCE_CAP) return { state: 'unread', reason: 'too_many_sources' };
     for (const sourceId of ids) {
       const mentionTypes = policy?.enabled ? linkableTypesFor(await loadSourcePack(ctx.engine, sourceId), policy) : undefined;
