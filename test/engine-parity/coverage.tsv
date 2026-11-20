@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1116/1123
+# covered: 1119/1126
 # lifecycle: 9/9
 # pages: 61/61
 # search: 7/7
@@ -47,7 +47,7 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 12/12
 # facts_purge: 18/18
-# facts_repair: 14/14
+# facts_repair: 17/17
 # facts_trust: 10/10
 # trust_tier_reads: 16/16
 # memory_mutation_reads: 12/12
@@ -98,13 +98,13 @@ getPage	pages	yes	138	yes	yes	yes	serves
 readPageSnapshot	pages	yes	39	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	596	yes	yes	yes	serves
+putPage	pages	yes	601	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	172	yes	yes	yes	serves
+softDeletePage	pages	yes	173	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -134,7 +134,7 @@ listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
-insertSource	pages	yes	5	no	yes	yes	serves
+insertSource	pages	yes	7	no	yes	yes	serves
 deleteSourceRecord	pages	yes	6	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
@@ -355,9 +355,9 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	67	yes	yes	yes	serves
-insertFacts	facts	yes	100	no	yes	yes	serves
+insertFacts	facts	yes	106	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	37	no	yes	yes	serves
+expireFact	facts	yes	39	no	yes	yes	serves
 listFactsByEntity	facts	yes	29	yes	yes	yes	serves
 listFactsSince	facts	yes	22	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
@@ -411,7 +411,7 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	17	no	yes	yes	serves
+getConfig	config	yes	19	no	yes	yes	serves
 setConfig	config	yes	35	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -419,7 +419,7 @@ getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	18	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	20	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
@@ -808,13 +808,16 @@ loopFactDrift	facts_repair	yes	3	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	3	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
-listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+listCapturedFactsForClassification	facts_repair	yes	3	no	yes	yes	serves
 countLabelFacts	facts_repair	yes	2	no	yes	yes	serves
 listExtractorFactsForClassification	facts_repair	yes	2	no	yes	yes	serves
 listClosedConsolidationTies	facts_repair	yes	1	no	yes	yes	serves
 listPagelessEntityFacts	facts_repair	yes	1	no	yes	yes	serves
 listOntologyFactCandidates	facts_repair	yes	1	no	yes	yes	serves
 listDuplicateFactRows	facts_repair	yes	1	no	yes	yes	serves
+listFactsOnValidDay	facts_repair	yes	1	no	yes	yes	serves
+readLivePageByPath	facts_repair	yes	2	no	yes	yes	serves
+listPurgedPageFactCandidates	facts_repair	yes	3	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	3	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	2	no	yes	yes	serves
 listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
@@ -890,7 +893,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	20	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	22	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	3	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
@@ -942,7 +945,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	12	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	13	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
@@ -959,7 +962,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	3	no	yes	yes	serves
-readSourceState	write_misc	yes	5	no	yes	yes	serves
+readSourceState	write_misc	yes	7	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
@@ -977,7 +980,7 @@ appendOpCheckpointPaths	write_misc	yes	4	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	14	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	20	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	27	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	3	no	yes	yes	serves
@@ -1031,7 +1034,7 @@ readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
 readFolderAccess	write_misc	yes	7	no	yes	yes	serves
-listSourceIncarnations	repair_bookkeeping	yes	9	no	yes	yes	serves
+listSourceIncarnations	repair_bookkeeping	yes	12	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
 readLoopFactState	repair_bookkeeping	yes	2	no	yes	yes	serves

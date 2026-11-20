@@ -49,6 +49,14 @@ pub struct DuplicateRowsArgs {
     pub excluded_sources: Vec<String>,
 }
 
+/// `listFactsOnValidDay(sourceId, day)`: `day` is `YYYY-MM-DD`, the UTC day of `valid_from`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidDayArgs {
+    pub source_id: String,
+    pub day: String,
+}
+
 /// One partition of the duplicate read: `(visibility, speaker, fingerprint)` and its rows with their `fenced` flag.
 type Partitions<'a> = BTreeMap<(String, String, String), Vec<(&'a FactRecord, bool)>>;
 
@@ -78,6 +86,31 @@ fn by_source(
 }
 
 impl Store {
+    /// `listFactsOnValidDay`: the unexpired facts of the source whose `valid_from` falls on the UTC `day`, by id.
+    /// `valid_from` is `timestamptz::text` in UTC and `valid_until_day` the `to_char` UTC day of `valid_until`.
+    pub fn list_facts_on_valid_day(&self, a: &ValidDayArgs) -> Result<Vec<Value>> {
+        no_nul(
+            "listFactsOnValidDay",
+            &[("sourceId", &a.source_id), ("day", &a.day)],
+        )?;
+        let mut rows: Vec<FactRecord> = source_rows(&*self.read()?, &a.source_id)?
+            .into_iter()
+            .filter(|f| f.expired_at_us.is_none() && iso(f.valid_from_us)[..10] == a.day)
+            .collect();
+        rows.sort_by_key(|f| f.id);
+        Ok(rows
+            .iter()
+            .map(|f| {
+                json!({
+                    "id": f.id, "entity_slug": f.entity_slug, "fact": f.fact, "row_num": f.row_num,
+                    "source_markdown_slug": f.source_markdown_slug,
+                    "valid_from": timestamptz_text(f.valid_from_us),
+                    "valid_until_day": f.valid_until_us.map(|u| iso(u)[..10].to_string()),
+                })
+            })
+            .collect())
+    }
+
     /// `listClosedConsolidationTies`: by (source, id).
     pub fn list_closed_consolidation_ties(&self, a: &SourcesArgs) -> Result<Vec<Value>> {
         let mut out = Vec::new();

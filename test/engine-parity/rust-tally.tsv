@@ -109,6 +109,7 @@ test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0
 test/engine-parity/repair-bookkeeping.test.ts	7	1
 test/engine-parity/repair-busy.test.ts	1	0
+test/engine-parity/repair-facts-previews-2.test.ts	4	4
 test/engine-parity/repair-facts-previews.test.ts	5	0
 test/engine-parity/repair-fence-scans.test.ts	2	1
 test/engine-parity/repair-owner-kinds.test.ts	4	1

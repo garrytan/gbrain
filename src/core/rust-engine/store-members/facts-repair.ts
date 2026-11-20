@@ -121,3 +121,23 @@ export const listOntologyFactCandidates: Member<'listOntologyFactCandidates'> = 
 
 export const listDuplicateFactRows: Member<'listDuplicateFactRows'> = (brain, sourceIds, excludedSources) =>
   storeCall({ member: 'listDuplicateFactRows' }, () => brain.listDuplicateFactRows({ sourceIds, excludedSources }));
+
+/**
+ * The previews of `gbrain repair fact-claim-dates` and `url-clone-fences`: the store reads the facts of the UTC day, and the
+ * live page of a path (the lowest id, as the SQL's `ORDER BY id LIMIT 1`). A day that is not a real `YYYY-MM-DD` refuses: the
+ * SQL's `$2::date` would read other spellings, which a caller never sends.
+ */
+export const listFactsOnValidDay: Member<'listFactsOnValidDay'> = (brain, sourceId, day) => {
+  const m = 'listFactsOnValidDay';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) refuseMember(m, 'a day that is not a real YYYY-MM-DD date');
+  return storeCall({ member: m }, () => brain.listFactsOnValidDay({ sourceId, day }));
+};
+
+export const readLivePageByPath: Member<'readLivePageByPath'> = async (brain, sourceId, path) =>
+  await storeCall({ member: 'readLivePageByPath', sourceId }, () => brain.readLivePageByPath({ sourceId, path })) as { id: number; slug: string } | null;
+
+/** `listPurgedPageFactCandidates`: the store answers the rows of the SQL in its order; `purged` reads its `page_purges` ledger, which no member writes on Rust. */
+export const listPurgedPageFactCandidates: Member<'listPurgedPageFactCandidates'> = (brain, sourceIds, ids) => {
+  wholeIds('listPurgedPageFactCandidates', ids);
+  return storeCall({ member: 'listPurgedPageFactCandidates' }, () => brain.listPurgedPageFactCandidates({ sourceIds, ids }));
+};

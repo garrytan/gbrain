@@ -27,6 +27,14 @@ use crate::pages::{
 };
 use crate::{Result, Store, StoreError, keys};
 
+/// `readLivePageByPath({ sourceId, path })`: the live page of the source that records `path`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageByPathArgs {
+    pub source_id: String,
+    pub path: String,
+}
+
 /// Which page: by id within the source when `page_id` is given, else by slug.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -221,6 +229,22 @@ impl Store {
             .collect();
         rows.sort_by(|a, b| a.slug.cmp(&b.slug));
         Ok(rows)
+    }
+
+    /// `readLivePageByPath(sourceId, path)`: `{ id, slug }` of the live page of the source that records `path`, the
+    /// lowest id when two do not (the SQL's `ORDER BY id LIMIT 1`; the live-origin index keeps one), or `None`. An
+    /// empty path is never an origin.
+    pub fn read_live_page_by_path(&self, a: &PageByPathArgs) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let mut pages = Vec::new();
+        if !a.path.is_empty() && !a.source_id.contains('\0') && !a.path.contains('\0') {
+            claims_of(&*read, &a.source_id, &a.path, None, &mut pages)?;
+        }
+        pages.sort_by_key(|p| p.id);
+        Ok(pages
+            .into_iter()
+            .next()
+            .map(|p| serde_json::json!({ "id": p.id, "slug": p.slug })))
     }
 
     /// `bindPageOrigin(bind)`: records `source_path` on the page the bind names when it records a

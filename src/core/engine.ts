@@ -3869,6 +3869,12 @@ export interface BrainEngine {
   listOntologyFactCandidates(sourceIds: string[]): Promise<FactsRepairSql.OntologyCandidateRow[]>;
   /** Active facts sharing a source, visibility, speaker and fingerprint with another, less the audit sources `excludedSources`, in (source, visibility, fingerprint, speaker, fenced first, created_at, id) order. Backs `gbrain repair duplicate-facts`' preview. */
   listDuplicateFactRows(sourceIds: string[], excludedSources: string[]): Promise<FactsRepairSql.DuplicateFactRow[]>;
+  /** The active facts of a source whose `valid_from` falls on the UTC day `day` (`YYYY-MM-DD`), in id order. Backs `gbrain repair fact-claim-dates`' preview. */
+  listFactsOnValidDay(sourceId: string, day: string): Promise<FactsRepairSql.FactClaimDayRow[]>;
+  /** The live page of a source recorded at `path` (the lowest id), or null. Backs `gbrain repair url-clone-fences`' preview and its identity recheck. */
+  readLivePageByPath(sourceId: string, path: string): Promise<{ id: number | string; slug: string } | null>;
+  /** Every candidate fact of a purged page of these sources (or only `ids`) with its exclusion flags and whether a purge record names its page, in (source, slug, id) order. Reads page_purges, fact_withdrawals and open_loops. Backs `gbrain repair purged-page-facts`. */
+  listPurgedPageFactCandidates(sourceIds: string[], ids: number[] | null): Promise<FactsRepairSql.PurgedCandidateRow[]>;
   /** The bounded count of facts of a purged page, by class, capped at `cap`. Reads page_purges, fact_withdrawals and open_loops. */
   countPurgedPageFacts(sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }>;
   /** Facts a facts-fence generation (`fenceKind`) retired that no withdrawal covers, in (source, page, id) order; `slug` null is every page. Reads derived_generations, derived_generation_items and fact_withdrawals. */

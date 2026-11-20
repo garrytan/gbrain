@@ -53,6 +53,8 @@ import { resolveSlugForPath } from '../sync.ts';
 import { isOwnedClone, trackedChanges, urlCloneReadOnly, urlCloneRepairPreviewArgv } from '../url-clone.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
 import { readSourceStates } from '../source-rows.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#url-clone-fences';
 /** preview-approval's command union predates this kind; the store keys on the string alone. */
@@ -95,8 +97,7 @@ export function proveFenceRowsOnly(head: string | null, work: string | null): Pr
 }
 
 async function pageOf(engine: BrainEngine, sourceId: string, path: string): Promise<{ slug: string; page_id: number | null }> {
-  const [row] = await engine.executeRaw<{ id: number; slug: string }>(
-    'SELECT id, slug FROM pages WHERE source_id = $1 AND source_path = $2 AND deleted_at IS NULL ORDER BY id LIMIT 1', [sourceId, path]);
+  const row = await engine.readLivePageByPath(sourceId, path);
   return row ? { slug: row.slug, page_id: Number(row.id) } : { slug: resolveSlugForPath(path), page_id: null };
 }
 
@@ -235,6 +236,9 @@ export const urlCloneFencesRepair: RepairHandler = {
     return { items: files.map((file, index) => toItem(file, index)), residuals, listing, ...(files.length ? { preview_hash: hash } : {}), details: { listing } };
   },
   async apply(ctx, entry, opts) {
+    // The page import publishes through the page write door and the clone checks read sources through raw SQL, so a Rust brain
+    // stops here by name, before the filesystem lock, the backup or the first write.
+    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair url-clone-fences page write');
     const item = entry as FileItem;
     const { file } = item;
     const outcome = await withSourceFilesystemLock(ctx.engine, file.root,

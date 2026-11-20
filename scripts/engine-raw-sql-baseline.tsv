@@ -810,7 +810,7 @@ src/core/repair/consolidate-ties.ts	execute_raw	1
 src/core/repair/conversation-labels.ts	execute_raw	10
 src/core/repair/duplicate-facts.ts	execute_raw	3
 src/core/repair/extractor-facts.ts	execute_raw	5
-src/core/repair/fact-claim-dates.ts	execute_raw	2
+src/core/repair/fact-claim-dates.ts	execute_raw	1
 src/core/repair/facts-rehome.ts	execute_raw	2
 src/core/repair/failed-writes.ts	execute_raw	15
 src/core/repair/fences.ts	execute_raw	2
@@ -829,7 +829,7 @@ src/core/repair/overwritten-edits.ts	execute_raw	2
 src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/purged-change-reasons.ts	execute_raw	2
-src/core/repair/purged-page-facts.ts	execute_raw	3
+src/core/repair/purged-page-facts.ts	execute_raw	2
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/redacted-facts.ts	execute_raw	4
 src/core/repair/rename-identity.ts	execute_raw	6
@@ -845,7 +845,7 @@ src/core/repair/timeline-comments.ts	execute_raw	5
 src/core/repair/timeline-order.ts	execute_raw	3
 src/core/repair/timeline.ts	execute_raw	2
 src/core/repair/unwithdrawn-facts.ts	execute_raw	3
-src/core/repair/url-clone-fences.ts	execute_raw	3
+src/core/repair/url-clone-fences.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	10
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1

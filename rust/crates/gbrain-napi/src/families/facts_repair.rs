@@ -15,9 +15,10 @@ use crate::store_binding::{Brain, required};
 use gbrain_store::facts::extractor_classify::ExtractorClassificationQuery;
 use gbrain_store::facts::generations::UnwithdrawnArgs;
 use gbrain_store::facts::repair::{
-    ClassifyArgs, LabelCountArgs, PurgedCountArgs, TwinArgs, WorldFactArgs,
+    ClassifyArgs, LabelCountArgs, PurgedCandidatesArgs, PurgedCountArgs, TwinArgs, WorldFactArgs,
 };
-use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs};
+use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs, ValidDayArgs};
+use gbrain_store::write_guards::PageByPathArgs;
 
 #[napi]
 impl Brain {
@@ -180,6 +181,45 @@ impl Brain {
         self.run(env, move |s| {
             let a: DuplicateRowsArgs = required(args, "listDuplicateFactRows args")?;
             s.list_duplicate_fact_rows(&a)
+        })
+    }
+
+    /// `listFactsOnValidDay({ sourceId, day })`: resolves the unexpired facts whose `valid_from` falls on the UTC day.
+    #[napi]
+    pub fn list_facts_on_valid_day<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ValidDayArgs = required(args, "listFactsOnValidDay args")?;
+            s.list_facts_on_valid_day(&a)
+        })
+    }
+
+    /// `readLivePageByPath({ sourceId, path })`: resolves `{ id, slug }` of the live page that records the path, or null.
+    #[napi]
+    pub fn read_live_page_by_path<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageByPathArgs = required(args, "readLivePageByPath args")?;
+            s.read_live_page_by_path(&a)
+        })
+    }
+
+    /// `listPurgedPageFactCandidates({ sourceIds, ids })`: resolves the gone-page facts with their exclusion flags and purge evidence.
+    #[napi]
+    pub fn list_purged_page_fact_candidates<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PurgedCandidatesArgs = required(args, "listPurgedPageFactCandidates args")?;
+            s.list_purged_page_fact_candidates(&a)
         })
     }
 }

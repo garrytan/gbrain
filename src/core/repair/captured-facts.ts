@@ -56,6 +56,8 @@ import { corpusFileSessionId, corpusTextForExtraction } from '../context/corpus-
 import { pruneDir } from '../sync.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { sortSourcesById } from '../source-rows.ts';
 
 export const CAPTURE_LANES = ['hook:writeback', 'hook:compact', 'sweep:corpus'] as const;
@@ -296,6 +298,9 @@ export const capturedFactsRepair: RepairHandler = {
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as PageItem;
     const engine = ctx.engine;
+    // The expiry and the page strike read and write facts through raw SQL, and the strike publishes the page through the page
+    // write door (raw too), so a Rust brain stops here by name, before its first write.
+    if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair captured-facts page write');
     // Recheck each approved fact against its live row: same class, evidence and row.
     const live = new Map((await classifyCapturedFacts(engine, [page.source_id], { ids: page.facts.map(f => f.id) })).candidates.map(c => [c.id, c]));
     const unchanged = page.facts.filter(f => {

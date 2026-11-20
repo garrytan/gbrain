@@ -27,6 +27,7 @@
  * remediation plan.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FactClaimDayRow } from '../engine-sql/facts-repair.ts';
 import type { Page } from '../types.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -52,8 +53,7 @@ interface Selection { source_ids: string[]; day: string | null }
 interface Approved { selection: Selection; page?: PagePlan; facts?: FactsPlan }
 interface ClaimItem extends RepairItem { approved: Approved; hash: string; last: boolean }
 
-interface FactRow { id: number | string; entity_slug: string | null; fact: string; row_num: number | string | null; source_markdown_slug: string | null;
-  valid_from: string; valid_until_day: string | null }
+type FactRow = FactClaimDayRow;
 
 interface Plan { hash: string; days: BulkFactDay[]; pages: PagePlan[]; facts: FactsPlan[]; residuals: Record<string, number>; listing: RepairListing[] }
 
@@ -124,9 +124,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
   const byPage = new Map<string, Array<{ row: FactRow; day: string; date: string }>>();
   const byEntity = new Map<string, FactsPlan>();
   for (const day of dayList) {
-    const rows = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
-        to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
-      FROM facts f WHERE f.source_id = $1 AND f.expired_at IS NULL AND (f.valid_from AT TIME ZONE 'UTC')::date = $2::date ORDER BY f.id`, [sourceId, day]);
+    const rows = await engine.listFactsOnValidDay(sourceId, day);
     for (const row of rows) {
       const found = claimDate(row.fact, day);
       if ('skip' in found) { count(found.skip); continue; }

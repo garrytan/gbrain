@@ -1,13 +1,16 @@
 //! The reads behind the previews of `gbrain repair consolidate-ties`, `facts-rehome`,
-//! `ontology-facts` and `duplicate-facts` (`facts/repair_previews.rs`).
+//! `ontology-facts` and `duplicate-facts` (`facts/repair_previews.rs`), `fact-claim-dates` (the facts of a UTC
+//! day), `url-clone-fences` (the live page of a path) and `purged-page-facts` (the gone-page candidates).
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::facts::InsertFactsArgs;
-use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs};
+use gbrain_store::facts::repair::PurgedCandidatesArgs;
+use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs, ValidDayArgs};
 use gbrain_store::pages::{PageInput, PutPageOptions};
+use gbrain_store::write_guards::PageByPathArgs;
 use serde_json::{Value, json};
 
 fn args<T: serde::de::DeserializeOwned>(v: Value) -> T {
@@ -239,4 +242,133 @@ fn duplicate_rows_group_by_fingerprint_with_the_fenced_copy_first() {
     assert_eq!(rows[0]["fp"], rows[1]["fp"]);
     assert_eq!(rows[0]["source_markdown_slug"], "people/ana");
     assert_eq!(rows[1]["row_num"], Value::Null);
+}
+
+#[test]
+fn facts_on_a_valid_day_list_the_unexpired_facts_of_the_utc_day_by_id() {
+    let dir = TempDir::new("facts-repair-previews-day");
+    let store = open(&dir);
+    let on = |text: &str, from: &str, row: Value| {
+        let mut input = json!({ "valid_from": from });
+        for (k, v) in row.as_object().unwrap() {
+            input[k] = v.clone();
+        }
+        fact(&store, text, input)
+    };
+    let a = on(
+        "a on 2025-03-14",
+        "2026-02-03T23:59:59.999999Z",
+        json!({ "entity_slug": "companies/acme" }),
+    );
+    let b = on(
+        "b",
+        "2026-02-03T00:00:00.000000Z",
+        json!({ "valid_until": "2027-05-06T07:08:09Z", "row_num": 2, "source_markdown_slug": "notes/p" }),
+    );
+    // The next day, an expired fact and another source's fact are not listed.
+    on("c", "2026-02-04T00:00:00.000000Z", json!({}));
+    on(
+        "d",
+        "2026-02-03T12:00:00.000000Z",
+        json!({ "expired_at": "2026-03-01T00:00:00Z" }),
+    );
+    let day = |source: &str, day: &str| -> Vec<Value> {
+        store
+            .list_facts_on_valid_day(&args::<ValidDayArgs>(
+                json!({ "sourceId": source, "day": day }),
+            ))
+            .unwrap()
+    };
+    let rows = day("default", "2026-02-03");
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [a, b]
+    );
+    assert_eq!(rows[0]["valid_from"], "2026-02-03 23:59:59.999999+00");
+    assert_eq!(rows[0]["valid_until_day"], Value::Null);
+    assert_eq!(rows[0]["entity_slug"], "companies/acme");
+    assert_eq!(rows[1]["valid_until_day"], "2027-05-06");
+    assert_eq!(rows[1]["row_num"], 2);
+    assert_eq!(rows[1]["source_markdown_slug"], "notes/p");
+    assert!(day("other", "2026-02-03").is_empty());
+    assert!(day("default", "2026-02-05").is_empty());
+}
+
+#[test]
+fn the_live_page_of_a_path_is_read_by_source_and_origin() {
+    let dir = TempDir::new("facts-repair-previews-path");
+    let store = open(&dir);
+    let input: PageInput = args(json!({
+        "type": "note", "title": "A", "compiled_truth": "a", "frontmatter": {}, "source_path": "notes/a.md",
+    }));
+    store
+        .put_page("notes/a", &input, &args::<PutPageOptions>(json!({})))
+        .unwrap();
+    let page = |source: &str, path: &str| -> Option<Value> {
+        store
+            .read_live_page_by_path(&args::<PageByPathArgs>(
+                json!({ "sourceId": source, "path": path }),
+            ))
+            .unwrap()
+    };
+    let found = page("default", "notes/a.md").unwrap();
+    assert_eq!(found["slug"], "notes/a");
+    assert!(found["id"].as_u64().is_some());
+    assert!(page("default", "notes/b.md").is_none());
+    assert!(page("other", "notes/a.md").is_none());
+    assert!(page("default", "").is_none());
+}
+
+#[test]
+fn purged_candidates_list_gone_pages_with_their_flags() {
+    let dir = TempDir::new("facts-repair-previews-gone");
+    let store = open(&dir);
+    put(&store, "notes/live");
+    let withdrawn = fact(
+        &store,
+        "claim withdrawn",
+        json!({ "source": "mcp:put_page", "context": "notes/gone-b" }),
+    );
+    let plain = fact(
+        &store,
+        "claim plain",
+        json!({ "source": "mcp:put_page", "context": "notes/gone-a \u{2014} note" }),
+    );
+    fact(
+        &store,
+        "claim live",
+        json!({ "source": "mcp:put_page", "context": "notes/live" }),
+    );
+    fact(
+        &store,
+        "claim filed",
+        json!({ "source": "mcp:put_page", "context": "notes/gone-c", "source_markdown_slug": "notes/live", "row_num": 1 }),
+    );
+    store
+        .insert_fact_withdrawal("default", "private", "claim withdrawn", "*", None)
+        .unwrap();
+    let list = |ids: Option<Vec<i64>>| {
+        store
+            .list_purged_page_fact_candidates(&PurgedCandidatesArgs {
+                source_ids: vec!["default".into()],
+                ids,
+            })
+            .unwrap()
+    };
+    let rows = list(None);
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [plain, withdrawn]
+    );
+    assert_eq!(rows[0]["slug"], "notes/gone-a");
+    assert_eq!(rows[0]["withdrawn"], false);
+    assert_eq!(rows[1]["withdrawn"], true);
+    // No page was purged, so no candidate has purge evidence.
+    assert!(rows.iter().all(|r| r["purged"] == false));
+    assert_eq!(list(Some(vec![withdrawn as i64])).len(), 1);
+    assert!(list(Some(vec![-1])).is_empty());
 }

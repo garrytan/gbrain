@@ -386,3 +386,48 @@ export async function listDuplicateFactRows(raw: EngineRawRead, sourceIds: strin
   return rows.map(r => ({ id: r.id, source_id: r.source_id, visibility: r.visibility, fp: r.fp, fact: r.fact, entity_slug: r.entity_slug, fenced: r.fenced,
     row_num: r.row_num, source_markdown_slug: r.source_markdown_slug, speaker: r.speaker }));
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Repair previews: fact-claim-dates, url-clone-fences and purged-page-facts (src/core/repair/*.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface FactClaimDayRow {
+  id: number | string; entity_slug: string | null; fact: string; row_num: number | string | null; source_markdown_slug: string | null;
+  valid_from: string; valid_until_day: string | null;
+}
+
+/** The active facts of a source whose `valid_from` falls on the UTC day `day` (`YYYY-MM-DD`), in id order. Backs `gbrain repair fact-claim-dates`' preview. */
+export async function listFactsOnValidDay(raw: EngineRawRead, sourceId: string, day: string): Promise<FactClaimDayRow[]> {
+  return raw<FactClaimDayRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
+        to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
+      FROM facts f WHERE f.source_id = $1 AND f.expired_at IS NULL AND (f.valid_from AT TIME ZONE 'UTC')::date = $2::date ORDER BY f.id`, [sourceId, day]);
+}
+
+/** The live page of a source recorded at `path` (the lowest id), or null. Backs `gbrain repair url-clone-fences`' preview and its identity recheck. */
+export async function readLivePageByPath(raw: EngineRawRead, sourceId: string, path: string): Promise<{ id: number | string; slug: string } | null> {
+  const [row] = await raw<{ id: number | string; slug: string }>(
+    'SELECT id, slug FROM pages WHERE source_id = $1 AND source_path = $2 AND deleted_at IS NULL ORDER BY id LIMIT 1', [sourceId, path]);
+  return row ?? null;
+}
+
+export interface PurgedCandidateRow {
+  id: number | string; source_id: string; slug: string; fact: string; context: string; entity_slug: string | null; visibility: string; source: string;
+  withdrawn: boolean; superseded: boolean; referenced: boolean; open_loop: boolean; purged: boolean;
+}
+
+/** Every candidate fact of a purged page of these sources (or only these ids) with its exclusion flags and whether a purge record names its page, in (source, slug, id) order. Reads page_purges, fact_withdrawals and open_loops. */
+export async function listPurgedPageFactCandidates(raw: EngineRawRead, sourceIds: string[], ids: number[] | null): Promise<PurgedCandidateRow[]> {
+  const HEAD = PURGED_HEAD_SQL;
+  const PURGED_SQL = PURGED_PAGE_SQL;
+  const EXCLUDED_SQL = PURGED_EXCLUDED_SQL;
+  const CANDIDATE_WHERE = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${PURGED_SOURCES_SQL})
+     AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
+     AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD})`;
+  return raw<PurgedCandidateRow>(`
+    SELECT f.id, f.source_id, ${HEAD} AS slug, f.fact, f.context, f.entity_slug, f.visibility, f.source,
+           ${EXCLUDED_SQL.withdrawn} AS withdrawn, ${EXCLUDED_SQL.superseded} AS superseded, ${EXCLUDED_SQL.referenced} AS referenced,
+           ${EXCLUDED_SQL.open_loop} AS open_loop, ${PURGED_SQL} AS purged
+      FROM facts f
+     WHERE ${CANDIDATE_WHERE} AND ($2::bigint[] IS NULL OR f.id = ANY($2::bigint[]))
+     ORDER BY f.source_id, ${HEAD}, f.id`, [sourceIds, ids]);
+}
