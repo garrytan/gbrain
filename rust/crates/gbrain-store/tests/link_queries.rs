@@ -541,3 +541,51 @@ fn projection_readiness_generation_moves_only_on_a_commit() {
     assert_ne!(before, after);
     assert!(after.starts_with(&format!("{}/", brain.store.brain_id())));
 }
+
+#[test]
+fn probe_page_types_reports_each_set_and_lists_types_only_when_one_has_none() {
+    let b = Brain::new("lq-type-probe");
+    b.source("other");
+    b.page("people/a", "default", "person");
+    b.page("notes/a", "default", "note");
+    b.page("deals/a", "other", "deal");
+    b.page("memos/gone", "default", "memo");
+    b.store
+        .soft_delete_page("memos/gone", Some("default"))
+        .unwrap();
+    let probe = |sets: Value, scope: Value| {
+        let input = serde_json::from_value(json!({ "sets": sets, "scope": scope })).unwrap();
+        b.store.probe_page_types(&input).unwrap()
+    };
+    let default_scope = json!({ "sourceId": "default", "scoped": true });
+    // An empty set is never present and never asks for the type list.
+    assert_eq!(
+        probe(
+            json!([["person"], ["company", "org"], []]),
+            default_scope.clone()
+        ),
+        json!({ "present": [true, false, false], "available": ["note", "person"] })
+    );
+    assert_eq!(
+        probe(json!([["person", "x"], []]), default_scope.clone()),
+        json!({ "present": [true, false], "available": null })
+    );
+    assert_eq!(
+        probe(json!([[]]), default_scope.clone()),
+        json!({ "present": [false], "available": null })
+    );
+    // The scope's source clause: the deal page is in another source.
+    assert_eq!(
+        probe(json!([["deal"]]), default_scope),
+        json!({ "present": [false], "available": ["note", "person"] })
+    );
+    // The live clause: a soft-deleted page's type is neither present nor listed.
+    assert_eq!(
+        probe(json!([["memo"]]), json!({ "scoped": true })),
+        json!({ "present": [false], "available": ["deal", "note", "person"] })
+    );
+    assert_eq!(
+        probe(json!([["deal"]]), json!({ "scoped": true })),
+        json!({ "present": [true], "available": null })
+    );
+}

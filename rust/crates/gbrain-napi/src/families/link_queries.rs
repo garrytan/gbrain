@@ -310,6 +310,20 @@ impl Brain {
         })
     }
 
+    /// `probePageTypes(input)`: `{ present, available }`.
+    #[napi]
+    pub fn probe_page_types<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::TypeProbeInput =
+                arg(input, "probePageTypes input")?;
+            s.probe_page_types(&input)
+        })
+    }
+
     /// `wordLexemes(words)`: `[{ w, lexemes }]`.
     #[napi]
     pub fn word_lexemes<'env>(

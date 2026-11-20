@@ -222,6 +222,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
   'readGitHoldRecords': OOS.callerRawSql,
+  'probePageTypes': OOS.callerRawSql,
   'readGitHoldRetryRequest': OOS.callerRawSql,
   'readGitHoldReportInputs': OOS.callerRawSql,
   'readReasonPurgeTombstones': OOS.callerRawSql,

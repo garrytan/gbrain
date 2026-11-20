@@ -17,7 +17,7 @@ import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, Acces
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from './engine-sql/access-setup.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -3461,6 +3461,8 @@ export interface BrainEngine {
    * with JIT off under a `timeoutMs` statement deadline; a timeout throws the statement-timeout error.
    */
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
+  /** search's type-filter probe (engine-sql/cli-reads-ops.ts probePageTypes); Postgres runs it with JIT off, unprepared. */
+  probePageTypes(sets: readonly (readonly string[])[], scope: PageReadScope): Promise<PageTypeProbe>;
   /** The first live page after `afterPageId` in id order, in any source, or null. */
   nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
@@ -4168,7 +4170,7 @@ export interface BrainEngine {
    */
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
     opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
-  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 2 s). */
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
 
   // Migration support

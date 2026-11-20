@@ -4,7 +4,8 @@
 //!
 //! Members: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages.
+//! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages, and the
+//! search type-filter probe probePageTypes (src/core/engine-sql/cli-reads-ops.ts).
 //! readEntityInboundEdges reads the links countInboundLinks counts (`kept_inbound_links`), with
 //! their temporal columns, in link_temporal.rs.
 //!
@@ -94,6 +95,17 @@ pub struct TitledInput {
     pub query_lower: String,
     pub scope: GraphScope,
 }
+
+/// `probePageTypes(sets, scope)`: one type set per requested type.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TypeProbeInput {
+    pub sets: Vec<Vec<String>>,
+    pub scope: GraphScope,
+}
+
+/// The most distinct types the probe lists (`LIMIT 500`).
+const PROBE_TYPE_LIMIT: usize = 500;
 
 /// One ask of `readLinkContextMatches(asks)`: a returned link context, its row index and the
 /// stored edge it came from.
@@ -503,6 +515,39 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `probePageTypes(sets, scope)`: `{ present, available }`. `present[i]` is whether a page that
+    /// passes `pageReadFilter(.., scope, live)` has a type in `sets[i]` (false for an empty set).
+    /// `available` is null when no set is empty-handed, else the distinct types of such pages, at
+    /// most 500; the SQL leaves which 500 and their order to the plan, here they are the first 500
+    /// in byte order.
+    pub fn probe_page_types(&self, input: &TypeProbeInput) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = Pages::new(&*read);
+        let mut types: BTreeSet<String> = BTreeSet::new();
+        for page in all_pages(&*read)? {
+            if pages.passes(&page, &input.scope, true)? {
+                types.insert(page.page_type.clone());
+            }
+        }
+        let present: Vec<bool> = input
+            .sets
+            .iter()
+            .map(|set| set.iter().any(|t| types.contains(t)))
+            .collect();
+        let probed = input.sets.iter().any(|set| !set.is_empty());
+        let all_found = input
+            .sets
+            .iter()
+            .zip(&present)
+            .all(|(set, found)| set.is_empty() || *found);
+        let available = if !probed || all_found {
+            Value::Null
+        } else {
+            json!(types.into_iter().take(PROBE_TYPE_LIMIT).collect::<Vec<_>>())
+        };
+        Ok(json!({ "present": present, "available": available }))
     }
 
     /// `readLinkContextMatches(asks)`: `[{ i, link_source, context, page_id }]`, for each ask the

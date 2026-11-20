@@ -38,6 +38,8 @@ import { grantedPrivateFactSql, memberFactAdmitSql } from '../src/core/access/me
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
+import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
+import type { TrustTier } from '../src/core/trust/tier.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -1673,7 +1675,33 @@ const PINS: Pin[] = [
     texts: ['BEGIN READ WRITE; SET LOCAL statement_timeout = 1000',
       'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', 'COMMIT'],
   },
+  {
+    from: 'src/core/ops/search-type-filter.ts:42 reconcileTypeFilter (a remote caller, one empty set; at efeb078093)',
+    case: { method: 'probePageTypes', variant: 'remote', run: e => e.probePageTypes([['person', 'people'], [], ['deal']], { sourceId: 'default', excludePrivate: true }) },
+    // The caller's JIT-off bound rides along: the same server-side envelope its executeRaw call sent.
+    texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off', pinnedTypeProbe([['person', 'people'], [], ['deal']], { sourceId: 'default', excludePrivate: true }), 'COMMIT'],
+  },
+  {
+    from: 'src/core/ops/search-type-filter.ts:42 reconcileTypeFilter (federated sources under a trust floor; at efeb078093)',
+    case: { method: 'probePageTypes', variant: 'floored', run: e => e.probePageTypes([['note']], { sourceIds: ['default', 'wiki'], minTrust: 'operator_curated' }) },
+    // The caller's JIT-off bound rides along: the same server-side envelope its executeRaw call sent.
+    texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off', pinnedTypeProbe([['note']], { sourceIds: ['default', 'wiki'], minTrust: 'operator_curated' }), 'COMMIT'],
+  },
 ];
+
+/** ops/search-type-filter.ts reconcileTypeFilter's probe statement at efeb078093, verbatim (`{ ...scope, excludePrivate }`). */
+function pinnedTypeProbe(expanded: string[][], scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }): string {
+  const params: unknown[] = [];
+  const filter = pageReadFilter('p', scope, params, true);
+  const probes = expanded.flatMap((set, i) => {
+    if (set.length === 0) return [];
+    params.push(set);
+    return [{ name: `t${i}`, sql: `EXISTS (SELECT 1 FROM pages p WHERE ${filter} AND p.type = ANY($${params.length}::text[])) AS t${i}` }];
+  });
+  return `SELECT probe.*, CASE WHEN ${probes.map(p => `probe.${p.name}`).join(' AND ')} THEN NULL
+         ELSE ARRAY(SELECT DISTINCT p.type FROM pages p WHERE ${filter} LIMIT 500) END AS available
+       FROM (SELECT ${probes.map(p => p.sql).join(', ')} OFFSET 0) probe`;
+}
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */
 function pinnedReferrersCte(excludePrivate: boolean, floored: boolean): string {

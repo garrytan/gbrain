@@ -21,9 +21,29 @@ import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy } from 
 import { activationSuppressedSql, deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
 import { heldRowSql } from '../eligibility/fence-overlay.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { pageTypeProbeStatement } from '../search/page-type-probe.ts';
+import type { PageReadScope } from '../types.ts';
 
 /** The engine's `executeRaw` (bound), with the two bounds these reads use. */
-export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean }) => Promise<R[]>;
+export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean; prepare?: boolean }) => Promise<R[]>;
+
+/** Whether each type set has a page `scope` reads live, and (when one has none) the types such pages have. */
+export interface PageTypeProbe { present: boolean[]; available: string[] | null }
+
+/**
+ * The type-filter probe (search/page-type-probe.ts): `present[i]` is whether a live page `scope` reads has a type in
+ * `sets[i]` (false for an empty set); `available` lists at most 500 distinct types of such pages, in no set order, when
+ * a non-empty set has none, else null. JIT off and planned for its parameters on every call (ops/search-type-filter.ts).
+ */
+export async function probePageTypes(raw: EngineRawRead, sets: readonly (readonly string[])[], scope: PageReadScope): Promise<PageTypeProbe> {
+  const stmt = pageTypeProbeStatement(sets, scope);
+  if (!stmt) return { present: sets.map(() => false), available: null };
+  const [row] = await raw<Record<string, unknown>>(stmt.text, stmt.params, { jitOff: true, prepare: false });
+  return {
+    present: sets.map((set, i) => set.length > 0 && row?.[`t${i}`] === true),
+    available: Array.isArray(row?.available) ? row.available as string[] : null,
+  };
+}
 
 /** One batch of the exact-phrase scan; null when the phrase has no searchable word (the statement builder's null). */
 export async function scanExactBatch(raw: EngineRawRead, opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null> {

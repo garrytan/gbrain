@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 951/954
+# covered: 952/955
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -41,7 +41,7 @@
 # minion_queue: 106/106
 # minion_status: 11/11
 # minion_subagent: 17/17
-# cli_reads_ops: 12/12
+# cli_reads_ops: 13/13
 # facts_doctor: 11/11
 # embedding_catalog: 5/5
 # fact_relink_attempts: 3/3
@@ -89,13 +89,13 @@ getPage	pages	yes	117	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	531	yes	yes	yes	serves
+putPage	pages	yes	533	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	159	yes	yes	yes	serves
+softDeletePage	pages	yes	160	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -708,6 +708,7 @@ startSubagentToolExecution	minion_subagent	yes	3	no	yes	yes	serves
 completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
+probePageTypes	cli_reads_ops	yes	2	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves

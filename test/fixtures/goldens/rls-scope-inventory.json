@@ -7458,6 +7458,7 @@
         "probeIdleWork": "none",
         "probeLiveConsumerRows": "none",
         "probeNoopEmbeddingSettle": "none",
+        "probePageTypes": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
         "pruneFrontmatterTags": "none",

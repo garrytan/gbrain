@@ -6,7 +6,7 @@
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
  * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
- * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
+ * listLinkEndpointPages, listPagesTitledIn, probePageTypes, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -40,6 +40,7 @@ import type {
   EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary,
   TitledPage,
 } from '../../engine-sql/link-reads.ts';
+import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -485,6 +486,15 @@ export const listPagesTitledIn: StoreMember<[queryLower: string, scope: PageRead
     const rows: TitledPage[] = await storeCall({ member: 'listPagesTitledIn' },
       () => brain.listPagesTitledIn({ queryLower, scope: { ...scopeOf('listPagesTitledIn', options), scoped: true } }));
     return rows.map(r => ({ ...r, id: Number(r.id) }));
+  };
+
+/** search's type-filter probe: each set's presence among the live pages `scope` reads, and their types when one has none. */
+export const probePageTypes: StoreMember<[sets: readonly (readonly string[])[], scope: PageReadScope], PageTypeProbe> =
+  async (brain, sets, scope) => {
+    const options = takeOptions('probePageTypes', scope, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const out: { present: boolean[]; available: string[] | null } = await storeCall({ member: 'probePageTypes' },
+      () => brain.probePageTypes({ sets: sets.map(set => [...set]), scope: { ...scopeOf('probePageTypes', options), scoped: true } }));
+    return { present: out.present.map(Boolean), available: out.available ?? null };
   };
 
 /** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */
