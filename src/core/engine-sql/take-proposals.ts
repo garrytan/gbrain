@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
 import type { WriteRequest } from '../persistence/model.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -44,33 +45,20 @@ function proposalRow(row: TakeProposalRow): TakeProposalRow {
 /** Pending proposals, newest first (`proposed_at`, then id), in one source or every source; `limit` is clamped to 1..500. */
 export async function listPendingTakeProposals(tx: Raw, opts: { sourceId?: string; limit: number }): Promise<TakeProposalRow[]> {
   const limit = Math.max(1, Math.min(500, Math.trunc(opts.limit)));
-  const where = [`status = 'pending'`];
-  const params: unknown[] = [];
-  if (opts.sourceId) {
-    params.push(opts.sourceId);
-    where.push(`source_id = $${params.length}`);
-  }
-  params.push(limit);
-  const rows = await tx.executeRaw<TakeProposalRow>(
-    `SELECT ${PROPOSAL_COLUMNS}
+  const scope = opts.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(PROPOSAL_COLUMNS)}
        FROM take_proposals
-      WHERE ${where.join(' AND ')}
+      WHERE status = 'pending'${scope}
       ORDER BY proposed_at DESC, id DESC
-      LIMIT $${params.length}`,
-    params,
-  );
-  return rows.map(proposalRow);
+      LIMIT ${limit}`);
+  return (await tx.executeRaw<TakeProposalRow>(text, params)).map(proposalRow);
 }
 
 /** One proposal by id, whatever its status, or null; with `sourceId`, a proposal of another source reads as null. */
 export async function readTakeProposal(tx: Raw, id: number, sourceId?: string): Promise<TakeProposalRow | null> {
-  const params: unknown[] = [id];
-  let scope = '';
-  if (sourceId) {
-    params.push(sourceId);
-    scope = ` AND source_id = $${params.length}`;
-  }
-  const [row] = await tx.executeRaw<TakeProposalRow>(`SELECT ${PROPOSAL_COLUMNS} FROM take_proposals WHERE id = $1${scope}`, params);
+  const scope = sourceId ? sqlFragment` AND source_id = ${sourceId}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(PROPOSAL_COLUMNS)} FROM take_proposals WHERE id = ${id}${scope}`);
+  const [row] = await tx.executeRaw<TakeProposalRow>(text, params);
   return row ? proposalRow(row) : null;
 }
 
@@ -173,17 +161,15 @@ export interface TakeProposalInsert extends TakeProposalPageKey {
  * in): the new id, or null when it was already there.
  */
 export async function insertTakeProposal(tx: Raw, p: TakeProposalInsert): Promise<number | null> {
-  const status = p.status === 'rejected' ? `, 'rejected'` : '';
-  const rows = await tx.executeRaw<{ id: number | string }>(
-    `INSERT INTO take_proposals
+  const rejected = p.status === 'rejected';
+  const { text, params } = renderFragment(sqlFragment`INSERT INTO take_proposals
        (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
-        claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id${status ? ', status' : ''})
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb, $12${status})
+        claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id${trustedSql(rejected ? ', status' : '')})
+     VALUES (${p.sourceId}, ${p.pageSlug}, ${p.contentHash}, ${p.promptVersion}, ${p.proposalRunId}, ${p.claimText}, ${p.kind}, ${p.holder},
+       ${p.weight}, ${p.domain}, ${JSON.stringify(p.dedupAgainst)}::text::jsonb, ${p.modelId}${trustedSql(rejected ? ", 'rejected'" : '')})
      ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
-     RETURNING id`,
-    [p.sourceId, p.pageSlug, p.contentHash, p.promptVersion, p.proposalRunId, p.claimText, p.kind, p.holder, p.weight,
-      p.domain, JSON.stringify(p.dedupAgainst), p.modelId],
-  );
+     RETURNING id`);
+  const rows = await tx.executeRaw<{ id: number | string }>(text, params);
   return rows[0] ? Number(rows[0].id) : null;
 }
 
@@ -224,38 +210,26 @@ export interface ProposeTakesPageRow { slug: string; source_id: string; compiled
  * dream cycle, the atom extractor or the concept synthesizer, not in a guest source, in scope and of a listed type.
  */
 export async function listProposeTakesCandidatePages(tx: Raw, scope: ProposeTakesCandidateScope): Promise<ProposeTakesPageRow[]> {
-  const where = [
-    'deleted_at IS NULL',
-    "type IS DISTINCT FROM 'extract_receipt'",
+  const parts = [
+    sqlFragment`deleted_at IS NULL`,
+    sqlFragment`type IS DISTINCT FROM 'extract_receipt'`,
     // #5211: an atom is a fragment of a page that is itself a candidate; a legacy atom carries no writer stamp.
-    "type IS DISTINCT FROM 'atom'",
+    sqlFragment`type IS DISTINCT FROM 'atom'`,
     // #5212: never propose takes from the dream cycle's own output.
-    "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
-    "COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'",
-    "COALESCE(frontmatter->>'synthesized_by', '') NOT LIKE 'synthesize_concepts%'",
-    guestSourceExclusionSql('propose_takes', 'pages'),
+    sqlFragment`COALESCE(frontmatter->>'dream_generated', '') <> 'true'`,
+    sqlFragment`COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'`,
+    sqlFragment`COALESCE(frontmatter->>'synthesized_by', '') NOT LIKE 'synthesize_concepts%'`,
+    sqlFragment`${trustedSql(guestSourceExclusionSql('propose_takes', 'pages'))}`,
   ];
-  const params: unknown[] = [];
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    where.push(`source_id = ANY($${params.length}::text[])`);
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    where.push(`source_id = $${params.length}`);
-  }
-  if (scope.types) {
-    params.push(scope.types);
-    where.push(`type = ANY($${params.length}::text[])`);
-  }
-  params.push(scope.limit);
-  return tx.executeRaw<ProposeTakesPageRow>(
-    `SELECT slug, source_id, compiled_truth
+  if (scope.sourceIds && scope.sourceIds.length > 0) parts.push(sqlFragment`source_id = ANY(${scope.sourceIds}::text[])`);
+  else if (scope.sourceId) parts.push(sqlFragment`source_id = ${scope.sourceId}`);
+  if (scope.types) parts.push(sqlFragment`type = ANY(${scope.types}::text[])`);
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, source_id, compiled_truth
        FROM pages
-      WHERE ${where.join(' AND ')}
+      WHERE ${joinFragments(parts, ' AND ')}
       ORDER BY updated_at DESC, id DESC
-      LIMIT $${params.length}`,
-    params,
-  );
+      LIMIT ${scope.limit}`);
+  return tx.executeRaw<ProposeTakesPageRow>(text, params);
 }
 
 /** The one JSON document an op checkpoint row holds (its `completed_keys[0]`), or null when there is no row. */
