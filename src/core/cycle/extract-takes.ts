@@ -41,7 +41,8 @@ import { readMetafilePagesMode } from '../sync.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { withWriteTrust } from '../persistence/context.ts';
 import { derivedWriteTrust, recordTaintEdges } from '../trust/taint.ts';
-import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
+import type { TrustTier } from '../trust/tier.ts';
+import type { TakesLeavingFence } from '../engine-sql/takes-reads.ts';
 import { contestHeldRows, guardTakeRows, heldRows, type HeldChange } from '../trust/fence-guard.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, type GateTally } from '../trust/derived-gate.ts';
 import { decideTakeWrite, recordFlaggedRow } from '../write-gate-store.ts';
@@ -107,18 +108,14 @@ export interface ExtractTakesResult {
  * that slug (e.g. file on disk that hasn't been imported yet).
  */
 async function getPageIdForSlug(engine: BrainEngine, slug: string, sourceId: string): Promise<number | null> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL LIMIT 1`,
-    [slug, sourceId],
-  );
-  return rows[0]?.id ?? null;
+  return engine.readLivePageIdBySlug(slug, sourceId);
 }
 
 /** The tier a takes reconcile restates the page at: its page's tier, capped as a projection (upsertProjectedTakes). */
 async function reconcileTier(engine: BrainEngine, pageId: number): Promise<{ tier: TrustTier; sourceId: string; slug: string } | null> {
-  const [page] = await engine.executeRaw<{ source_id: string; slug: string; trust_tier: string | null }>('SELECT source_id, slug, trust_tier FROM pages WHERE id = $1', [pageId]);
+  const page = await engine.readPageTierRef(pageId);
   if (!page) return null;
-  const tier = derivedWriteTrust({ channel: 'derive:takes_fence', inputs: [{ table: 'pages', id: pageId, tier: storedTrustTier(page.trust_tier) }], projection: true }).tier;
+  const tier = derivedWriteTrust({ channel: 'derive:takes_fence', inputs: [{ table: 'pages', id: pageId, tier: page.trust_tier }], projection: true }).tier;
   return { tier, sourceId: page.source_id, slug: page.slug };
 }
 
@@ -126,11 +123,12 @@ async function reconcileTier(engine: BrainEngine, pageId: number): Promise<{ tie
  * W1 #6783 §12 (a): of the stored takes a reconcile would delete, those more trusted than the page's restatement or held
  * by an open contest stay; each gets the owner's `forget` proposal. Returns the rest, which the take generation retires.
  */
-async function unheldTakes(db: BrainEngine, pageId: number, where: string, params: unknown[], change: HeldChange): Promise<number[]> {
-  const candidates = (await db.executeRaw<{ id: number }>(`SELECT id FROM takes WHERE page_id = $1 AND ${where}`, [pageId, ...params])).map(r => Number(r.id));
+async function unheldTakes(db: BrainEngine, pageId: number, fence: TakesLeavingFence): Promise<number[]> {
+  const candidates = await db.listTakeIdsLeavingFence(pageId, fence);
+  const change: HeldChange = fence.change;
   if (!candidates.length) return [];
   const page = await reconcileTier(db, pageId);
-  const held = page ? await heldRows(db, 'takes', candidates, { writer: page.tier, pending: true }) : new Map();
+  const held = page ? await heldRows(db, 'takes', pageId, candidates, { writer: page.tier, pending: true }) : new Map();
   if (page && held.size) await contestHeldRows(db, { sourceId: page.sourceId, slug: page.slug, table: 'takes', proposer: 'takes_reextract', writer: page.tier,
     rows: [...held].map(([id, tier]) => ({ id, tier, change })) });
   return candidates.filter(id => !held.has(id));
@@ -148,10 +146,8 @@ async function reconcileTakesGeneration(db: BrainEngine, inTx: boolean, page: { 
   warnings: string[], rebuild: boolean, dryRun: boolean, hasBegin: boolean, result: ExtractTakesResult): Promise<boolean> {
   if (dryRun || warnings.length > 0) return true;
   const prune = async (tx: BrainEngine): Promise<boolean> => {
-    const ids = hasBegin ? [...new Set([...await unheldTakes(tx, page.id, 'NOT (row_num = ANY($2::integer[]))', [takes.map(t => t.rowNum)], 'removed'),
-      ...(rebuild ? await unheldTakes(tx, page.id, `NOT EXISTS (
-        SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) AS f(row_num int, claim text) WHERE f.row_num = takes.row_num AND f.claim = takes.claim)`,
-      [JSON.stringify(takes.map(t => ({ row_num: t.rowNum, claim: t.claim })))], 'replaced') : [])])] : [];
+    const ids = hasBegin ? [...new Set([...await unheldTakes(tx, page.id, { change: 'removed', rowNums: takes.map(t => t.rowNum) }),
+      ...(rebuild ? await unheldTakes(tx, page.id, { change: 'replaced', rows: takes.map(t => ({ row_num: t.rowNum, claim: t.claim })) }) : [])])] : [];
     const before = await takePreimages(tx, page.id, ids, takes);
     const outcome = await publishFenceGeneration(tx, { kind: TAKE_FENCE_KIND, sourceId: page.source_id, slug: page.slug, read, items: takeFenceItems(takes),
       retire: before.gone.map(row => takeItem(row)), overwrite: before.replaced.map(row => takeItem(row, takeFenceItems(takes.filter(t => t.rowNum === Number(row.row_num)))[0]?.key)),
@@ -161,7 +157,7 @@ async function reconcileTakesGeneration(db: BrainEngine, inTx: boolean, page: { 
         + 'gbrain doctor --only generation_held names the user\'s choice (restore the fence or write an empty one)');
       return false;
     }
-    if (ids.length) await tx.executeRaw('DELETE FROM takes WHERE id = ANY($1::bigint[])', [ids]);
+    if (ids.length) await tx.deleteTakesByIds(ids);
     return true;
   };
   return inTx ? prune(db) : maintenanceTransaction(db, prune);
@@ -184,9 +180,8 @@ const BATCH_SIZE = 100;
 async function upsertProjectedTakes(engine: BrainEngine, rows: TakeBatchInput[], result: ExtractTakesResult, inTx?: BrainEngine): Promise<number> {
   if (!rows.length) return 0;
   const db = inTx ?? engine;
-  const pages = new Map((await db.executeRaw<{ id: number; source_id: string; slug: string; trust_tier: string | null }>(
-    'SELECT id,source_id,slug,trust_tier FROM pages WHERE id=ANY($1::int[])', [[...new Set(rows.map(r => r.page_id))]]))
-    .map(page => [Number(page.id), { ...page, input: { table: 'pages' as const, id: Number(page.id), tier: storedTrustTier(page.trust_tier) } }]));
+  const pages = new Map((await db.readPageTierRows([...new Set(rows.map(r => r.page_id))]))
+    .map(page => [page.id, { ...page, input: { table: 'pages' as const, id: page.id, tier: page.trust_tier } }]));
   const cfg = await derivedGateConfig(db);
   const tally = result.writeGate ?? emptyGateTally();
   let upserted = 0;
@@ -212,10 +207,10 @@ async function upsertProjectedTakes(engine: BrainEngine, rows: TakeBatchInput[],
       const count = allowed.length ? await tx.addTakesBatch(allowed) : 0;
       for (const [i, r] of allowed.entries()) {
         const page = pages.get(r.page_id);
-        const [take] = await tx.executeRaw<{ id: number }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [r.page_id, r.row_num]);
-        if (!take || !page) continue;
-        await recordTaintEdges(tx, { table: 'takes', id: Number(take.id), sourceId: page.source_id }, [page.input]);
-        if (await recordFlaggedRow(tx, flags[i], { table: 'takes', id: Number(take.id), sourceId: page.source_id }) !== null) tally.flagged++;
+        const takeId = await tx.findTakeId(r.page_id, r.row_num);
+        if (takeId === null || !page) continue;
+        await recordTaintEdges(tx, { table: 'takes', id: takeId, sourceId: page.source_id }, [page.input]);
+        if (await recordFlaggedRow(tx, flags[i], { table: 'takes', id: takeId, sourceId: page.source_id }) !== null) tally.flagged++;
       }
       return count;
     };
@@ -288,7 +283,7 @@ export async function extractTakesFromFs(
       continue;
     }
     // #6259: the stored page decides (the gate stamps quarantine on it); a quarantined page projects no takes.
-    if ((await engine.executeRaw('SELECT 1 FROM pages WHERE id=$1 AND frontmatter ? $2', [pageId, QUARANTINE_KEY])).length) continue;
+    if (await engine.pageHasFrontmatterKey(pageId, QUARANTINE_KEY)) continue;
     if (!await reconcileTakesGeneration(engine, false, { id: pageId, slug, source_id: sourceId }, readFenceBlocks({ compiled_truth: body, timeline: '' }, 'takes'),
       takes, warnings, opts.rebuild === true, dryRun, body.includes(TAKES_FENCE_BEGIN), result)) continue;
     if (takes.length === 0) continue;

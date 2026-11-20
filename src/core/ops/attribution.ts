@@ -208,11 +208,11 @@ function rowTarget(ctx: OperationContext, pageId: number, slug: string, sourceId
   if (ids.take !== undefined) {
     const holders = readHolders(ctx);
     return { kind: 'take', label: `take at row ${ids.take}`, list: { tool: 'takes_list', arguments: { page_slug: slug } },
-      target: { kind: 'take', pageId, rowNum: ids.take, ...(holders ? { holders } : {}) } };
+      target: { kind: 'take', pageId, rowNum: ids.take, excludePrivate, ...(holders ? { holders } : {}) } };
   }
   if (ids.timeline !== undefined) {
     return { kind: 'timeline_entry', label: `timeline entry #${ids.timeline}`, list: { tool: 'get_timeline', arguments: { slug } },
-      target: { kind: 'timeline', id: ids.timeline, pageId } };
+      target: { kind: 'timeline', id: ids.timeline, pageId, excludePrivate } };
   }
   return undefined;
 }

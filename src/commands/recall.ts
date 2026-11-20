@@ -1213,8 +1213,17 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
 
 export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine>), args: string[]): Promise<void> {
   const purge = await import('./forget-purge.ts');
+  const ids = await purge.forgetFactIds(args);
+  if (ids.length > 1) {
+    const { opError } = await import('../core/operations.ts');
+    const { reportPersistenceCliError } = await import('./persistence-delegate.ts');
+    const error = opError('invalid_params', `gbrain forget takes one fact id per run, and ${ids.length} were given (${ids.join(', ')}), so nothing was forgotten.`,
+      `Run gbrain forget once for each fact id, e.g. gbrain forget ${ids[0]}.`);
+    if (await reportPersistenceCliError(error, args.includes('--json'))) return;
+    throw error;
+  }
   if (purge.routesToForgetPurge(args)) return purge.runForgetPurge(engine, args);
-  const idArg = args.find(a => /^\d+$/.test(a));
+  const idArg = ids[0];
   if (!idArg) {
     process.stderr.write('Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]\n');
     process.exit(1);

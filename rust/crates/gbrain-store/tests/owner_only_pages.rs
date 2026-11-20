@@ -1,7 +1,7 @@
 //! The owner-only rule of the `excludePrivate` page policy (`ownerOnlyPageSql`,
 //! src/core/access/owner-only.ts): with an owner-only source in the brain, a non-owner read
 //! hides that source's pages and every concept or question synthesized from one of them in the
-//! `fn` (lineage) form, and hides every page in the closed form. With no owner-only source, the rule
+//! `fn` form, and hides every page in the closed form. With no owner-only source, the rule
 //! hides nothing.
 
 mod common;
@@ -105,7 +105,7 @@ const ALL: [&str; 6] = [
 ];
 
 #[test]
-fn lineage_form_hides_owner_only_pages_and_their_concepts_before_the_limit() {
+fn fn_form_hides_owner_only_pages_and_their_concepts_before_the_limit() {
     let (_dir, store) = brain("owner-only-lineage");
     fixture(&store, json!({"owner_only": true}));
     let kept = [

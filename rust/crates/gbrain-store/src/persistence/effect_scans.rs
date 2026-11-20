@@ -1,10 +1,11 @@
 //! Effect scans: the statements of `src/core/engine-sql/persistence-effect-scans.ts` that the
-//! effect worker's pass sends before and when it claims effects (rust/docs/store/persistence.md,
-//! "Effect scans").
+//! effect worker's pass sends before and when it claims effects, and the read of the effects a
+//! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
-//! worktree. This engine records no effect (it keeps the worktrees an unmanaged claim records,
-//! `worktrees.rs`, but no effect row joins them), so every scan answers no row.
+//! worktree. This engine keeps only the worktrees an unmanaged claim records (`worktrees.rs`),
+//! and no effect row joins them, so every scan answers no row (the claim itself is
+//! `effect_worker.rs`).
 //! The parameters are still checked as their Postgres casts check them, so an argument Postgres
 //! refuses is refused here too.
 
@@ -14,7 +15,7 @@ use crate::error::{Result, StoreError};
 use serde_json::Value;
 
 /// `$1::uuid`: the message Postgres gives for text that is not a uuid.
-fn host_uuid(text: &str) -> Result<()> {
+pub(super) fn host_uuid(text: &str) -> Result<()> {
     if is_uuid(text) {
         Ok(())
     } else {
@@ -75,14 +76,6 @@ pub(crate) fn list_effect_recoveries(
     Ok(Vec::new())
 }
 
-/// `selectClaimableEffect(hostId, deadOwners)`: no effect is recorded here, so there is nothing
-/// to claim (null); a non-uuid host id refuses. The dead owner keys only widen which running
-/// effects match, so they change nothing.
-pub(crate) fn select_claimable_effect(host_id: &str) -> Result<Value> {
-    host_uuid(host_id)?;
-    Ok(Value::Null)
-}
-
 impl Store {
     /// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`.
     pub fn list_gated_mirror_requests(&self, host_id: &str) -> Result<Vec<Value>> {
@@ -97,11 +90,6 @@ impl Store {
         limit: f64,
     ) -> Result<Vec<Value>> {
         list_effect_recoveries(host_id, after, limit)
-    }
-
-    /// `selectClaimableEffect(hostId, deadOwners)`.
-    pub fn select_claimable_effect(&self, host_id: &str) -> Result<Value> {
-        select_claimable_effect(host_id)
     }
 }
 
@@ -119,19 +107,6 @@ mod tests {
                 .is_empty()
         );
         let bad = list_gated_mirror_requests("nope").unwrap_err();
-        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
-    }
-
-    #[test]
-    fn claimable_effect_is_null_and_refuses_a_non_uuid_host() {
-        let host = "0f000000-0000-4000-8000-0000000000f1";
-        assert!(select_claimable_effect(host).unwrap().is_null());
-        assert!(
-            select_claimable_effect(&host.to_uppercase())
-                .unwrap()
-                .is_null()
-        );
-        let bad = select_claimable_effect("nope").unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 

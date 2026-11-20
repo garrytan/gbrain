@@ -66,6 +66,12 @@ function editError(code: string, message: string, suggestion: string, detail?: s
   return error;
 }
 
+/** GST-3170: an old_text holding U+0000 matches no stored page text; refused as written, before anything is journaled. */
+export function nulSelectorError(index: number): OperationError {
+  return editError('edit_no_match', `Edit ${index}'s old_text was not found in the page: it holds U+0000, which stored page text never contains.`,
+    'Read get_page with include_content:true and copy old_text exactly, without U+0000 characters.', `edit_index=${index} match_count=0`);
+}
+
 /** Validates the wire shape: 1-50 `{ old_text, new_text }` objects, `old_text` non-empty. */
 export function parsePageEdits(value: unknown): PageEdit[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > EDIT_PAGE_MAX_EDITS) {
@@ -176,7 +182,11 @@ function pageSegments(page: Page, tags: string[], remote: boolean, omitRows?: Re
 
 const join = (segments: Segment[], key: 'canonical' | 'view') => segments.map(segment => segment[key]).join('');
 
-/** The text a caller matches against: get_page `content` for that caller. */
+/**
+ * The text a caller matches against: get_page `content` for that caller. A remote caller bound to the brain owner
+ * (GST-3058) reads its fences as stored in get_page but still matches against the remote fence view here; fences are
+ * never editable, so only text inside a fence differs.
+ */
 export function editableView(page: Page, tags: string[], remote: boolean): string {
   return join(pageSegments(page, tags, remote), 'view');
 }

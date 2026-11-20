@@ -369,22 +369,24 @@ export function purgePreviewHash(retentionHours: number, pages: ReadonlyArray<{ 
 }
 
 async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<void> {
-  const [{ selectPurgeCandidates, purgeDeletedPagesCoordinated }, { readPurgeRetentionHours }] = await Promise.all([
+  const [{ selectPurgeCandidates, purgeDeletedPagesCoordinated, rebuildNote }, { readPurgeRetentionHours }] = await Promise.all([
     import('../core/persistence/purge-deleted.ts'), import('../core/sync-reconcile.ts')]);
   const retention = await readPurgeRetentionHours(engine);
-  const selection = await selectPurgeCandidates(engine, retention, { automatic: true });
+  const selection = await selectPurgeCandidates(engine, retention, { automatic: true, model: (await import('../core/ai/gateway.ts')).isAvailable('chat') });
   const pages: Array<{ source_id: string; slug: string }> = (selection.managed ? selection.candidates : selection.pages ?? [])
     .map((p) => ({ source_id: p.source_id, slug: p.slug }));
   const hash = purgePreviewHash(retention, pages);
   const apply = ['gbrain', 'maintain', '--purge', '--yes', '--expect', hash];
   if (!opts.yes) {
     const preview = { mode: 'preview', retention_hours: retention, count: pages.length, pages: pages.slice(0, 50), blocked: selection.blocked.length, hash,
+      ...(selection.rebuild.held.length ? { rebuild: selection.rebuild, rebuild_note: rebuildNote(selection.rebuild) } : {}),
       ...(pages.length ? { apply: renderAction({ argv: apply, consent: ['destructive'], actor: 'agent', requires_exclusive: false,
         why: `Permanently deletes the ${pages.length} page(s) listed (soft-deleted more than ${retention}h ago); gbrain restore cannot bring them back.` }, cliRenderContext()) } : {}) };
     if (opts.json) { console.log(JSON.stringify(preview, null, 2)); return; }
     console.log(`${pages.length} soft-deleted page(s) are past the ${retention}h recovery window.`);
     for (const p of pages.slice(0, 50)) console.log(`  ${p.source_id}/${p.slug}`);
     if (pages.length > 50) console.log(`  ...and ${pages.length - 50} more`);
+    if (selection.rebuild.held.length) console.log(rebuildNote(selection.rebuild));
     if (pages.length) console.log(`Nothing was deleted. To purge exactly these, run: ${apply.join(' ')}`);
     return;
   }

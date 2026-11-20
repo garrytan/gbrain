@@ -40,6 +40,7 @@ async function writerFindings(engine: BrainEngine, source: string, writer: strin
   const grant = kind === 'oauth_client' ? grantFromClient(grantFromRow(json(row.row))) : grantFromTokenRow(json(row.row));
   const auth = authSourcesFromGrant(grant);
   const reads = auth.allowedSources ?? [auth.sourceId];
+  if (grant.readShared === true && grant.sources.kind !== 'none') return [{ level: 'fail', text: 'writer ' + writer + ' also reads every shared source (read-shared switch on), not exactly ' + source }];
   if (auth.sourceId === source && reads.every(s => s === source)) return [];
   return [{ level: 'fail', text: 'writer ' + writer + ' is granted ' + [...new Set([auth.sourceId, ...reads])].join(', ') + ', not exactly ' + source }];
 }

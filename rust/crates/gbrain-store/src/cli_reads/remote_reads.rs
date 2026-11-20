@@ -13,7 +13,7 @@
 
 use super::reads::{Sources, has_key, served};
 use crate::Store;
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
 use crate::error::Result;
 use crate::extraction::{guest_sources, owes_link_extraction, version_us};

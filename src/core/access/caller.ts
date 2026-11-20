@@ -41,7 +41,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readAudiencePrincipals as readAudiencePrincipalsOver, readFolderAccess as readFolderAccessOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type MayActForVia, type MemberBindingVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type LiveMemberVia, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -82,16 +82,13 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
   return null;
 }
 
-/**
- * An engine the member lookup reads through: an engine (its typed readLiveMember, which a Rust brain serves), or an
- * executeRaw-only view of one (persistence SqlEngine), which runs the same statement over that view's executeRaw.
- */
-export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
+/** An engine that reads a live member: a typed engine, or a narrow executeRaw caller (the same SQL over it). */
+export type LiveMemberEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
 
-async function liveIdentity(engine: MemberLookupEngine, via: MemberBindingVia, param: string): Promise<string[]> {
+async function liveIdentity(engine: LiveMemberEngine, via: LiveMemberVia, key: string): Promise<string[]> {
   let row: LiveMemberRow | null;
   try {
-    row = 'readLiveMember' in engine ? await engine.readLiveMember(via, param) : await readLiveMemberOver(engine, via, param);
+    row = 'readLiveMember' in engine ? await engine.readLiveMember(via, key) : await readLiveMemberOver(engine, via, key);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
     if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
@@ -114,13 +111,13 @@ async function liveIdentity(engine: MemberLookupEngine, via: MemberBindingVia, p
  * that fails throws (liveIdentity: a transient database failure unchanged, else access_identity_unavailable). A write's publication passes only its stored
  * principal, so a member disabled or a binding removed after submission takes effect.
  */
-export async function memberIdentityFor(engine: MemberLookupEngine, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
+export async function memberIdentityFor(engine: LiveMemberEngine, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
   if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, 'member', auth.stdioMember)
     : liveIdentity(engine, 'stdio_config', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
-  return liveIdentity(engine, principal.kind, principal.id);
+  return liveIdentity(engine, principal.kind === 'legacy_token' ? 'legacy_token' : 'oauth_client', principal.id);
 }
 
 /** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
@@ -145,6 +142,12 @@ export async function stdioMemberIdentity(engine: BrainEngine, registered?: stri
 }
 
 /**
+ * An engine the folder access read goes through: its typed readFolderAccess, which every engine serves (a Rust brain
+ * without raw SQL) and every persistence SqlEngine view carries.
+ */
+export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'>;
+
+/**
  * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
  * source-qualified ids of the rules `identity` satisfies, and every prefix that reads as nobody (a narrowing being
  * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed), and so
@@ -154,9 +157,6 @@ export async function folderAccessFor(engine: FolderAccessEngine, identity: read
   return folderAccessForAll(engine, [identity]);
 }
 
-/** An engine the folder access reads go through: its typed readFolderAccess (a Rust brain serves it), or an executeRaw-only handle. */
-export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'> | Pick<BrainEngine, 'executeRaw'>;
-
 /**
  * GBRA-231: folderAccessFor for an audience. A rule is satisfied only when every identity meets its readers, so the
  * satisfied set is the intersection of each entry's set (empty when any entry, a guest included, meets none).
@@ -165,7 +165,7 @@ export async function folderAccessForAll(engine: FolderAccessEngine, identities:
   try {
     const union = [...new Set(identities.flat())];
     const readers = union.length && identities.length && identities.every(id => id.length > 0) ? union : [];
-    const { rules, coverage } = 'readFolderAccess' in engine ? await engine.readFolderAccess(readers) : await readFolderAccessOver(engine, readers);
+    const { rules, coverage } = await engine.readFolderAccess(readers);
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {

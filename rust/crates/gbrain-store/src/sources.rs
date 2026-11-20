@@ -17,6 +17,7 @@ pub(crate) struct SourceRecord {
     pub name: Option<String>,
     pub local_path: Option<String>,
     pub last_sync_at_us: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
     pub config: Map<String, Value>,
     /// Changes when a source is deleted and created again; page snapshots carry it.
     pub incarnation: String,

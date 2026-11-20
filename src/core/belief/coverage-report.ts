@@ -344,9 +344,7 @@ export async function fillCommitMarks(engine: BrainEngine, sourceId: string, opt
 
 /** Sources with any coverage event in their current incarnation. */
 export async function coveredSources(engine: BrainEngine): Promise<string[]> {
-  const rows = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM belief_events e
-    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY 1`, [COVERAGE_KEY]);
-  return rows.map(r => r.id);
+  return engine.listCoveredSources(COVERAGE_KEY);
 }
 
 /** The cycle's extract phase: a sampled drift reconcile and commit-mark fill on each covered source (or the cycle's source); failures become details. */

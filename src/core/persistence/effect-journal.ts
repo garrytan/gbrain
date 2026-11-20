@@ -7,7 +7,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { fileContentHash } from './large-file.ts';
-import { PARK_AFTER_FAILURES, REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_OPERATIONS, WITHHELD_BY_MIRROR, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, REMOTE_MENTION_OPERATIONS, WITHHELD_BY_MIRROR, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
@@ -18,7 +18,7 @@ import { claimOwner, EXPIRED_PREPARING_CHARGE_SQL } from './claim-phase.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
-import { asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
+import { REARMABLE_SQL } from '../engine-sql/persistence-effect-worker.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -66,14 +66,10 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
   } else if (opts.pageTargets?.length && !prepared?.deferEmbedding) queue('embedding', { version: 2, targets: opts.pageTargets });
-  const inserted = queued.length ? await tx.executeRaw<{ kind: string }>(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
-    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
-    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
-      WHERE key IN ('auto_link',$7) AND ${asciiLowerSql(edgeTrimSql('value'))} IN ('false','0','no','off')))
-    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`,
-  [row.id, revision ?? null, row.source_id, row.source_incarnation, row.worktree_id, JSON.stringify(queued), REMOTE_AUTO_LINKS_KEY]) : [];
+  const inserted = queued.length ? await tx.insertPublicationEffects({ requestId: row.id, revision: revision ?? null, sourceId: row.source_id,
+    sourceIncarnation: row.source_incarnation, worktreeId: row.worktree_id, effects: queued }) : [];
   if (queued.some(effect => effect.kind === 'links')) {
-    if (inserted.some(effect => effect.kind === 'links')) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
+    if (inserted.includes('links')) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
     if (!opts.deferBatchReconcile) await reconcileFinishedBatch(tx, row);
   }
 }
@@ -157,9 +153,7 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
     const candidate = await tx.selectClaimableEffect<PersistenceEffect>(hostId, deadOwners);
     if (!candidate) return null;
     const token = randomUUID();
-    const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`, [candidate.id, token, effectClaimStamp(token)]);
-    return claimed;
+    return tx.stampEffectClaim<PersistenceEffect>({ id: candidate.id, token, ownerJson: effectClaimStamp(token) });
   }, { pipelineFirst: isPersistenceDeclaration });
 }
 
@@ -187,11 +181,9 @@ export interface MirrorGate { state: 'pending' | 'failed' | 'committed'; publish
  * committed, and a committed one that recorded its publications. A request
  * without such a mirror is absent and its work is unrestricted.
  */
-export async function mirrorGates(engine: SqlEngine, requestIds: readonly string[]): Promise<Map<string, MirrorGate>> {
+export async function mirrorGates(engine: Pick<BrainEngine, 'readMirrorGateRows'>, requestIds: readonly string[]): Promise<Map<string, MirrorGate>> {
   if (!requestIds.length) return new Map();
-  const rows = await engine.executeRaw<{ request_id: string; state: PersistenceEffect['state']; data: PersistenceEffect['data'] }>(
-    `SELECT request_id::text AS request_id,state,data FROM persistence_effects WHERE kind='withdrawal-mirror' AND (state<>'committed' OR data ? 'published')
-      AND request_id=ANY($1::uuid[])`, [[...new Set(requestIds)]]);
+  const rows = await engine.readMirrorGateRows([...new Set(requestIds)]) as Array<{ request_id: string; state: PersistenceEffect['state']; data: PersistenceEffect['data'] }>;
   return new Map(rows.map(({ request_id, state, data }) => {
     const after = data.after_slug;
     const unfinished = new Set([...(data.parked ?? []).flatMap(entry => entry.slug ? [entry.slug] : []), ...(data.retry_slugs ?? [])]);
@@ -210,15 +202,12 @@ export async function mirrorGates(engine: SqlEngine, requestIds: readonly string
  * calls this in its own transaction; each effect pass calls it again for the
  * requests it touched, for a park that settled after a concurrent mirror commit.
  */
-const REARMABLE = `e.request_id=ANY($1::uuid[])
-    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL AND NOT (e.data ? 'settled')
-    AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) AS p(target) WHERE p.target->>'error_code'=$2)
-    AND EXISTS (SELECT 1 FROM persistence_effects m WHERE m.request_id=e.request_id AND m.kind='withdrawal-mirror' AND m.state='committed')`;
+const REARMABLE = REARMABLE_SQL;
 
 /** Whether any of these requests has a target rearmWithheldTargets would re-arm; a pass opens its re-arm transaction only then. */
-export async function hasRearmableTargets(engine: SqlEngine, requestIds: readonly string[]): Promise<boolean> {
+export async function hasRearmableTargets(engine: Pick<BrainEngine, 'hasRearmableTargets'>, requestIds: readonly string[]): Promise<boolean> {
   if (!requestIds.length) return false;
-  return (await engine.executeRaw(`SELECT 1 FROM persistence_effects e WHERE ${REARMABLE} LIMIT 1`, [[...new Set(requestIds)], WITHHELD_BY_MIRROR])).length > 0;
+  return engine.hasRearmableTargets([...new Set(requestIds)], WITHHELD_BY_MIRROR);
 }
 
 export async function rearmWithheldTargets(engine: SqlEngine, requestIds: readonly string[]): Promise<number> {
@@ -334,13 +323,18 @@ export function effectClaimKeeper(engine: BrainEngine, effect: PersistenceEffect
   };
 }
 
-export async function renewPersistenceEffectClaim(engine: SqlEngine, effect: PersistenceEffect): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);
-  return rows.length === 1;
+/**
+ * The statements that settle an effect claim (engine-sql/persistence-effect-worker.ts). Each matches only the effect
+ * still claimed under `effect.execution_token`.
+ */
+export type EffectSettler = Pick<BrainEngine, 'advanceEffectRow' | 'completeEffectRow' | 'retryEffectRow' | 'retryBusyEffectRow' | 'requeueEffectRow' | 'parkEffectRow' | 'failEffectRow'>;
+
+/** Extends the claim's lease; `direct` runs it on the Postgres direct lane, outside the pooled transactions. */
+export async function renewPersistenceEffectClaim(engine: Pick<BrainEngine, 'renewEffectClaim'>, effect: PersistenceEffect, opts?: { direct?: boolean }): Promise<boolean> {
+  return engine.renewEffectClaim({ id: effect.id, token: effect.execution_token }, opts);
 }
 
-export async function advanceEffectCursor(engine: SqlEngine, effect: PersistenceEffect, slug: string): Promise<void> {
+export async function advanceEffectCursor(engine: EffectSettler, effect: PersistenceEffect, slug: string): Promise<void> {
   const retrying = effect.data.retry_slugs ?? [];
   if (retrying.includes(slug)) {
     // A retried parked target finishes without moving the scan cursor. Each
@@ -350,27 +344,16 @@ export async function advanceEffectCursor(engine: SqlEngine, effect: Persistence
     await requeueEffect(engine, effect, remaining.length ? { ...data, retry_slugs: remaining, target_failures: PARK_AFTER_FAILURES - 1 } : data, null, 0);
     return;
   }
-  await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=jsonb_set(
-    CASE WHEN kind='embedding' THEN jsonb_set(data,'{embedding_attempt_base}',to_jsonb(attempts)) ELSE data-'target_failures'-'failing_target' END,'{after_slug}',to_jsonb($3::text)),
-    execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,next_attempt_at=now(),error_code=NULL,
-    updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [effect.id, effect.execution_token, slug]);
+  await engine.advanceEffectRow({ id: effect.id, token: effect.execution_token, slug });
 }
 
 /** An effect with parked targets finishes as failed (`targets_parked`), never as committed. */
-export async function completeEffect(engine: SqlEngine, effect: PersistenceEffect, outcome: Record<string, unknown> = {}): Promise<void> {
+export async function completeEffect(engine: Pick<BrainEngine, 'completeEffectRow'>, effect: PersistenceEffect, outcome: Record<string, unknown> = {}): Promise<void> {
   await faultPoint(EFFECT_FAULT_POINTS[effect.kind], { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-  await engine.executeRaw(`UPDATE persistence_effects SET
-    state=CASE WHEN jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
-    error_code=CASE WHEN jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
-    data=data-'retry_slugs'-'target_failures'-'failing_target'-'busy_retries'-'busy_since'-'busy_at',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
-    outcome=$3::text::jsonb,updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [effect.id, effect.execution_token, JSON.stringify(outcome)]);
+  await engine.completeEffectRow({ id: effect.id, token: effect.execution_token, outcomeJson: JSON.stringify(outcome) });
 }
-export async function retryEffect(engine: SqlEngine, effect: PersistenceEffect, reason: string, delayMs = 1000): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,
-    next_attempt_at=now()+($4::double precision*interval '1 millisecond'),updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [effect.id, effect.execution_token, reason, delayMs]);
+export async function retryEffect(engine: Pick<BrainEngine, 'retryEffectRow'>, effect: PersistenceEffect, reason: string, delayMs = 1000): Promise<void> {
+  await engine.retryEffectRow({ id: effect.id, token: effect.execution_token, reason, delayMs });
 }
 /** GBRA-133: the longest a `writer_busy` effect waits before its next claim. */
 export const BUSY_RETRY_MAX_MS = 60_000;
@@ -379,30 +362,22 @@ export const BUSY_RETRY_MAX_MS = 60_000;
  * catch-up that cannot take the worktree stops claiming its effects several times a second. A streak whose last busy
  * retry is over two caps old starts again. It never parks: contention says nothing about the target.
  */
-export async function retryBusyEffect(engine: SqlEngine, effect: PersistenceEffect, now = Date.now()): Promise<void> {
+export async function retryBusyEffect(engine: Pick<BrainEngine, 'retryBusyEffectRow'>, effect: PersistenceEffect, now = Date.now()): Promise<void> {
   const last = Date.parse(effect.data.busy_at ?? '');
   const streak = Number.isFinite(last) && now - last < 2 * BUSY_RETRY_MAX_MS ? (effect.data.busy_retries ?? 0) + 1 : 1;
   const busy = { busy_retries: streak, busy_since: streak > 1 && effect.data.busy_since ? effect.data.busy_since : new Date(now).toISOString(), busy_at: new Date(now).toISOString() };
-  await engine.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code='writer_busy',
-    data=data||$3::text::jsonb,next_attempt_at=now()+($4::double precision*interval '1 millisecond'),updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [effect.id, effect.execution_token, JSON.stringify(busy), Math.min(BUSY_RETRY_MAX_MS, 250 * 2 ** Math.min(streak - 1, 8))]);
+  await engine.retryBusyEffectRow({ id: effect.id, token: effect.execution_token, dataJson: JSON.stringify(busy),
+    delayMs: Math.min(BUSY_RETRY_MAX_MS, 250 * 2 ** Math.min(streak - 1, 8)) });
 }
 /** Release a claim with replacement bookkeeping; parking never applies while recovery is recorded. */
-export async function requeueEffect(engine: SqlEngine, effect: PersistenceEffect, data: PersistenceEffect['data'], reason: string | null, delayMs: number): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=$3::text::jsonb,execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$4,
-    next_attempt_at=now()+($5::double precision*interval '1 millisecond'),updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [effect.id, effect.execution_token, JSON.stringify(data), reason, delayMs]);
+export async function requeueEffect(engine: Pick<BrainEngine, 'requeueEffectRow'>, effect: PersistenceEffect, data: PersistenceEffect['data'], reason: string | null, delayMs: number): Promise<void> {
+  await engine.requeueEffectRow({ id: effect.id, token: effect.execution_token, dataJson: JSON.stringify(data), reason, delayMs });
 }
-export async function parkEffect(engine: SqlEngine, effect: PersistenceEffect, data: PersistenceEffect['data']): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET state='failed',data=$3::text::jsonb,execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
-    error_code='targets_parked',updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [effect.id, effect.execution_token, JSON.stringify(data)]);
+export async function parkEffect(engine: Pick<BrainEngine, 'parkEffectRow'>, effect: PersistenceEffect, data: PersistenceEffect['data']): Promise<void> {
+  await engine.parkEffectRow({ id: effect.id, token: effect.execution_token, dataJson: JSON.stringify(data) });
 }
-export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, reason: string): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET state='failed',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [effect.id, effect.execution_token, reason]);
+export async function failEffect(engine: Pick<BrainEngine, 'failEffectRow'>, effect: PersistenceEffect, reason: string): Promise<void> {
+  await engine.failEffectRow({ id: effect.id, token: effect.execution_token, reason });
 }
 
 /**
@@ -413,9 +388,8 @@ export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, r
  * with the last attempt's error, `running`, `recovering`, and `queued` only while the effect is queued. Null when the
  * request has no Git effect row.
  */
-export async function gitReceiptState(engine: SqlEngine, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
-  const [row] = await engine.executeRaw<{ state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    `SELECT state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`, [requestId]);
+export async function gitReceiptState(engine: Pick<BrainEngine, 'readRequestEffects'>, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
+  const [row] = await engine.readRequestEffects(requestId, 'git');
   if (!row) return null;
   const reason = (value: unknown) => typeof value === 'string' && /^[a-z_]{1,80}$/.test(value) ? { git_reason: value } : {};
   if (row.recovering) return { git_state: 'recovering' };
@@ -429,11 +403,10 @@ export async function gitReceiptState(engine: SqlEngine, requestId: string): Pro
 }
 
 /** Only public kind/state/reason, aggregated so withdrawal page counts cannot leak. */
-export async function publicEffectsForRequest(engine: SqlEngine, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
+export async function publicEffectsForRequest(engine: Pick<BrainEngine, 'readRequestEffects'>, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number;
   invalid_targets?: Array<{ slug: string; reason: 'invalid_slug' }> }>> {
-  const rows = await engine.executeRaw<{ kind: EffectKind; state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
-    'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [requestId]);
-  return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
+  const rows = await engine.readRequestEffects(requestId);
+  return rows.filter((row): row is typeof row & { kind: EffectKind } => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
     const reason = row.error_code ?? row.outcome?.reason;
     const push = row.outcome?.push;
     const invalid = Array.isArray(row.outcome?.skipped_targets) ? (row.outcome.skipped_targets as Array<{ slug: string; reason: string }>)

@@ -4,17 +4,22 @@
 //! resolves plain JSON. Job rows carry timestamps as ISO strings; the shell makes them `Date`s
 //! (rust/docs/store/jobs.md).
 
+mod access_tokens;
 mod checks;
 mod health;
 mod insight;
 mod ops;
 mod spend;
+mod spend_log;
 mod status;
 mod subagent;
 mod wake;
 
 use gbrain_store::error::StoreError;
-use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};
+use gbrain_store::jobs::{
+    AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder, PageLeaseHolder,
+    PageLeaseTake,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -190,6 +195,48 @@ impl Brain {
         self.run(env, move |s| {
             let opts: LockHolder = required(opts, "deleteCycleLockIfStale opts")?;
             s.delete_cycle_lock_if_stale(&lock_id, &opts)
+        })
+    }
+
+    /// `takePageEmbeddingLease(leaseId, opts)`: whether the lease was free or expired and is now this holder's.
+    #[napi]
+    pub fn take_page_embedding_lease<'env>(
+        &self,
+        env: &'env Env,
+        lease_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: PageLeaseTake = required(opts, "takePageEmbeddingLease opts")?;
+            s.take_page_embedding_lease(&lease_id, &opts)
+        })
+    }
+
+    /// `renewPageEmbeddingLease(leaseId, opts)`: whether the row still carried this token.
+    #[napi]
+    pub fn renew_page_embedding_lease<'env>(
+        &self,
+        env: &'env Env,
+        lease_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: PageLeaseHolder = required(opts, "renewPageEmbeddingLease opts")?;
+            s.renew_page_embedding_lease(&lease_id, &opts)
+        })
+    }
+
+    /// `releasePageEmbeddingLease(leaseId, opts)`: this holder's row and every expired `embed-page:` row go.
+    #[napi]
+    pub fn release_page_embedding_lease<'env>(
+        &self,
+        env: &'env Env,
+        lease_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: PageLeaseHolder = required(opts, "releasePageEmbeddingLease opts")?;
+            s.release_page_embedding_lease(&lease_id, &opts)
         })
     }
 

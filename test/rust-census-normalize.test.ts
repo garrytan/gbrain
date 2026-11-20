@@ -45,3 +45,23 @@ describe('census normaliser on opaque cursors', () => {
     for (const s of ['people/alice-example', 'abcdefgh', 'eyJub3QganNvbg', 'SGVsbG8gd29ybGQ']) expect(normalize(s, [])).toBe(s);
   });
 });
+
+describe('census normaliser on serve PIDs in notice text', () => {
+  // A readiness notice names the stdio serve that holds the brain: `fix: kill <pid>` and "(PID <pid>)". Each arm
+  // runs its own serve, so only the number may differ; the `pid` key rule masks it in JSON but not inside text.
+  const notice = (pid: number) => `fix: kill ${pid}\nuser_message: Please stop the stdio \`gbrain serve\` an agent session started (PID ${pid}), then retry.`;
+
+  test('a notice that differs only by the serve PID compares equal', () => {
+    expect(same({ content: notice(2826684) }, { content: notice(41) })).toBe(true);
+    expect(normalize(notice(7), [])).toBe('fix: kill <pid>\nuser_message: Please stop the stdio `gbrain serve` an agent session started (PID <pid>), then retry.');
+  });
+
+  test('numbers in any other text form still compare', () => {
+    expect(same({ content: 'killed 3 jobs' }, { content: 'killed 4 jobs' })).toBe(false);
+    expect(same({ content: 'pid 3' }, { content: 'pid 4' })).toBe(false);
+    expect(same({ content: 'PIDs 3' }, { content: 'PIDs 4' })).toBe(false);
+    expect(same({ content: 'skill 3' }, { content: 'skill 4' })).toBe(false);
+    expect(same({ content: 'kill -9 3' }, { content: 'kill -9 4' })).toBe(false);
+    expect(same({ content: 'fix: kill 3\nretry 1' }, { content: 'fix: kill 4\nretry 2' })).toBe(false);
+  });
+});

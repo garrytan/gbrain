@@ -102,3 +102,43 @@ export async function hasStoredVectors(raw: EngineRawRead, store: EmbeddingStore
   const [row] = await raw<{ present: boolean }>(sql);
   return !!row?.present;
 }
+
+/** The fixed-width `content_chunks` vector columns beside `embedding` (`vector(1024)` on Postgres and PGLite). */
+export const FIXED_VECTOR_COLUMNS = ['embedding_image', 'embedding_multimodal'] as const;
+export type FixedVectorColumn = typeof FIXED_VECTOR_COLUMNS[number];
+
+/** One source's `content_chunks` rows and how many of them hold a vector in the column. */
+export interface ChunkVectorCoverageRow { source_id: string; total: number; covered: number }
+
+/** One constant statement per column, so no column name is spliced into SQL (the doctor's unified_multimodal_coverage text). */
+const COVERAGE_SQL: Readonly<Record<FixedVectorColumn, string>> = {
+  // chunk-visibility-ok: doctor coverage ratio moved verbatim from doctor/checks/data-integrity.ts; it counts every chunk row, as before.
+  embedding_image: `SELECT
+           COALESCE(p.source_id, 'default') AS source_id,
+           COUNT(*)::text AS total,
+           SUM(CASE WHEN cc.embedding_image IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         GROUP BY p.source_id`,
+  // chunk-visibility-ok: doctor coverage ratio moved verbatim from doctor/checks/data-integrity.ts; it counts every chunk row, as before.
+  embedding_multimodal: `SELECT
+           COALESCE(p.source_id, 'default') AS source_id,
+           COUNT(*)::text AS total,
+           SUM(CASE WHEN cc.embedding_multimodal IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         GROUP BY p.source_id`,
+};
+
+/**
+ * Per source with at least one chunk, the chunks (every generation, soft-deleted pages too) and how many hold a vector in
+ * `column`, in source id order. Throws when the column is missing (a brain from before v0.36 that has not migrated).
+ */
+export async function countChunkVectorCoverage(raw: EngineRawRead, column: FixedVectorColumn): Promise<ChunkVectorCoverageRow[]> {
+  const sql = COVERAGE_SQL[column];
+  if (!sql) throw new Error(`countChunkVectorCoverage: '${String(column)}' is not a fixed vector column`);
+  const rows = await raw<{ source_id: string | null; total: string; covered: string }>(sql);
+  return rows
+    .map((r) => ({ source_id: r.source_id || 'default', total: parseInt(String(r.total), 10), covered: parseInt(String(r.covered), 10) }))
+    .sort((a, b) => (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
+}

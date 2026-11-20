@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`, the binding reads by gbrain-store `persistence::worktrees`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, LiveMemberRow, MayActForVia, MemberBindingVia } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -76,6 +76,9 @@ export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [
 /** The store keeps no access members, so none is active. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
 
+/** The store keeps no access members, so none carries the labelled-only grant and a write skips the labelled-only checks. */
+export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
+
 /**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
  * among them, so a memoized health answer is reused only while nothing was written since it was read.
@@ -115,17 +118,14 @@ export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderA
 export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
   via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
 
-/**
- * The store keeps no access members (see listActiveAccessMembers), so no key names a live member through any binding:
- * the answer is null, as PGLite answers for a brain with no members. access/caller.ts reads that as unbound.
- */
-export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async () => null;
-
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so none awaits its owner. */
 export const listAwaitingMemoryProposals: StoreMember<[limit: number], Array<Record<string, unknown>>> = async () => [];
+
+/** No memory proposals exist on this engine (see expireMemoryProposals), so a principal holds none under any request id. */
+export const readMemoryProposal: StoreMember<[principalKind: string, principalId: string, requestId: string], Record<string, unknown> | null> = async () => null;
 
 /** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
 export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;
@@ -138,3 +138,24 @@ export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], 
 
 /** The store keeps no access members (see listActiveAccessMembers), so no id names a member and the list is empty. */
 export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async () => [];
+
+/** The store keeps no access tokens and no OAuth clients (see readMayActFor), so no name or member binding names a live credential. */
+export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
+
+/** The store keeps no access members (see listActiveAccessMembers), so no member is of kind audience. */
+export const listAudienceAccessMembers: StoreMember<[], string[]> = async () => [];
+
+/**
+ * The store keeps no access members (see listActiveAccessMembers), so no id, config key, token or client names a live
+ * member: the identity is empty, as for an unbound caller on a brain with none.
+ */
+export const readLiveMember: StoreMember<[via: LiveMemberVia, key: string], LiveMemberRow | null> = async () => null;
+
+/** No memory proposals exist on this engine (see expireMemoryProposals), so none is pending: count 0, no oldest age. */
+export const readPendingProposalSummary: StoreMember<[], PendingProposalRow | null> = async () => ({ n: 0, oldest: null });
+
+/** No memory proposals exist on this engine (see expireMemoryProposals), so the owner's list is empty on every page. */
+export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Array<Record<string, unknown>>> = async () => [];
+
+/** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
+export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];

@@ -58,7 +58,7 @@ export async function planFactPurgeIds(raw: EngineRawRead, sourceId: string, vis
 
 export interface FactsReconcileBacklogRows { rows: Array<{ source_id: string; slug: string; invalid: boolean }>; segmented: number }
 
-/** doctor: the due pages holding a fence (or fence rows) with whether the latest attempt marked them invalid, and the due segmented pages with no fence rows (0 when the count cannot run). */
+/** doctor: the due pages holding a fence (or fence rows) with whether the latest attempt marked them invalid, in (source, slug) byte order, and the due segmented pages with no fence rows (0 when the count cannot run). */
 export async function listFactsReconcileBacklog(raw: EngineRawRead): Promise<FactsReconcileBacklogRows> {
   const pattern = `%${FACTS_FENCE_BEGIN}%`;
   const backlog = renderFragment(sqlFragment`WITH due AS MATERIALIZED (
@@ -70,12 +70,72 @@ export async function listFactsReconcileBacklog(raw: EngineRawRead): Promise<Fac
             COALESCE(d.outcome = 'invalid' AND d.attempted_revision IS NOT DISTINCT FROM d.knowledge_revision, false) AS invalid
        FROM due d JOIN pages p ON p.id = d.id
       WHERE p.compiled_truth LIKE ${pattern} OR p.timeline LIKE ${pattern} OR ${trustedSql(OWNS_FENCE_ROWS)}
-      ORDER BY d.source_id, d.slug`);
+      ORDER BY d.source_id COLLATE "C", d.slug COLLATE "C"`);
   const rows = await raw<{ source_id: string; slug: string; invalid: boolean }>(backlog.text, backlog.params);
   const count = renderFragment(sqlFragment`SELECT COUNT(*)::int AS n FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
       WHERE p.deleted_at IS NULL AND ${trustedSql(DUE)} AND p.body_storage = 'segmented' AND NOT ${trustedSql(OWNS_FENCE_ROWS)}`);
   const [segmented] = await raw<{ n: number }>(count.text, count.params).catch(() => []);
   return { rows, segmented: Number(segmented?.n ?? 0) };
+}
+
+/** A reconcile attempt's outcome: `complete`, `deferred` (retried next run), `invalid` (retried after the page changes) or `cancelled`. */
+export type FactsReconcileOutcome = 'complete' | 'deferred' | 'invalid' | 'cancelled';
+/** Upper bound on pages one drain settles in bulk as having no fence and no fence rows. */
+export const FACTLESS_SETTLE_LIMIT = 10_000;
+/** `p`'s latest attempt did not mark its current revision invalid. */
+export const RETRYABLE = `NOT COALESCE(r.outcome = 'invalid' AND r.attempted_revision IS NOT DISTINCT FROM p.knowledge_revision, false)`;
+
+/** extract_facts: records one live page's reconcile outcome at `revision` (`undefined`: at the current revision); a moved-on page records nothing. Moved from facts/reconcile-watermark.ts settleFactsReconcile unchanged. */
+export async function settleFactsReconcile(
+  raw: EngineRawRead, sourceId: string, slug: string, outcome: FactsReconcileOutcome, revision?: string | null,
+): Promise<void> {
+  await raw(
+    `INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
+     SELECT p.id, CASE WHEN $3 = 'complete' THEN p.knowledge_revision END, CASE WHEN $3 = 'complete' THEN now() END,
+            $3, p.knowledge_revision, now()
+       FROM pages p
+      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+        AND ($5::boolean OR p.knowledge_revision IS NOT DISTINCT FROM $4::uuid)
+     ON CONFLICT (page_id) DO UPDATE SET
+       reconciled_revision = CASE WHEN EXCLUDED.outcome = 'complete' THEN EXCLUDED.reconciled_revision ELSE r.reconciled_revision END,
+       reconciled_at = CASE WHEN EXCLUDED.outcome = 'complete' THEN EXCLUDED.reconciled_at ELSE r.reconciled_at END,
+       outcome = EXCLUDED.outcome,
+       attempted_revision = EXCLUDED.attempted_revision,
+       attempted_at = EXCLUDED.attempted_at`,
+    [sourceId, slug, outcome, revision ?? null, revision === undefined],
+  );
+}
+
+/** extract_facts' commit step: locks the live page row `FOR SHARE` for the rest of the caller's transaction and reports whether its `knowledge_revision` is still `revision`. Fires no trigger and changes nothing. Moved from facts/reconcile-watermark.ts lockReconcileRevision unchanged. */
+export async function lockReconcileRevision(raw: EngineRawRead, sourceId: string, slug: string, revision: string | null): Promise<boolean> {
+  const rows = await raw<{ knowledge_revision: string | null }>(
+    `SELECT knowledge_revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE`,
+    [sourceId, slug],
+  );
+  return rows.length === 1 && (rows[0]!.knowledge_revision ?? null) === revision;
+}
+
+/** extract_facts: settles up to FACTLESS_SETTLE_LIMIT due fenceless pages of the source as complete, then returns up to `pageLimit` due retryable slugs, never-attempted first, then oldest attempt, then page id. Moved from facts/reconcile-watermark.ts selectFactsReconcileDrain; `sqlFragment` numbers the placeholders, the predicates are the same. */
+export async function selectFactsReconcileDrain(raw: EngineRawRead, sourceId: string, pageLimit: number): Promise<string[]> {
+  const marker = `%${FACTS_FENCE_BEGIN}%`;
+  const settle = renderFragment(sqlFragment`INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
+     SELECT p.id, p.knowledge_revision, now(), 'complete', p.knowledge_revision, now()
+       FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
+      WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND ${trustedSql(DUE)}
+        AND p.compiled_truth NOT LIKE ${marker} AND p.timeline NOT LIKE ${marker}
+        AND NOT ${trustedSql(OWNS_FENCE_ROWS)}
+      ORDER BY p.id
+      LIMIT ${FACTLESS_SETTLE_LIMIT}
+     ON CONFLICT (page_id) DO UPDATE SET
+       reconciled_revision = EXCLUDED.reconciled_revision, reconciled_at = EXCLUDED.reconciled_at,
+       outcome = EXCLUDED.outcome, attempted_revision = EXCLUDED.attempted_revision, attempted_at = EXCLUDED.attempted_at`);
+  await raw(settle.text, settle.params);
+  const due = renderFragment(sqlFragment`SELECT p.slug FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
+      WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND ${trustedSql(DUE)} AND ${trustedSql(RETRYABLE)}
+      ORDER BY r.attempted_at ASC NULLS FIRST, p.id ASC
+      LIMIT ${pageLimit}`);
+  const rows = await raw<{ slug: string }>(due.text, due.params);
+  return rows.map(r => r.slug);
 }
 
 export interface RelinkCandidateRow { id: number | string; fact: string; visibility: 'private' | 'world'; context: string | null; source: string | null; attributed_to: FactAttribution | null }
@@ -134,9 +194,10 @@ export type ExactFactRow = FactRow & { source_markdown_slug: string | null; row_
 /**
  * decideSingleFact: the first active fact (lowest id) with the same fingerprint, entity, visibility and speaker slot. With
  * `pageSlug` it is a fact on that page; without, one on no owned memory page (an empty `pageSlug` matches nothing).
- * `remoteFloor` adds the remote provenance floor (a remote caller's own reads).
+ * `remoteFloor` adds the remote provenance floor (a remote caller's own reads). `newest` answers the highest id instead
+ * (remember linking the unlinked copy of a claim).
  */
-export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean }): Promise<ExactFactRow | null> {
+export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean; newest?: boolean }): Promise<ExactFactRow | null> {
   const floor = trustedSql(opts.remoteFloor ? ` AND ${remoteProvenanceFloorSql('facts')}` : '');
   const page = opts.pageSlug ? sqlFragment`source_markdown_slug=${opts.pageSlug}`
     : sqlFragment`(${opts.pageSlug}::text IS NULL AND NOT ${trustedSql(onOwnedMemoryPageSql('facts'))})`;
@@ -145,7 +206,7 @@ export async function findActiveSingleFact(raw: EngineRawRead, opts: { sourceId:
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint(${opts.fact})
     AND (${opts.attributedTo}::text IS NULL OR attributed_to IS NULL OR attributed_to=${opts.attributedTo}::text)${floor}
     AND ${page}
-    ORDER BY id LIMIT 1`);
+    ORDER BY id${trustedSql(opts.newest ? ' DESC' : '')} LIMIT 1`);
   const [exact] = await raw<ExactFactRow>(text, params);
   return exact ?? null;
 }
@@ -194,7 +255,30 @@ export async function listWithdrawalSlugs(raw: EngineRawRead, sourceId: string, 
   return raw<{ slug: string }>(text, params);
 }
 
+/** One hop of the derivation walk (facts/derivation-inputs.ts derivedRowsFrom): the rows a `derivation_inputs` edge
+ * derives from a frontier row, distinct, in (table, id) order, at most `limit`. */
+export async function listDerivedRows(raw: EngineRawRead, frontier: ReadonlyArray<{ table: string; id: string }>, limit: number):
+  Promise<Array<{ derived_table: string; derived_id: string }>> {
+  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
+      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
+        ON d.input_table=f.input_table AND d.input_id=f.input_id
+      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
+}
+
 /** recordFactWithdrawal: expires every live fact of the claim under `subject` now, closing its valid time at now; the ids it expired. */
+/** A fact purge tombstone, the row purge_fact writes into `fact_purges`. */
+export interface FactPurgeInsert {
+  sourceId: string; visibility: string; subject: string; factHash: string;
+  requestId: string | null; actor: string | null; reason: string | null;
+}
+
+/** purge_fact: stores the tombstone; false when one already holds the same (source, visibility, subject, fingerprint). */
+export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert): Promise<boolean> {
+  const rows = await raw<{ inserted: number }>(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.visibility, row.subject, row.factHash, row.requestId, row.actor, row.reason]);
+  return rows.length > 0;
+}
+
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})

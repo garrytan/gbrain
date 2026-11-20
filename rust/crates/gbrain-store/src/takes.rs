@@ -1,8 +1,8 @@
 //! Takes and synthesis evidence: the `takes` and `synthesis_evidence` tables of the PGLite engine.
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
-//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, and the
-//! reads of `takes/reads.rs`.
+//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
+//! `takes/reads.rs`, and the reads and the delete of `takes/extract.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -16,8 +16,10 @@
 //! A take records the source of its page (`source_id`) and an evidence row the source of its
 //! synthesis page, so `remove_source_rows` can sweep a deleted source without its pages.
 //!
-//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; the
-//! embeddings family stores the rev with the vector and treats a vector with another rev as stale.
+//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; so does
+//! `addTakesBatch` here (`embeddings::remove_take_vector`, which also raises the vector generation the
+//! warm vector index is keyed by). The embeddings family stores the rev with the vector and treats a
+//! vector with another rev as stale, so a vector written for an older claim never counts.
 //! A claim edited A -> B -> A is then stale, as it is in Postgres (an md5 compare would miss it).
 
 use crate::env::iso;
@@ -34,8 +36,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod extract;
 mod reads;
 
+pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use reads::{McpResolvedInput, PurgeTakesInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
@@ -502,7 +506,6 @@ fn list_texts<'a>(name: &'a str, list: &'a Option<Vec<Option<String>>>) -> Vec<(
 // Record access.
 
 /// The take at `id`.
-#[allow(dead_code)]
 pub(crate) fn read_take(read: &dyn KvRead, id: u64) -> Result<Option<TakeRecord>> {
     get_json(read, &take_key(id))
 }
@@ -549,8 +552,9 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
 
 /// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),
 /// stamped with the open write's receipt as the PGLite attribution trigger stamps it
-/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. A write
-/// that changes no trust column (the embedding) uses it; a takes writer uses [`store_take`].
+/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. The
+/// trust columns are written as given: a write that changes no trust column (the embedding) uses
+/// it; a takes writer uses [`store_take`].
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let old = read_take(&*tx, take.id)?;
     let mut stamped = take.clone();
@@ -949,6 +953,9 @@ impl Store {
                     }
                     if existing.claim != claim {
                         existing.claim_rev += 1;
+                        // Postgres nulls the embedding in this upsert. Dropping the vector also raises the vector
+                        // generation, so a warm vector index rebuilds instead of ranking the old claim's vector.
+                        crate::embeddings::remove_take_vector(tx, existing.id)?;
                     }
                     existing.claim = claim;
                     existing.kind = kind;
@@ -1651,7 +1658,7 @@ impl Store {
             return Ok(());
         }
         self.write(|tx| {
-            for row_num in wanted {
+            for row_num in wanted.iter().copied() {
                 if let Some(take) = take_at(&*tx, page_id, row_num)? {
                     delete_take(tx, &take)?;
                 }

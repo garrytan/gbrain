@@ -15,33 +15,25 @@
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
  */
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
-import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { judgeWidenedCaller, ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /**
- * The store policy for page policy part `part` of the current caller, or a refusal. An anonymous caller (no reader
- * identity) on a brain whose config holds no member-access restriction renders the short member-access form
- * (restricted: false). That caller is judged under the restricted rendering instead, which the store implements: it
- * only adds conditions (no readable_by, no restricted origin), so it never shows a page the short form hides, and it
- * hides no more pages while no page carries readable_by, which the store's restriction flag (access.restrictions_present,
- * set on the first such write and never cleared) guarantees whenever the config says unrestricted.
+ * The store policy for page policy part `part` of the current caller, or a refusal. The caller is judged by
+ * judgeWidenedCaller (private-provenance.ts), which also judges a caller on a brain whose config holds no member-access
+ * restriction, anonymous or with a reader identity, under the restricted rendering the store implements.
  */
 function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
-  const access = currentCallerAccess();
-  if (!access.restricted && access.identity.length === 0) return withCallerAccess({ restricted: true }, () => restrictedCallerPolicy(member, part));
-  return restrictedCallerPolicy(member, part);
-}
-
-function restrictedCallerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
   if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
-  const text = callerAccessAllowedSql('p');
-  const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
-  if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
-  const access = currentCallerAccess();
-  const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
-  const canonical = withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p')));
-  if (text === canonical) return { ...off, ...readers };
+  const policy = judgeWidenedCaller<StorePrivacyPolicy>(readers => {
+    const text = callerAccessAllowedSql('p');
+    const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
+    if (text === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) return off;
+    const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p'));
+    return text === canonical ? { ...off, ...readers } : undefined;
+  });
+  if (policy) return policy;
   refuseMember(member, 'a caller whose member pages, grants or lineage widen the member-access policy');
 }
 

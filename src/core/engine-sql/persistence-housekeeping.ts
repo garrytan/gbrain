@@ -129,6 +129,36 @@ export function listTrueUpRequests<R = Record<string, unknown>>(exec: LegacyUnsc
   return exec.executeRaw<R>(TRUE_UP_REQUESTS_SQL, [[...ids]]);
 }
 
+/**
+ * `trueUpRequests`' compare-and-set (`EFFECT_BYTES_SQL`, the unsettled states and `TRUE_UP_CLAMP_SQL` written out): $1
+ * request ids, $2 the reservations read, $3 what each receipt keeps, $4 the effect bytes each was sized with. A request
+ * shrinks only while its reservation and effect bytes are unchanged and no effect is unsettled; the freed bytes leave the
+ * brain and principal counters, clamped at zero, and each clamped counter adds one to `persistence.true_up.clamped`.
+ */
+export const TRUE_UP_RESERVATIONS_SQL = `WITH t AS (SELECT * FROM unnest($1::uuid[],$2::bigint[],$3::bigint[],$4::bigint[]) AS t(id,old,kept,effects)),
+      done AS (UPDATE persistence_requests r SET terminal_reservation=t.kept FROM t
+        WHERE r.id=t.id AND r.terminal_reservation=t.old
+          AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running'))
+          AND COALESCE((SELECT SUM(octet_length(data::text)+octet_length(kind)+1024) FROM persistence_effects e WHERE e.request_id=r.id),0)=t.effects
+        RETURNING r.principal_kind,r.principal_id,t.old-t.kept AS freed),
+      d AS (SELECT k.key,SUM(done.freed) AS freed FROM done
+        CROSS JOIN LATERAL (VALUES ('brain'),('principal:'||done.principal_kind||':'||done.principal_id)) AS k(key) GROUP BY k.key),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST(d.freed,c.terminal_bytes) FROM d WHERE c.key=d.key),
+      clamped AS (INSERT INTO config(key,value) SELECT 'persistence.true_up.clamped',k.n::text FROM (SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes) AS k(n) WHERE k.n>0
+      ON CONFLICT (key) DO UPDATE SET value=(CASE WHEN config.value ~ '^[0-9]+$' THEN config.value::bigint ELSE 0 END+EXCLUDED.value::bigint)::text)
+      SELECT COALESCE(SUM(freed),0)::text AS freed FROM done`;
+
+/** One request `trueUpRequests` shrinks: the reservation it read, what the receipt keeps and the effect bytes it sized. */
+export interface TrueUpReservation { id: string; old: number; kept: number; effects: string }
+
+/** Shrinks each unchanged settled request to what its receipt keeps; returns the bytes given back. */
+export async function trueUpReservations(exec: SqlExecutor, rows: readonly TrueUpReservation[]): Promise<number> {
+  if (!rows.length) return 0;
+  const [freed] = await exec.executeRaw<{ freed: string }>(TRUE_UP_RESERVATIONS_SQL,
+    [rows.map(r => r.id), rows.map(r => r.old), rows.map(r => r.kept), rows.map(r => r.effects)]);
+  return Number(freed?.freed ?? 0);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The capacity forecast's reads (capacity-forecast.ts). The arithmetic stays in the forecast.
 
@@ -232,7 +262,7 @@ export const PROJECTION_RETRY_READY_TEXT = "(j.reason IS DISTINCT FROM 'rebuild_
   + ` AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`
   + " AND NOT (split_part(j.reason,':',1)='chunk_replacement_continuing' AND j.updated_at>=now()-interval '60 seconds')";
 /** A segmented row no other process holds (the filter when the retry cooldown is off). */
-const SEGMENTED_PROJECTION_UNCLAIMED_TEXT = `NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`;
+const SEGMENTED_PROJECTION_UNCLAIMED_TEXT = `NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
 
 /** Which segmented queue rows `rebuildPendingSegmentedProjections` takes. */
 export interface SegmentedProjectionFilter {
@@ -269,11 +299,28 @@ export interface ProjectionWindowRow {
  * budgets (100 recent, 400 window) inlined; the recency lane, then the key window from `cursor`.
  */
 export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
+  return sqlFragment`WITH ${residentWindowCtesFragment(cursor, retryCooldown)}
+    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
+    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
+      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
+    ORDER BY r.lane,r.ord`;
+}
+
+/** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
+export function projectionRetryReadyFragment(): SqlFragment {
+  return sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`;
+}
+
+/**
+ * `residentWindowCtes(cursor, params, filter)` (page-state/projection-window.ts) written out: the `mark`, `recent`,
+ * `fwd`, `wrap`, `win` and `high_water` CTEs, the filter `PROJECTION_RETRY_READY_TEXT` or TRUE.
+ */
+export function residentWindowCtesFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
   const filter = retryCooldown ? trustedSql(PROJECTION_RETRY_READY_TEXT) : trustedSql('TRUE');
   const cols = trustedSql('j.source_incarnation,j.slug,j.revision,j.updated_at,j.reason');
   const inc = cursor.after.source_incarnation;
   const slug = cursor.after.slug;
-  return sqlFragment`WITH mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
+  return sqlFragment`mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
       WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT 100),
     fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
@@ -283,14 +330,64 @@ export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'aft
     win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug COLLATE "C"))::int AS ord FROM (
       SELECT * FROM ((SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug COLLATE "C") UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug COLLATE "C")) u
       ORDER BY part,source_incarnation,slug COLLATE "C" LIMIT 400) w),
-    high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)
-    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
-    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
-      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
-    ORDER BY r.lane,r.ord`;
+    high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)`;
 }
 
 /** Runs `projectionWindowFragment`; on an empty queue it returns one row of nulls that carries the high water. */
 export async function selectProjectionWindowJobs(exec: LegacyUnscopedRead, cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]> {
   return (await exec.run<ProjectionWindowRow>(projectionWindowFragment(cursor, retryCooldown))).rows;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The segmented projector's queue writes (page-body/projection.ts).
+
+/** `claimSegmentedProjection`: $1 source id, $2 slug, $3 the claim. No row when the page has no queued job. */
+export const CLAIM_SEGMENTED_PROJECTION_SQL = `WITH claimed AS (UPDATE page_projection_jobs SET reason=$3, updated_at=clock_timestamp()
+      WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND NOT (split_part(reason,':',1)='segmented_projecting' AND updated_at>=now()-interval '60 seconds') RETURNING 1)
+    SELECT EXISTS (SELECT 1 FROM claimed) AS claimed WHERE EXISTS (SELECT 1 FROM claimed) OR EXISTS (SELECT 1 FROM page_projection_jobs WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2)`;
+
+/** `renewSegmentedProjectionClaim`: $1 source id, $2 slug, $3 the claim. */
+export const RENEW_SEGMENTED_PROJECTION_CLAIM_SQL = `UPDATE page_projection_jobs SET updated_at=clock_timestamp() WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND reason=$3 RETURNING 1`;
+
+/** `releaseSegmentedProjectionClaim`: $1 source id, $2 slug, $3 the claim. */
+export const RELEASE_SEGMENTED_PROJECTION_CLAIM_SQL = `UPDATE page_projection_jobs SET reason='canonical_change', updated_at=clock_timestamp() WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND reason=$3`;
+
+/** `deleteProjectionJob`: $1 source incarnation, $2 slug, $3 revision. */
+export const DELETE_PROJECTION_JOB_SQL = 'DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid';
+
+/** `markProjectionRebuildFailed`: $1 source incarnation, $2 slug, $3 revision. */
+export const MARK_PROJECTION_REBUILD_FAILED_SQL = `UPDATE page_projection_jobs j SET reason='rebuild_failed', updated_at=now()
+        WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
+
+/** A page by source and slug, as the projector names it. */
+export interface ProjectionPageRef { sourceId: string; slug: string }
+/** A queued job by its key and the revision it was queued at. */
+export interface ProjectionJobRef { sourceIncarnation: string; slug: string; revision: string }
+/** What a claim found: the job is now this build's, another live claim holds it, or the page has no queued job. */
+export type SegmentedProjectionClaimOutcome = 'claimed' | 'held' | 'absent';
+
+/** Claims the page's queued job for `claim` (`segmented_projecting:<uuid>`) unless another live claim holds it. */
+export async function claimSegmentedProjection(exec: SqlExecutor, ref: ProjectionPageRef, claim: string): Promise<SegmentedProjectionClaimOutcome> {
+  const [row] = await exec.executeRaw<{ claimed: boolean }>(CLAIM_SEGMENTED_PROJECTION_SQL, [ref.sourceId, ref.slug, claim]);
+  return !row ? 'absent' : row.claimed ? 'claimed' : 'held';
+}
+
+/** Moves the claim's time to now; false when the job no longer carries `claim`, changing nothing. */
+export async function renewSegmentedProjectionClaim(exec: SqlExecutor, ref: ProjectionPageRef, claim: string): Promise<boolean> {
+  return (await exec.executeRaw(RENEW_SEGMENTED_PROJECTION_CLAIM_SQL, [ref.sourceId, ref.slug, claim])).length > 0;
+}
+
+/** Puts a job that still carries `claim` back to `canonical_change`. */
+export async function releaseSegmentedProjectionClaim(exec: SqlExecutor, ref: ProjectionPageRef, claim: string): Promise<void> {
+  await exec.executeRaw(RELEASE_SEGMENTED_PROJECTION_CLAIM_SQL, [ref.sourceId, ref.slug, claim]);
+}
+
+/** Deletes the job when it is still queued at `job.revision`. */
+export async function deleteProjectionJob(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
+  await exec.executeRaw(DELETE_PROJECTION_JOB_SQL, [job.sourceIncarnation, job.slug, job.revision]);
+}
+
+/** Marks a job still queued at `job.revision` that no live claim holds `rebuild_failed`, starting its retry window. */
+export async function markProjectionRebuildFailed(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
+  await exec.executeRaw(MARK_PROJECTION_REBUILD_FAILED_SQL, [job.sourceIncarnation, job.slug, job.revision]);
 }

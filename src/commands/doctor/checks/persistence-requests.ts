@@ -303,7 +303,7 @@ function rankTerminalFailures(sources: TerminalSourceSummary[], remote: boolean,
     lines.push(`Blocking now (${blocking.length}): ${shown.join('; ')}${blocking.length > 5 ? `; +${blocking.length - 5} more in details.ranked.blocking` : ''}.`);
   }
   if (unresolved.rows) {
-    const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? ' (gbrain defect)' : g.needs_human ? ' (needs a person)' : ''}`);
+    const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? (g.category === 'needs_engine_upgrade' ? ' (needs an engine upgrade)' : ' (gbrain defect)') : g.needs_human ? ' (needs a person)' : ''}`);
     lines.push(`Unresolved, not blocking: ${unresolved.rows} row(s) on ${unresolved.pages} page(s) in ${groups.length} group(s): ${shown.join('; ')}${groups.length > 3 ? `; +${groups.length - 3} more group(s)` : ''}. `
       + `Group them: ${unresolved.group_by.slice(0, 2).map(argv => argv.join(' ')).join('; ')} (each group carries its fix and drill-down).`);
   }
@@ -367,7 +367,7 @@ export async function terminalFailuresCheck(engine: BrainEngine | null, sourceId
     if (defects.length) {
       const first = defects[0]!;
       return { name, status: 'warn', details, fix: remote ? hostFix : { ...first.action, verify: doctorVerify(name) },
-        message: `${defects.reduce((n, d) => n + d.rows, 0)} unresolved write receipt(s) in the last ${summary.window_days} d are a gbrain-defect class (${defects.slice(0, 3)
+        message: `${defects.reduce((n, d) => n + d.rows, 0)} unresolved write receipt(s) in the last ${summary.window_days} d ${defects.every(d => d.category === 'needs_engine_upgrade') ? 'need an engine upgrade' : 'are a gbrain-defect class'} (${defects.slice(0, 3)
           .map(d => `${d.category}/${d.code} ×${d.rows} on ${d.source_id}`).join('; ')}). ${counts} ${first.human_reason ?? (remote ? hostFix.why : first.action.why)}` };
     }
     const drill = (sourceId: string) => ['gbrain', 'sources', 'writer', 'failures', sourceId, '--group-by', 'category', '--json'];

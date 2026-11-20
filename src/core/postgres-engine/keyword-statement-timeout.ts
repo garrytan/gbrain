@@ -62,17 +62,20 @@ export const KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL = `SELECT value FROM config WH
  * The `statement_timeout` setting value (`<ms>ms`) for one engine connection:
  * the file plane's value when set, else the DB plane's (from the request's
  * config snapshot when one is open, #7147). A config table that cannot be read
- * yet (a fresh brain before its schema) yields the default.
+ * yet (a fresh brain before its schema) yields the default. `boundedRead`, when
+ * given (a read under a preparation deadline), sends the DB-plane read instead and
+ * its failure is the caller's: it never turns into the default.
  */
 export async function loadKeywordStatementTimeout(
   reader: { executeRaw<T>(sql: string): Promise<T[]> } & BulkConfigReader,
   fileValue: unknown,
+  boundedRead?: (sql: string) => Promise<Array<{ value: string }>>,
 ): Promise<string> {
   const fileMs = keywordStatementTimeoutMs(fileValue);
   if (fileMs !== undefined) return `${fileMs}ms`;
   const snapshotValue = await requestConfigValue(reader, KEYWORD_STATEMENT_TIMEOUT_KEY);
   const dbValue = snapshotValue !== undefined
     ? snapshotValue
-    : (await reader.executeRaw<{ value: string }>(KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL).catch(() => []))[0]?.value;
+    : (await (boundedRead ? boundedRead(KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL) : reader.executeRaw<{ value: string }>(KEYWORD_STATEMENT_TIMEOUT_CONFIG_SQL).catch(() => [])))[0]?.value;
   return `${resolveKeywordStatementTimeoutMs(undefined, dbValue)}ms`;
 }

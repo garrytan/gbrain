@@ -12,10 +12,12 @@
 //! regular expression.
 //!
 //! The two loop reads, `closedLoopWithActiveFact` and `loopFactDrift`, are served from
-//! `facts/loops.rs`. The other three members of the file refuse with `engine_capability_missing`:
-//! `listExtractorFactsForClassification` joins the persistence journal, and the other two read a
-//! table the store does not hold (`page_purges`, `derived_generations` and
-//! `derived_generation_items`). rust/docs/store/facts.md names each one.
+//! `facts/loops.rs`. `countPurgedPageFacts` (doctor's gone-page check) also reads the store's
+//! `page_purges` ledger (`facts/page_purges.rs`), which no member writes on Rust, and
+//! `listUnwithdrawnFacts` is served from the derived generation ledger in `facts/generations.rs`.
+//! The last member of the file refuses with `engine_capability_missing`:
+//! `listExtractorFactsForClassification` joins the persistence journal. rust/docs/store/facts.md
+//! names each one.
 //!
 //! Shared reading rules. A source's rows come back in id order ([`source_rows`]); the sources are
 //! visited in byte order of their id, which is `ORDER BY f.source_id, f.id` under the C collation
@@ -24,6 +26,7 @@
 //! plain `Option` equality.
 
 use super::loops::loop_fact_ids;
+use super::page_purges::source_purges;
 use super::{FactRecord, fact_fingerprint, ids_under, refs_prefix, source_rows};
 use crate::Store;
 use crate::error::Result;
@@ -83,6 +86,23 @@ pub struct LabelCountArgs {
     /// `o.source IN ($6, $7)`: the audit sources that mark a page as decided.
     pub terminal_source: String,
     pub non_extractable_source: String,
+}
+
+/// `countPurgedPageFacts(sourceIds, cap)`: `limit` is the SQL's `LIMIT cap + 1`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PurgedCountArgs {
+    pub source_ids: Vec<String>,
+    pub limit: u64,
+}
+
+/// `PAGE_EXTRACTION_SOURCE_LIST` (facts/gone-page-facts.ts): the sources whose context names the page.
+const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+    ["mcp:put_page", "sync:import", "file_upload", "code_import"];
+
+/// `contextHeadSql`: `split_part(context, ' — ', 1)`, the text before the first separator.
+fn context_head(context: &str) -> &str {
+    context.split(" \u{2014} ").next().unwrap_or("")
 }
 
 /// The literal prefix of `f.source LIKE 'cli:extract-conversation-facts%'`.
@@ -491,6 +511,77 @@ impl Store {
         }
         Ok(n)
     }
+
+    /// `countPurgedPageFacts` (engine-sql/facts-repair.ts): for each gone-page fact, at most `limit`, whether a
+    /// purge record names its page. A gone-page fact is active, filed on no page, from a page-extraction source,
+    /// with a context head that is not empty, holds no `[[:space:]]` ([`posix_space`]) and names no page row
+    /// (live or soft-deleted) of its source. It counts when its head holds a `/` or a tombstone of its source
+    /// names the head at or after the fact's `created_at`, and no withdrawal, successor, referrer or loop holds it.
+    /// Sources go in byte order, facts in id order (the SQL has no ORDER BY; the member only caps the list).
+    pub fn count_purged_page_facts(&self, a: &PurgedCountArgs) -> Result<Vec<bool>> {
+        let op = "countPurgedPageFacts";
+        for source in &a.source_ids {
+            no_nul(op, &[("sourceIds", source)])?;
+        }
+        let mut out = Vec::new();
+        if a.limit == 0 {
+            return Ok(out);
+        }
+        let read = self.read()?;
+        let held = loop_fact_ids(&*read, op)?;
+        let sources: BTreeSet<&str> = a.source_ids.iter().map(String::as_str).collect();
+        for source in sources {
+            let purges = source_purges(&*read, source, op)?;
+            let mut page_row: HashMap<String, bool> = HashMap::new();
+            for f in source_rows(&*read, source)? {
+                if f.expired_at_us.is_some()
+                    || f.source_markdown_slug.is_some()
+                    || !PAGE_EXTRACTION_SOURCES.contains(&f.source.as_str())
+                {
+                    continue;
+                }
+                let Some(head) = f.context.as_deref().map(context_head) else {
+                    continue;
+                };
+                if head.is_empty() || head.chars().any(posix_space) {
+                    continue;
+                }
+                let has_row = match page_row.get(head) {
+                    Some(known) => *known,
+                    None => {
+                        let found = read_page(&*read, source, head)?.is_some();
+                        page_row.insert(head.to_string(), found);
+                        found
+                    }
+                };
+                if has_row {
+                    continue;
+                }
+                let purged = purges
+                    .iter()
+                    .any(|(slug, at)| slug == head && *at >= f.created_at_us);
+                if !(head.contains('/') || purged)
+                    || f.superseded_by.is_some()
+                    || held.contains(&f.id)
+                    || !ids_under(&*read, &refs_prefix(f.id))?.is_empty()
+                    || withdrawn_claim(
+                        &*read,
+                        source,
+                        &f.visibility,
+                        &f.fact,
+                        f.entity_slug.as_deref(),
+                    )?
+                {
+                    continue;
+                }
+                out.push(purged);
+                if out.len() as u64 >= a.limit {
+                    return Ok(out);
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// The sources whose facts name their page in `context` (`factProvenanceSlugSql`).
@@ -506,7 +597,7 @@ const PAGE_SOURCES: [&str; 6] = [
 /// `factProvenanceSlugSql('f')`: the page a fact was extracted from. A `put_page:` or `sync:`
 /// session names it (an empty remainder is still a name, not a fall-through); otherwise a page
 /// source names it as the first space-separated word of `context`. One trailing `.md` goes.
-pub(super) fn provenance_slug(row: &FactRecord) -> Option<String> {
+pub(crate) fn provenance_slug(row: &FactRecord) -> Option<String> {
     let named = row
         .source_session
         .as_deref()
@@ -582,7 +673,7 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 /// `derivationPrivateSql('h')`: the snapshot filter fails, a privacy alias is set (whether or not
 /// aliases are honoured), the page names readers (`readable_by`), or a folder rule covers it (never
 /// here: the store holds no folder rules).
-pub(super) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
+pub(crate) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
     !snapshot_allows(page, honor_aliases)
         || alias_private(&page.frontmatter)
         || page.frontmatter.contains_key("readable_by")
@@ -591,6 +682,51 @@ pub(super) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_context_head_is_the_text_before_the_first_separator() {
+        assert_eq!(context_head("notes/a \u{2014} b \u{2014} c"), "notes/a");
+        assert_eq!(context_head("notes/a"), "notes/a");
+        assert_eq!(context_head("notes/a \u{2014}b"), "notes/a \u{2014}b");
+        assert_eq!(context_head(""), "");
+    }
+
+    #[test]
+    fn a_purge_record_of_the_head_written_at_or_after_the_fact_is_the_evidence() {
+        use crate::facts::InsertFactsArgs;
+        use crate::facts::page_purges::put_purge;
+        let store = crate::test_support::store();
+        let rows: Vec<Value> = ["early", "purged", "notes/gone", "elsewhere"]
+            .iter()
+            .map(|c| {
+                json!({ "fact": format!("claim {c}"), "visibility": "private", "source": "mcp:put_page",
+                    "valid_from": "2026-01-01T00:00:00.000Z", "context": format!("{c} \u{2014} x") })
+            })
+            .collect();
+        let insert: InsertFactsArgs =
+            serde_json::from_value(json!({ "rows": rows, "sourceId": "default" })).unwrap();
+        store.insert_facts(&insert).unwrap();
+        store
+            .write(|tx| {
+                put_purge(tx, "default", "h1", "early", 0)?;
+                put_purge(tx, "default", "h2", "purged", i64::MAX)?;
+                put_purge(tx, "default", "h3", "elsewhere-not", i64::MAX)
+            })
+            .unwrap();
+        let count = |limit| {
+            store
+                .count_purged_page_facts(&PurgedCountArgs {
+                    source_ids: vec!["default".into()],
+                    limit,
+                })
+                .unwrap()
+        };
+        // `early` was purged before its fact and `elsewhere` has no record: neither has a `/`, so only
+        // `purged` (evidenced) and `notes/gone` (ambiguous) count, in id order.
+        assert_eq!(count(10), vec![true, false]);
+        assert_eq!(count(1), vec![true]);
+        assert!(count(0).is_empty());
+    }
 
     fn labels(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

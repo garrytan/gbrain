@@ -15,7 +15,7 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   `test/large-pages/segmented-core-list.test.ts`), `renderCoreBlock` (whole-page truncation, notice lines,
   withheld lines), `coreRevision`, the delivery sensitivity policy
   (`applyCoreSensitivity`: credential-like hits withhold, contact details and
-  private paths redact) and `loadCoreBlock`, which every delivery lane uses.
+  private paths redact) and `loadCoreBlock`, which every delivery lane uses. `listCorePages` and `pendingCoreNotices` sort by source and slug in byte order (`COLLATE "C"`, `test/collate-core-memory.test.ts`).
 - `src/core/persistence/core-guard.ts`: the write-path guard run from
   `preparePageMutation`: owner-only marking (`core_mark_owner_only`,
   `core_delete_owner_only`), the budget (`core_budget_exceeded`, re-checked in

@@ -23,6 +23,12 @@
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
+//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`), read only.
+//! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
+//! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
+//!   (`facts/generations.rs`), read only.
+//! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
+//!   (`facts/purge_ledger.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -36,29 +42,48 @@
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
 mod collapse;
+pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+pub mod extractor_classify;
 mod fence;
+mod fence_overlay;
+pub mod generations;
 mod held_cells;
 pub mod loops;
+mod page_purges;
 mod privacy;
 pub mod purge;
+pub mod purge_ledger;
+pub mod quote;
+pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
 pub mod saved_match;
 pub mod trust;
+pub mod trust_owner;
 pub mod trust_reads;
+mod widen;
+pub mod withdrawal_discovery;
+pub mod withdrawal_fence;
+pub mod withdrawal_pages;
 
 pub use crate::owner_only::OwnerOnlyForm;
+pub(crate) use crate::owner_only::OwnerOnlySources;
+pub(crate) use fence::jsonb_time;
 pub use fence::{FenceContext, FenceTarget};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    caller_version_hidden, page_hidden, reason_successor_allows, version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
+    hidden_by_provenance_page, page_hidden, page_hidden_with, version_hidden,
 };
+pub use widen::VisibilityWidening;
+use widen::{visibility_admits, world_admits};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -167,6 +192,7 @@ pub(crate) struct FactRecord {
     /// written before the store kept the column, reads as `unknown` ([`TrustTier::stored`]).
     pub trust_tier: String,
     /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub write_origin: Option<Value>,
     /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
     /// while every column is null. [`write_fact`] stamps it.
@@ -297,7 +323,7 @@ impl FactRecord {
     }
 
     /// `onOwnedMemoryPageSql`: the row sits on a member page or the scope page.
-    fn on_owned_memory_page(&self) -> bool {
+    pub(crate) fn on_owned_memory_page(&self) -> bool {
         let slug = self.source_markdown_slug.as_deref().unwrap_or("");
         slug.starts_with(MEMBER_PAGE_PREFIX) || slug == SCOPE_PAGE_SLUG
     }
@@ -344,7 +370,10 @@ impl FactRecord {
             out.insert("attributed_to".into(), json!(who));
         }
         out.insert("trust_tier".into(), json!(self.tier().as_str()));
-        out.insert("write_origin".into(), json!(self.write_origin));
+        out.insert(
+            "write_origin".into(),
+            json!(self.write_origin.clone().map(crate::jsonb::order)),
+        );
         if let Some(m) = self.claim_metric.as_deref().filter(|s| !s.is_empty()) {
             out.insert("claim_metric".into(), json!(m));
         }
@@ -595,7 +624,10 @@ pub(crate) fn write_fact(
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
-    let new = &stamp_fact(trust, old, new)?;
+    let mut stamped = stamp_fact(trust, old, new)?;
+    preserve_withdrawal(tx, old, &mut stamped)?;
+    let new = &stamped;
+    purge_ledger::refuse_purged(tx, old, new)?;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;
@@ -615,6 +647,34 @@ pub(crate) fn write_fact(
         tx.put(key, if unique.is_some() { &id } else { &[] })?;
     }
     put_json(tx, &fact_key(new.id), new)
+}
+
+/// `gbrain_preserve_fact_withdrawal`, the `BEFORE INSERT OR UPDATE OF fact, source_id, visibility,
+/// entity_slug, expired_at` trigger: a row that is not expired and matches a withdrawal of its
+/// claim is saved expired at the earliest such withdrawal, and its `valid_until` is no later than
+/// it ([`purge::earliest_withdrawal`]). An update that changes none of those columns does not fire it.
+fn preserve_withdrawal(
+    read: &dyn KvRead,
+    old: Option<&FactRecord>,
+    new: &mut FactRecord,
+) -> Result<()> {
+    if new.expired_at_us.is_some() {
+        return Ok(());
+    }
+    if old.is_some_and(|o| {
+        o.fact == new.fact
+            && o.source_id == new.source_id
+            && o.visibility == new.visibility
+            && o.entity_slug == new.entity_slug
+            && o.expired_at_us == new.expired_at_us
+    }) {
+        return Ok(());
+    }
+    if let Some(withdrawn) = purge::earliest_withdrawal(read, new)? {
+        new.expired_at_us = Some(withdrawn);
+        new.valid_until_us = Some(new.valid_until_us.map_or(withdrawn, |v| v.min(withdrawn)));
+    }
+    Ok(())
 }
 
 /// Deletes a row and its index entries, then clears `superseded_by` on the rows that named it
@@ -724,7 +784,8 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 }
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
-/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does. A row of
+/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -735,7 +796,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    Ok(())
+    purge_ledger::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1018,7 +1079,9 @@ pub struct KeysetAfter {
 }
 
 /// The filters of the four list reads. The TypeScript member clamps `limit`, builds the `grep`
-/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing).
+/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing) with the
+/// caller's `widen` record when member pages or a private-facts grant widen it, and the
+/// read eligibility as `eligible`, `min_trust` and `suppress_flagged` (as `SupersessionQuery`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactQuery {
@@ -1030,6 +1093,8 @@ pub struct FactQuery {
     pub unconsolidated_only: bool,
     pub kinds: Option<Vec<String>>,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub exclude_audit_rows: bool,
     pub grep: Option<String>,
     pub fingerprint: bool,
@@ -1040,8 +1105,10 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
-    /// The caller passed a read eligibility (`eligibilityClause`): `projectionEligibleSql('facts')`
-    /// replaces the deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
+    /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
+    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
+    /// so that clause hides nothing.
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1056,6 +1123,8 @@ pub struct SupersessionQuery {
     pub since: Option<String>,
     pub limit: f64,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
@@ -1109,6 +1178,9 @@ pub struct TrajectoryQuery {
     pub source_ids: Vec<String>,
     pub entity_slug: String,
     pub world_only: bool,
+    /// With `worldOnly`, the private rows the caller's member page or private-facts grant also admits
+    /// (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub metric: Option<String>,
     pub kind: Option<String>,
     pub since: Option<String>,
@@ -1346,7 +1418,13 @@ impl FactQuery {
         }
     }
 
-    fn admits(&self, read: &dyn KvRead, row: &FactRecord, now: i64) -> Result<bool> {
+    fn admits(
+        &self,
+        read: &dyn KvRead,
+        row: &FactRecord,
+        now: i64,
+        trust: &TrustPolicy,
+    ) -> Result<bool> {
         let eq = |want: &Option<String>, have: &Option<String>| want.is_none() || want == have;
         if !(eq(&self.entity_slug, &row.entity_slug)
             && eq(&self.source_markdown_slug, &row.source_markdown_slug)
@@ -1357,7 +1435,7 @@ impl FactQuery {
         if (self.active_only && !row.active(now))
             || (self.unconsolidated_only && row.consolidated_at_us.is_some())
             || !listed(&self.kinds, &row.kind)
-            || !listed(&self.visibility, &row.visibility)
+            || !visibility_admits(read, &self.visibility, &self.widen, row)?
             || (self.exclude_audit_rows && row.audit_row())
         {
             return Ok(false);
@@ -1368,8 +1446,9 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
+            && !hidden_by_policy(read, row, &self.exclude_private)?
             && !(self.eligible && hidden_by_quarantine(read, row)?)
-            && !hidden_by_policy(read, row, &self.exclude_private)?)
+            && trust.admits(read, "facts", row.id, row.tier())?)
     }
 
     fn check(&self, op: &str) -> Result<()> {
@@ -1403,6 +1482,16 @@ fn page_of(
     rows.into_iter().skip(offset).take(limit).collect()
 }
 
+/// A fact's newest-first ranking time: its `valid_from`, or its `created_at` when it is dated
+/// after `now` (`CASE WHEN valid_from > now() THEN created_at ELSE valid_from END`).
+pub(crate) fn ranked_time(r: &FactRecord, now: i64) -> i64 {
+    if r.valid_from_us > now {
+        r.created_at_us
+    } else {
+        r.valid_from_us
+    }
+}
+
 impl Store {
     #[allow(clippy::too_many_arguments)]
     fn list_facts(
@@ -1422,11 +1511,7 @@ impl Store {
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id
-                && extra(&row)
-                && q.admits(&*read, &row, now)?
-                && trust.admits(&*read, "facts", row.id, row.tier())?
-            {
+            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now, &trust)? {
                 rows.push(row);
             }
         }
@@ -1560,11 +1645,21 @@ impl Store {
         self.write(|tx| delete_for_page(tx, trust, "deleteFactsForPage", args))
     }
 
-    /// `listFactsByEntity`: `valid_from DESC, id DESC`.
+    /// `listFactsByEntity`: newest first by `valid_from`, except that a fact dated in the future
+    /// ranks by its `created_at` (as of when it was written), then `id DESC`.
     pub fn list_facts_by_entity(&self, q: &FactQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsByEntity";
         let offset = count_arg(OP, "offset", q.offset)?;
-        self.list_facts(OP, q, |r| r.valid_from_us, true, offset, |_| true, false)
+        let now = self.env.now_micros();
+        self.list_facts(
+            OP,
+            q,
+            move |r| ranked_time(r, now),
+            true,
+            offset,
+            |_| true,
+            false,
+        )
     }
 
     /// `listFactsSince`: rows at or after `since` on `created_at` (or `valid_from` with
@@ -1625,7 +1720,7 @@ impl Store {
             let ended = row.expired_at_us.or(row.valid_until_us);
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
-                || !listed(&q.visibility, &row.visibility)
+                || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || (q.eligible && hidden_by_quarantine(&*read, &row)?)
@@ -1814,7 +1909,7 @@ impl Store {
             }
             for row in entity_rows(&*read, source, &q.entity_slug)? {
                 if row.expired_at_us.is_some()
-                    || (q.world_only && row.visibility != "world")
+                    || (q.world_only && !world_admits(&*read, &q.widen, &row)?)
                     || q.metric
                         .as_ref()
                         .is_some_and(|m| row.claim_metric.as_ref() != Some(m))
@@ -2090,9 +2185,8 @@ fn drop_rekey_duplicates(
 /// row_num a row at `old` holds (they belong to a purged page), drop the ontology rows the fence
 /// move would duplicate, then move `source_markdown_slug` (statements 1 to 6 of "Rename slug
 /// rows" in docs/designs/RUST_ENGINE_INTERFACES.md). Statement 1 moves the `fact_withdrawals`
-/// rows by `subject`; only `executeRaw` writes that ledger (src/core/facts/withdrawal.ts), and the
-/// Rust engine refuses `executeRaw`, so the store holds no withdrawal records and statement 1
-/// moves nothing. Called by `cascade::rename_slug_rows`.
+/// rows by `subject` (`trust::withdrawals::move_subject_in`), so a withdrawn claim stays withdrawn
+/// under the new slug. Called by `cascade::rename_slug_rows`.
 pub(crate) fn rename_slug_rows(
     tx: &mut dyn KvWrite,
     trust: &WriteTrust,
@@ -2103,6 +2197,7 @@ pub(crate) fn rename_slug_rows(
     if old == new {
         return Ok(());
     }
+    crate::trust::withdrawals::move_subject_in(tx, source_id, old, new)?;
     let about = entity_rows(tx, source_id, old)?;
     let moving = about
         .iter()

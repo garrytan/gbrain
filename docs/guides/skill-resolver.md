@@ -219,15 +219,29 @@ list at all (cut at load, see `skill_resolver_host_load_cut`) goes into that
 agent's `exclude_ids` and is never suggested, and setup names it. If the
 command fails, or lists none of the catalog's skills (usually a different
 workspace), nothing is filtered and setup says so. Run setup again after you
-change which skills an agent can use.
+change which skills an agent can use; `gbrain doctor --only skill_resolver`
+asks OpenClaw again (read-only) and warns when the plugin still suggests a
+skill OpenClaw now hides or no longer lists; its fix,
+`gbrain setup openclaw --skills-index-only`, re-reads that list and rewrites
+only the plugin state. A
+`--skill-loading` re-run that changes nothing runs no install command for
+either plugin when OpenClaw's config already loads, enables and allows it and
+its plugin policy (`plugins.enabled`, `allow`, `deny`) lets it load.
 
 The plugin never adds to or edits OpenClaw's own skill list. On each real user
 turn (`before_prompt_build`; inter-session and other internal turns are
-skipped) it puts up to 3 suggestions with at least a description match in
-`appendContext`, and the pinned block in `appendSystemContext`. Ranking runs
+skipped) it ranks the message the user just sent (OpenClaw's `event.prompt`;
+`event.messages` holds only earlier turns) and puts up to 3 suggestions with at
+least a description match in `appendContext`, and the pinned block in
+`appendSystemContext`. A turn whose run OpenClaw already ended (its
+`assertActive` check throws) commits nothing toward the session. Ranking runs
 in a worker thread with a 50 ms deadline: a miss injects nothing, commits
 nothing and is logged as `timeout`; three misses in a row restart the worker.
-A retried turn (same message id) gets the same block and commits once. It
+A retried attempt of the same run (same `runId`, or the same message id when
+OpenClaw sends one) resolves nothing new and commits nothing again: it gets
+the first attempt's block back when it resends the user's text, and nothing
+when it sends other text or its transcript already holds that block, so the
+model sees the block once. It is logged as `retry`. It
 loads the library only from `~/.gbrain/lib`, owned by the gateway's user, not
 writable by others and matching the recorded sha256.
 
@@ -780,7 +794,17 @@ run. Run `gbrain setup openclaw --skill-loading resolve --agent <id>`.
 ### skill_resolver_host_load_cut
 
 OpenClaw does not list some of the skills in the agent's skill directories (it
-caps each root with `skills.limits.maxCandidatesPerRoot`), so `skills_read`
-could not open them. Setup leaves those skills out of the agent's suggestions
-and names them. To get them back, raise that limit or split the root, then run
-setup again.
+caps each root with `skills.limits.maxCandidatesPerRoot` and each source with
+`skills.limits.maxSkillsLoadedPerSource`), so `skills_read` could not open
+them. Setup leaves those skills out of the agent's suggestions and names them;
+doctor warns when the plugin still suggests one (the limits changed since
+setup ran). To get them back, raise those limits in `openclaw.json` or split
+the root, then run setup again. gbrain never edits these limits itself.
+
+### skill_resolver_host_hidden
+
+Doctor found skills the plugin still suggests that OpenClaw now hides from the
+agent's model (not eligible on this host, outside the agent's skill filter, or
+model invocation off). Run `gbrain setup openclaw --skills-index-only` (doctor
+prints it): it re-reads OpenClaw's list and stops suggesting them, installing
+nothing.

@@ -614,6 +614,35 @@ describe('engine parity: takes', () => {
       return answers;
     },
   );
+
+  parityTest(
+    'a claim edited through the batch upsert drops out of a vector search that ran before the edit',
+    { methods: ['putPage', 'addTakesBatch', 'listTakes', 'updateTakeEmbeddings', 'searchTakesVector'] },
+    async (engine) => {
+      const a = await page(engine, 'people/alice-example');
+      await engine.addTakesBatch([
+        take(a.id, 1, 'axis zero take', { holder: 'garry', weight: 0.5 }),
+        take(a.id, 2, 'axis one take', { holder: 'alice', weight: 0.5 }),
+      ]);
+      const ids = await takeIds(engine, a.id);
+      expect(await engine.updateTakeEmbeddings([
+        { take_id: ids.get('axis zero take')!, embedding: basisEmbedding(0), claim: 'axis zero take', model: 'embed-m1' },
+        { take_id: ids.get('axis one take')!, embedding: basisEmbedding(1), claim: 'axis one take', model: 'embed-m1' },
+      ])).toBe(2);
+      const query = new Float32Array(1536);
+      query[0] = 1;
+      query[1] = 0.1;
+      const claims = async () => (await engine.searchTakesVector(query)).map((h) => h.claim);
+      // The first search warms whatever the engine keeps between reads.
+      const before = await claims();
+      // The claim changes; Postgres nulls the take's embedding in the same upsert, so the take has no vector to rank.
+      await engine.addTakesBatch([take(a.id, 1, 'axis zero take, reworded', { holder: 'garry', weight: 0.5 })]);
+      const after = await claims();
+      expect(before).toEqual(['axis zero take', 'axis one take']);
+      expect(after).toEqual(['axis one take']);
+      return { before, after };
+    },
+  );
 });
 
 describe('engine parity: contradiction probe runs and judge cache', () => {
@@ -788,6 +817,21 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
+    'listHeldFenceTakeRows returns nothing for a page whose take fence generation is not held, takes or not',
+    { methods: ['putPage', 'addTakesBatch', 'listHeldFenceTakeRows'] },
+    async (engine) => {
+      const a = await page(engine, 'notes/held-a');
+      await engine.addTakesBatch([take(a.id, 1, 'first'), take(a.id, 2, 'second', { active: false })]);
+      const spec = { sourceId: 'default', kind: 'take_fence', ownerKey: 'page:notes/held-a' };
+      const withTakes = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      const unknown = await engine.listHeldFenceTakeRows({ ...spec, pageId: 999_999 });
+      expect(withTakes).toEqual([]);
+      expect(unknown).toEqual([]);
+      return { withTakes, unknown };
+    },
+  );
+
+  parityTest(
     'planFactPurgeTakes plans the takes a purged fact consolidated into and the takes echoing its claim, within one source',
     { methods: ['putPage', 'addTakesBatch', 'insertFact', 'loadPurgeTarget', 'consolidateFact', 'planFactPurgeTakes'] },
     async (engine, backend) => {
@@ -929,15 +973,21 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
-    'countMcpResolvedTakes under excludePrivate for a caller with a reader identity: SQL arms apply the caller policy, the Rust store refuses',
+    'countMcpResolvedTakes under excludePrivate applies the caller policy: a reader identity reads its readers page, a private-readable grant its source',
     { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
     async (engine, backend) => {
       await mcpPrivacyFixture(engine, backend);
-      const asReader = await withCallerAccess({ identity: ['alice-example'], hidePrivate: true },
-        () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true }));
-      const open = await engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: false });
-      expect(asReader).toBeLessThan(open);
-      return { asReader, open };
+      const hidden = () => engine.countMcpResolvedTakes({ sourceIds: null, holders: null, excludePrivate: true });
+      const out = {
+        plain: await hidden(),
+        reader: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, hidden),
+        stranger: await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, hidden),
+        granted: await withCallerAccess({ privateReadableSources: ['mcp-priv-other'], hidePrivate: true }, hidden),
+        readerGranted: await withCallerAccess({ identity: ['member:alice-example'], privateReadableSources: ['mcp-priv-other'], hidePrivate: true }, hidden),
+      };
+      // plain sees open and other-open; the reader adds the readers page, the grant adds other-private.
+      expect(out).toEqual({ plain: 3, reader: 4, stranger: 3, granted: 4, readerGranted: 5 });
+      return out;
     },
   );
 

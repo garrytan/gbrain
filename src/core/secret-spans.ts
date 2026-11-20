@@ -106,14 +106,14 @@ const wellFormed = (text: string, spans: readonly SecretSpan[]) =>
  * Plans every field of one page, in the given order, against one shared echo dictionary restricted to the selected
  * rules. Returns one result per field, changed or not.
  */
-export function redactFields(fields: ReadonlyArray<{ key: string; text: string }>, rules: SecretRuleSet): FieldRedaction[] {
+export function redactFields(fields: ReadonlyArray<{ key: string; text: string }>, rules: SecretRuleSet, allowed: (value: string) => boolean = () => false): FieldRedaction[] {
   const shared: EchoDictionary = new Map();
   const plans = fields.map(field => planRedaction(field.text, { ...rules.scan, echoValues: shared }));
   const selected = new Set(rules.rules);
-  const echo: EchoDictionary = new Map([...shared].filter(([value, rule]) => selected.has(rule) && !MARKER_ONLY.test(value)));
+  const echo: EchoDictionary = new Map([...shared].filter(([value, rule]) => selected.has(rule) && !MARKER_ONLY.test(value) && !allowed(value)));
   return fields.map((field, i) => {
     const plan = plans[i]!;
-    const claimed = plan.claimed.filter(c => selected.has(c.pattern) && !MARKER_ONLY.test(field.text.slice(c.abs, c.end)));
+    const claimed = plan.claimed.filter(c => selected.has(c.pattern) && !MARKER_ONLY.test(field.text.slice(c.abs, c.end)) && !allowed(field.text.slice(c.abs, c.end)));
     const spans = spansOf(field.text, claimed, echo);
     const next = spans.length ? splice(field.text, spans) : field.text;
     const proven = wellFormed(field.text, spans) && applyRedaction({ ...plan, claimed, echoValues: echo }) === next;
@@ -123,11 +123,11 @@ export function redactFields(fields: ReadonlyArray<{ key: string; text: string }
 }
 
 /** Matches of the selected rules a fresh scan still finds in `text`, by rule (marker-only claims excluded). */
-export function residualMatches(text: string, rules: SecretRuleSet): Record<string, number> {
+export function residualMatches(text: string, rules: SecretRuleSet, allowed: (value: string) => boolean = () => false): Record<string, number> {
   const selected = new Set(rules.rules);
   const out: Record<string, number> = {};
   for (const c of planRedaction(text, rules.scan).claimed) {
-    if (!selected.has(c.pattern) || MARKER_ONLY.test(text.slice(c.abs, c.end))) continue;
+    if (!selected.has(c.pattern) || MARKER_ONLY.test(text.slice(c.abs, c.end)) || allowed(text.slice(c.abs, c.end))) continue;
     out[c.pattern] = (out[c.pattern] ?? 0) + 1;
   }
   return out;

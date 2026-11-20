@@ -17,7 +17,9 @@ import { viewedEngine } from './switches.ts';
 import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only.ts';
 
 /** An engine that also reads a stored writer's slug fence (storedOwnerSpeaksForItself and the checks that call it). */
-export type FenceEngine = SqlEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
+/** An engine that resolves a writer's live member identity (access/caller.ts memberIdentityFor). */
+export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember'>;
+export type FenceEngine = MemberEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
 
 /** An engine that also runs the opening probe of a page write's visibility check (authorizePageVisibility). */
 export type VisibilityEngine = FenceEngine & Pick<BrainEngine, 'readWriteVisibilityProbe'>;
@@ -119,7 +121,7 @@ export async function writerReadPolicySql(engine: FenceEngine, authority: WriteA
  * audience's member entries, the attested actor's member) as well as from their re-resolved identities, so a
  * re-resolution that reads as the guest identity never makes a labelled-only member's write unlabelled.
  */
-async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, identities: readonly (readonly string[])[]): Promise<boolean> {
+async function writerLabelledOnly(engine: MemberEngine, authority: WriteAuthority, identities: readonly (readonly string[])[]): Promise<boolean> {
   const attested = authority.actingFor && !Array.isArray(authority.actingFor);
   const bound = attested ? [] : await memberIdentityFor(engine, authority);
   const actor = attested ? parseStoredActor(authority.actingFor) : null;
@@ -137,7 +139,7 @@ async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, 
  * (authorizePageVisibility), so only a slug with no live page is checked here. Refused with the readers line to add and
  * the page rule the operator could add instead.
  */
-export async function assertLabelledOnlyCreate(engine: SqlEngine, authority: WriteAuthority, slug: string,
+export async function assertLabelledOnlyCreate(engine: MemberEngine, authority: WriteAuthority, slug: string,
   stored: { deleted_at?: unknown } | null | undefined, frontmatter: unknown): Promise<void> {
   if (!authority.remote || (stored && stored.deleted_at == null)) return;
   if (!await anyLabelledOnlyMember(engine)) return;
@@ -160,7 +162,7 @@ export async function assertLabelledOnlyCreate(engine: SqlEngine, authority: Wri
 }
 
 /** The readers check (remoteReadersChecked) and the labelled-only create check (assertLabelledOnlyCreate) of one remote page write. */
-export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: SqlEngine, authority: WriteAuthority, slug: string,
+export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: MemberEngine, authority: WriteAuthority, slug: string,
   stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, prepared: T): Promise<T> {
   const ready = await remoteReadersChecked(engine, authority, stored?.frontmatter, prepared);
   await assertLabelledOnlyCreate(engine, authority, slug, stored, ready.parsedPage.frontmatter);
@@ -174,7 +176,7 @@ export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter:
  * no restricted page (fail closed; writerLabelledOnly still reads the stored members). A database failure is rethrown,
  * so the write is retried or fails instead of being checked as the guest.
  */
-async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): Promise<string[][]> {
+async function writerIdentities(engine: MemberEngine, authority: WriteAuthority): Promise<string[][]> {
   const refusedAsGuest = (error: unknown): string[] => { if (error instanceof OperationError) return []; throw error; };
   if (authority.actingFor && !Array.isArray(authority.actingFor)) {
     // GST-359 C1: an attested write reads as its member only while actorCoverage still covers the same member.
@@ -268,7 +270,7 @@ export function assertSubmittedReaders(remote: boolean | undefined, slug: unknow
  * The preparation-time check, returning the prepared import it was given: the stored principal's live identity, and a
  * remote write never drops readable_by from a page that names readers.
  */
-export async function remoteReadersChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: SqlEngine, authority: WriteAuthority, before: unknown, prepared: T): Promise<T> {
+export async function remoteReadersChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: MemberEngine, authority: WriteAuthority, before: unknown, prepared: T): Promise<T> {
   const after = prepared.parsedPage.frontmatter;
   if (!authority.remote || (!hasReaders(before) && !hasReaders(after))) return prepared;
   if (!hasReaders(after)) {
@@ -331,7 +333,7 @@ export async function storedOwnerSpeaksForItself(engine: FenceEngine, authority:
  * or a credential bound to the live owner member, for itself or for an audience of the owner alone. Any other caller
  * read the page without them.
  */
-export async function storedWriterReadsHeld(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+export async function storedWriterReadsHeld(engine: MemberEngine, authority: WriteAuthority): Promise<boolean> {
   if (!authority.remote) return true;
   const audience = authority.actingFor;
   if (audience !== undefined && !(Array.isArray(audience) && audience.length === 1)) return false;

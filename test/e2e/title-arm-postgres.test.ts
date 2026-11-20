@@ -20,7 +20,7 @@ import { registerPostgresTests, requirePostgresTestDatabase } from '../helpers/t
 
 await registerPostgresTests(() => import('../search/title-arm-exact.test.ts'));
 
-const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true };
+const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true, staleProbe: false };
 const REMOTE = { requireSafeChunks: true, excludePrivate: true, sourceId: 'default', limit: 50 };
 const DEFAULT_CAP = titleWholeVectorCandidates();
 

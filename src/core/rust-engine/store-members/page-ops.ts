@@ -2,7 +2,7 @@
  * Batch page reads and writes over the store's page_ops family (rust/docs/store/page_ops.md).
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
- * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpLastRetrieved,
+ * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpPageRetrievals,
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
  * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
@@ -25,25 +25,31 @@ import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
-import { SEARCH_OPTION_KEYS } from './search-options.ts';
+import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
   if (n > DELETE_BATCH_SIZE) throw new Error(`${member}: input size ${n} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`);
 }
 
+/** The page read policy keys (`PageReadPolicy`); a key the type gains and this list misses fails to compile. */
+const READ_POLICY_KEYS = ['sourceId', 'sourceIds', 'excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged',
+  'takesHoldersAllowList'] as const satisfies ReadonlyArray<keyof PageReadPolicy>;
+const READ_POLICY_KEYS_COMPLETE: Exclude<keyof PageReadPolicy, (typeof READ_POLICY_KEYS)[number]> extends never ? true : never = true;
+void READ_POLICY_KEYS_COMPLETE;
+
 /**
  * A `PageReadScope` as the store reads it (`pageReadFilter`, search/read-policy-sql.ts). Any scope object turns on
  * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
- * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` and
- * `takesHoldersAllowList` change nothing on these reads.
+ * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
+ * nothing on these reads. The marker reads (every member that uses this) are handed hybridSearch's whole option bag as
+ * their policy, so they also accept and ignore the bag's own keys (`HYBRID_BAG_KEYS`, and whoknows' `WHOKNOWS_KEYS`); any other key still refuses.
  */
-function readScope(member: string, opts: PageReadScope | undefined, unread: readonly string[] = []): Record<string, unknown> {
+function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', 'takesHoldersAllowList', ...unread]);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -51,9 +57,6 @@ function readScope(member: string, opts: PageReadScope | undefined, unread: read
     suppressFlagged: taken.suppressFlagged === true,
   };
 }
-
-/** The `WhoknowsOpts` keys and the read-policy holder list that getEffectiveDates is handed but never reads. */
-const WHOKNOWS_UNREAD = ['topic', 'limit', 'explain', 'types', 'onMeta', 'takesHoldersAllowList'] as const;
 
 const reviveDate = (value: unknown): Date => new Date(String(value));
 
@@ -230,12 +233,6 @@ export const listPrefixSampledPages: StoreMember<[opts: DomainBankSampleOpts], D
   return rows.map(toDomainBankRow);
 };
 
-/** The `last-retrieved.ts` write-back: a stamp per page, kept by the store's page_ops family (`p 0x03 <page id>`). */
-export const bumpLastRetrieved: StoreMember<[pageIds: number[]], void> = async (brain, pageIds) => {
-  if (pageIds.length === 0) return;
-  await storeCall({ member: 'bumpLastRetrieved' }, () => brain.bumpLastRetrieved(pageIds));
-};
-
 export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankRow[]> = async (brain, opts) => {
   const options = takeOptions('listCorpusSample', opts, ['n', 'excludeSlugs', 'seed', 'sourceId', 'sourceIds']);
   if (!(opts.n > 0)) return [];
@@ -245,14 +242,17 @@ export const listCorpusSample: StoreMember<[opts: CorpusSampleOpts], DomainBankR
   return rows.map(toDomainBankRow);
 };
 
-/** What hybrid search hands the stamp reads as their policy (search-options.ts): its search options and the takes-holder list, which `pageReadFilter` never reads. */
-const HYBRID_UNREAD = [...SEARCH_OPTION_KEYS, 'takesHoldersAllowList'];
-
 /** Page ids as the store reads them: integers only, as Postgres's `int[]` cast requires. */
 function pageIds(member: string, ids: number[]): number[] {
   for (const id of ids) if (!Number.isSafeInteger(id)) throw new TypeError(`${member}: page id ${String(id)} is not an integer`);
   return ids;
 }
+
+/** Records now as each page's retrieval time, 5-minute throttled (gbrain-store `page_ops/retrievals.rs`). */
+export const bumpPageRetrievals: StoreMember<[pageIds: number[]], void> = async (brain, ids) => {
+  if (!ids.length) return;
+  await storeCall({ member: 'bumpPageRetrievals' }, () => brain.bumpPageRetrievals(pageIds('bumpPageRetrievals', ids)));
+};
 
 export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: PageReadScope], Map<number, { reason: string; detail: string }>> = async (
   brain,
@@ -260,7 +260,7 @@ export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: Pa
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getContentFlagsByPageIds', opts, HYBRID_UNREAD);
+  const scope = readScope('getContentFlagsByPageIds', opts);
   const rows: Array<{ id: number; reason: string; detail: string }> = await storeCall({ member: 'getContentFlagsByPageIds' }, () =>
     brain.getContentFlagsByPageIds(pageIds('getContentFlagsByPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { reason: r.reason, detail: r.detail }]));
@@ -272,7 +272,7 @@ export const getUnverifiedExtractionPageIds: StoreMember<[pageIds: number[], opt
   opts,
 ) => {
   if (!ids.length) return new Map();
-  const scope = readScope('getUnverifiedExtractionPageIds', opts, HYBRID_UNREAD);
+  const scope = readScope('getUnverifiedExtractionPageIds', opts);
   const rows: Array<{ id: number; status: string; unverified: boolean }> = await storeCall({ member: 'getUnverifiedExtractionPageIds' }, () =>
     brain.getUnverifiedExtractionPageIds(pageIds('getUnverifiedExtractionPageIds', ids), scope));
   return new Map(rows.map((r) => [Number(r.id), { unverified: r.unverified === true, status: r.status }]));
@@ -290,8 +290,7 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
-  const scope = readScope('getEffectiveDates', opts, WHOKNOWS_UNREAD);
+  const scope = readScope('getEffectiveDates', opts);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, reviveDate(r.ts)]));

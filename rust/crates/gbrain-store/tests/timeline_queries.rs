@@ -775,7 +775,7 @@ fn update_timeline_details_rewrites_a_detail_only_while_it_is_the_preimage() {
 
 /// `excludePrivate` with the policy PGLite renders for no caller record.
 fn policy() -> Value {
-    json!({"honorAliases": true, "entityPrivacy": true})
+    json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"})
 }
 
 #[test]
@@ -852,7 +852,7 @@ fn exclude_private_drops_rows_whose_depth_or_event_page_the_policy_hides() {
     );
     // The policy without the privacy part judges readers only: the readers event still hides. The
     // foreign event has no effective date, so it orders at midnight.
-    let readers_only = json!({"honorAliases": true, "entityPrivacy": false});
+    let readers_only = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn"});
     assert_eq!(
         field(&day(json!({"excludePrivate": readers_only})), "summary"),
         vec![

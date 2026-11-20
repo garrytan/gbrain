@@ -1,12 +1,10 @@
 //! `createVersion` with an import history (`CreateVersionOptions`): the snapshot keeps the reason
 //! as `change_reason`, unless a purge tombstoned its (commit, path) (`stampableReason`); a history
-//! gap stamps the page. `getVersions` reads each reason as `replaced_because`, and under a caller
-//! policy hides it when the next snapshot is one that caller cannot read (`replacedBecauseSql`).
+//! gap stamps the page. `getVersions` reads each reason as `replaced_because`.
 
 mod common;
 
 use common::TempDir;
-use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{
     CreateVersionOptions, PageInput, PutPageOptions, ReasonSource, VersionsOptions,
 };
@@ -39,17 +37,14 @@ fn version(store: &Store, reason: Option<&str>, commit: Option<&str>, gap: bool)
             commit: c.repeat(40),
             path: "notes/why.md".into(),
         }),
-        history_gap: gap,
+        history_gap: Some(gap),
         ..CreateVersionOptions::default()
     };
-    store.create_version_with("notes/why", &options).unwrap()
+    store.create_version_opts("notes/why", &options).unwrap()
 }
 
-fn reasons(store: &Store, policy: Option<PrivacyPolicy>) -> Vec<(String, Value)> {
-    let options = VersionsOptions {
-        exclude_private: policy,
-        ..VersionsOptions::default()
-    };
+fn reasons(store: &Store) -> Vec<(String, Value)> {
+    let options = VersionsOptions::default();
     store
         .get_versions("notes/why", &options)
         .unwrap()
@@ -85,30 +80,13 @@ fn a_version_keeps_its_reason_unless_a_purge_tombstoned_the_source() {
     assert_eq!(purged["change_reason"], Value::Null);
     assert_eq!(third["change_reason"], json!(""));
     assert_eq!(
-        reasons(&store, None),
+        reasons(&store),
         vec![
             ("Third".to_string(), json!("")),
             ("Second".to_string(), Value::Null),
             ("First".to_string(), json!("Add the note")),
         ]
     );
-    // Alice cannot read the second snapshot, so the reason the first one was replaced is hidden.
-    let alice = PrivacyPolicy {
-        identity: vec!["member:alice-example".into()],
-        ..PrivacyPolicy::default()
-    };
-    assert_eq!(
-        reasons(&store, Some(alice)),
-        vec![
-            ("Third".to_string(), json!("")),
-            ("First".to_string(), Value::Null),
-        ]
-    );
-    let bob = PrivacyPolicy {
-        identity: vec!["member:bob-example".into()],
-        ..PrivacyPolicy::default()
-    };
-    assert_eq!(reasons(&store, Some(bob))[2].1, json!("Add the note"));
 }
 
 #[test]
@@ -120,7 +98,7 @@ fn a_reason_with_a_nul_byte_is_refused() {
         ..CreateVersionOptions::default()
     };
     let err = store
-        .create_version_with("notes/why", &options)
+        .create_version_opts("notes/why", &options)
         .unwrap_err();
     assert!(err.to_string().contains("NUL"), "{err}");
 }

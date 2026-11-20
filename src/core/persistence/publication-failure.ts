@@ -89,7 +89,25 @@ export interface StagingRefusalDetail {
   staging: { staging_id: string; state?: string | null; reason?: 'generation_incomplete'; rows?: number; segment_count?: number; covered_bytes?: number | null; body_bytes?: number };
   stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
 }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail }
+/**
+ * A write the engine refused with its typed capability refusal (`engine_capability_missing`, the Rust engine): the member
+ * it refused and the capability that member needs. The refusal repeats on every attempt, so the write ends with it.
+ * Owner-only (`member` and `capability` are not public keys); the receipt's code and message name both.
+ */
+export interface CapabilityRefusalDetail {
+  origin: 'engine_capability'; member: string; capability: string;
+  stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
+}
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail | CapabilityRefusalDetail }
+
+/** The site of a capability refusal, read from its `member=... capability=...` detail (rust-engine/errors.ts), or undefined. */
+export function capabilityRefusalDetail(error: Pick<OperationError, 'code' | 'detail' | 'reason'>): CapabilityRefusalDetail | undefined {
+  if (error.code !== 'engine_capability_missing') return undefined;
+  const site = typeof error.detail === 'string' ? /^member=(.+) capability=([a-z_]+) outcome=/.exec(error.detail) : null;
+  const capability = site?.[2] ?? (typeof error.reason === 'string' ? error.reason : undefined);
+  if (!capability) return undefined;
+  return { origin: 'engine_capability', member: (site?.[1] ?? 'unknown').slice(0, 200), capability };
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STAGING_STATES: readonly unknown[] = ['open', 'sealed', 'prepared', 'committed', 'aborted', 'expired'];

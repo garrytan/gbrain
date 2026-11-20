@@ -24,7 +24,7 @@ import { remoteReadFloorSql } from '../search/private-visibility.ts';
 
 export type NearNameKind = 'same' | 'typo' | 'acronym';
 
-const CORPORATE_SUFFIXES: ReadonlySet<string> = new Set([
+export const CORPORATE_SUFFIXES: ReadonlySet<string> = new Set([
   'inc', 'incorporated', 'llc', 'ltd', 'limited', 'corp', 'corporation', 'co', 'company', 'labs', 'lab', 'gmbh',
   'plc', 'ag', 'sa', 'bv', 'the',
 ]);

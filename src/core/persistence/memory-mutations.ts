@@ -23,14 +23,13 @@ import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, wri
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
-import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
+import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { ownerReachesFact, readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
-import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted, worldOnlyFacts } from '../search/private-visibility.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { callerIsOwner, currentCallerAccess, resolveExcludePrivatePages, withFolderRestricted, worldOnlyFacts } from '../search/private-visibility.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
-import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { callerMember, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
 import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { entityPageMissingNotice } from '../interop-notices.ts';
@@ -60,7 +59,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw writeGrantRefusal(ctx,
-      `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
+      `${readsButWritesOnly(ctx, sourceId, granted)}This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
       retryArguments ? { tool: operation, arguments: retryArguments } : undefined);
   }
   await initializeLocalPersistence(ctx);
@@ -233,8 +232,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
   if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(ctx, settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
-  const [source] = await ctx.engine.executeRaw<RememberSource & { role: string | null }>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
+  const source: (RememberSource & { role: string | null }) | null = await ctx.engine.readSourceWriteRow(sourceId);
   if (!source || source.archived) throw sourceInactive(sourceId);
   assertStorageSourceWriter(ctx, sourceId, source.role, {});
   await refuseGuestSourceWrite(ctx.engine, sourceId, () => Promise.resolve(principal), 'remember');
@@ -315,7 +313,7 @@ async function rememberLanded<T extends Record<string, unknown>>(ctx: OperationC
     { slug: row.slug, committed: (response.persistence as { mode?: unknown } | undefined)?.mode === 'filesystem' }));
   if ((response.write_through as { skipped?: unknown } | undefined)?.skipped === 'entity_page_missing' && typeof intent?.entity_slug === 'string') {
     const binding = await getWorktreeBinding(ctx.engine, row.source_id);
-    const root = binding?.local_path || (await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [row.source_id]))[0]?.local_path
+    const root = binding?.local_path || await ctx.engine.readSourceLocalPath(row.source_id)
       || (row.source_id === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
     // The checkout itself must be the repository: a folder that merely sits under one (a home directory kept in Git) is not.
     if (binding?.canonical_git === true || binding?.git_durability === 'enabled' || root && isGitCheckoutRoot(root)) {
@@ -413,20 +411,18 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     // #9101: a fact the caller reads (one it shared, or a teammate's shared fact) is refused by name; a fact it cannot read stays not_found.
     // An attested QM actor keeps not_found for every fact off its page, as QM memory-provider contract v3 states.
     if (currentCallerAccess().actor) throw missing();
-    const readable = callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
-    const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
-    const readsUnder = async (provenance: string) => (await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${provenance}`, [id, sourceId])).length > 0;
-    const reads = await readsUnder(excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '');
+    const spec = { id, sourceId, anyVisibility: callerIsOwner(), eligibility: await resolveReadEligibility(ctx) };
+    const readsUnder = (excludePrivate: boolean) => ctx.engine.factReadableUnder({ ...spec, excludePrivate });
+    const reads = await readsUnder(excludePrivate);
     // GST-2346 D1: the owner speaking for itself also withdraws a fact it reads on a page its credential may write: a
     // private one the brain host wrote, or one on a page whose readers name the owner (GST-2490's owner read rule, for
     // this withdrawal only). Preparation judges the owner and the page again from the stored principal.
     const access = currentCallerAccess();
     ownerReach = ownerSpeaksForItself(ctx) && await ownerReachesFact(ctx.engine, id, sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds })
-      && (reads || await readsUnder(''));
+      && (reads || await readsUnder(false));
     if (!reads && !ownerReach) throw missing();
     // GST-2897 B: a member withdraws a shared fact it reads about itself (its people page), as any remote caller does.
-    const subject = !ownerReach && reads && peoplePageMember((await ctx.engine.executeRaw<{ entity_slug: string | null }>(
-      'SELECT entity_slug FROM facts WHERE id=$1 AND source_id=$2', [id, sourceId]))[0]?.entity_slug) === member;
+    const subject = !ownerReach && reads && peoplePageMember(await ctx.engine.readFactEntitySlug(id, sourceId)) === member;
     if (!ownerReach && !subject) throw hostWithdraws();
     ownPage = null;
   }
@@ -436,8 +432,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const hidePrivate = ownerReach || excludePrivate;
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
   if (remote) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
-  const [source] = await ctx.engine.executeRaw<RememberSource & { role: string | null }>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
+  const source: (RememberSource & { role: string | null }) | null = await ctx.engine.readSourceWriteRow(sourceId);
   if (!source || source.archived) throw sourceInactive(sourceId);
   assertStorageSourceWriter(ctx, sourceId, source.role, {});
   const fact = await readForgetTarget(ctx.engine, id, sourceId, worldOnly, targetHidden, false, ownPage);
@@ -462,8 +457,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // GST-2492: a fact held on a holding page for an entity with no page is struck there too (its row names the entity).
   const heldOn = isHoldingSlug(fact.source_markdown_slug) && fact.entity_slug !== null ? fact.source_markdown_slug : null;
   const struck = plan ? plan.slugs.filter(page => plan.subject === '*' || plan.subject === page || page === heldOn) : [];
-  const fileBacked = struck.length > 0 && (await ctx.engine.executeRaw(
-    'SELECT 1 FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL LIMIT 1', [sourceId, struck])).length > 0;
+  const fileBacked = struck.length > 0 && await ctx.engine.hasLiveFileBackedPage(sourceId, struck);
   const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked, remote })
     .catch((error: unknown) => { if (!fileBacked && error instanceof OperationError) return null; throw error; });
   // Likewise with sync.write_through off or from a sandboxed subagent: the struck file would not be written, so the claim

@@ -3,24 +3,35 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
- *    listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
- *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs and
- *    expireFactsByWithdrawal return the same observable result on every engine arm (PGLite always; Postgres with
+ *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
+ *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs,
+ *    expireFactsByWithdrawal and listDerivedRows (one hop of the derivation walk) return the same observable result
+ *    on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which rows `forget --purge` removes and counts
  *    as left, which pages a withdrawal rewrites, which facts relink and fence repair touch, and which fact a save treats
  *    as already stored; the Rust engine has no SQL, so each read has to exist as a typed method it can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none; every row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage` and
- *    `expireFact`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or shape, never by value.
+ *  - Seam: the watermark is written through the typed settleFactsReconcile and selectFactsReconcileDrain, and read back
+ *    through listFactsReconcileBacklog. recordFactsReconcile (harness.ts) still writes states settle cannot reach (an
+ *    older reconciled revision) with SQL; the Rust arm stops on the typed raw_sql refusal there. The extract_facts
+ *    commit step (lockReconcileRevision, then the settle, in one transaction) runs through typed members. Every other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
+ *    `createSegmentedPageShell`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or
+ *    shape, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, sorted } from './harness.ts';
+import { createSource, parityArms, recordFactsReconcile, sorted } from './harness.ts';
+import { pageMeta } from '../helpers/page-body-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
+import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { derivedRowsFrom, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -166,6 +177,197 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(backlog.rows.every((r) => r.source_id === SRC && r.invalid === false)).toBe(true);
     expect(backlog.segmented).toBe(0);
     return backlog;
+  });
+
+  parityTest('listFactsReconcileBacklog finds a fence in the body or timeline or owned rows, per source in C order, and counts due segmented pages', {
+    methods: ['putPage', 'insertFacts', 'softDeletePage', 'createSegmentedPageShell', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    await engine.putPage('notes/alpha', note('Alpha', `intro ${fence}`));
+    await engine.putPage('notes/b-c', note('B c', fence));
+    await engine.putPage('notes/bb', note('Bb', fence));
+    await engine.putPage('notes/_under', note('Under', fence));
+    await engine.putPage('notes/timeline', { ...note('Timeline', 'body'), timeline: `- entry\n${fence}` });
+    await engine.putPage('notes/half', note('Half', `<!--- gbrain:facts:begi -->`));
+    await engine.putPage('notes/upper', note('Upper', FACTS_FENCE_BEGIN.toUpperCase()));
+    await engine.putPage('notes/other', note('Other', fence), { sourceId: 'other' });
+    await engine.putPage('notes/rows-elsewhere', note('Rows elsewhere', 'no fence'));
+    await engine.insertFacts([{ fact: 'a row', source: 'fence', entity_slug: 'notes/rows-elsewhere', source_markdown_slug: 'notes/rows-elsewhere', row_num: 1 }] as never, { source_id: 'other' });
+    await engine.putPage('notes/expired-row', note('Expired row', 'no fence'));
+    const [expired] = (await engine.insertFacts([{ fact: 'old row', source: 'fence', entity_slug: 'notes/expired-row', source_markdown_slug: 'notes/expired-row', row_num: 1 }] as never, { source_id: SRC })).ids;
+    await engine.expireFact(expired!);
+    await engine.putPage('notes/unnumbered', note('Unnumbered', 'no fence'));
+    await engine.insertFacts([{ fact: 'filed, no row', source: 'fence', entity_slug: 'notes/unnumbered', source_markdown_slug: 'notes/unnumbered' }] as never, { source_id: SRC });
+    await engine.createSegmentedPageShell('notes/seg', pageMeta('Seg'), { sourceId: SRC });
+    await engine.createSegmentedPageShell('notes/seg-other', pageMeta('Seg other'), { sourceId: 'other' });
+    await engine.createSegmentedPageShell('notes/seg-rows', pageMeta('Seg rows'), { sourceId: SRC });
+    await engine.insertFacts([{ fact: 'seg row', source: 'fence', entity_slug: 'notes/seg-rows', source_markdown_slug: 'notes/seg-rows', row_num: 1 }] as never, { source_id: SRC });
+    await engine.createSegmentedPageShell('notes/seg-gone', pageMeta('Seg gone'), { sourceId: SRC });
+    await engine.softDeletePage('notes/seg-gone');
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => `${r.source_id}:${r.slug}`)).toEqual([
+      'default:notes/_under', 'default:notes/alpha', 'default:notes/b-c', 'default:notes/bb', 'default:notes/expired-row', 'default:notes/seg-rows',
+      'default:notes/timeline', 'other:notes/other',
+    ]);
+    expect(backlog.rows.every((r) => r.invalid === false)).toBe(true);
+    expect(backlog.segmented).toBe(2);
+    return backlog;
+  });
+
+  parityTest('listFactsReconcileBacklog leaves out a page reconciled at its revision and marks an invalid attempt at it', {
+    methods: ['putPage', 'createSegmentedPageShell', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    for (const slug of ['done', 'stale', 'invalid-now', 'invalid-before', 'deferred', 'cancelled']) await engine.putPage(`notes/${slug}`, note(slug, fence));
+    await engine.createSegmentedPageShell('notes/seg-done', pageMeta('Seg done'), { sourceId: SRC });
+    await engine.createSegmentedPageShell('notes/seg-stale', pageMeta('Seg stale'), { sourceId: SRC });
+    await recordFactsReconcile(engine, backend, SRC, 'notes/done', 'complete', 'current', 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/stale', 'complete', 'older', 'older');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/invalid-now', 'invalid', null, 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/invalid-before', 'invalid', 'older', 'older');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/deferred', 'deferred', null, 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/cancelled', 'cancelled', 'current', 'older');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/seg-done', 'complete', 'current', 'current');
+    await recordFactsReconcile(engine, backend, SRC, 'notes/seg-stale', 'deferred', 'older', 'current');
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => [r.slug, r.invalid])).toEqual([
+      ['notes/deferred', false], ['notes/invalid-before', false], ['notes/invalid-now', true], ['notes/stale', false],
+    ]);
+    expect(backlog.segmented).toBe(1);
+    return backlog;
+  });
+
+  parityTest('settleFactsReconcile records an outcome only at the revision the reconcile read, keeps the reconciled one, and skips a gone page', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    const slugs = ['done', 'stale', 'invalid-now', 'kept', 'any', 'gone', 'edited', 'cancelled'];
+    for (const slug of slugs) await engine.putPage(`notes/${slug}`, note(slug, fence));
+    await engine.putPage('notes/done', note('done', fence), { sourceId: 'other' });
+    const rev = async (slug: string) => (await engine.getPage(`notes/${slug}`))!.knowledge_revision!;
+    const settle = (slug: string, outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', revision?: string | null) =>
+      engine.settleFactsReconcile(SRC, `notes/${slug}`, outcome, revision);
+    await settle('done', 'complete', await rev('done'));
+    await settle('stale', 'complete', '00000000-0000-4000-8000-000000000000');
+    await settle('stale', 'complete', null);
+    await settle('invalid-now', 'invalid', await rev('invalid-now'));
+    await settle('kept', 'complete', await rev('kept'));
+    await settle('kept', 'deferred');
+    await settle('any', 'complete');
+    await engine.softDeletePage('notes/gone');
+    await settle('gone', 'complete');
+    await settle('edited', 'complete', await rev('edited'));
+    await engine.putPage('notes/edited', note('edited', `${fence}\nmore`));
+    await settle('cancelled', 'cancelled');
+    await settle('missing', 'complete');
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => [`${r.source_id}:${r.slug}`, r.invalid])).toEqual([
+      ['default:notes/cancelled', false], ['default:notes/edited', false], ['default:notes/invalid-now', true],
+      ['default:notes/stale', false], ['other:notes/done', false],
+    ]);
+    return backlog;
+  });
+
+  parityTest('selectFactsReconcileDrain settles the fenceless pages and lists the rest never-attempted first, then by oldest attempt, at most the limit', {
+    methods: ['putPage', 'insertFacts', 'softDeletePage', 'createSegmentedPageShell', 'settleFactsReconcile', 'selectFactsReconcileDrain', 'listFactsReconcileBacklog'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    // Created in id order; tried-early has a later id than tried-late but is attempted first, so attempt order differs from id order.
+    for (const slug of ['new-a', 'tried-late', 'tried-early', 'new-b', 'invalid-now', 'invalid-before', 'gone']) {
+      await engine.putPage(`notes/${slug}`, note(slug, fence));
+    }
+    await engine.putPage('notes/plain', note('Plain', 'no fence'));
+    await engine.putPage('notes/rows', note('Rows', 'rows only'));
+    await engine.insertFacts([{ fact: 'a row', source: 'fence', entity_slug: 'notes/rows', source_markdown_slug: 'notes/rows', row_num: 1 }] as never, { source_id: SRC });
+    await engine.createSegmentedPageShell('notes/seg', pageMeta('Seg'), { sourceId: SRC });
+    await engine.putPage('notes/elsewhere', note('Elsewhere', fence), { sourceId: 'other' });
+    await engine.putPage('notes/plain-elsewhere', note('Plain elsewhere', 'no fence'), { sourceId: 'other' });
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+    await engine.settleFactsReconcile(SRC, 'notes/invalid-before', 'invalid');
+    await engine.putPage('notes/invalid-before', note('invalid-before', `${fence}\nedited`));
+    await tick();
+    await engine.settleFactsReconcile(SRC, 'notes/tried-early', 'deferred');
+    await tick();
+    await engine.settleFactsReconcile(SRC, 'notes/tried-late', 'deferred');
+    await engine.settleFactsReconcile(SRC, 'notes/invalid-now', 'invalid');
+    await engine.softDeletePage('notes/gone');
+    const limited = await engine.selectFactsReconcileDrain(SRC, 2);
+    const drain = await engine.selectFactsReconcileDrain(SRC, 50);
+    // A settled page stays out of the backlog after it gains a fence row; an unsettled one comes back.
+    await engine.insertFacts([{ fact: 'late row', source: 'fence', entity_slug: 'notes/plain', source_markdown_slug: 'notes/plain', row_num: 1 }] as never, { source_id: SRC });
+    await engine.insertFacts([{ fact: 'late row', source: 'fence', entity_slug: 'notes/plain-elsewhere', source_markdown_slug: 'notes/plain-elsewhere', row_num: 1 }] as never, { source_id: 'other' });
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(limited).toEqual(['notes/new-a', 'notes/new-b']);
+    expect(drain).toEqual(['notes/new-a', 'notes/new-b', 'notes/rows', 'notes/seg', 'notes/invalid-before', 'notes/tried-early', 'notes/tried-late']);
+    expect(backlog.rows.map((r) => `${r.source_id}:${r.slug}`)).not.toContain('default:notes/plain');
+    expect(backlog.rows.map((r) => `${r.source_id}:${r.slug}`)).toContain('other:notes/plain-elsewhere');
+    return { limited, drain, backlog };
+  });
+
+  parityTest('settleFactsReconcile inside a transaction settles the page when the transaction commits', {
+    methods: ['putPage', 'getPage', 'transaction', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine) => {
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    await engine.putPage('notes/fenced', note('Fenced', fence));
+    await engine.putPage('notes/other', note('Other', fence));
+    const rev = (await engine.getPage('notes/fenced'))!.knowledge_revision!;
+    await engine.transaction((tx) => tx.settleFactsReconcile(SRC, 'notes/fenced', 'complete', rev));
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(backlog.rows.map((r) => r.slug)).toEqual(['notes/other']);
+    return backlog;
+  });
+
+  parityTest('lockReconcileRevision answers whether the live page is still at the revision the reconcile read, inside a transaction too', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'transaction', 'lockReconcileRevision'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/live', note('live', 'x'));
+    await engine.putPage('notes/gone', note('gone', 'x'));
+    await engine.putPage('notes/elsewhere', note('elsewhere', 'x'), { sourceId: 'other' });
+    const live = (await engine.getPage('notes/live'))!.knowledge_revision!;
+    const gone = (await engine.getPage('notes/gone'))!.knowledge_revision!;
+    const elsewhere = (await engine.getPage('notes/elsewhere', { sourceId: 'other' }))!.knowledge_revision!;
+    await engine.softDeletePage('notes/gone');
+    const lock = (db: BrainEngine, sourceId: string, slug: string, revision: string | null) => db.lockReconcileRevision(sourceId, `notes/${slug}`, revision);
+    const outside = {
+      current: await lock(engine, SRC, 'live', live),
+      otherRevision: await lock(engine, SRC, 'live', '00000000-0000-4000-8000-000000000000'),
+      noRevision: await lock(engine, SRC, 'live', null),
+      softDeleted: await lock(engine, SRC, 'gone', gone),
+      wrongSource: await lock(engine, SRC, 'elsewhere', elsewhere),
+      ownSource: await lock(engine, 'other', 'elsewhere', elsewhere),
+      missing: await lock(engine, SRC, 'missing', null),
+    };
+    const inside = await engine.transaction(async (tx) => {
+      const before = await lock(tx, SRC, 'live', live);
+      await tx.putPage('notes/live', note('live', 'edited'));
+      const edited = (await tx.getPage('notes/live'))!.knowledge_revision!;
+      return { before, stale: await lock(tx, SRC, 'live', live), fresh: await lock(tx, SRC, 'live', edited) };
+    });
+    expect(outside).toEqual({ current: true, otherRevision: false, noRevision: false, softDeleted: false, wrongSource: false, ownSource: true, missing: false });
+    expect(inside).toEqual({ before: true, stale: false, fresh: true });
+    return { outside, inside };
+  });
+
+  parityTest('the extract_facts commit step locks the page revision, then settles complete, in one transaction', {
+    methods: ['putPage', 'getPage', 'transaction', 'lockReconcileRevision', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine) => {
+    const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
+    await engine.putPage('notes/fenced', note('Fenced', fence));
+    await engine.putPage('notes/other', note('Other', fence));
+    const rev = (await engine.getPage('notes/fenced'))!.knowledge_revision!;
+    const locked = await engine.transaction(async (tx) => {
+      if (!await lockReconcileRevision(tx, SRC, 'notes/fenced', rev)) return false;
+      await tx.settleFactsReconcile(SRC, 'notes/fenced', 'complete', rev);
+      return true;
+    });
+    const backlog = await engine.listFactsReconcileBacklog();
+    expect(locked).toBe(true);
+    expect(backlog.rows.map((r) => r.slug)).toEqual(['notes/other']);
+    return { locked, backlog };
   });
 
   parityTest('listRelinkCandidateRows lists the loose active facts after an id, from a time, at most the limit', { methods: ['listRelinkCandidateRows'] }, async (engine, backend) => {
@@ -339,6 +541,36 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { found, other, row: { fact: row.fact, attributed_to: row.attributed_to, kind: row.kind, visibility: row.visibility, confidence: row.confidence, embedding_model: row.embedding_model, created: row.created_at instanceof Date, row_num: row.row_num, trust_tier: row.trust_tier, write_origin: row.write_origin } };
   });
 
+  parityTest('findActiveSingleFact with newest answers the highest-id active copy, as remember links the unlinked copy of a claim', { methods: ['findActiveSingleFact'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
+    await seed.one('old', { fact: 'Likes tea' });
+    await seed.one('new', { fact: 'likes  TEA.', attributed_to: 'user' });
+    const expired = await seed.one('expired', { fact: 'Likes tea' });
+    await engine.expireFact(expired);
+    await seed.one('linked', { fact: 'Likes tea', entity_slug: 'people/a' });
+    await seed.one('world', { fact: 'Likes tea', visibility: 'world' });
+    await seed.fence([
+      { label: 'member-old', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'memory/members/alice' },
+      { label: 'member-new', fact: 'Likes tea', row_num: 2, source_markdown_slug: 'memory/members/alice' },
+    ]);
+    await seed.fence([{ label: 'on-private', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/private' }]);
+    const find = async (pageSlug: string | null, newest: boolean | undefined, remoteFloor = false) => {
+      const row = await engine.findActiveSingleFact({ sourceId: SRC, entitySlug: null, visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor, ...(newest === undefined ? {} : { newest }) });
+      return row === null ? null : seed.name(row.id);
+    };
+    const found = {
+      lowest: await find(null, undefined), lowestFalse: await find(null, false), newest: await find(null, true),
+      member: await find('memory/members/alice', true), memberLowest: await find('memory/members/alice', undefined),
+      emptyPage: await find('', true), privatePage: await find('notes/private', true),
+      privateFloor: await find('notes/private', true, true), noPageFloor: await find(null, true, true),
+    };
+    // The private page's fence row is the highest id, so the floor is not vacuous: it hides that row and keeps 'new'.
+    expect(found).toEqual({ lowest: 'old', lowestFalse: 'old', newest: 'on-private', member: 'member-new', memberLowest: 'member-old',
+      emptyPage: null, privatePage: 'on-private', privateFloor: null, noPageFloor: 'new' });
+    return found;
+  });
+
   parityTest('findActiveSingleFact under the remote provenance floor drops facts on private pages', { methods: ['findActiveSingleFact'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
@@ -381,6 +613,32 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
       'none:open': 'readers-page', 'none:floor': 'open-page',
     });
     return found;
+  });
+
+  parityTest('findActiveSingleFact under the remote provenance floor hides a fact of an owner-only source, closed with no schema version and per source with one', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    const find = async (sourceId: string, remoteFloor: boolean) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug: null, remoteFloor });
+      return row === null ? null : seed.name(row.id);
+    };
+    const read = async () => ({
+      open: await find(SRC, false), openFloor: await find(SRC, true),
+      chat: await find('fact-chat', false), chatFloor: await find('fact-chat', true),
+    });
+    await seed.one('default-row', { fact: 'Likes tea', entity_slug: 'people/a' });
+    // Before any owner-only source exists the floor keeps the default-source fact, so the case is not vacuous.
+    const before = { openFloor: await find(SRC, true) };
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    // The harness brain records no schema version: the closed form hides every fact while any source is owner-only.
+    const closed = await read();
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    // Schema version 320 or later: only a fact of the owner-only source is hidden.
+    const fn = await withEngineScope(engine, read);
+    expect(before).toEqual({ openFloor: 'default-row' });
+    expect(closed).toEqual({ open: 'default-row', openFloor: null, chat: 'chat-row', chatFloor: null });
+    expect(fn).toEqual({ open: 'default-row', openFloor: 'default-row', chat: 'chat-row', chatFloor: null });
+    return { before, closed, fn };
   });
 
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {
@@ -525,5 +783,43 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(row.valid_until).toBeInstanceOf(Date);
     expect(row.valid_until!.getTime()).toBeLessThanOrEqual(row.expired_at!.getTime());
     return { first, again, afterFirst, member, everyone, world, left, expired: history.map((r) => ({ visibility: r.visibility, expired: r.expired_at instanceof Date, closed: r.valid_until instanceof Date })) };
+  });
+
+  // The derivation walk's edges are written only through raw SQL (recordDerivationInputs), which the Rust engine
+  // refuses, so only the SQL arms can record one; the Rust store keeps no derivation_inputs and every hop answers no
+  // rows. A page with no recorded derivation, an empty frontier and the walk itself answer the same on every arm.
+  parityTest('listDerivedRows answers one hop of the derivation walk; the Rust store records none and answers no rows', {
+    methods: ['putPage', 'listDerivedRows'],
+  }, async (engine, backend) => {
+    const id = async (slug: string) => String((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` })).id);
+    const [input, mid, leaf, alone] = [await id('derive/input'), await id('derive/mid'), await id('derive/leaf'), await id('derive/alone')];
+    const slugOf = new Map([[input, 'input'], [mid, 'mid'], [leaf, 'leaf'], [alone, 'alone']]);
+    const name = (table: string, rowId: string) => (table === 'pages' ? slugOf.get(rowId) ?? rowId : rowId);
+    if (backend !== 'rust') {
+      await recordDerivationInputs(engine, { table: 'pages', id: mid, sourceId: SRC }, [{ table: 'pages', id: input }, { table: 'facts', id: '7' }]);
+      await recordDerivationInputs(engine, { table: 'pages', id: leaf, sourceId: SRC }, [{ table: 'pages', id: mid }]);
+      await recordDerivationInputs(engine, { table: 'takes', id: '3', sourceId: SRC }, [{ table: 'pages', id: input }]);
+    }
+    const hop = async (frontier: Array<{ table: string; id: string }>, limit: number) =>
+      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${name(r.derived_table, r.derived_id)}`);
+    const fromInput = await hop([{ table: 'pages', id: input }], 10);
+    const capped = await hop([{ table: 'pages', id: input }, { table: 'facts', id: '7' }], 1);
+    const walk = await derivedRowsFrom(engine, [{ table: 'pages', id: input }]);
+    const walked = walk.rows.map((r) => `${r.table}:${name(r.table, r.id)}@${r.depth}`);
+    if (backend === 'rust') {
+      expect(fromInput).toEqual([]);
+      expect(capped).toEqual([]);
+      expect(walked).toEqual([]);
+    } else {
+      expect(fromInput).toEqual(['pages:mid', 'takes:3']);
+      expect(capped).toEqual(['pages:mid']);
+      expect(walked).toEqual(['pages:mid@1', 'takes:3@1', 'pages:leaf@2']);
+    }
+    expect(walk.truncated).toBe(false);
+    return {
+      unrecorded: await hop([{ table: 'pages', id: alone }], 10),
+      emptyFrontier: await hop([], 10),
+      unrecordedWalk: await derivedRowsFrom(engine, [{ table: 'pages', id: alone }]),
+    };
   });
 });

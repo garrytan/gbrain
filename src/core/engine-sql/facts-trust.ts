@@ -154,7 +154,8 @@ function customPlan<T>(transaction: EngineRawTransaction, fragment: SqlFragment)
 
 /**
  * The pool's candidate rows of one arm: the keyword arm (full-text over the fact and its entity name, best rank
- * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first.
+ * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first
+ * (a future-dated fact as of when it was written).
  * Every arm reads under the caller's read policy and filters, and `similarity` is the row's cosine to `vector` when
  * the row's embedding is comparable with it.
  */
@@ -167,11 +168,15 @@ export async function listFactsForRelevance(raw: EngineRawRead, transaction: Eng
        ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
   }
   const named = q.entity!;
+  // GST-3170: a future-dated fact ranks as of when it was written; each active branch keeps an index-ordered scan.
+  const ranked = trustedSql('(CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC');
+  const branch = (order: ReturnType<typeof trustedSql>, from: ReturnType<typeof trustedSql>) => sqlFragment`(SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)}
+       AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT ${q.limit})`;
   const { text, params } = renderFragment(q.arm === 'entity'
-    ? sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`
+    ? sqlFragment`SELECT * FROM (${branch(trustedSql('f.valid_from'), trustedSql('f.valid_from <= now()'))} UNION ALL ${branch(trustedSql('f.created_at'), trustedSql('f.valid_from > now()'))}) f
+       ORDER BY ${ranked} LIMIT ${q.limit}`
     : sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, { ...q.filters, includeExpired: true })} AND ${endedFactSql()} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
+       ORDER BY ${ranked} LIMIT ${q.limit}`);
   return raw<FactRelevanceRow>(text, params);
 }
 
@@ -323,6 +328,37 @@ export async function listRestatedPrivateCopies(raw: EngineRawRead,
          AND (w.valid_until IS NULL OR w.valid_until > now()))
      ORDER BY f.id LIMIT 1`);
   return raw(text, params);
+}
+
+/**
+ * Of `ids`, the facts taken from a page whose type is one of `pageTypes`, in the fact's own source: the page that holds
+ * the fact (`source_markdown_slug`), a page recorded as its derivation input, or the page a backstop fact's
+ * `source_session` names (`backstop`: each `[source, session prefix]` pair, the slug after the prefix). Any page row
+ * counts, a soft-deleted one too.
+ */
+export async function listFactsFromQuotedPages(raw: EngineRawRead,
+  opts: { ids: readonly number[]; pageTypes: readonly string[]; backstop: readonly [readonly [string, string], readonly [string, string]] }): Promise<number[]> {
+  if (!opts.ids.length) return [];
+  const [[syncSource, syncPrefix], [putSource, putPrefix]] = opts.backstop;
+  const rows = await raw<{ id: number | string }>(
+    `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
+       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
+         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
+         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
+         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`,
+    [[...new Set(opts.ids.map(Number))], [...opts.pageTypes], syncSource, syncPrefix, putSource, putPrefix]);
+  return rows.map(r => Number(r.id));
+}
+
+/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. */
+export async function listOwnerTierFacts(raw: EngineRawRead, opts: { ids: readonly number[]; floor: TrustTier }): Promise<number[]> {
+  if (!opts.ids.length) return [];
+  const ids = [...new Set(opts.ids.map(Number))];
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${ids}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[opts.floor]}::int`);
+  const rows = await raw<{ id: number | string }>(text, params);
+  return rows.map(r => Number(r.id));
 }
 
 /** How many facts carry `taint_inputs` in their write origin, and how many of those are stamped external_untrusted. */

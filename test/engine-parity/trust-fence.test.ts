@@ -16,9 +16,14 @@
  *    members (no executeRaw: D18).
  *  - Rust fact rows store the tier their writer declared (rust/docs/store/facts.md), and the held arm reads the Rust
  *    `trust_proposals` family, so every case below expects one answer on every arm.
+ *  - listHeldRows (trust/fence-guard.ts `heldRows`): the take or timeline rows a lower-tier write may not delete, more
+ *    trusted than the writer or under a pending `forget`. Rust take and timeline records store their stamped tier, so both
+ *    cases expect one answer on every arm; the takes case asks the guard itself, so an agent-tier write is refused on an
+ *    operator-curated take.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { heldRows } from '../../src/core/trust/fence-guard.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -187,5 +192,159 @@ describe('engine parity: the fence guard read of a page\'s fact rows', () => {
     const undeclared = await read('', '');
     expect(undeclared).toEqual([row(3, 'Gamma', 'operator_curated', true), row(5, 'Epsilon', 'unknown', false)]);
     return { external, operator, undeclared };
+  });
+});
+
+describe('engine parity: a fence append sets its page trust back', () => {
+  parityTest('restorePageTrust lowers freely, raises only under a promotion, and sets the origin the caller passes', {
+    methods: ['putPage', 'readPageTrustRows', 'restorePageTrust', 'applyTransactionSettings', 'transaction'],
+  }, async (engine) => {
+    const page = { type: 'note' as const, title: 'Kept', compiled_truth: 'Kept body.', timeline: '' };
+    const owner = { channel: 'owner-example' };
+    await withWriteTrustSettings(engine, ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+      ['operator_curated', 'operator_curated', JSON.stringify(owner)], (tx) => tx.putPage('notes/kept', page));
+    const trust = async () => {
+      const [row] = await engine.readPageTrustRows({ keys: [{ source_id: SRC, slug: 'notes/kept' }] });
+      return { tier: row!.trust_tier, origin: row!.write_origin ?? null };
+    };
+    const [kept] = await engine.readPageTrustRows({ keys: [{ source_id: SRC, slug: 'notes/kept' }] });
+    const pageId = Number(kept!.id);
+    const agent = ['gbrain.write_trust_tier', 'gbrain.write_origin'];
+    const agentValues = ['agent_written', JSON.stringify({ channel: 'agent-example' })];
+    // The fence append: an agent rewrite lowers the page, then the restore raises it back under the page's own promotion.
+    const appended = await withWriteTrustSettings(engine, agent, agentValues, async (tx) => {
+      await tx.putPage('notes/kept', { ...page, compiled_truth: 'Kept body, appended.' });
+      const lowered = await (async () => {
+        const [row] = await tx.readPageTrustRows({ ids: [pageId] });
+        return { tier: row!.trust_tier, origin: row!.write_origin ?? null };
+      })();
+      await tx.applyTransactionSettings(['gbrain.write_trust_promotion'], ['operator_curated']);
+      await tx.restorePageTrust({ pageId, trustTier: 'operator_curated', writeOrigin: JSON.stringify(owner) });
+      return lowered;
+    });
+    const restored = await trust();
+    // A lower needs no promotion; a null origin clears it.
+    await withWriteTrustSettings(engine, agent, agentValues,
+      (tx) => tx.restorePageTrust({ pageId, trustTier: 'external_untrusted', writeOrigin: null }));
+    const lowered = await trust();
+    // A raise a declared writer makes without a promotion keeps the stored tier.
+    await withWriteTrustSettings(engine, agent, agentValues,
+      (tx) => tx.restorePageTrust({ pageId, trustTier: 'operator_curated', writeOrigin: JSON.stringify(owner) }));
+    const unpromoted = await trust();
+    // A raise the promotion does not cover keeps the stored tier too.
+    await withWriteTrustSettings(engine, [...agent, 'gbrain.write_trust_promotion'], [...agentValues, 'tool_observed'],
+      (tx) => tx.restorePageTrust({ pageId, trustTier: 'operator_curated', writeOrigin: null }));
+    const capped = await trust();
+    // An unknown page id writes nothing.
+    await withWriteTrustSettings(engine, agent, agentValues,
+      (tx) => tx.restorePageTrust({ pageId: 987_654, trustTier: 'agent_written', writeOrigin: null }));
+    const after = await trust();
+    expect(appended).toEqual({ tier: 'agent_written', origin: { channel: 'agent-example' } });
+    expect(restored).toEqual({ tier: 'operator_curated', origin: owner });
+    expect(lowered).toEqual({ tier: 'external_untrusted', origin: null });
+    expect(unpromoted.tier).toBe('external_untrusted');
+    expect(capped.tier).toBe('external_untrusted');
+    expect(after).toEqual(capped);
+    return { appended, restored, lowered, unpromoted, capped, after };
+  });
+});
+
+describe('engine parity: the held-row read of a lower-tier write', () => {
+  parityTest('listHeldRows lists the page\'s timeline rows above the writer, or under a pending forget, by id', {
+    methods: ['putPage', 'addTimelineEntry', 'listStoredTimelineRows', 'insertTrustProposal', 'listHeldRows'],
+  }, async (engine) => {
+    const body = { type: 'note' as const, title: 'Held', compiled_truth: 'Body.', timeline: '' };
+    const page = await engine.putPage('notes/held', body);
+    const other = await engine.putPage('notes/held-other', { ...body, title: 'Other' });
+    // A row is stamped with its writer's declared tier, so the tiers are set by writing under them.
+    const add = (slug: string, summary: string, tier: string) => withWriteTrustSettings(engine,
+      ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion'], [tier, tier],
+      (tx) => tx.addTimelineEntry(slug, { date: '2026-03-01', summary, detail: '', source: '' }));
+    expect([
+      await add('notes/held', 'plain', ''),
+      await add('notes/held', 'curated', 'operator_curated'),
+      await add('notes/held', 'agent', 'agent_written'),
+      await add('notes/held-other', 'other page', 'operator_curated'),
+    ]).toEqual([true, true, true, true]);
+    const rows = [...await engine.listStoredTimelineRows(SRC, 'notes/held'), ...await engine.listStoredTimelineRows(SRC, 'notes/held-other')];
+    const idOf = (summary: string) => Number(rows.find((r) => r.summary === summary)!.id);
+    const ids = ['plain', 'curated', 'agent', 'other page'].map(idOf);
+    const label = new Map(ids.map((id, i) => [id, ['plain', 'curated', 'agent', 'other page'][i]!]));
+    const named = (out: Array<{ id: number; trust_tier: string }>) => out.map((r) => `${label.get(Number(r.id)) ?? `other:${r.id}`}=${r.trust_tier}`);
+    const all = [...ids, 999_999];
+    const read = (opts: { writer?: string; pending?: boolean; pageId?: number; ids?: number[] } = {}) => engine.listHeldRows({
+      table: 'timeline_entries', pageId: opts.pageId ?? Number(page.id), ids: opts.ids ?? all,
+      ...(opts.writer !== undefined ? { writer: opts.writer } : {}), ...(opts.pending ? { pending: true } : {}),
+    }).then(named);
+    // No declared tier: the writer is `unknown`, below the curated and agent rows; the other page's row is not this page's.
+    const undeclared = await read();
+    expect(undeclared).toEqual(['curated=operator_curated', 'agent=agent_written']);
+    const agentWriter = await read({ writer: 'agent_written' });
+    expect(agentWriter).toEqual(['curated=operator_curated']);
+    // A name that is no tier ranks 0, below `unknown`.
+    const noTier = await read({ writer: 'no-such-tier' });
+    expect(noTier).toEqual(['plain=unknown', 'curated=operator_curated', 'agent=agent_written']);
+    // With no writer named, the declared tier of the transaction is the writer.
+    const declared = await withWriteTrustSettings(engine, ['gbrain.write_trust_tier'], ['operator_curated'],
+      async (tx) => named(await tx.listHeldRows({ table: 'timeline_entries', pageId: Number(page.id), ids: all })));
+    expect(declared).toEqual([]);
+    // A pending forget on the plain row holds it only when `pending` asks for the open contest.
+    const filed = await engine.insertTrustProposal({ action: 'forget', sourceId: SRC, target: { table: 'timeline_entries', id: ids[0]! },
+      before: {}, proposer: 'test' });
+    expect(filed.created).toBe(true);
+    const curatedWriter = await read({ writer: 'operator_curated' });
+    expect(curatedWriter).toEqual([]);
+    const contested = await read({ writer: 'operator_curated', pending: true });
+    expect(contested).toEqual(['plain=unknown']);
+    const otherPage = await read({ pageId: Number(other.id), writer: 'agent_written' });
+    expect(otherPage).toEqual(['other page=operator_curated']);
+    const none = await read({ ids: [] });
+    expect(none).toEqual([]);
+    return { undeclared, agentWriter, noTier, declared, curatedWriter, contested, otherPage, none };
+  });
+
+  parityTest('heldRows refuses a lower-tier write on a higher-tier take: the page\'s takes above the writer, or under a pending forget, by id', {
+    methods: ['putPage', 'addTakesBatch', 'listTakes', 'insertTrustProposal', 'listHeldRows'],
+  }, async (engine) => {
+    const body = { type: 'note' as const, title: 'Held takes', compiled_truth: 'Body.', timeline: '' };
+    const page = await engine.putPage('notes/held-takes', body);
+    const other = await engine.putPage('notes/held-takes-other', { ...body, title: 'Other' });
+    // A take is stamped with its writer's declared tier, so the tiers are set by writing under them.
+    const add = (pageId: number, rowNum: number, claim: string, tier: string) => withWriteTrustSettings(engine,
+      ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion'], [tier, tier],
+      (tx) => tx.addTakesBatch([{ page_id: pageId, row_num: rowNum, claim, kind: 'take', holder: 'h', weight: 0.5 }]));
+    expect([
+      await add(Number(page.id), 1, 'plain', ''),
+      await add(Number(page.id), 2, 'curated', 'operator_curated'),
+      await add(Number(page.id), 3, 'agent', 'agent_written'),
+      await add(Number(other.id), 1, 'other page', 'operator_curated'),
+    ]).toEqual([1, 1, 1, 1]);
+    const takes = [...await engine.listTakes({ page_id: Number(page.id) }), ...await engine.listTakes({ page_id: Number(other.id) })];
+    const idOf = (claim: string) => Number(takes.find((t) => t.claim === claim)!.id);
+    const claims = ['plain', 'curated', 'agent', 'other page'];
+    const ids = claims.map(idOf);
+    const label = new Map(ids.map((id, i) => [id, claims[i]!]));
+    const named = (held: Map<number, string>) => [...held].map(([id, tier]) => `${label.get(id) ?? `other:${id}`}=${tier}`);
+    const all = [...ids, 999_999];
+    const guard = (writer: 'agent_written' | 'operator_curated' | undefined, opts: { pending?: boolean; pageId?: number } = {}) =>
+      heldRows(engine, 'takes', opts.pageId ?? Number(page.id), all, { ...(writer ? { writer } : {}), ...(opts.pending ? { pending: true } : {}) }).then(named);
+    // An agent-tier write may not delete or overwrite the operator-curated take; the plain take is not above it.
+    const agentWriter = await guard('agent_written');
+    expect(agentWriter).toEqual(['curated=operator_curated']);
+    // An operator-curated write is above every take of the page, so nothing is held.
+    const curatedWriter = await guard('operator_curated');
+    expect(curatedWriter).toEqual([]);
+    // With no writer named, the transaction's declared tier is the writer: undeclared is `unknown`, below both stamped takes.
+    const undeclared = await engine.transaction(async (tx) => named(await heldRows(tx, 'takes', Number(page.id), all)));
+    expect(undeclared).toEqual(['curated=operator_curated', 'agent=agent_written']);
+    // A pending forget on the plain take holds it only when the open contest is asked for.
+    const filed = await engine.insertTrustProposal({ action: 'forget', sourceId: SRC, target: { table: 'takes', id: ids[0]! },
+      before: {}, proposer: 'test' });
+    expect(filed.created).toBe(true);
+    const contested = await guard('operator_curated', { pending: true });
+    expect(contested).toEqual(['plain=unknown']);
+    const otherPage = await guard('agent_written', { pageId: Number(other.id) });
+    expect(otherPage).toEqual(['other page=operator_curated']);
+    return { agentWriter, curatedWriter, undeclared, contested, otherPage };
   });
 });

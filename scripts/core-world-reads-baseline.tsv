@@ -441,6 +441,9 @@ src/core/git-transport.ts	process_env	2	W6: settings plane out of the core
 src/core/git-visible-files.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/git-visible-files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git-visible-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/git/background-publish.ts	fs_import	1	W7: filesystem boundary moves to the local app (the background publish record and its output beside the checkout git dir)
+src/core/git/background-publish.ts	process_env	1	W6: settings plane out of the core (the detached publish child inherits the environment, with longer publish lock waits)
+src/core/git/background-publish.ts	spawn_import	1	W7: git boundary moves to the local app (starts the detached gbrain git commit-push child)
 src/core/git/commit-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-guard.ts	spawn_import	1	W7: process-wide effects move to src/cli; PR B owner-path guard reads git version and hook paths of the worktree it installs into
 src/core/git/commit-ledger.ts	fs_import	1	W7: filesystem boundary moves to the local app; PR B commit ledger appends to <git common dir>/gbrain/commit-ledger.jsonl
@@ -456,6 +459,11 @@ src/core/git/git-run.ts	spawn_import	1	W7: process-wide effects move to src/cli;
 src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
 src/core/git/reconcile.ts	process_env	2	W6: settings plane out of the core; the commit-push child inherits this process environment (GBRAIN_HOME, Git credentials) and resolves its CLI from it, like refresh's publish child
+src/core/git/redact-finish.ts	fs_import	1	W7: filesystem boundary moves to the local app (the redaction journal beside the checkout git dir)
+src/core/git/redact-finish.ts	spawn_import	1	W7: git boundary moves to the local app (backup refs are deleted with git update-ref)
+src/core/git/redact-unpushed.ts	fs_import	1	W7: filesystem boundary moves to the local app (rewrites the checkout files and index of a publish)
+src/core/git/redact-unpushed.ts	process_env	2	W6: settings plane out of the core (GBRAIN_SECRETS_ON_PUSH and the publish lock wait, read by engine-free publishers)
+src/core/git/redact-unpushed.ts	spawn_import	1	W7: git boundary moves to the local app (rebuilds unpushed commits with git plumbing)
 src/core/git/skipped-paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2767 moved commit-push's skipped-path checks here unchanged
 src/core/git/untrack-admission.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2964 moved commit-push's untrack admission here unchanged in kind: its readFileSync of the source's gbrain.yml and its lstatSync symlink checks left src/core/git/commit-push.ts, whose fs_import row stays 1 because this lint counts one node:fs import per file and commit-push.ts still imports node:fs for its own reads; no new filesystem read beyond the brain-recorded source root's gbrain.yml and a realpath of that root
 src/core/git/upstream-history.ts	fs_import	1	W7: filesystem boundary moves to the local app; reads the tail of the checkout reflog to tell a rewritten upstream from a fast-forward (lifted out of worktree-refresh.ts)
@@ -978,6 +986,11 @@ src/core/secret-scan-allowlist.ts	fs_import	1	W7: filesystem boundary moves to t
 src/core/secret-scan-allowlist.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/secret-scan.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/secret-store/backup.ts	fs_import	1	W7: filesystem boundary moves to the local app (the backup status file lives on the machine beside the keyring)
+src/core/secret-store/backup.ts	load_config	1	W6: settings plane out of the core (reads the configured storage backend for the secret store backup)
+src/core/secret-store/keyring.ts	fs_import	1	W7: filesystem boundary moves to the local app (the secret store key file lives on the machine)
+src/core/secret-store/keyring.ts	process_env	1	W6: settings plane out of the core (GBRAIN_SECRET_STORE_KEY override)
+src/core/secret-store/spool.ts	fs_import	1	W7: filesystem boundary moves to the local app (the encrypted spool lives on the machine)
 src/core/self-upgrade-recovery.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/self-upgrade-recovery.ts	load_config	1	W6: settings plane out of the core
 src/core/self-upgrade-swap.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1239,3 +1252,6 @@ src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver e
 src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
 src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
 src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays
+src/core/entities/identity-decisions.ts	fs_import	1	W7: filesystem boundary moves to the local app (decision files under .gbrain/identity/, same door as access/policy-git.ts)
+src/core/entities/identity-decisions.ts	process_env	4	W7: the commit-lock marker (COMMIT_LOCK_ENV) exported to commitAndPush while the lock is held, as in access/policy-git.ts; it moves with the filesystem boundary
+src/core/entities/identity-decisions.ts	spawn_import	1	W7: process-wide effects move to src/cli (git show of the committed decision file)

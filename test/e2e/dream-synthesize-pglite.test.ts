@@ -1226,14 +1226,14 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       let calls = 0;
       __setChatTransportForTests(async () => {
         calls++;
-        const text = calls === 1 ? 'sure! here are your pages, enjoy' : 'saved';
+        const text = calls === 1 ? 'sure! here are your pages, enjoy' : calls === 2 ? 'sorry, here they are again in words' : 'saved';
         return {
-          text: calls === 2 ? '' : text,
-          blocks: calls === 2 ? [{
+          text: calls === 3 ? '' : text,
+          blocks: calls === 3 ? [{
             type: 'tool-call', toolCallId: 'fallback-save', toolName: 'brain_put_page',
             input: { slug, content: '---\ntitle: Fallback synthesis\ntype: reflection\n---\n\nSaved through the fallback loop.' },
           }] : [{ type: 'text', text }],
-          stopReason: calls === 2 ? 'tool_calls' : 'end',
+          stopReason: calls === 3 ? 'tool_calls' : 'end',
           usage: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
           model: 'anthropic:claude-sonnet-4-6',
           providerId: 'anthropic',
@@ -1242,7 +1242,7 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
 
       const result = await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
       expect(result.status).toBe('ok');
-      expect(calls).toBeGreaterThanOrEqual(2); // oneshot attempt + >=1 loop turn
+      expect(calls).toBeGreaterThanOrEqual(3); // oneshot attempt + one re-ask (#9648) + >=1 loop turn
       const synthesis = (result.details as { synthesis: Record<string, unknown> }).synthesis;
       expect(synthesis.oneshot_jobs).toBe(0);
       expect(synthesis.fallback_jobs).toBe(1);

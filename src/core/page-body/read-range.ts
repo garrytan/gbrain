@@ -31,6 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import type { BodyManifestRow } from '../engine-sql/export-reads.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
@@ -161,7 +162,7 @@ const bytesOf = (v: unknown): Uint8Array => { const b = v as Uint8Array; return 
 const newlines = (s: string) => { let n = 0; for (let i = s.indexOf('\n'); i !== -1; i = s.indexOf('\n', i + 1)) n++; return n; };
 
 /** The page row a pin was taken at: same revision and, when pinned, the same body generation. */
-async function checkPin(pin: BodyPin, page: Record<string, unknown> | undefined, pageId: number): Promise<void> {
+async function checkPin(pin: BodyPin, page: { slug?: unknown; body_generation?: unknown; revision?: unknown } | undefined, pageId: number): Promise<void> {
   const revision = page?.revision == null ? REVISION_BACKFILL_PENDING : String(page.revision);
   if (!page || revision !== pin.revision || (pin.generation !== undefined && Number(page.body_generation) !== pin.generation)) {
     const slug = page?.slug == null ? String(pageId) : String(page.slug);
@@ -173,13 +174,8 @@ async function checkPin(pin: BodyPin, page: Record<string, unknown> | undefined,
 }
 
 /** A generation's manifest rows, each carrying the generation read (`generation` null: the page's live one at the statement). */
-function manifestRows(engine: BrainEngine, pageId: number, generation: number | null): Promise<Record<string, unknown>[]> {
-  return engine.executeRaw<Record<string, unknown>>(`SELECT m.seq, m.occurrence_id, m.region, m.sha256, m.byte_start, m.byte_len,
-      m.line_start, m.line_count, m.static_proj_bytes, m.static_proj_lines, jsonb_array_length(m.outline) AS outline_count,
-      jsonb_array_length(m.facts_slots) > 0 AS has_facts, m.date_min IS NOT NULL AS has_date, g.generation
-    FROM (SELECT COALESCE($2::bigint, (SELECT body_generation FROM pages WHERE id=$1)) AS generation) g
-    JOIN page_body_manifest m ON m.page_id=$1 AND m.staging_id IS NULL AND m.gen_from<=g.generation AND (m.gen_to IS NULL OR m.gen_to>g.generation)
-    ORDER BY m.seq`, [pageId, generation]);
+function manifestRows(engine: BrainEngine, pageId: number, generation: number | null): Promise<BodyManifestRow[]> {
+  return engine.readBodyManifestRows(pageId, generation);
 }
 
 /**
@@ -196,8 +192,7 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
   expect?: { slug: string; sourceId: string }; hideHeld?: boolean }, attempt = 1): Promise<SegmentedBody> {
   const requested = opts.pin?.generation ?? opts.generation ?? null;
   const [[page], read, expected] = await Promise.all([
-    engine.executeRaw<Record<string, unknown>>(`SELECT id, source_id, slug, body_storage, body_generation, body_bytes, body_lines, truth_bytes,
-      body_flags, segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1`, [opts.pageId]),
+    engine.readSegmentedPageHead(opts.pageId).then(page => [page]),
     manifestRows(engine, opts.pageId, requested),
     opts.ledger || !opts.expect ? undefined : readBodyLedger(engine, opts.expect.sourceId, opts.expect.slug),
   ]);
@@ -217,7 +212,7 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
     assertRowsTile(bodyRows, { slug, sourceId, total: await generationBodyBytes(engine, { id: opts.pageId, body_generation: page.body_generation, body_bytes: page.body_bytes }, generation) });
   } catch (error) {
     if (requested !== null || attempt >= LIVE_READ_ATTEMPTS) throw error;
-    const [now] = await engine.executeRaw<{ body_generation: unknown }>('SELECT body_generation FROM pages WHERE id=$1', [opts.pageId]);
+    const now = await engine.readSegmentedPageHead(opts.pageId);
     if (!now || Number(now.body_generation) === generation) throw error;
     return openSegmentedBody(engine, opts, attempt + 1);
   }
@@ -232,8 +227,7 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
 /** After a pinned read, before its text is returned: the page is still at the pin and still admits the caller. */
 export async function confirmBodyPin(engine: BrainEngine, body: SegmentedBody): Promise<void> {
   if (!body.pin) return;
-  const [page] = await engine.executeRaw<Record<string, unknown>>('SELECT slug, body_generation, knowledge_revision::text AS revision FROM pages WHERE id=$1', [body.pageId]);
-  await checkPin(body.pin, page, body.pageId);
+  await checkPin(body.pin, await engine.readSegmentedPageHead(body.pageId), body.pageId);
 }
 
 interface LoadedSegment {
@@ -250,9 +244,7 @@ async function* loadSegments(engine: BrainEngine, body: SegmentedBody, rows: rea
   const readText = (row: BodyRow) => { stop?.(); return engine.readSegmentTexts(body.sourceId, [row.sha256]); };
   for (let at = 0; at < rows.length; at += HEAVY_BATCH) {
     const batch = rows.slice(at, at + HEAVY_BATCH);
-    const [first, metaRows] = await Promise.all([readText(batch[0]!), engine.executeRaw<Record<string, unknown>>(`SELECT occurrence_id, entry_state, protected_regions
-      FROM page_body_manifest WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
-    [body.pageId, batch.map(r => r.occurrenceId), body.generation])]);
+    const [first, metaRows] = await Promise.all([readText(batch[0]!), engine.readBodyManifestMeta(body.pageId, batch.map(r => r.occurrenceId), body.generation)]);
     const meta = new Map(metaRows.map(m => [Number(m.occurrence_id), m]));
     for (const [i, row] of batch.entries()) {
       const m = meta.get(row.occurrenceId);
@@ -628,9 +620,8 @@ export async function projectedOutline(engine: BrainEngine, body: SegmentedBody,
     if (index + v.row.outlineCount > from && index < from + limit) needed.push(v);
     index += v.row.outlineCount;
   }
-  const meta = needed.length ? new Map((await engine.executeRaw<Record<string, unknown>>(`SELECT occurrence_id, facts_slots, outline FROM page_body_manifest
-    WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
-  [body.pageId, needed.map(v => v.row.occurrenceId), body.generation])).map(m => [Number(m.occurrence_id), m])) : new Map();
+  const meta = needed.length ? new Map((await engine.readBodyManifestOutline(body.pageId, needed.map(v => v.row.occurrenceId), body.generation))
+    .map(m => [Number(m.occurrence_id), m])) : new Map();
   index = 0;
   let next = 0;
   for (const v of visible) {

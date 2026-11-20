@@ -4,15 +4,18 @@
 //!
 //! Members: readJobSpendTree, insertSpendReservation, expireSpendReservations,
 //! settleSpendReservation, markSpendUsageUnknown, insertLeasePressure, countLeasePressure,
-//! listRecentLeasePressure. The reads and the settle that need `mcp_spend_log` or `oauth_clients`
-//! (budget-meter.ts) are not here: those tables are not in the store, so they stay raw SQL and the
-//! engine refuses them.
+//! listRecentLeasePressure. The ledger (`mcp_spend_log`) and the client caps (`oauth_clients`) are in
+//! `spend_log.rs` and `oauth_clients.rs` (rust/docs/store/spend-log.md); they read the holds through
+//! the helpers here (`insert_res`, `expire_res`, `settle_res`, `open_holds`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tags 0x20 to 0x27 (this file only):
 //! - `m 0x20 reservation_uuid(16) -> ResRecord`: one reservation. A UUID is stored as its 16 bytes,
 //!   so any spelling the column accepts names the same row.
 //! - `m 0x21 job reservation_uuid`: the reservations of a job (the foreign key's index).
 //! - `m 0x22 expires_at reservation_uuid`: the `pending` reservations by expiry (the sweep).
+//! - `m 0x27 kind owner \0 reservation_uuid`: the reservations that are not `settled`, by owner (`c`
+//!   client id, `b` budget key), for the admissions' sums. `save_res` keeps it. A reservation written
+//!   by a build before the index is not in it (no backfill).
 //! - `m 0x24 id -> LogRecord`: one lease-pressure row (sequence `lease_pressure`).
 //! - `m 0x25 bounced_at id`: the log in time order (the window reads, newest first by a reverse scan).
 //! - `m 0x26 job id`: the log rows of a job that still exists (the foreign key's index).
@@ -33,14 +36,13 @@ use crate::env::parse_iso;
 const RES: u8 = 0x20;
 const RES_JOB: u8 = 0x21;
 const RES_EXP: u8 = 0x22;
+const RES_OPEN: u8 = 0x27;
 const LOG: u8 = 0x24;
 const LOG_AT: u8 = 0x25;
 const LOG_JOB: u8 = 0x26;
 
 /// Scaled amounts: `NUMERIC(12,4)` is an integer count of 1/10000 cent.
-const SCALE: i64 = 10_000;
-/// Eight integer digits and four decimals.
-const NUMERIC_LIMIT: i64 = 1_000_000_000_000;
+pub(super) const SCALE: i64 = 10_000;
 
 fn res_key(id: &[u8; 16]) -> Vec<u8> {
     let mut k = prefix(RES);
@@ -63,6 +65,29 @@ fn res_job_key(job: i64, id: &[u8; 16]) -> Vec<u8> {
 fn res_exp_key(expires_at: i64, id: &[u8; 16]) -> Vec<u8> {
     let mut k = prefix(RES_EXP);
     k.extend_from_slice(&signed_key(expires_at));
+    k.extend_from_slice(id);
+    k
+}
+
+/// The owner an open-hold index entry is filed under: `c` + client id, or `b` + budget key.
+fn res_owner(r: &ResRecord) -> Option<(u8, &str)> {
+    match (&r.client_id, &r.budget_key) {
+        (Some(c), _) => Some((b'c', c.as_str())),
+        (None, Some(b)) => Some((b'b', b.as_str())),
+        _ => None,
+    }
+}
+
+fn res_open_prefix(kind: u8, owner: &str) -> Vec<u8> {
+    let mut k = prefix(RES_OPEN);
+    k.push(kind);
+    k.extend_from_slice(owner.as_bytes());
+    k.push(0);
+    k
+}
+
+fn res_open_key(kind: u8, owner: &str, id: &[u8; 16]) -> Vec<u8> {
+    let mut k = res_open_prefix(kind, owner);
     k.extend_from_slice(id);
     k
 }
@@ -100,7 +125,7 @@ fn key_time(key: &[u8]) -> Option<i64> {
 
 /// The text of a UUID as Postgres prints it: lowercase, hyphenated, every bit kept (the reservation ids the budget
 /// meter makes are version 7, so the version bits must not be rewritten).
-fn uuid_text(b: &[u8; 16]) -> String {
+pub(super) fn uuid_text(b: &[u8; 16]) -> String {
     let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
     format!(
         "{}-{}-{}-{}-{}",
@@ -113,7 +138,7 @@ fn uuid_text(b: &[u8; 16]) -> String {
 }
 
 /// The 16 bytes of a UUID in any spelling the column takes: hyphenated (8-4-4-4-12), or 32 hex digits.
-fn uuid_bytes(text: &str) -> Result<[u8; 16]> {
+pub(super) fn uuid_bytes(text: &str) -> Result<[u8; 16]> {
     let bad = || StoreError::invalid(format!("invalid input syntax for type uuid: \"{text}\""));
     let b = text.as_bytes();
     let hyphenated = b.len() == 36 && [8, 13, 18, 23].iter().all(|&i| b[i] == b'-');
@@ -134,7 +159,18 @@ fn uuid_bytes(text: &str) -> Result<[u8; 16]> {
 
 /// `NUMERIC(12,4)` of a JavaScript number: the shortest decimal text of the double, rounded half
 /// away from zero to four decimals, as a count of 1/10000.
-fn numeric_4(value: f64, what: &str) -> Result<i64> {
+pub(super) fn numeric_4(value: f64, what: &str) -> Result<i64> {
+    numeric_fixed(value, 4, 8, what)
+}
+
+/// `NUMERIC(int_digits + decimals, decimals)` of a JavaScript number, as a count of `10^-decimals`: the
+/// shortest decimal text of the double, rounded half away from zero (`overflow` past `int_digits` integer digits).
+pub(super) fn numeric_fixed(
+    value: f64,
+    decimals: usize,
+    int_digits: usize,
+    what: &str,
+) -> Result<i64> {
     if !value.is_finite() {
         return Err(StoreError::invalid(format!(
             "{what}: {value} is not a finite number"
@@ -149,49 +185,57 @@ fn numeric_4(value: f64, what: &str) -> Result<i64> {
     let overflow = || {
         StoreError::new(
             CONSTRAINT_VIOLATION,
-            format!("numeric field overflow: {what} {value} does not fit NUMERIC(12,4)"),
+            format!(
+                "numeric field overflow: {what} {value} does not fit NUMERIC({},{decimals})",
+                int_digits + decimals
+            ),
         )
     };
-    if int_part.len() > 8 && int_part.trim_start_matches('0').len() > 8 {
+    if int_part.len() > int_digits && int_part.trim_start_matches('0').len() > int_digits {
         return Err(overflow());
     }
     let mut frac: Vec<u8> = frac_part.bytes().collect();
-    let round_up = frac.get(4).is_some_and(|d| *d >= b'5');
-    frac.resize(4, b'0');
+    let round_up = frac.get(decimals).is_some_and(|d| *d >= b'5');
+    frac.resize(decimals, b'0');
+    let unit = 10_i64.pow(decimals as u32);
     let whole: i64 = int_part.parse().map_err(|_| overflow())?;
-    let tail: i64 = std::str::from_utf8(&frac[..4])
-        .ok()
-        .and_then(|t| t.parse().ok())
-        .ok_or_else(overflow)?;
+    let tail: i64 = if decimals == 0 {
+        0
+    } else {
+        std::str::from_utf8(&frac[..decimals])
+            .ok()
+            .and_then(|t| t.parse().ok())
+            .ok_or_else(overflow)?
+    };
     let scaled = whole
-        .checked_mul(SCALE)
+        .checked_mul(unit)
         .and_then(|w| w.checked_add(tail + i64::from(round_up)))
-        .filter(|s| *s < NUMERIC_LIMIT)
+        .filter(|s| *s < 10_i64.pow((int_digits + decimals) as u32))
         .ok_or_else(overflow)?;
     Ok(if negative { -scaled } else { scaled })
 }
 
-fn cents(scaled: i64) -> f64 {
+pub(super) fn cents(scaled: i64) -> f64 {
     scaled as f64 / SCALE as f64
 }
 
 /// One `mcp_spend_reservations` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ResRecord {
-    reservation_id: String,
-    client_id: Option<String>,
-    budget_key: Option<String>,
-    job_id: Option<i64>,
-    estimated: i64,
-    actual: Option<i64>,
-    model: String,
-    provider: String,
-    status: String,
-    created_at: i64,
-    settled_at: Option<i64>,
-    expires_at: i64,
-    estimate_known: bool,
-    usage_unknown_reason: Option<String>,
+pub(super) struct ResRecord {
+    pub(super) reservation_id: String,
+    pub(super) client_id: Option<String>,
+    pub(super) budget_key: Option<String>,
+    pub(super) job_id: Option<i64>,
+    pub(super) estimated: i64,
+    pub(super) actual: Option<i64>,
+    pub(super) model: String,
+    pub(super) provider: String,
+    pub(super) status: String,
+    pub(super) created_at: i64,
+    pub(super) settled_at: Option<i64>,
+    pub(super) expires_at: i64,
+    pub(super) estimate_known: bool,
+    pub(super) usage_unknown_reason: Option<String>,
 }
 
 impl ResRecord {
@@ -204,7 +248,7 @@ impl ResRecord {
         json!({
             "reservation_id": self.reservation_id,
             "client_id": self.client_id,
-            "budget_key": self.budget_key,
+            "budget_key": self.budget_key.clone(),
             "job_id": self.job_id,
             "estimated_cents": cents(self.estimated),
             "actual_cents": self.actual.map(cents),
@@ -281,7 +325,7 @@ impl LogRecord {
         json!({
             "id": self.id,
             "job_id": self.job_id,
-            "lease_key": self.lease_key,
+            "lease_key": self.lease_key.clone(),
             "active_at_bounce": self.active_at_bounce,
             "max_concurrent": self.max_concurrent,
             "bounced_at": iso(self.bounced_at),
@@ -326,13 +370,23 @@ pub struct LeaseFilter {
     pub lease_key: Option<String>,
 }
 
-fn load_res(read: &dyn KvRead, id: &[u8; 16]) -> Result<Option<ResRecord>> {
+pub(super) fn load_res(read: &dyn KvRead, id: &[u8; 16]) -> Result<Option<ResRecord>> {
     get_json(read, &res_key(id))
 }
 
 /// Write a reservation and move its index entries from the old row to the new one.
-fn save_res(tx: &mut dyn KvWrite, old: Option<&ResRecord>, new: &ResRecord) -> Result<()> {
+pub(super) fn save_res(
+    tx: &mut dyn KvWrite,
+    old: Option<&ResRecord>,
+    new: &ResRecord,
+) -> Result<()> {
     let id = new.id_bytes();
+    if res_owner(new).is_some_and(|(_, owner)| owner.contains('\0')) {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "mcp_spend_reservations owner: a NUL byte is not valid text",
+        ));
+    }
     if let Some(old) = old {
         if let Some(job) = old.job_id {
             tx.delete(&res_job_key(job, &id))?;
@@ -340,12 +394,22 @@ fn save_res(tx: &mut dyn KvWrite, old: Option<&ResRecord>, new: &ResRecord) -> R
         if old.status == "pending" {
             tx.delete(&res_exp_key(old.expires_at, &id))?;
         }
+        if old.status != "settled"
+            && let Some((kind, owner)) = res_owner(old)
+        {
+            tx.delete(&res_open_key(kind, owner, &id))?;
+        }
     }
     if let Some(job) = new.job_id {
         tx.put(&res_job_key(job, &id), b"")?;
     }
     if new.status == "pending" {
         tx.put(&res_exp_key(new.expires_at, &id), b"")?;
+    }
+    if new.status != "settled"
+        && let Some((kind, owner)) = res_owner(new)
+    {
+        tx.put(&res_open_key(kind, owner, &id), b"")?;
     }
     put_json(tx, &res_key(&id), new)
 }
@@ -398,11 +462,15 @@ fn cutoff(now: i64, window_ms: f64) -> Result<i64> {
     Ok(now.saturating_sub(ms_to_us(window_ms)))
 }
 
-impl Store {
-    /// `insertSpendReservation(row)`. `constraint_violation` for a job that does not exist, for neither or both of
-    /// `client_id` and `budget_key`, for a reservation id already taken, and for an amount that overflows
-    /// `NUMERIC(12,4)`; `invalid_argument` for an id that is not a UUID or a time that is not ISO text.
-    pub fn insert_spend_reservation(&self, row: &SpendInsert) -> Result<()> {
+/// What `insertSpendReservation` checks before it opens a write: the id, the expiry time and the amount.
+pub(super) struct ParsedInsert {
+    id: [u8; 16],
+    expires_at: i64,
+    estimated: i64,
+}
+
+impl ParsedInsert {
+    pub(super) fn new(row: &SpendInsert) -> Result<Self> {
         let id = uuid_bytes(&row.reservation_id)?;
         let expires_at = parse_iso(&row.expires_at).ok_or_else(|| {
             StoreError::invalid(format!(
@@ -411,86 +479,161 @@ impl Store {
             ))
         })?;
         let estimated = numeric_4(row.estimated_cents, "estimated_cents")?;
-        self.write(|tx| {
-            let now = self.env.now_micros();
-            if row.client_id.is_some() == row.budget_key.is_some() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    "mcp_spend_reservations check: exactly one of client_id and budget_key",
-                ));
-            }
-            if let Some(job) = row.job_id
-                && load(tx, job)?.is_none()
-            {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    format!("mcp_spend_reservations foreign key: job {job} does not exist"),
-                ));
-            }
-            if load_res(tx, &id)?.is_some() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    "duplicate key value violates unique constraint \"mcp_spend_reservations_pkey\"",
-                ));
-            }
-            let record = ResRecord {
-                reservation_id: uuid_text(&id),
-                client_id: row.client_id.clone(),
-                budget_key: row.budget_key.clone(),
-                job_id: row.job_id,
-                estimated,
-                actual: None,
-                model: row.model.clone(),
-                provider: row.provider.clone(),
-                status: "pending".to_string(),
-                created_at: now,
-                settled_at: None,
-                expires_at,
-                estimate_known: row.estimate_known,
-                usage_unknown_reason: row.usage_unknown_reason.clone(),
-            };
-            save_res(tx, None, &record)
+        Ok(Self {
+            id,
+            expires_at,
+            estimated,
         })
+    }
+}
+
+/// Insert one `pending` reservation inside a write (`now` is the call's one clock read).
+pub(super) fn insert_res(
+    tx: &mut dyn KvWrite,
+    now: i64,
+    row: &SpendInsert,
+    parsed: &ParsedInsert,
+) -> Result<()> {
+    let id = parsed.id;
+    if row.client_id.is_some() == row.budget_key.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "mcp_spend_reservations check: exactly one of client_id and budget_key",
+        ));
+    }
+    if let Some(job) = row.job_id
+        && load(tx, job)?.is_none()
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!("mcp_spend_reservations foreign key: job {job} does not exist"),
+        ));
+    }
+    if load_res(tx, &id)?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint \"mcp_spend_reservations_pkey\"",
+        ));
+    }
+    let record = ResRecord {
+        reservation_id: uuid_text(&id),
+        client_id: row.client_id.clone(),
+        budget_key: row.budget_key.clone(),
+        job_id: row.job_id,
+        estimated: parsed.estimated,
+        actual: None,
+        model: row.model.clone(),
+        provider: row.provider.clone(),
+        status: "pending".to_string(),
+        created_at: now,
+        settled_at: None,
+        expires_at: parsed.expires_at,
+        estimate_known: row.estimate_known,
+        usage_unknown_reason: row.usage_unknown_reason.clone(),
+    };
+    save_res(tx, None, &record)
+}
+
+/// Mark every `pending` reservation past its expiry (`expires_at < now`) `expired`, among those that match the scope.
+pub(super) fn expire_res(tx: &mut dyn KvWrite, now: i64, scope: &ExpireScope) -> Result<i64> {
+    let mut due = Vec::new();
+    scan_prefix(tx, &prefix(RES_EXP), false, &mut |k, _| match key_time(k) {
+        Some(at) if at < now => {
+            if let Ok(id) = <[u8; 16]>::try_from(&k[k.len() - 16..]) {
+                due.push(id);
+            }
+            true
+        }
+        _ => false,
+    })?;
+    let mut count = 0;
+    for id in due {
+        let Some(old) = load_res(tx, &id)? else {
+            continue;
+        };
+        if scope
+            .client_id
+            .as_ref()
+            .is_some_and(|c| old.client_id.as_ref() != Some(c))
+            || scope
+                .budget_key
+                .as_ref()
+                .is_some_and(|b| old.budget_key.as_ref() != Some(b))
+        {
+            continue;
+        }
+        let mut new = old.clone();
+        new.status = "expired".to_string();
+        save_res(tx, Some(&old), &new)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// What settling a reservation found.
+pub(super) enum Settle {
+    Missing,
+    Already,
+    /// The settled row.
+    Done(Box<ResRecord>),
+}
+
+/// Settle a `pending` or `expired` reservation at `actual` (scaled), stamped `now`.
+pub(super) fn settle_res(
+    tx: &mut dyn KvWrite,
+    now: i64,
+    id: &[u8; 16],
+    actual: i64,
+) -> Result<Settle> {
+    let Some(old) = load_res(tx, id)? else {
+        return Ok(Settle::Missing);
+    };
+    if old.status == "settled" {
+        return Ok(Settle::Already);
+    }
+    let mut new = old.clone();
+    new.status = "settled".to_string();
+    new.actual = Some(actual);
+    new.usage_unknown_reason = None;
+    new.settled_at = Some(now);
+    save_res(tx, Some(&old), &new)?;
+    Ok(Settle::Done(Box::new(new)))
+}
+
+/// The `pending` and `expired` reservations of one owner (`c` client id, `b` budget key), from the open-hold index.
+pub(super) fn open_holds(read: &dyn KvRead, kind: u8, owner: &str) -> Result<Vec<ResRecord>> {
+    let mut ids = Vec::new();
+    scan_prefix(read, &res_open_prefix(kind, owner), false, &mut |k, _| {
+        if let Some(id) = k
+            .get(k.len().saturating_sub(16)..)
+            .and_then(|t| <[u8; 16]>::try_from(t).ok())
+        {
+            ids.push(id);
+        }
+        true
+    })?;
+    let mut rows = Vec::new();
+    for id in ids {
+        if let Some(r) = load_res(read, &id)? {
+            rows.push(r);
+        }
+    }
+    Ok(rows)
+}
+
+impl Store {
+    /// `insertSpendReservation(row)`. `constraint_violation` for a job that does not exist, for neither or both of
+    /// `client_id` and `budget_key`, for a reservation id already taken, and for an amount that overflows
+    /// `NUMERIC(12,4)`; `invalid_argument` for an id that is not a UUID or a time that is not ISO text.
+    pub fn insert_spend_reservation(&self, row: &SpendInsert) -> Result<()> {
+        let parsed = ParsedInsert::new(row)?;
+        self.write(|tx| insert_res(tx, self.env.now_micros(), row, &parsed))
     }
 
     /// `expireSpendReservations(scope)`: how many `pending` reservations past their expiry (`expires_at < now`) were
     /// marked `expired`, among those that match every field of the scope.
     pub fn expire_spend_reservations(&self, scope: &ExpireScope) -> Result<i64> {
-        self.write(|tx| {
-            let now = self.env.now_micros();
-            let mut due = Vec::new();
-            scan_prefix(tx, &prefix(RES_EXP), false, &mut |k, _| match key_time(k) {
-                Some(at) if at < now => {
-                    if let Ok(id) = <[u8; 16]>::try_from(&k[k.len() - 16..]) {
-                        due.push(id);
-                    }
-                    true
-                }
-                _ => false,
-            })?;
-            let mut count = 0;
-            for id in due {
-                let Some(old) = load_res(tx, &id)? else {
-                    continue;
-                };
-                if scope
-                    .client_id
-                    .as_ref()
-                    .is_some_and(|c| old.client_id.as_ref() != Some(c))
-                    || scope
-                        .budget_key
-                        .as_ref()
-                        .is_some_and(|b| old.budget_key.as_ref() != Some(b))
-                {
-                    continue;
-                }
-                let mut new = old.clone();
-                new.status = "expired".to_string();
-                save_res(tx, Some(&old), &new)?;
-                count += 1;
-            }
-            Ok(count)
-        })
+        self.write(|tx| expire_res(tx, self.env.now_micros(), scope))
     }
 
     /// `settleSpendReservation(id, actualCents)`: `{ outcome: 'settled', client_id, budget_key, model, provider }` for a
@@ -504,23 +647,14 @@ impl Store {
         let id = uuid_bytes(reservation_id)?;
         let actual = numeric_4(actual_cents, "actual_cents")?;
         self.write(|tx| {
-            let now = self.env.now_micros();
-            let Some(old) = load_res(tx, &id)? else {
-                return Ok(json!({ "outcome": "missing" }));
-            };
-            if old.status == "settled" {
-                return Ok(json!({ "outcome": "already_settled" }));
-            }
-            let mut new = old.clone();
-            new.status = "settled".to_string();
-            new.actual = Some(actual);
-            new.usage_unknown_reason = None;
-            new.settled_at = Some(now);
-            save_res(tx, Some(&old), &new)?;
-            Ok(json!({
-                "outcome": "settled", "client_id": new.client_id, "budget_key": new.budget_key,
-                "model": new.model, "provider": new.provider,
-            }))
+            Ok(match settle_res(tx, self.env.now_micros(), &id, actual)? {
+                Settle::Missing => json!({ "outcome": "missing" }),
+                Settle::Already => json!({ "outcome": "already_settled" }),
+                Settle::Done(new) => json!({
+                    "outcome": "settled", "client_id": new.client_id, "budget_key": new.budget_key,
+                    "model": new.model, "provider": new.provider,
+                }),
+            })
         })
     }
 

@@ -122,6 +122,8 @@ test('a provider refusal of one request\'s own input is the item\'s content fail
   const status = (error: Error, code: number) => Object.assign(error, { status: code });
   expect(classifyItemFailure(status(new AIConfigError('[chat(anthropic:claude-example)] prompt is too long: 250000 tokens > 200000 maximum'), 400)))
     .toMatchObject({ code: 'request_too_large', scope: 'item', class: 'content' });
+  expect(classifyItemFailure(status(new AIConfigError('[chat(openai:qwen-example)] request (89808 tokens) exceeds the available context size (65536 tokens), try increasing it'), 400)))
+    .toMatchObject({ code: 'request_too_large', scope: 'item', class: 'content' });
   expect(classifyItemFailure(status(new AIConfigError('[chat(openai:gpt-example)] Request Entity Too Large'), 413))).toMatchObject({ code: 'request_too_large', class: 'content' });
   const blocked = Object.assign(new Error('Bad Request'), { statusCode: 400, responseBody: JSON.stringify({ error: { code: 'content_policy_violation' } }) });
   expect(classifyItemFailure(new AIConfigError('[chat(openai:gpt-example)] Bad Request', undefined, blocked))).toMatchObject({ code: 'content_rejected', class: 'content' });

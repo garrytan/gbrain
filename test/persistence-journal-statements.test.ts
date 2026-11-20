@@ -20,10 +20,16 @@
  * true-up and the capacity reads, the compacted-byte sizing, and the projection queue's probes are pinned below.
  *
  * The effect claim's candidate read in src/core/engine-sql/persistence-effect-scans.ts does too: its dead-owner test and
- * refresh fence are pinned below against the effect-journal and worktree-refresh fragments.
+ * refresh fence are pinned below against the effect-journal and worktree-refresh fragments. So does the publication's
+ * effects insert in persistence-journal.ts: its text and its auto-link gate key are pinned against effect-journal.ts.
+ * The managed-request withdrawal's effects insert is pinned against the text facts/withdrawal.ts sent.
+ * The completion's synchronous-commit statement in persistence-declaration.ts is pinned against journal.ts `completeWrite`.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL } from '../src/core/engine-sql/persistence-journal.ts';
+import { CLAIM_STAMP_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, PUBLICATION_EFFECTS_SQL, publicationEffectsParams,
+  REMOTE_AUTO_LINKS_CONFIG_KEY, WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams } from '../src/core/engine-sql/persistence-journal.ts';
+import { REMOTE_AUTO_LINKS_KEY } from '../src/core/persistence/effect-model.ts';
+import { asciiLowerSql, edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
 import { EFFECT_BYTES_SQL, TRUE_UP_CLAMP_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { PURGE_PRESENCE_COLUMNS } from '../src/core/persistence/purged-intent.ts';
@@ -31,20 +37,29 @@ import { claimableWriteFragment, EXPIRE_CLAIMS_SQL, foregroundPriorityText, hasC
   RENEW_CLAIM_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { defineNormalizer, expectGolden } from './helpers/golden.ts';
+import { idleProbeStatement, type IdleProbeSpec } from '../src/core/engine-sql/persistence-idle-probe.ts';
+import { overdueDeferredWorkSql } from '../src/core/persistence/refresh-barrier.ts';
 import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
-import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, COMPACTABLE_RECEIPTS_SQL, PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL,
-  SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, projectionWindowFragment } from '../src/core/engine-sql/persistence-housekeeping.ts';
+import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, CLAIM_SEGMENTED_PROJECTION_SQL, COMPACTABLE_RECEIPTS_SQL, MARK_PROJECTION_REBUILD_FAILED_SQL,
+  PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL, SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment,
+} from '../src/core/engine-sql/persistence-housekeeping.ts';
 import { residentWindowCtes, type ProjectionScanCursor } from '../src/core/page-state/projection-window.ts';
-import { INSERT_TOPOLOGY_CHANGE_SQL, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { INSERT_TOPOLOGY_CHANGE_SQL, RELEASE_CLAIM_SQL, releaseUnpublishedClaim as releaseClaimStatement, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../src/core/persistence/journal.ts';
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
+import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
+import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
+import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
-import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIMED_SQL } from '../src/core/page-state/projections.ts';
+import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
+import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIM, SEGMENTED_PROJECTION_CLAIMED_SQL, SEGMENTED_PROJECTION_LEASE_SECONDS,
+} from '../src/core/page-state/projections.ts';
 
 const completion = (purgeColumns: string) => `WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
       COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
@@ -117,6 +132,17 @@ describe('written-out write-journal statements', () => {
       COALESCE((SELECT SUM(${EFFECT_BYTES_SQL}) FROM persistence_effects e WHERE e.request_id=r.id),0)::text AS effect_bytes,
       EXISTS(SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running')) AS unfinished
     FROM persistence_requests r WHERE r.id=ANY($1::uuid[]) AND r.state IN ('committed','failed','conflict','cancelled')`);
+    expect(TRUE_UP_RESERVATIONS_SQL).toBe(`WITH t AS (SELECT * FROM unnest($1::uuid[],$2::bigint[],$3::bigint[],$4::bigint[]) AS t(id,old,kept,effects)),
+      done AS (UPDATE persistence_requests r SET terminal_reservation=t.kept FROM t
+        WHERE r.id=t.id AND r.terminal_reservation=t.old
+          AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running'))
+          AND COALESCE((SELECT SUM(${EFFECT_BYTES_SQL}) FROM persistence_effects e WHERE e.request_id=r.id),0)=t.effects
+        RETURNING r.principal_kind,r.principal_id,t.old-t.kept AS freed),
+      d AS (SELECT k.key,SUM(done.freed) AS freed FROM done
+        CROSS JOIN LATERAL (VALUES ('brain'),('principal:'||done.principal_kind||':'||done.principal_id)) AS k(key) GROUP BY k.key),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST(d.freed,c.terminal_bytes) FROM d WHERE c.key=d.key),
+      ${TRUE_UP_CLAMP_SQL('SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes')}
+      SELECT COALESCE(SUM(freed),0)::text AS freed FROM done`);
     const principalNet = COMPACTED_RECEIPT_BYTES_SQL('w', 'e');
     expect(CAPACITY_PRINCIPAL_DAYS_SQL).toContain(`e AS (SELECT request_id,SUM(${EFFECT_BYTES_SQL}) AS bytes FROM persistence_effects`);
     expect(CAPACITY_PRINCIPAL_DAYS_SQL).toContain(`COALESCE(SUM(${principalNet}),0)::text AS net`);
@@ -126,6 +152,9 @@ describe('written-out write-journal statements', () => {
     expect(SEGMENTED_JOB_PROBES_SQL).toBe(SEGMENTED_JOB_PROBES);
     expect(SEGMENTED_PROJECTION_CLAIMED_TEXT).toBe(SEGMENTED_PROJECTION_CLAIMED_SQL);
     expect(PROJECTION_RETRY_READY_TEXT).toBe(PROJECTION_RETRY_READY_SQL);
+    // The projector's queue writes copy its claim name, lease and live-claim test.
+    expect(CLAIM_SEGMENTED_PROJECTION_SQL).toContain(`NOT (split_part(reason,':',1)='${SEGMENTED_PROJECTION_CLAIM}' AND updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds')`);
+    expect(MARK_PROJECTION_REBUILD_FAILED_SQL).toContain(`AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`);
   });
 
   test('the resident window copies residentWindowCtes, its row budgets and its parameter order', () => {
@@ -155,5 +184,334 @@ describe('the effect claim read copies the claim fragments', () => {
     expect(CLAIMABLE_EFFECT_SQL).toContain(`AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})\n`);
     expect(CLAIMABLE_EFFECT_SQL).toContain('w.owner_host_id=$1::uuid');
     expect(CLAIMABLE_EFFECT_SQL.endsWith('ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED')).toBe(true);
+  });
+});
+
+describe('the FIFO head read copies the journal claim formula', () => {
+  // The text claimNextWrite sent through executeRaw before selectClaimableWrite, built from the journal's own fragments.
+  const LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE ${SYNC_KIND('r')} AND l.id=$7::text||r.source_id
+  AND l.ttl_expires_at>now() AND NOT (l.holder_pid=$8::integer AND l.holder_host IS NOT DISTINCT FROM $9::text))`;
+  const journalText = (prio: string, holderOnly: boolean) => {
+    const first = `(${prio}) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))`;
+    return `WITH waiting AS MATERIALIZED (SELECT f.worktree_id, max(f.sequence) AS last
+        FROM (${FOREGROUND_WAITING_ON('$5::text', "($6::text::jsonb->>f.worktree_id::text)::bigint")}) f GROUP BY f.worktree_id)
+      SELECT r.* FROM persistence_requests r
+      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE ${claimableWriteSql(`(${first})`, '$4::text[]')}
+        -- On a root whose lane groups run in this process only a foreground write is claimed (beside them).
+        AND NOT (r.worktree_id::text=ANY($4::text[]) AND (${SYNC_KIND('r')} OR NOT (${first})))
+        AND NOT (${SYNC_KIND('r')} AND ${first} AND EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=r.worktree_id AND g.last>r.sequence))
+      ORDER BY ${holderOnly ? `${LEASE_HELD}, ` : ''}${CLAIM_ORDER(`(${first})`)} LIMIT 1 FOR UPDATE OF r SKIP LOCKED`;
+  };
+
+  test('selectClaimableWrite sends the journal text for each priority and claim owner', () => {
+    for (const priority of [null, true, false] as const) {
+      for (const holder of [false, true]) expect(claimHeadText(priority, holder)).toBe(journalText(foregroundPriorityText(priority), holder));
+    }
+  });
+
+  test('the lease holder binds $7..$9 only when the claim owner holds no resident lease', () => {
+    const spec = { hostId: 'h', excludeRoots: ['x'], fifoRoots: ['f'], laneRoots: ['l'], nonce: 'n', syncSeen: { w: '3' }, priority: null };
+    expect(claimHeadStatement({ ...spec, leaseHolder: null }).params).toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}']);
+    expect(claimHeadStatement({ ...spec, leaseHolder: { lockPrefix: 'p:', pid: 7, host: 'host' } }).params)
+      .toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}', 'p:', 7, 'host']);
+  });
+});
+
+describe('the publication effects insert copies the effect journal statement', () => {
+  // The statement effect-journal.ts queuePublicationEffects sent through executeRaw before it called insertPublicationEffects.
+  const journalText = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND ${asciiLowerSql(edgeTrimSql('value'))} IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+  test('insertPublicationEffects sends the journal text and gates on the remote auto-link key', () => {
+    expect(PUBLICATION_EFFECTS_SQL).toBe(journalText);
+    expect(REMOTE_AUTO_LINKS_CONFIG_KEY).toBe(REMOTE_AUTO_LINKS_KEY);
+  });
+
+  test('the effects bind as one text parameter, so postgres.js does not double-encode them', () => {
+    const effects = [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }, { kind: 'links', data: { slug: 'notes/a' }, gated: true }];
+    expect(publicationEffectsParams({ requestId: 'r', revision: null, sourceId: 'default', sourceIncarnation: 'i', worktreeId: null, effects }))
+      .toEqual(['r', null, 'default', 'i', null, JSON.stringify(effects), 'mcp.remote_auto_links']);
+  });
+});
+
+describe('the withdrawal effects insert copies the withdrawal statement', () => {
+  // The statement facts/withdrawal.ts recordFactWithdrawal sent through executeRaw before it called insertWithdrawalEffects.
+  const withdrawalText = `INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
+          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
+          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
+          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`;
+
+  test('insertWithdrawalEffects sends the withdrawal text', () => {
+    expect(WITHDRAWAL_EFFECTS_SQL).toBe(withdrawalText);
+  });
+
+  test('the data binds as one text parameter with its targets in slug order, as the withdrawal bound it', () => {
+    const targets = [{ slug: 'people/b', page_id: 2, revision: 'r2' }, { slug: 'people/a', page_id: 1, revision: 'r1' }];
+    expect(withdrawalEffectsParams({ requestId: 'q', sourceId: 'default', targets }))
+      .toEqual(['q', 'default', JSON.stringify({ version: 2, targets: [targets[1], targets[0]] })]);
+    expect(targets[0].slug).toBe('people/b');
+  });
+});
+
+describe('the completion synchronous-commit statement copies the journal statement', () => {
+  // The statement journal.ts completeWrite sent through executeRaw before it called requireSynchronousCommit.
+  const journalText = "SELECT set_config('synchronous_commit','on',true)";
+
+  test('requireSynchronousCommit sends the journal text alone, with no parameters', async () => {
+    expect(SYNCHRONOUS_COMMIT_SQL).toBe(journalText);
+    const sent: unknown[][] = [];
+    const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
+    await requireSynchronousCommit(engine as never);
+    expect(sent).toEqual([[journalText]]);
+  });
+});
+
+describe('the unpublished-claim release copies the journal statement', () => {
+  // The statement journal.ts releaseUnpublishedClaim sent through executeRaw before it called the engine member.
+  const journalText = `UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
+    WHERE id=$1::uuid AND execution_token=$2::uuid
+    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`;
+
+  test('releaseUnpublishedClaim sends the journal text with id, token, reason and charge', async () => {
+    expect(RELEASE_CLAIM_SQL).toBe(journalText);
+    const sent: unknown[][] = [];
+    const engine = { executeRaw: async (...args: unknown[]) => { sent.push(args); return []; } };
+    await releaseClaimStatement(engine, { id: 'a', token: 'b', reason: 'database_contention', charge: true });
+    await releaseClaimStatement(engine, { id: 'a', token: null, reason: 'claim_lost', charge: false });
+    expect(sent).toEqual([[journalText, ['a', 'b', 'database_contention', true]], [journalText, ['a', null, 'claim_lost', false]]]);
+  });
+});
+
+describe('the effect worker statements are one text on both engines', () => {
+  // The claim, settle, gate, guard and re-arm statements effect-journal.ts and effect-recovery.ts sent through executeRaw
+  // before they called the engine members. Both engines delegate to engine-sql/persistence-effect-worker.ts; this pins
+  // the text and bound values each engine sends, through its own prototype, in one golden.
+  const T = 'f0000000-0000-4000-8000-0000000000e1';
+  const ref = { id: '7', token: T };
+  const calls: [string, (e: any) => Promise<unknown>][] = [
+    ['stampEffectClaim', e => e.stampEffectClaim({ id: '7', token: T, ownerJson: '{}' })],
+    ['renewEffectClaim', e => e.renewEffectClaim(ref)],
+    ['renewEffectClaim#direct', e => e.renewEffectClaim(ref, { direct: true })],
+    ['advanceEffectRow', e => e.advanceEffectRow({ ...ref, slug: 'notes/a' })],
+    ['completeEffectRow', e => e.completeEffectRow({ ...ref, outcomeJson: '{}' })],
+    ['retryEffectRow', e => e.retryEffectRow({ ...ref, reason: 'r', delayMs: 1000 })],
+    ['retryBusyEffectRow', e => e.retryBusyEffectRow({ ...ref, dataJson: '{}', delayMs: 1000 })],
+    ['requeueEffectRow', e => e.requeueEffectRow({ ...ref, dataJson: '{}', reason: null, delayMs: 1000 })],
+    ['parkEffectRow', e => e.parkEffectRow({ ...ref, dataJson: '{}' })],
+    ['failEffectRow', e => e.failEffectRow({ ...ref, reason: 'r' })],
+    ['readMirrorGateRows', e => e.readMirrorGateRows(['b0000000-0000-4000-8000-0000000000b1'])],
+    ['lockEffectGuard#brain', e => e.lockEffectGuard(null)],
+    ['lockEffectGuard#worktree', e => e.lockEffectGuard('b0000000-0000-4000-8000-0000000000b1')],
+    ['hasRearmableTargets', e => e.hasRearmableTargets(['b0000000-0000-4000-8000-0000000000b1'], 'withdrawal_mirror_failed')],
+  ];
+  async function record(proto: object): Promise<Record<string, unknown[][]>> {
+    const out: Record<string, unknown[][]> = {};
+    for (const [name, run] of calls) {
+      const sent: unknown[][] = [];
+      const send = async (sql: string, params?: unknown[]) => { sent.push([sql, params ?? []]); return []; };
+      const engine = Object.create(proto, { executeRaw: { value: send }, executeRawDirect: { value: send }, engineSql: { value: { executeRaw: send } } });
+      await run(engine);
+      out[name] = sent;
+    }
+    return out;
+  }
+
+  test('PGLite and Postgres send the pinned statements with the same bound values', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    const pglite = await record(PGLiteEngine.prototype);
+    expect(await record(PostgresEngine.prototype)).toEqual(pglite);
+    expectGolden('sql-text-extra/persistence-effect-worker', pglite, defineNormalizer<Record<string, unknown[][]>>('effect-worker-statements-v1', m => m));
+  });
+});
+
+describe('the idle probe is one text on both engines', () => {
+  // consumer.ts hasWork built this statement inline before it called probeIdleWork. `original` is that builder, kept
+  // here verbatim over the source fragments (journal.ts, refresh-barrier.ts, page-state/projections.ts), so the engine-sql
+  // copy (persistence-idle-probe.ts) cannot drift from what the consumer sent.
+  function original(spec: IdleProbeSpec): { sql: string; params: unknown[] } {
+    const priority = foregroundPrioritySql();
+    const cursor = { after: spec.cursor.after, highWater: spec.cursor.highWater } as ProjectionScanCursor;
+    const params: unknown[] = [spec.hostId, spec.excludedRoots, spec.publishing, spec.retryingTopologies, spec.laneRoots];
+    const windowCtes = residentWindowCtes(cursor, params, PROJECTION_RETRY_READY_SQL);
+    if (spec.abandonedBefore) params.push(spec.abandonedBefore);
+    const abandoned = spec.abandonedBefore ? `
+      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL AND r.publication_started=false AND r.updated_at<$${params.length}::timestamptz)
+      OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.state='running' AND e.recovery IS NULL AND e.updated_at<$${params.length}::timestamptz)` : '';
+    return { sql: `WITH ${windowCtes},
+    pwork AS (SELECT EXISTS (SELECT 1 FROM (SELECT source_incarnation,slug FROM recent UNION ALL SELECT source_incarnation,slug FROM win) j
+      CROSS JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
+      CROSS JOIN LATERAL (SELECT 1 FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug OFFSET 0) k
+        JOIN pages p ON p.id=k.id WHERE p.deleted_at IS NULL AND p.page_kind IN ('markdown','code')) p) AS found)
+    SELECT (SELECT found FROM pwork) AS projection_work,
+      (SELECT json_build_object('source_incarnation',source_incarnation,'slug',slug) FROM win ORDER BY ord DESC LIMIT 1) AS projection_last,
+      (SELECT at FROM high_water) AS high_water, (
+      EXISTS (SELECT 1 FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
+        WHERE ${claimableWriteSql(priority, '$5::text[]')}
+        AND ($3::boolean OR r.blocked_reason IS DISTINCT FROM 'writer_pool_capacity'))
+      OR EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_worktrees w ON w.id=r.worktree_id
+        WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT (r.worktree_id::text=ANY($2::text[])))
+      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
+        AND r.publication_started=false AND r.claim_expires_at<now()
+        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid)))
+      OR EXISTS (SELECT 1 FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+        AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')}) AND e.recovery IS NULL
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')))
+      OR EXISTS (SELECT 1 FROM persistence_effects e JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE e.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND e.next_attempt_at<=now())
+      OR (SELECT found FROM pwork)
+      OR EXISTS (SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation AND NOT s.archived
+        JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL AND p.body_storage='segmented'
+        WHERE ${PROJECTION_RETRY_READY_SQL})
+      OR EXISTS (SELECT 1 FROM persistence_topology_changes c
+        JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
+        WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
+      OR ${overdueDeferredWorkSql('$1')}${abandoned}
+    ) AS work`, params };
+  }
+  const H = 'f0000000-0000-4000-8000-0000000000e2';
+  const specs: [string, IdleProbeSpec][] = [
+    ['first', { hostId: H, excludedRoots: [], publishing: false, retryingTopologies: [], laneRoots: [], cursor: { after: { source_incarnation: 'b0000000-0000-4000-8000-0000000000b1', slug: '' }, highWater: null }, abandonedBefore: null, foregroundPriority: null }],
+    ['later', { hostId: H, excludedRoots: ['db:x'], publishing: true, retryingTopologies: ['9'], laneRoots: ['w'], cursor: { after: { source_incarnation: 'b0000000-0000-4000-8000-0000000000b1', slug: 'notes/a' }, highWater: '2026-11-19 00:00:00+00' }, abandonedBefore: '2026-11-19T00:00:00.000Z', foregroundPriority: true }],
+    ['fifo', { hostId: H, excludedRoots: [], publishing: false, retryingTopologies: [], laneRoots: [], cursor: { after: { source_incarnation: 'b0000000-0000-4000-8000-0000000000b1', slug: '' }, highWater: null }, abandonedBefore: null, foregroundPriority: false }],
+  ];
+
+  // The engine-sql copy binds each value where it is read (renderFragment numbers them); the consumer hand-numbered
+  // $1..$9 and reused them. Writing each placeholder as the value it binds makes the two comparable value for value.
+  function bound({ sql, params }: { sql: string; params: unknown[] }): string {
+    return sql.replace(/\$(\d+)/g, (_, n: string) => {
+      const i = Number(n) - 1;
+      expect(i).toBeLessThan(params.length);
+      return `<${JSON.stringify(params[i])}>`;
+    });
+  }
+
+  test('the statement is the one the consumer built, value for value, for every switch and window state', async () => {
+    for (const [, spec] of specs) {
+      const env = spec.foregroundPriority === null ? undefined : String(spec.foregroundPriority);
+      await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: env }, () => {
+        const ours = idleProbeStatement(spec);
+        expect(bound(ours)).toBe(bound(original(spec)));
+        // Every bound value is read: renderFragment numbers $1..$n in order, once each.
+        expect([...ours.sql.matchAll(/\$(\d+)/g)].map(m => Number(m[1]))).toEqual(ours.params.map((_, i) => i + 1));
+      });
+    }
+  });
+
+  test('PGLite and Postgres send it on the lane they are given, with the same bound values', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    async function record(proto: object): Promise<Record<string, unknown[][]>> {
+      const out: Record<string, unknown[][]> = {};
+      for (const [name, spec] of specs) for (const route of ['engine', 'direct', 'lane'] as const) {
+        const sent: unknown[][] = [];
+        const send = (via: string) => async (sql: string, params?: unknown[]) => { sent.push([via, sql, params ?? []]); return []; };
+        const engine = Object.create(proto, { executeRaw: { value: send('engine') }, executeRawDirect: { value: send('direct') } });
+        const lane = { executeRaw: send('lane') } as never;
+        await engine.probeIdleWork(spec, route === 'lane' ? { lane } : { direct: route === 'direct' });
+        out[`${name}#${route}`] = sent;
+      }
+      return out;
+    }
+    const pglite = await record(PGLiteEngine.prototype);
+    const postgres = await record(PostgresEngine.prototype);
+    // PGLite has no direct lane: its direct route is the engine itself.
+    for (const [name] of specs) expect(postgres[`${name}#direct`]!.map(([, ...rest]) => rest)).toEqual(pglite[`${name}#direct`]!.map(([, ...rest]) => rest));
+    expect(postgres[`first#direct`]![0]![0]).toBe('direct');
+    expect(pglite[`first#direct`]![0]![0]).toBe('engine');
+    const shared = (m: Record<string, unknown[][]>) => Object.fromEntries(Object.entries(m).filter(([k]) => !k.endsWith('#direct')));
+    expect(shared(postgres)).toEqual(shared(pglite));
+    expectGolden('sql-text-extra/persistence-idle-probe', shared(pglite), defineNormalizer<Record<string, unknown[][]>>('idle-probe-statements-v1', m => m));
+  });
+});
+
+describe('the no-op embedding settle statements are one text on both engines', () => {
+  // embedding-noop-settle.ts sent these statements inline before it called the engine members. `original` is its
+  // candidate builder, kept here verbatim over refreshFenceClear and quoteIdentifier, so the engine-sql copy
+  // (persistence-embedding-noop-settle.ts) cannot drift from what the settle pass sent.
+  const H = 'f0000000-0000-4000-8000-0000000000e3';
+  const spec = { hostId: H, signature: 'sig-1', expectedModel: 'model-a', column: 'embedding', window: ['7', '9'], pageIds: [3, 4] };
+  function original(s: typeof spec): { sql: string; params: unknown[] } {
+    const vector = quoteIdentifier(s.column);
+    return { sql: `SELECT e.id::text AS id, e.kind, e.source_id, e.source_incarnation, e.worktree_id
+      FROM persistence_effects e
+      JOIN pages p ON p.id=(e.data->>'page_id')::int AND p.source_id=e.source_id
+      WHERE e.id=ANY($4::text[]::bigint[]) AND p.id=ANY($5::int[]) AND e.next_attempt_at<=now()
+        AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'retry_slugs') AND NOT (e.data ? 'parked')
+        AND (e.worktree_id IS NULL OR (EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=e.worktree_id AND w.owner_host_id=$1::uuid)
+          AND ${refreshFenceClear('e')}))
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
+        AND p.deleted_at IS NULL AND p.knowledge_revision=e.revision AND p.text_projection_revision=p.knowledge_revision
+        AND p.embedding_signature=$2
+        AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id=p.id AND NOT (cc.${vector} IS NOT NULL
+          AND cc.embedded_at IS NOT NULL AND cc.embedded_text_hash IS NOT DISTINCT FROM md5(cc.chunk_text) AND cc.model IS NOT DISTINCT FROM $3))
+      ORDER BY e.id
+      FOR SHARE OF p`, params: [s.hostId, s.signature, s.expectedModel, s.window, s.pageIds] };
+  }
+  function bound({ sql, params }: { sql: string; params: unknown[] }): string {
+    return sql.replace(/\$(\d+)/g, (_, n: string) => {
+      const i = Number(n) - 1;
+      expect(i).toBeLessThan(params.length);
+      return `<${JSON.stringify(params[i])}>`;
+    });
+  }
+  async function record(proto: object): Promise<Record<string, unknown[][]>> {
+    const calls: [string, (e: any) => Promise<unknown>][] = [
+      ['probeNoopEmbeddingSettle', e => e.probeNoopEmbeddingSettle('5')],
+      ['lockNoopEmbeddingWindow', e => e.lockNoopEmbeddingWindow({ from: '5', limit: 50 })],
+      ['readNoopEmbeddingCandidates', e => e.readNoopEmbeddingCandidates(spec)],
+      ['readNoopEmbeddingCandidates#null-model', e => e.readNoopEmbeddingCandidates({ ...spec, expectedModel: null })],
+      ['settleNoopEmbeddingRows', e => e.settleNoopEmbeddingRows(['7', '9'])],
+    ];
+    const out: Record<string, unknown[][]> = {};
+    for (const [name, run] of calls) {
+      const sent: unknown[][] = [];
+      const send = async (sql: string, params?: unknown[]) => { sent.push([sql, params ?? []]); return [{ newest: '9' }]; };
+      await run(Object.create(proto, { executeRaw: { value: send } }));
+      out[name] = sent;
+    }
+    return out;
+  }
+
+  test('the candidate read is the one the settle pass built, value for value; the others are its texts', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const sent = await record(PGLiteEngine.prototype);
+    const [candidates] = sent.readNoopEmbeddingCandidates as [string, unknown[]][];
+    expect(bound({ sql: candidates![0], params: candidates![1] })).toBe(bound(original(spec)));
+    const [nullModel] = sent['readNoopEmbeddingCandidates#null-model'] as [string, unknown[]][];
+    expect(bound({ sql: nullModel![0], params: nullModel![1] })).toBe(bound(original({ ...spec, expectedModel: null as never })));
+    expect(sent.probeNoopEmbeddingSettle).toEqual([[`SELECT 1 FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued'
+    AND e.attempts=0 AND e.recovery IS NULL ORDER BY e.id LIMIT 1`, ['5']]]);
+    expect(sent.lockNoopEmbeddingWindow).toEqual([
+      ['SELECT COALESCE(max(id),0)::text AS newest FROM persistence_effects', []],
+      [`SELECT e.id::text AS id, (e.data->>'page_id')::int AS page_id
+      FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued' AND e.attempts=0 AND e.recovery IS NULL
+      ORDER BY e.id LIMIT $2 FOR UPDATE SKIP LOCKED`, ['5', 50]],
+    ]);
+    expect(sent.settleNoopEmbeddingRows).toEqual([[`UPDATE persistence_effects SET state='committed', error_code=NULL, attempts=attempts+1,
+        data=data-'retry_slugs'-'target_failures'-'failing_target', execution_token=NULL, claim_expires_at=NULL, claim_owner=NULL, outcome='{}'::jsonb, updated_at=now()
+      WHERE id=ANY($1::text[]::bigint[]) AND state='queued' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id, request_id`, [['7', '9']]]]);
+  });
+
+  test('PGLite and Postgres send the pinned statements with the same bound values', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    const pglite = await record(PGLiteEngine.prototype);
+    expect(await record(PostgresEngine.prototype)).toEqual(pglite);
+    expectGolden('sql-text-extra/persistence-embedding-noop-settle', pglite, defineNormalizer<Record<string, unknown[][]>>('noop-settle-statements-v1', m => m));
   });
 });

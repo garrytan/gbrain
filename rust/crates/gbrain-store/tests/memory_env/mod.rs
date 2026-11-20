@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 //! A store on a clock the test moves, for the memory-record families (dream, contradictions,
-//! facts, ontology, raw_files, stats).
+//! facts, ontology, raw_files, stats). `GBRAIN_RUST_CONCURRENT_WRITES=1` puts it on the
+//! concurrent-write record file (`OccKv`), as `common::open` does, so the gate checks both modes.
 
 use gbrain_store::env::uuid_from_bytes;
+use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::{Env, OpenOptions, Store};
+use gbrain_store::{Env, Kv, OpenOptions, Store};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
@@ -75,7 +77,25 @@ pub fn brain(name: &str) -> Brain {
         now: AtomicI64::new(T0),
         ids: AtomicU64::new(1),
     });
+    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
+    #[cfg(feature = "fjall")]
+    if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
+        use gbrain_store::fjall_kv::FjallKv;
+        let kv = FjallKv::open_dir(&dir.join("records.fjall")).unwrap();
+        let kv: Arc<dyn Kv> = if concurrent {
+            Arc::new(OccKv::new_fjall(kv).unwrap())
+        } else {
+            Arc::new(kv)
+        };
+        let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
+        return Brain { store, clock, dir };
+    }
     let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
-    let store = Store::open_kv(Arc::new(kv), clock.clone(), OpenOptions::default()).unwrap();
+    let kv: Arc<dyn Kv> = if concurrent {
+        Arc::new(OccKv::new(kv).unwrap())
+    } else {
+        Arc::new(kv)
+    };
+    let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
     Brain { store, clock, dir }
 }

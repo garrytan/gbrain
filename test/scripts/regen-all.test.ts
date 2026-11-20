@@ -50,6 +50,15 @@ describe('regen:all', () => {
     for (const c of POSTGRES_GOLDENS) expect(existsSync(join(ROOT, /bun test (?:--timeout=\d+ )?(\S+)/.exec(c)![1]!)), c).toBe(true);
   });
 
+  test('every golden that only a Postgres E2E file writes is named in POSTGRES_GOLDENS', () => {
+    const written = (file: string) => [...readFileSync(join(ROOT, file), 'utf8').matchAll(/expectGolden\(\s*'([^']+)'/g)].map(m => m[1]!);
+    const files = [...new Bun.Glob('test/**/*.test.ts').scanSync(ROOT)];
+    const offline = new Set(files.filter(f => !f.startsWith('test/e2e/')).flatMap(written));
+    const postgresOnly = files.filter(f => f.startsWith('test/e2e/') && written(f).some(name => !offline.has(name)));
+    expect(postgresOnly.length).toBeGreaterThan(0);
+    for (const f of postgresOnly) expect(POSTGRES_GOLDENS.some(c => c.includes(` ${f}`)), f).toBe(true);
+  });
+
   test('every bun test it spawns passes an explicit --timeout (bunfig\'s [test] timeout is not applied, #6187)', () => {
     const argvs = [...ARTIFACTS.flatMap(a => [a.regen, a.check]), ...CONTRACT_GOLDENS.map(goldenArgv)];
     const bunTests = argvs.filter(argv => argv[0] === 'bun' && argv[1] === 'test');

@@ -16,8 +16,16 @@
  * (`preadmitRecheckFailed`), the caller drops this engine's entries and runs
  * the whole pre-admission again uncached, once, so the write refuses (or
  * routes) exactly as without the cache.
+ *
+ * The brain identity and the writer registration are also read through typed
+ * engine methods (`readPersistenceBrainId`, an unlocked `readLocalWriterRow`);
+ * the cache answers those the same way as their SQL text. A locked read always
+ * goes to the database. A replay of a committed request_id never reaches the
+ * locked recheck, so submitPageMutation prepares it once more without the cache
+ * before it returns the stored receipt.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import { OperationError } from '../ops/contract.ts';
 import { registerEngineView, writeSwitchOn } from './switches.ts';
 import { ADMISSION_SOURCE_SQL, type AdmissionSourceRow, WORKTREE_BINDING_SQL, type WorktreeBinding } from '../engine-sql/write-misc.ts';
@@ -64,6 +72,10 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
   let cache = caches.get(engine);
   if (!cache) { cache = { reads: new Map() }; caches.set(engine, cache); }
   const held = cache;
+  const noteBrain = (id: string) => {
+    if (held.brainId && held.brainId.id !== id) held.reads.clear();
+    held.brainId = { id, at: now() };
+  };
   // `fetch` runs the read on a miss: the statement itself, or the typed member that runs it.
   const read = async (sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal } | undefined,
     fetch: () => Promise<Array<Record<string, unknown>>> = () => engine.executeRaw<Record<string, unknown>>(sql, params, opts)): Promise<unknown[]> => {
@@ -71,10 +83,7 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     if (sql === BRAIN_SQL) {
       if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return [{ brain_id: held.brainId.id }];
       const rows = await engine.executeRaw<Record<string, unknown>>(sql, params, opts);
-      if (present(sql, rows) && caches.get(engine) === held) {
-        if (held.brainId && held.brainId.id !== rows[0]!.brain_id) held.reads.clear();
-        held.brainId = { id: String(rows[0]!.brain_id), at: now() };
-      }
+      if (present(sql, rows) && caches.get(engine) === held) noteBrain(String(rows[0]!.brain_id));
       return rows;
     }
     const key = JSON.stringify([held.brainId?.id ?? null, sql, params ?? null]);
@@ -84,6 +93,13 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     if (held.brainId && present(sql, rows) && caches.get(engine) === held) held.reads.set(key, { at: now(), rows: rows.map(row => ({ ...row })) });
     else held.reads.delete(key);
     return rows;
+  };
+  const brainRead = async (): Promise<string | null> => {
+    if (caches.get(engine) !== held) return engine.readPersistenceBrainId();
+    if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return held.brainId.id;
+    const id = await engine.readPersistenceBrainId();
+    if (typeof id === 'string' && caches.get(engine) === held) noteBrain(id);
+    return id;
   };
   // Every cached read is filed under the brain it was taken for, which admission checks.
   if (!held.brainId || now() - held.brainId.at >= PREADMIT_TTL_MS) await read(BRAIN_SQL, undefined, undefined);
@@ -114,6 +130,7 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
       else held.reads.delete(memo);
       return row;
     };
+    if (key === 'readPersistenceBrainId') return brainRead;
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);

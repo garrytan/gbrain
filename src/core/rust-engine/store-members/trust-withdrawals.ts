@@ -1,10 +1,11 @@
 /**
- * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, insertFactWithdrawal,
+ * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, isFactWithdrawn, isFactPurged, insertFactWithdrawal,
  * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys,
  * readFactCacheWatermark, readTrustGeneration), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
  * watermark's access digest is that of empty folder access tables: the store keeps none. The trust generation is the
  * store's commit sequence, which moves on every commit. `withdrawnAt` must be the ISO form `Date#toISOString` gives;
- * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md).
+ * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md). The purge reads answer from
+ * the store's fact purge ledger (`facts/purge_ledger.rs`); it keeps no take purge ledger, so `takes` is false.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
@@ -14,6 +15,12 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 
 export const hasCoveringFactWithdrawal: Member<'hasCoveringFactWithdrawal'> = (brain, sourceId, visibility, factHash, claim, subject) =>
   storeCall({ member: 'hasCoveringFactWithdrawal', sourceId }, () => brain.hasCoveringFactWithdrawal(sourceId, visibility, factHash, claim, subject));
+
+export const isFactWithdrawn: Member<'isFactWithdrawn'> = (brain, sourceId, visibility, claim, entitySlug, memberPage) =>
+  storeCall({ member: 'isFactWithdrawn', sourceId }, () => brain.isFactWithdrawn(sourceId, visibility ?? null, claim, entitySlug ?? null, memberPage ?? null));
+
+export const isFactPurged: Member<'isFactPurged'> = (brain, sourceId, visibility, claim, entitySlug) =>
+  storeCall({ member: 'isFactPurged', sourceId }, () => brain.isFactPurged(sourceId, visibility, claim, entitySlug ?? null));
 
 export const insertFactWithdrawal: Member<'insertFactWithdrawal'> = (brain, sourceId, visibility, claim, subject, withdrawnAt) =>
   storeCall({ member: 'insertFactWithdrawal', sourceId }, () => brain.insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt ?? null));
@@ -39,3 +46,6 @@ export const readFactCacheWatermark: Member<'readFactCacheWatermark'> = (brain, 
 
 export const readTrustGeneration: Member<'readTrustGeneration'> = (brain) =>
   storeCall({ member: 'readTrustGeneration' }, () => brain.readTrustGeneration());
+
+export const readSourcePurgeFlags: Member<'readSourcePurgeFlags'> = (brain, sourceId) =>
+  storeCall({ member: 'readSourcePurgeFlags', sourceId }, () => brain.readSourcePurgeFlags(sourceId));
