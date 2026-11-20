@@ -50,7 +50,7 @@ Each returns what PGLite returns for a brain with the same contents.
 | `listFenceHoldRows(sourceIds, kinds, ownerKey?)` (`src/core/rust-engine/store-members/fence-holds.ts`) | `[]` | Only a facts or takes fence publish holds a fence result, and it writes `derived_generations` through `executeRaw`, which this engine refuses. A family that lets the store publish fence generations must read its held rows here. |
 | `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
 | `readOAuthClientWriteGrant(clientId, opts?)` | `null` | The store keeps no OAuth clients (its writers are `local_cli` and `local_stdio`), so a write owned by one finds no live grant and `authorizeWrite` refuses `permission_denied`, as a Postgres or PGLite brain without that client does. |
-| `readAccessTokenWriteGrant(tokenId, opts?)` | `null` | The store keeps no legacy access tokens; same answer and refusal as above. |
+| `readAccessTokenWriteGrant(tokenId, opts?)` | `null`, or a typed refusal | A token with no live row (`findActiveAccessTokens`) answers `null`, with the same refusal as above. The store keeps a minted token but not every grant column (see [access-tokens.md](access-tokens.md)), so a live token refuses `engine_capability_missing` rather than read as revoked. |
 | `shareLockWriteCredential(kind, id)` | no-op | No credential row exists to hold; a missing row locks nothing on Postgres either. |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way

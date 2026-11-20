@@ -222,7 +222,6 @@ src/core/skillpack/shared-brain-bridge.ts	kind_compare	1
 src/core/sql-engine-kind.ts	kind_compare	2	came from #9631 (the Rust engine shell): the one helper that narrows an engine kind to pglite or postgres and refuses rust; joined at the #9641 merge with 56a9547a
 src/core/statement-deadline.ts	kind_compare	1
 src/core/sync-concurrency.ts	kind_compare	2
-src/core/sync-identity-downgrades.ts	kind_compare	1
 src/core/vector-index.ts	kind_compare	5
 src/core/vector-prewarm.ts	kind_compare	2
 src/mcp/resolve-ipc-binding.ts	kind_compare	1

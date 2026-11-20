@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { detachRestoredPage } from './detached-pages.ts';
 
@@ -26,8 +27,8 @@ export const UNBOUND_COLLISION_MESSAGE = 'A database-only page written while its
 /**
  * #6449: the rooted sources `writer activate` accepted without an owner because
  * `sync.write_through` was off (activation.ts writes the list, deactivation
- * clears it). A PGLite page write to one of them never runs the automatic
- * first-write claim, so turning `sync.write_through` back on refuses with the
+ * clears it). A single-process engine's page write to one of them never runs
+ * the automatic first-write claim, so turning `sync.write_through` back on refuses with the
  * claim named instead of starting to publish files into an unreviewed checkout.
  */
 export const DATABASE_ONLY_SOURCES_KEY = 'persistence.database_only_sources';
@@ -36,6 +37,15 @@ export async function readDatabaseOnlyActivatedSources(engine: Pick<BrainEngine,
     const parsed: unknown = JSON.parse(await engine.getConfig(DATABASE_ONLY_SOURCES_KEY) ?? '[]');
     return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
   } catch { return []; }
+}
+
+/**
+ * A single-process engine (PGLite, Rust: one process owns the brain, consumer-election.ts) claims a rooted source with
+ * no worktree binding on its first page write, unless activation listed the source database-only (#6449). Postgres is
+ * multi-process: it never claims automatically, and the write refuses until `gbrain sources writer claim` (#6608).
+ */
+export async function autoClaimsUnboundSource(engine: Pick<BrainEngine, 'kind' | 'getConfig'>, sourceId: string): Promise<boolean> {
+  return engine.kind !== 'postgres' && !(await readDatabaseOnlyActivatedSources(engine)).includes(sourceId);
 }
 
 export function parseUnboundWriteValue(value: string): UnboundWritePolicy {
@@ -106,9 +116,10 @@ export type UnboundWriteDecision = { kind: 'claim' } | { kind: 'database_only'; 
 /**
  * The one rule for a write-through write to a source with a checkout root but
  * no worktree binding, shared by page writers and fact writers (#6608):
- * a connector source is database-only by design and never claimed; PGLite
- * claims the source automatically unless activation listed it database-only
- * (#6449); otherwise a target with a recorded canonical file, or any
+ * a connector source is database-only by design and never claimed; a
+ * single-process engine (PGLite, Rust) claims the source automatically unless
+ * activation listed it database-only (#6449, autoClaimsUnboundSource);
+ * otherwise a target with a recorded canonical file, or any
  * `persistence.unbound_write` other than `database_only`, refuses with
  * `unboundSourceError`, and the rest is written database-only (`unbound_source`).
  * `path` names the checkout in the refusal; pass it only for trusted local callers.
@@ -116,7 +127,11 @@ export type UnboundWriteDecision = { kind: 'claim' } | { kind: 'database_only'; 
 export async function decideUnboundWrite(engine: BrainEngine,
   input: { sourceId: string; sourceKind: string | null; fileBacked: boolean; path: string | null }): Promise<UnboundWriteDecision> {
   if (isConnectorSourceKind(input.sourceKind)) return { kind: 'database_only', reason: 'connector_database' };
-  if (engine.kind === 'pglite' && !(await readDatabaseOnlyActivatedSources(engine)).includes(input.sourceId)) return { kind: 'claim' };
+  if (await autoClaimsUnboundSource(engine, input.sourceId)) {
+    // The claim binds the source to a managed worktree: an engine that holds none yet refuses here, before it claims.
+    requireManagedPersistence(engine, 'claimWorktree', 'the first page write to a rooted source claims it as a managed worktree');
+    return { kind: 'claim' };
+  }
   if (input.fileBacked || await readUnboundWritePolicy(engine) !== 'database_only') {
     throw unboundSourceError(input.sourceId, input.path, input.fileBacked ? 'file_backed' : 'database_only_eligible', !await managedPersistenceEnabled(engine));
   }

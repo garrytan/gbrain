@@ -23,6 +23,9 @@ brain.
 `findActiveAccessTokens` and `setAccessTokenMinTrust`; their `migrations_pending` answer for a brain without the
 `min_trust` column still comes from the undefined-column error the SQL engines raise.
 
+`authorizeWrite` (`src/core/persistence/authority.ts`) reads `readAccessTokenWriteGrant` (journal.md): `findActiveAccessTokens`
+answers whether the token is live, and a live token's write stops on `engine_capability_missing`.
+
 ## Constraints
 
 A write that breaks one is `constraint_violation` in the store, with the Postgres message. The TypeScript store member

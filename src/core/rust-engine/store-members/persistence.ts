@@ -26,7 +26,7 @@ import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
-import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+import { refuseMember, requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import { readBrainMode } from './writer-release.ts';
 
 /** The one singleton row with the stored brain mode (gbrain-store `persistence::worktrees::release`; classic until activated). */
@@ -130,11 +130,21 @@ export const countOutstandingBySource: StoreMember<[principalKind: string, princ
 export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 
 /**
- * The Rust store keeps no OAuth clients or legacy access tokens (its writers are local_cli and local_stdio), so a
- * write owned by either finds no live grant row, as a Postgres or PGLite brain without that credential does.
+ * A write owned by an OAuth client finds no live grant row: its writers here are local_cli and local_stdio, as a
+ * Postgres or PGLite brain without that credential answers.
  */
 export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
-export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
+/**
+ * The store keeps a minted legacy token (rust/docs/store/access-tokens.md) but not every grant column authorizeWrite
+ * reads (the private and member columns). A token with no live row answers null, as on Postgres and PGLite, so its
+ * write refuses permission_denied; a live token refuses typed rather than read as revoked. `lock` holds nothing:
+ * one process owns the store.
+ */
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+  const live = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.findActiveAccessTokens(tokenId)) as { id: string }[];
+  if (live.some(row => row.id === tokenId)) refuseMember('readAccessTokenWriteGrant', 'the grant columns of a live legacy token');
+  return null;
+};
 /** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
 
