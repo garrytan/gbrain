@@ -250,7 +250,11 @@ fn mcp_request_log_rollup_keeps_the_tally_and_keys_no_token_as_empty() {
 
 #[test]
 fn the_wake_relations_import_in_order_after_the_decide_relations() {
-    let names: Vec<_> = crate::seed::plan().iter().map(|p| p.relation).collect();
+    let names: Vec<_> = crate::seed::plan()
+        .relations
+        .iter()
+        .map(|p| p.relation)
+        .collect();
     let wake = [
         "wake_crons",
         "wake_cron_runs",

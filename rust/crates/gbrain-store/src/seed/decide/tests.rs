@@ -655,7 +655,11 @@ fn dream_synthesis_completions_keep_the_time() {
 
 #[test]
 fn the_decide_relations_import_in_dependency_order() {
-    let names: Vec<_> = crate::seed::plan().iter().map(|p| p.relation).collect();
+    let names: Vec<_> = crate::seed::plan()
+        .relations
+        .iter()
+        .map(|p| p.relation)
+        .collect();
     let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
     let decide = [
         "decide_state",
