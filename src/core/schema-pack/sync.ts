@@ -83,7 +83,7 @@ async function probePrefix(
     const count = parseInt(cntRows[0]?.cnt ?? '0', 10) || 0;
     if (count === 0) return { count: 0, sample: [] };
     const sampleRows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages ${where} ORDER BY slug LIMIT 10`,
+      `SELECT slug FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT 10`,
       params,
     );
     return { count, sample: sampleRows.map((r) => r.slug) };

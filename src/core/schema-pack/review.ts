@@ -160,7 +160,7 @@ export async function findTypeOrphans(
   const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null }>(
     `SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
       WHERE ${where} AND (type IS NULL OR type = '' OR type = ANY($${params.length + 1}::text[]))
-      ORDER BY source_id, slug
+      ORDER BY source_id COLLATE "C", slug COLLATE "C"
       LIMIT ${rowLimit}`,
     [...params, undeclared.map((u) => u.type)],
   );

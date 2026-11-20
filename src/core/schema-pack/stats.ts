@@ -172,7 +172,7 @@ async function fetchCountRows(engine: BrainEngine, opts: StatsOpts): Promise<Raw
     FROM pages
     ${where}
     GROUP BY source_id, NULLIF(type, '')
-    ORDER BY source_id, NULLIF(type, '') NULLS LAST
+    ORDER BY source_id COLLATE "C", NULLIF(type, '') COLLATE "C" NULLS LAST
   `;
   try {
     return await engine.executeRaw<RawCountRow>(sql, params);
