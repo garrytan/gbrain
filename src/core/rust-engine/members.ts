@@ -446,6 +446,19 @@ export const RUST_ENGINE_MEMBERS = {
   listStoredFenceFactRows: 'facts',
   countWorldFacts: 'facts',
 
+  // Purge receipt reads (engine-sql/purge-verify.ts). Unserved: a page purge receipt and the purge probe refuse
+  // naming the member until the Rust store reads the full receipt.
+  countPurgeProbe: 'facts',
+  listPurgeProbeItems: 'facts',
+  listBeliefEventValuesAfter: 'belief_ledger',
+  listLiveFactContextsAfter: 'facts',
+  listSegmentedProseBodies: 'page_body',
+  listPurgeProseSlugs: 'pages',
+  countPagePurgeTombstones: 'pages',
+  readPagePurgeRequest: 'persistence_journal',
+  listPurgeEffectStates: 'persistence_journal',
+  countPurgeFingerprintRows: 'facts',
+
   // facts: purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts)
 
   countFactFingerprintLeftovers: 'facts',

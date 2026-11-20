@@ -153,7 +153,6 @@ src/core/cycle/phantom-redirect.ts	phantomHasResidue	field	SEGW	phantom stubs ar
 src/core/cycle/phantom-redirect.ts	tryRedirectPhantom	field	SEGW	canonical target asserted inline before the disk fence append; per-phantom throw is logged and the walk continues
 src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	call:contentHash	META	
 src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	field	STREAM	
-src/core/cycle/propose-takes.ts	listCandidatePages	sql	STREAM	
 src/core/cycle/synthesize-child-verify.ts	readTranscript	field	INLINE	a segmented conversation transcript is skipped: the child writes unverified and postprocessing verifies
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	call:serializeMarkdown	INLINE	serializes the child's own model output, never a stored body
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	field	INLINE	a segmented page it would replace skips child verification: postprocessing verifies
@@ -214,8 +213,11 @@ src/core/engine-sql/pages.ts	putPage	sql	SEGW	blank-guard reads body_bytes for a
 src/core/engine-sql/pages.ts	refreshPageBody	sql	SEGW	UPDATE of the body columns; the body-storage CHECK refuses it over a segmented row; callers assert first
 src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segmented page/version (revert deferred to PR 3)
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
+src/core/engine-sql/purge-verify.ts	PROSE_SLUGS	sql	STREAM	moved from facts/purge-verify.ts verifyPagePurge unchanged: segmented pages probed through their segment texts (withSegmentedProse)
+src/core/engine-sql/purge-verify.ts	carriesClaim	sql	STREAM	moved from facts/purge-verify.ts verifyPagePurge unchanged: strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
+src/core/engine-sql/take-proposals.ts	listProposeTakesCandidatePages	sql	STREAM	moved from cycle/propose-takes.ts listCandidatePages unchanged
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
 src/core/engine-sql/withdrawal-discovery.ts	INLINE_FENCE_PAGES_SQL	sql	STREAM	moved from discoverWithdrawalTargets: the inline page scan reads inline bodies (NULL never matches); segmented pages are found by SEGMENT_FENCE_ROWS_SQL and SPLIT_FENCE_SLOTS_SQL from their facts slots
@@ -266,7 +268,6 @@ src/core/facts/proposal-supersede.ts	prepareProposalMutation	call:serializePageT
 src/core/facts/proposal-supersede.ts	prepareProposalMutation	field	SEGW	segmented page: getter throws page_body_segmented in preparation (nothing written)
 src/core/facts/proposal-supersede.ts	undoUnmanaged	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge-verify.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
-src/core/facts/purge-verify.ts	verifyPagePurge	sql	STREAM	segmented pages probed through their segment texts (withSegmentedProse)
 src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
 src/core/facts/purge.ts	rewritePageBodies	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge.ts	rewritePageBodies	sql	SEGW	refuses a segmented target with page_body_segmented before rewriting (segment purge in PR 2)

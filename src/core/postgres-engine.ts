@@ -196,6 +196,8 @@ import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
 import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
+import * as purgeVerifyImpl from './engine-sql/purge-verify.ts';
+import type * as PurgeVerifySql from './engine-sql/purge-verify.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
@@ -1287,6 +1289,16 @@ export class PostgresEngine implements BrainEngine {
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts), through executeRaw as before.
 
+  countPurgeProbe(probe: PurgeVerifySql.PurgeProbe, bounds: PurgeVerifySql.PurgeProbeBounds) { return purgeVerifyImpl.countPurgeProbe(this, probe, bounds); }
+  listPurgeProbeItems(probe: PurgeVerifySql.NamedRowsProbe | PurgeVerifySql.EffectPayloadProbe, limit: number) { return purgeVerifyImpl.listPurgeProbeItems(this, probe, limit); }
+  listBeliefEventValuesAfter(sourceId: string, after: number, limit: number) { return purgeVerifyImpl.listBeliefEventValuesAfter(this, sourceId, after, limit); }
+  listLiveFactContextsAfter(sourceId: string, after: number, limit: number) { return purgeVerifyImpl.listLiveFactContextsAfter(this, sourceId, after, limit); }
+  listSegmentedProseBodies(sourceId: string, store: 'pages' | 'page_versions', limit: number) { return purgeVerifyImpl.listSegmentedProseBodies(this, sourceId, store, limit); }
+  listPurgeProseSlugs(store: PurgeVerifySql.PurgeProseStore, sourceId: string, needles: readonly string[], limit: number) { return purgeVerifyImpl.listPurgeProseSlugs(this, store, sourceId, needles, limit); }
+  countPagePurgeTombstones(sourceId: string, slug: string) { return purgeVerifyImpl.countPagePurgeTombstones(this, sourceId, slug); }
+  readPagePurgeRequest(sourceId: string, requestId: string) { return purgeVerifyImpl.readPagePurgeRequest(this, sourceId, requestId); }
+  listPurgeEffectStates(requestRowId: string) { return purgeVerifyImpl.listPurgeEffectStates(this, requestRowId); }
+  countPurgeFingerprintRows(sourceId: string, factHash: string, subject: string) { return purgeVerifyImpl.countPurgeFingerprintRows(this, sourceId, factHash, subject); }
   countFactFingerprintLeftovers(sourceId: string, factHash: string, visibility: string, subject: string) { return factsPurgeImpl.countFactFingerprintLeftovers(this.executeRaw.bind(this), sourceId, factHash, visibility, subject); }
   loadPurgeTarget(id: number, sourceId: string) { return factsPurgeImpl.loadPurgeTarget(this.executeRaw.bind(this), id, sourceId); }
   planFactPurgeIds(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.planFactPurgeIds(this.executeRaw.bind(this), sourceId, visibility, factHash, subject); }

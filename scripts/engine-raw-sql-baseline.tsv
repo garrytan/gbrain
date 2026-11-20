@@ -413,7 +413,7 @@ src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
 src/core/facts/purge-overlay.ts	execute_raw	2
 src/core/facts/purge-reasons.ts	execute_raw	8
-src/core/facts/purge-verify.ts	execute_raw	20
+src/core/facts/purge-verify.ts	execute_raw	6
 src/core/facts/purge.ts	execute_raw	36	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/question-recall.ts	execute_raw	1
 src/core/facts/relink-publish.ts	execute_raw	4

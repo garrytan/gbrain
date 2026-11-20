@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 940/940
+# covered: 950/950
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -46,7 +46,7 @@
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 14/14
-# facts_purge: 18/18
+# facts_purge: 28/28
 # facts_repair: 10/10
 # facts_trust: 10/10
 # trust_tier_reads: 15/15
@@ -728,6 +728,16 @@ maxFenceRowNum	facts_cycle	yes	1	no	yes	yes	serves
 readFenceRowOccupant	facts_cycle	yes	1	no	yes	yes	serves
 listStoredFenceFactRows	facts_cycle	yes	1	no	yes	yes	serves
 countWorldFacts	facts_cycle	yes	5	no	yes	yes	serves
+countPurgeProbe	facts_purge	yes	2	no	yes	yes	refuses:facts
+listPurgeProbeItems	facts_purge	yes	2	no	yes	yes	refuses:facts
+listBeliefEventValuesAfter	facts_purge	yes	1	no	yes	yes	refuses:belief_ledger
+listLiveFactContextsAfter	facts_purge	yes	1	no	yes	yes	refuses:facts
+listSegmentedProseBodies	facts_purge	yes	1	no	yes	yes	refuses:page_body
+listPurgeProseSlugs	facts_purge	yes	2	no	yes	yes	refuses:pages
+countPagePurgeTombstones	facts_purge	yes	2	no	yes	yes	refuses:pages
+readPagePurgeRequest	facts_purge	yes	2	no	yes	yes	refuses:persistence_journal
+listPurgeEffectStates	facts_purge	yes	1	no	yes	yes	refuses:persistence_journal
+countPurgeFingerprintRows	facts_purge	yes	1	no	yes	yes	refuses:facts
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
 loadPurgeTarget	facts_purge	yes	12	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves

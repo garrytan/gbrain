@@ -1,6 +1,7 @@
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
+import type * as PurgeVerifySql from './engine-sql/purge-verify.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
@@ -3523,6 +3524,34 @@ export interface BrainEngine {
   listStoredFenceFactRows(sourceId: string, slug: string): Promise<FactsCycleSql.StoredFenceFactRow[]>;
   /** The entity card's exact active-fact count under its visibility, privacy and read eligibility. */
   countWorldFacts(opts: FactsCycleSql.EntityFactCountOpts): Promise<number>;
+
+  // Purge receipt reads (engine-sql/purge-verify.ts): what facts/purge-verify.ts built its fact and page purge receipts
+  // with through executeRaw. The probe is typed: callers name the store and pass values, never SQL.
+
+  /**
+   * One bounded probe of a purge receipt: counts at most `bounds.rows + 1` rows of the named store still matching,
+   * in its own transaction under a local statement timeout of `bounds.statementMs`. More than `bounds.rows` rows is
+   * `row_bound`; a statement the timeout cancels is `statement_deadline`.
+   */
+  countPurgeProbe(probe: PurgeVerifySql.PurgeProbe, bounds: PurgeVerifySql.PurgeProbeBounds): Promise<PurgeVerifySql.PurgeProbeCount>;
+  /** The first `limit` rows a named-row or effect-payload probe matches, as `kind:id ...` items in sort order. */
+  listPurgeProbeItems(probe: PurgeVerifySql.NamedRowsProbe | PurgeVerifySql.EffectPayloadProbe, limit: number): Promise<string[]>;
+  /** One keyset batch of the source's recorded belief values with `id > after`, by id. */
+  listBeliefEventValuesAfter(sourceId: string, after: number, limit: number): Promise<Array<{ id: number; subject_kind: string; subject_key: string; value: unknown }>>;
+  /** One keyset batch of the source's live facts with a non-empty context and `id > after`, by id. */
+  listLiveFactContextsAfter(sourceId: string, after: number, limit: number): Promise<Array<{ id: number; context: string }>>;
+  /** Up to `limit` segmented bodies of the source: live pages or retained versions, by id. */
+  listSegmentedProseBodies(sourceId: string, store: 'pages' | 'page_versions', limit: number): Promise<PurgeVerifySql.SegmentedProseBody[]>;
+  /** Up to `limit` sorted slugs of the source's pages whose `store` text still states one of the lowercased `needles`. */
+  listPurgeProseSlugs(store: PurgeVerifySql.PurgeProseStore, sourceId: string, needles: readonly string[], limit: number): Promise<string[]>;
+  /** How many page tombstones the source holds for `slug`. */
+  countPagePurgeTombstones(sourceId: string, slug: string): Promise<number>;
+  /** The newest `delete_page` journal row of the source with this request id, or null. */
+  readPagePurgeRequest(sourceId: string, requestId: string): Promise<PurgeVerifySql.PurgeRequestRow | null>;
+  /** The effects of journal row `requestRowId` in kind order, each with whether it parked work. */
+  listPurgeEffectStates(requestRowId: string): Promise<PurgeVerifySql.PurgeEffectState[]>;
+  /** Live facts and takes of the source whose claim has fingerprint `factHash` (`subject` `*` for every entity). */
+  countPurgeFingerprintRows(sourceId: string, factHash: string, subject: string): Promise<{ facts: number; takes: number }>;
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
 

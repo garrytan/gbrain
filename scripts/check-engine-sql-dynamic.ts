@@ -125,6 +125,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   replacedBecauseSql: 'src/core/engine-sql/pages.ts: constant GBRA-217 reason projection over a caller alias, with callerReadersAllowedSql on the successor (identities checked by validIdentity before they are quoted in); the boolean picks one of two constant texts',
   validDateSql: 'src/core/valid-time.ts: constant GBRA-217 date normaliser over a caller column expression; engine-sql passes only constant pv.frontmatter keys',
   quarantineFilterFragment: 'src/core/quarantine.ts: constant quarantine predicate over a caller alias',
+  // purge-verify.ts builders
+  purgeProbeTableSql: 'src/core/engine-sql/purge-verify.ts: returns its argument only when it is a plain identifier the deletion inventory (deletion-inventory.ts) lists as a table, else throws; no values',
+  purgeProbeColumnSql: 'src/core/engine-sql/purge-verify.ts: returns its argument only when it is a plain identifier the deletion inventory lists among that table\'s columns or probe columns, else throws; no values',
   guestSourceExclusionSql: 'src/core/guests/derived.ts: GBRA-504 constant guest-source NOT EXISTS predicate (guests/note.ts guestSourceSql) over a caller alias, or TRUE for a producer that takes guest input; the producer key is a typed union member; no values',
   currentCodeEdgeFilter: 'src/core/code-intel/read-scope.ts: constant current-edge predicate over a caller alias',
   buildCJKKeywordSql: 'src/core/search/cjk-keyword-sql.ts: binds the query as params; shared by both engines',
