@@ -68,9 +68,7 @@ function placeFacts(request: ExtractedFactsRequest): { rows: StoredFact[]; detac
 
 async function storedRows(engine: BrainEngine, key: GenerationKey): Promise<FactPreimage[]> {
   const { slug, prefix } = parseOwner(key);
-  const ids = (await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND COALESCE(source,'') LIKE $3 ORDER BY id`, [key.sourceId, slug, `${prefix}%`])).map(row => Number(row.id));
-  return factPreimages(engine, key.sourceId, ids);
+  return factPreimages(engine, key.sourceId, await engine.listFactIdsBySourcePrefix(key.sourceId, slug, prefix));
 }
 
 export const extractedFactsAdapter: GenerationAdapter<{ input: InputState }> = {
@@ -79,9 +77,8 @@ export const extractedFactsAdapter: GenerationAdapter<{ input: InputState }> = {
   modelProduced: true,
   lockKeys: key => [{ sourceId: key.sourceId, slug: parseOwner(key).slug }],
   async readInput(engine, key, context) {
-    const [page] = await engine.executeRaw<{ live: boolean }>('SELECT deleted_at IS NULL AS live FROM pages WHERE source_id=$1 AND slug=$2 ORDER BY deleted_at NULLS FIRST LIMIT 1',
-      [key.sourceId, parseOwner(key).slug]);
-    return page?.live ? context?.input ?? null : null;
+    const page = await engine.getPage(parseOwner(key).slug, { sourceId: key.sourceId });
+    return page ? context?.input ?? null : null;
   },
   async readItems(engine, key) {
     const out = new Map<string, ItemRow>();
@@ -97,8 +94,7 @@ export const extractedFactsAdapter: GenerationAdapter<{ input: InputState }> = {
   legacyEvidence: async () => new Set(),
   async publishItems(tx, key, items: readonly ProposedItem[]) {
     const { slug } = parseOwner(key);
-    const [max] = await tx.executeRaw<{ n: number | null }>('SELECT MAX(row_num)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [key.sourceId, slug]);
-    let rowNum = Number(max?.n ?? 0);
+    let rowNum = await tx.maxFenceRowNum(key.sourceId, slug);
     const rows = items.map(item => {
       const { valid_from, valid_until, ...stored } = JSON.parse(item.content) as StoredFact;
       return { ...stored, source: stored.source, row_num: ++rowNum, source_markdown_slug: slug,
@@ -110,7 +106,7 @@ export const extractedFactsAdapter: GenerationAdapter<{ input: InputState }> = {
     if (!itemKeys.length) return;
     const wanted = new Set(itemKeys);
     const ids = (await storedRows(tx, key)).filter(row => row.expired_at === null && wanted.has(itemKeyOf(row))).map(row => Number(row.id));
-    if (ids.length) await tx.executeRaw('UPDATE facts SET expired_at = now() WHERE source_id=$1 AND id = ANY($2::bigint[]) AND expired_at IS NULL', [key.sourceId, ids]);
+    if (ids.length) await tx.expireFactRows(key.sourceId, ids);
   },
   async restoreItem(tx, key, _itemKey, preimage) {
     if (!await restoreFactRow(tx, key.sourceId, preimage)) throw new Error(`extracted fact ${String(preimage.id)} changed; nothing restored`);

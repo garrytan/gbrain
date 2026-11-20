@@ -86,6 +86,12 @@ fn read_activation(read: &dyn KvRead, id: &str) -> Result<Option<ActivationRecor
     get_json(read, &activation_key(id))
 }
 
+/// Whether the activation row `id` exists in state `activated` (`EXISTS (SELECT 1 FROM
+/// derived_generation_activations a WHERE a.id = $id AND a.state = 'activated')`).
+pub(super) fn activation_activated(read: &dyn KvRead, id: &str) -> Result<bool> {
+    Ok(read_activation(read, id)?.is_some_and(|row| row.state == "activated"))
+}
+
 /// Every activation row with its id, in id order.
 fn all_activations(read: &dyn KvRead) -> Result<Vec<(String, ActivationRecord)>> {
     let prefix = [keys::DERIVED_GENERATION, ACTIVATION];

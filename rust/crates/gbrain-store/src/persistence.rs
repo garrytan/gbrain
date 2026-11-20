@@ -64,7 +64,9 @@ pub use noop_settle::NoopSettleCandidateSpec;
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
-pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub(crate) use projection_queue::{
+    activation_started_us, parse_timestamptz, queue_page_projection,
+};
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.

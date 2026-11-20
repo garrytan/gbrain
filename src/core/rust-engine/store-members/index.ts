@@ -55,6 +55,8 @@ import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
+import * as derivationTrust from './derivation-trust.ts';
+import * as chronicleEvents from './chronicle-events.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
@@ -107,8 +109,10 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factRelinkAttempts,
   ...factRelinkWrites,
+  // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
+  ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).

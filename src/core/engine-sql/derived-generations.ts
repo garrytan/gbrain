@@ -6,6 +6,7 @@
  * attempt counter (`recordAttempt`) and the retirement valve (`readValve`, `bumpValve`). One SQL implementation for both engines; each statement is the text publish.ts
  * sent through `executeRaw`, with the same parameters and a total row order that sorts text by bytes (`COLLATE "C"`, as PGLite and the Rust engine sort it), on the engine's own `executeRaw`.
  * The Rust engine serves them from its `derived_generations` family (rust/crates/gbrain-store/src/generations.rs).
+ * Every engine refuses a JSON number past the double range in the written JSON text first (`checkGenerationJsonNumbers`).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -118,6 +119,12 @@ const VALVE_READ_SQL = `SELECT (SELECT retired FROM derived_generation_valve WHE
 const VALVE_BUMP_SQL = `INSERT INTO derived_generation_valve (source_id, kind, window_key, retired) VALUES ($1,$2,$3,$4)
     ON CONFLICT (source_id, kind, window_key) DO UPDATE SET retired=derived_generation_valve.retired+EXCLUDED.retired, updated_at=now()`;
 
+/** Whether the key's live row is a restore (generations/adapters/fact-rows.ts `consolidationRestored`). */
+const RESTORED_SQL = `SELECT restore_of IS NOT NULL AS restored FROM derived_generations
+    WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`;
+/** Deletes the `tie` held rows of $1/$2 whose owner key starts with $4 ($3 is its length; fact-rows.ts `clearConsolidationTies`). */
+const CLEAR_TIES_SQL = `DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND state='held' AND held_reason='tie' AND left(owner_key, $3)=$4`;
+
 /** The live generation of `key` with its owned items, or null. */
 export async function readLiveGenerationRow(raw: EngineRawRead, key: GenerationRowKey): Promise<LiveGenerationRow | null> {
   const [row] = await raw<{ id: number; generation: number; input_pin: string | null; input_size: number | null; locator: string | null }>(
@@ -129,11 +136,38 @@ export async function readLiveGenerationRow(raw: EngineRawRead, key: GenerationR
 }
 
 /**
+ * Refuses JSON text that holds a number past the double range (such as `1e400`) on every engine, before anything is
+ * written. Postgres stores it as `numeric`, but every gbrain reader parses it to `Infinity`, which `JSON.stringify`
+ * writes back as `null`; the Rust store cannot parse it. gbrain's own writers build this text with `JSON.stringify`,
+ * which never writes such a number. Text that is not JSON is left to the engine's own refusal.
+ */
+export function checkGenerationJsonNumbers(op: string, column: string, text: string | null): void {
+  if (text === null) return;
+  let huge = false;
+  try {
+    JSON.parse(text, (_key, value: unknown) => {
+      if (typeof value === 'number' && !Number.isFinite(value)) huge = true;
+      return value;
+    });
+  } catch {
+    return;
+  }
+  if (huge) throw new Error(`${op}: a JSON number in ${column} is past the double range`);
+}
+
+/** The JSON text checks of `recordHeldGenerationRow`. */
+export function checkHeldGenerationRow(row: HeldGenerationRow): void {
+  checkGenerationJsonNumbers('recordHeldGenerationRow', 'held_context', row.context);
+  checkGenerationJsonNumbers('recordHeldGenerationRow', 'proposal', row.proposal);
+}
+
+/**
  * Supersedes the live row `liveId` (when not null), inserts `row` as the key's live generation with `items`, and deletes
  * the key's held row and attempt counters. Resolves the new row's id. Runs in the caller's transaction.
  */
 export async function activateGenerationRows(raw: EngineRawRead, key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow,
   items: readonly GenerationLedgerRow[]): Promise<number> {
+  checkGenerationJsonNumbers('activateGenerationRows', 'completeness', row.completeness);
   if (liveId !== null) await raw(SUPERSEDE_SQL, [liveId]);
   const [created] = await raw<{ id: number }>(ACTIVATE_SQL,
     [key.sourceId, key.kind, key.ownerKey, row.generation, row.runId, row.operationId, row.inputPin, row.inputSize,
@@ -150,6 +184,7 @@ export async function activateGenerationRows(raw: EngineRawRead, key: Generation
  * caller's transaction.
  */
 export async function recordHeldGenerationRow(raw: EngineRawRead, key: GenerationRowKey, row: HeldGenerationRow): Promise<void> {
+  checkHeldGenerationRow(row);
   const [existing] = await raw<{ id: number; hold_id: string }>(HELD_ROW_SQL, [key.sourceId, key.kind, key.ownerKey]);
   if (existing?.hold_id === row.holdId) {
     await raw(BUMP_ATTEMPTS_SQL, [existing.id]);
@@ -197,4 +232,18 @@ export async function readGenerationValve(raw: EngineRawRead, key: GenerationRow
 /** Adds `retired` retirements to the valve window `windowKey` of the key's source and kind. Runs in the caller's transaction. */
 export async function bumpGenerationValve(raw: EngineRawRead, key: GenerationRowKey, windowKey: string, retired: number): Promise<void> {
   await raw(VALVE_BUMP_SQL, [key.sourceId, key.kind, windowKey, retired]);
+}
+
+/** Whether the live row of `key` is a restore (`restore_of` set); false when the key has no live row. */
+export async function readGenerationRestored(raw: EngineRawRead, key: GenerationRowKey): Promise<boolean> {
+  const [row] = await raw<{ restored: boolean }>(RESTORED_SQL, [key.sourceId, key.kind, key.ownerKey]);
+  return row?.restored === true;
+}
+
+/**
+ * Deletes the held rows of `kind` in `sourceId` held `tie` whose owner key starts with `ownerPrefix`, with their items,
+ * in the caller's transaction. The prefix length is its JavaScript length, as the caller sent it.
+ */
+export async function clearTieHeldGenerationRows(raw: EngineRawRead, sourceId: string, kind: string, ownerPrefix: string): Promise<void> {
+  await raw(CLEAR_TIES_SQL, [sourceId, kind, ownerPrefix.length, ownerPrefix]);
 }

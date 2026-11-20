@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::generations::{
-    ActivationInput, ActivationRecordInput, GenerationKey, HeldInput, LedgerItemInput, RepairFilter,
+    ActivationInput, ActivationRecordInput, GenerationKey, GenerationPageRowsQuery, HeldInput,
+    LedgerItemInput, RepairFilter,
 };
 
 #[napi]
@@ -86,6 +87,33 @@ impl Brain {
         self.run(env, move |s| {
             let key: GenerationKey = required(key, "clearFenceHoldRows key")?;
             s.clear_fence_hold_rows(&key)
+        })
+    }
+
+    /// `readGenerationRestored(key)`: resolves whether the key's live row is a restore.
+    #[napi]
+    pub fn read_generation_restored<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: GenerationKey = required(key, "readGenerationRestored key")?;
+            s.read_generation_restored(&key)
+        })
+    }
+
+    /// `clearTieHeldGenerationRows(sourceId, kind, ownerPrefix)`: resolves null.
+    #[napi]
+    pub fn clear_tie_held_generation_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        kind: String,
+        owner_prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.clear_tie_held_generation_rows(&source_id, &kind, &owner_prefix)
         })
     }
 
@@ -431,5 +459,56 @@ impl Brain {
             let key: GenerationKey = required(key, "readLiveGenerationId key")?;
             s.read_live_generation_id(&key)
         })
+    }
+
+    /// `readGenerationPageRows(query)`: resolves the page rows the query selects, by slug.
+    #[napi]
+    pub fn read_generation_page_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query: GenerationPageRowsQuery = required(query, "readGenerationPageRows query")?;
+            s.read_generation_page_rows(&query)
+        })
+    }
+
+    /// `readAtomOriginInput(sourceId, slug)`: resolves the live page origin's input row, or null.
+    #[napi]
+    pub fn read_atom_origin_input<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_atom_origin_input(&source_id, &slug))
+    }
+
+    /// `listProducerVersionRows(sourceId, slugs, producer)`: resolves the stored versions the
+    /// producer wrote of those pages.
+    #[napi]
+    pub fn list_producer_version_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        producer: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_producer_version_rows(&source_id, &slugs, &producer)
+        })
+    }
+
+    /// `listAtomWriteReceipts(sourceId, slugs)`: resolves the committed managed atom write
+    /// receipts with content of those pages.
+    #[napi]
+    pub fn list_atom_write_receipts<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_atom_write_receipts(&source_id, &slugs))
     }
 }

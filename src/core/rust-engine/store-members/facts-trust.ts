@@ -2,14 +2,14 @@
  * Group 5 facts members, search relevance and trust reads (src/core/engine-sql/facts-trust.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/trust.rs). A member not exported here refuses with `engine_capability_missing`.
  *
- * Served: `listFactsForRelevance` (the keyword and entity arms) and `countUncomparableFacts`. The pool's trust floor and
+ * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts` and `countDerivedFactTaint`. The pool's trust floor and
  * flagged-fact suppression go to the store, which reads each fact's stamped `trust_tier` and its write-gate receipts. The
  * store answers the rest of the pool's read policy exactly when the visibility rule is the plain `world` one, the privacy
  * policy is the no-caller one (private-provenance.ts), the keyword arm runs in the `english` FTS configuration, and the
  * facts embedding column is `halfvec` (the only column type the store keeps).
  *
  * Refused (not exported): `matchSavedFacts`, `readFactForOwnerAction`, `listStandingPreferences`,
- * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns
+ * `listLexicalContestCandidates` and `listRestatedPrivateCopies`. The store keeps the columns
  * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
  * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
@@ -73,3 +73,7 @@ export const countUncomparableFacts: Member<'countUncomparableFacts'> = async (b
     declared: q.declared,
   }));
 };
+
+/** How many facts carry `taint_inputs` in their write origin, and how many of those are external_untrusted. */
+export const countDerivedFactTaint: Member<'countDerivedFactTaint'> = async brain =>
+  storeCall({ member: 'countDerivedFactTaint' }, () => brain.countDerivedFactTaint());

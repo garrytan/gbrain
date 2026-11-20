@@ -9,6 +9,7 @@ import type {
   GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow,
   HeldInputRow, LiveGenerationRow,
 } from '../../engine-sql/derived-generations.ts';
+import { checkGenerationJsonNumbers, checkHeldGenerationRow } from '../../engine-sql/derived-generations.ts';
 import type { LedgerScrubCounts } from '../../engine-sql/generation-ledger.ts';
 import {
   checkActivationId, type GenerationActivationRecord, type GenerationActivationState, type GenerationOrphanRow, type PendingGenerationMemberRow,
@@ -18,6 +19,9 @@ import {
   type SourceIncarnationListRow, type UnmatchedGenerationRow,
 } from '../../engine-sql/generation-repair.ts';
 import type { FenceVersionBodyRow } from '../../engine-sql/generation-fence-evidence.ts';
+import { checkGenerationPageRowsQuery, type GenerationPageRow, type GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';
+import { checkGenerationVersionProducer, type AtomOriginInputRow, type AtomWriteReceiptRow, type GenerationVersionProducer, type ProducerVersionRow }
+  from '../../engine-sql/generation-atom-reads.ts';
 import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from '../../engine-sql/generation-fence-restore.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -27,11 +31,14 @@ export const readLiveGenerationRow: StoreMember<[key: GenerationRowKey], LiveGen
 
 /** Supersedes `liveId`, activates `row` with `items` and deletes the key's held row; resolves the new id. */
 export const activateGenerationRows: StoreMember<[key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow,
-  items: readonly GenerationLedgerRow[]], number> = async (brain, key, liveId, row, items) =>
-  storeCall({ member: 'activateGenerationRows', sourceId: key.sourceId }, () => brain.activateGenerationRows(key, liveId, row, [...items]));
+  items: readonly GenerationLedgerRow[]], number> = async (brain, key, liveId, row, items) => {
+  checkGenerationJsonNumbers('activateGenerationRows', 'completeness', row.completeness);
+  return storeCall({ member: 'activateGenerationRows', sourceId: key.sourceId }, () => brain.activateGenerationRows(key, liveId, row, [...items]));
+};
 
 /** Records `row` as the key's held row: the same hold counts one more attempt, another hold replaces it. */
 export const recordHeldGenerationRow: StoreMember<[key: GenerationRowKey, row: HeldGenerationRow], void> = async (brain, key, row) => {
+  checkHeldGenerationRow(row);
   await storeCall({ member: 'recordHeldGenerationRow', sourceId: key.sourceId }, () => brain.recordHeldGenerationRow(key, row));
 };
 
@@ -56,6 +63,15 @@ export const countGenerationAttempt: StoreMember<[key: GenerationRowKey, holdId:
 /** Deletes the attempt counter of the hold `holdId`. */
 export const clearGenerationAttempts: StoreMember<[holdId: string], void> = async (brain, holdId) => {
   await storeCall({ member: 'clearGenerationAttempts' }, () => brain.clearGenerationAttempts(holdId));
+};
+
+/** Whether the key's live row is a restore. */
+export const readGenerationRestored: StoreMember<[key: GenerationRowKey], boolean> = async (brain, key) =>
+  storeCall({ member: 'readGenerationRestored', sourceId: key.sourceId }, () => brain.readGenerationRestored(key));
+
+/** Deletes the `tie` held rows of `kind` in `sourceId` whose owner key starts with `ownerPrefix`. */
+export const clearTieHeldGenerationRows: StoreMember<[sourceId: string, kind: string, ownerPrefix: string], void> = async (brain, sourceId, kind, ownerPrefix) => {
+  await storeCall({ member: 'clearTieHeldGenerationRows', sourceId }, () => brain.clearTieHeldGenerationRows(sourceId, kind, ownerPrefix));
 };
 
 /** The valve window `windowKey` of the key's source and kind. */
@@ -179,3 +195,24 @@ export const listOwnedGenerationItems: StoreMember<[generationIds: readonly numb
 /** The id of the live generation of `key`, or null. */
 export const readLiveGenerationId: StoreMember<[key: GenerationRowKey], { id: number | string } | null> = async (brain, key) =>
   storeCall({ member: 'readLiveGenerationId', sourceId: key.sourceId }, () => brain.readLiveGenerationId(key));
+
+/** The page rows a page generation adapter reads, deleted rows included, by slug (`generations/page_rows.rs`). */
+export const readGenerationPageRows: StoreMember<[query: GenerationPageRowsQuery], GenerationPageRow[]> = async (brain, query) => {
+  checkGenerationPageRowsQuery(query);
+  return storeCall({ member: 'readGenerationPageRows', sourceId: query.sourceId }, () => brain.readGenerationPageRows(query));
+};
+
+/** A live page origin's input pin row, or null (`generations/atom_reads.rs`). */
+export const readAtomOriginInput: StoreMember<[sourceId: string, slug: string], AtomOriginInputRow | null> = async (brain, sourceId, slug) =>
+  storeCall({ member: 'readAtomOriginInput', sourceId }, () => brain.readAtomOriginInput(sourceId, slug));
+
+/** The stored versions `producer` wrote of the pages `slugs`, in no set order. */
+export const listProducerVersionRows: StoreMember<[sourceId: string, slugs: readonly string[], producer: GenerationVersionProducer], ProducerVersionRow[]> =
+  async (brain, sourceId, slugs, producer) => {
+    checkGenerationVersionProducer(producer);
+    return storeCall({ member: 'listProducerVersionRows', sourceId }, () => brain.listProducerVersionRows(sourceId, [...slugs], producer));
+  };
+
+/** The committed managed atom write receipts with content of the pages `slugs`, in no set order. */
+export const listAtomWriteReceipts: StoreMember<[sourceId: string, slugs: readonly string[]], AtomWriteReceiptRow[]> = async (brain, sourceId, slugs) =>
+  storeCall({ member: 'listAtomWriteReceipts', sourceId }, () => brain.listAtomWriteReceipts(sourceId, [...slugs]));

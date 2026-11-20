@@ -15,6 +15,10 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `getOnThisDay({ date?, limit?, sourceId?, sourceIds? })` | served |
 | `getLastSeen(entitySlug, { asof?, sourceId?, sourceIds? })` | served; the TypeScript member adds `days_ago` with the shared `finalizeLastSeen` |
 | `upsertEventProjection({ depthSlug, eventSlug, date, summary, detail?, sourceId? })` | served, through the core helpers `next_entry_id`, `read_entry` and `put_entry` |
+| `listEventProjectionRows(eventPageIds)` | served (`timeline_queries/event_rows.rs`): the index rows of each event page, by date then event page id |
+| `readEventProjectionId(eventPageId, date)` | served: the entry id of the index row, or null |
+| `deleteEventProjections(sourceId, slugs)` | served: the entries and index rows of each listed event page (deleted pages included), through `remove_entry` and `recompute_latest` |
+| `restoreEventProjection({ depthPageId, date, source, summary, detail, eventPageId })` | served, through `put_event_projection` (the upsert of `upsertEventProjection`); a missing depth or event page refuses `CONSTRAINT_VIOLATION` |
 | `removeTimelineRows(pageId, rows)` | served, through `remove_entry` and `recompute_latest` |
 | `updateTimelineDetails(pageId, rows)` | served, through `put_entry` |
 | `insertCanonicalTimelineRows(pageId, rows)` | served, through `insert_entry` |

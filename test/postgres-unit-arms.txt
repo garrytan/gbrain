@@ -139,6 +139,7 @@ test/engine-parity/access-flag.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/calibration-profiles.test.ts
+test/engine-parity/chronicle-publish-parity.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
@@ -171,6 +172,8 @@ test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/generation-output-parity.test.ts
+test/engine-parity/generation-page-rows-order.test.ts
+test/engine-parity/generation-write-parity.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts

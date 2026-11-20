@@ -548,7 +548,14 @@ store keeps the same rule in `pages.rs`.
   [`rust/docs/store/access-flag.md`](../../rust/docs/store/access-flag.md).
 - **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
-  `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
+  `facts`, SQL in `engine-sql/trust-fence.ts`), and the fact rows adapter's before-state read and restore (`readFactPreimages`,
+  `restoreFactPreimage`, capability `facts`, SQL in `engine-sql/facts.ts`; its consolidation reads `readGenerationRestored`
+  and `clearTieHeldGenerationRows` are capability `persistence_journal`, SQL in `engine-sql/derived-generations.ts`), the extracted facts adapter's own-row read and retire (`listFactIdsBySourcePrefix`, `expireFactRows`, capability `facts`,
+  SQL in `engine-sql/facts.ts`), the page generation adapters' page row read (`readGenerationPageRows`, capability
+  `persistence_journal`, SQL in `engine-sql/generation-page-rows.ts`, store in `generations/page_rows.rs`), the atoms adapter's input and legacy evidence reads (`readAtomOriginInput`,
+  `listProducerVersionRows`, `listAtomWriteReceipts`, capability `persistence_journal`, SQL in
+  `engine-sql/generation-atom-reads.ts`, store in `generations/atom_reads.rs`), and the take rows
+  adapter's before-state read (`readTakePreimages`, capability `takes`, SQL in `engine-sql/takes-reads.ts`, store in `takes/reads.rs`). The store answers them in `facts/fence.rs` in the default write
   context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
   writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.

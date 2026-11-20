@@ -23,7 +23,11 @@ use std::collections::BTreeSet;
 const FACTS_MARKER: &str = "gbrain:facts:";
 
 /// The version records of page `slug` of `source_id`, in id order; none when no page has the key.
-fn page_versions(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<VersionRecord>> {
+pub(super) fn page_versions(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<Vec<VersionRecord>> {
     let Some(page) = read_page(read, source_id, slug)? else {
         return Ok(Vec::new());
     };
