@@ -335,7 +335,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 | `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |
 | `listRestatedPrivateCopies` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |
-| `countDerivedFactTaint` | `trust/taint.ts` | refused | Reads `write_origin` and `trust_tier`. |
+| `countDerivedFactTaint` | `trust/taint.ts` | yes | Counts the facts whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` (rust/docs/store/trust.md, "Derivation trust"). |
 
 The pool predicate (`poolWhere`), clause by clause: the source list; unless `includeExpired`, `expired_at`
 and `superseded_by` NULL and `valid_until` NULL or in the future; no audit checkpoint source; the row's

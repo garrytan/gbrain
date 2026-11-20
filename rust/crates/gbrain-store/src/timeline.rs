@@ -238,6 +238,26 @@ pub(crate) fn read_entry(
     get_json(read, &keys::timeline(page_id, date, id))
 }
 
+/// The page of the timeline entry `id`, by a scan of every entry: the `E` key leads with the
+/// page, and no index maps an entry id to it. The owner-only lineage walk is the one caller, for
+/// a derivation input that names a timeline entry.
+pub(crate) fn entry_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<u64>> {
+    let mut found = None;
+    let mut failure = None;
+    scan_prefix(read, &[keys::TIMELINE], false, &mut |_, v| {
+        match serde_json::from_slice::<TimelineRecord>(v) {
+            Ok(r) if r.id == id => found = Some(r.page_id),
+            Ok(_) => {}
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        found.is_none() && failure.is_none()
+    })?;
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(found),
+    }
+}
+
 /// Writes `new`, replacing `old` (the same entry as it was stored before) when given. Removes
 /// `old`'s `E` key and its `D` key when that `D` key still points at `old.id`. Refuses with
 /// `constraint_violation` when `new`'s `D` key points at another entry (the dedup unique index).

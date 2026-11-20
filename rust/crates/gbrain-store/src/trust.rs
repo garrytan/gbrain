@@ -4,8 +4,9 @@
 //! Built: [`stamp`] (the trust-tier trigger rules as one pure function, for the writers of pages,
 //! facts, takes and timeline entries to call), [`withdrawals`] (the `fact_withdrawals` ledger),
 //! [`write_gate`] (the write gate's `write_gate_receipts` and `write_gate_holds`), [`proposals`]
-//! (the `trust_proposals` decision queue) and [`tier_reads`] (the typed reads of stamped tiers that
-//! core memory, the trust scan and page history made through `executeRaw`; no key of their own).
+//! (the `trust_proposals` decision queue), [`derivation`] (the `derivation_inputs` edges and the
+//! derived-row trust writes) and [`tier_reads`] (the typed reads of stamped tiers that core memory,
+//! the trust scan and page history made through `executeRaw`; no key of their own).
 //! Everything else still reaches its tables through `executeRaw`, which the Rust engine refuses.
 //! See rust/docs/store/trust.md.
 //!
@@ -20,11 +21,14 @@
 //! - `t 0x06 id` -> a trust proposal; `t 0x07 action \0 target_table \0 target_id \0
 //!   related_table \0 related_id` -> the id of the pending one; `t 0x08 table \0 row_id
 //!   proposal_id` -> empty, a proposal that names the row ([`proposals`]).
+//! - `t 0x09 derived_table \0 derived_id \0 input_table \0 input_id` -> an edge's source and
+//!   time; `t 0x0A input_table \0 input_id \0 derived_table \0 derived_id` -> empty, the rows
+//!   derived from an input ([`derivation`]).
 //!
 //! A page's trust tier and write origin have no key of their own: they are fields of the page
 //! record (`pages::PageRecord`, stamped by `pages::write_page`) and of each version record (copied
 //! by `pages::snapshot_in`). No read looks a page up by its tier, so no tier index exists; a later
-//! one takes `t 0x09`. The design sketch's `t 0x04` and `t 0x05` page keys were not built, and
+//! one takes `t 0x0B`. The design sketch's `t 0x04` and `t 0x05` page keys were not built, and
 //! those bytes hold the write gate.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("trust").
@@ -36,6 +40,7 @@
 #[allow(dead_code)]
 mod stamp;
 
+pub mod derivation;
 mod eligibility;
 mod fingerprint;
 pub mod proposals;
@@ -60,6 +65,7 @@ pub(crate) fn remove_source_rows(
     source_id: &str,
 ) -> crate::Result<()> {
     withdrawals::remove_source_rows(tx, source_id)?;
+    derivation::remove_source_rows(tx, source_id)?;
     proposals::remove_source_rows(tx, source_id)
 }
 
