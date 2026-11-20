@@ -152,6 +152,7 @@ test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
+test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
@@ -659,6 +660,8 @@ test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/readers-label-setter.test.ts
+test/readers-noncanonical-owner-reads.test.ts
+test/readers-noncanonical.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts

@@ -41,6 +41,7 @@ import { stagedUploadParts, stagedUploadWork, type StagingBodyRef } from './page
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
+import { assertReadersKeyCanonical } from './readers-request.ts';
 import { defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, remoteLabelsChecked } from './page-visibility.ts';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
@@ -141,6 +142,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
   await remoteLabelsChecked(engine, row.authority, row.slug, snapshot?.page, { parsedPage: { frontmatter: prepared.frontmatter } });
   const privateRequest = privateRequestGuarded(row.operation, p.kind) ? readPrivateRequest('', () => prepared.frontmatter) : null;
   if (privateRequest) assertPrivateRequestKept(row, privateRequest.frontmatter);
+  if (privateRequestGuarded(row.operation, p.kind)) assertReadersKeyCanonical(row, '', prepared.frontmatter, !row.authority.remote);
   if (coreMarking(snapshot?.page.frontmatter).core || coreMarking(prepared.frontmatter).core) {
     throw opError('page_body_segmented', `Page ${row.slug} is (or would become) always-loaded core memory, whose budget renders the page whole, and this upload is over ${PAGE_MAX_BYTES} bytes. Nothing was written.`,
       'Write a core page within the single-string ceiling, or drop always_load from its frontmatter.');

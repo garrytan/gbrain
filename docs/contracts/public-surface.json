@@ -2890,6 +2890,7 @@
     "rate_limited": 1,
     "read_budget_exhausted": 1,
     "readable_by_invalid": 1,
+    "readers_noncanonical": 1,
     "reason_purge_scan_capped": 3,
     "reason_purge_scan_failed": 1,
     "reason_scan_capped": 1,
