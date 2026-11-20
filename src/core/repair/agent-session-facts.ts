@@ -310,7 +310,7 @@ export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], re
       FROM contributing c JOIN takes t ON t.id=c.take_id JOIN pages p ON p.id=t.page_id
      WHERE p.source_id=ANY($1::text[]) AND t.kind='fact' AND t.holder='self' AND t.active AND t.resolved_at IS NULL
        AND t.created_at >= c.first_consolidated_at - interval '1 second'
-     ORDER BY p.source_id, p.slug, t.id`, [sourceIds, ids ?? null, NOTE_MARK]);
+     ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", t.id`, [sourceIds, ids ?? null, NOTE_MARK]);
   return rows.filter(row => row.user_fact_ids.every(id => reattributed.has(Number(id))) && (row.noted || row.user_fact_ids.length > 0))
     .map(row => {
       const factIds = row.fact_ids.map(Number);

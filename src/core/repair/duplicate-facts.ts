@@ -81,7 +81,7 @@ export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[
        WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
     ) d WHERE d.n > 1
-    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.fenced DESC, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
+    ORDER BY d.source_id COLLATE "C", d.visibility COLLATE "C", d.fp COLLATE "C", d.speaker COLLATE "C", d.fenced DESC, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
   const groups: DuplicateGroup[] = [];
   let key = '';
   for (const row of rows) {
