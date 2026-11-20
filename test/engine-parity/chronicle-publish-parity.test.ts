@@ -15,12 +15,11 @@
  *  - Regression: the chronicle adapter, publish.ts and event-identity.ts sent these reads and writes through
  *    `executeRaw`, so a Rust brain stopped on the typed `raw_sql` refusal at the first chronicle read: it published,
  *    retired and restored no event.
- *  - Rust arm on this branch: the real publication (first case) records derivation edges for each event
+ *  - Rust arm: the real publication (first case) records derivation edges for each event
  *    (adapters/chronicle-events.ts lowerDerivedPageIn → trust/taint.ts recordTaintEdges →
- *    facts/derivation-inputs.ts recordDerivationInputs), which still send raw SQL here, so that case stops on the typed
- *    `raw_sql` refusal (rust-tally.tsv). The derivation edges are typed on rust-engine/derivation-trust. The second
+ *    facts/derivation-inputs.ts recordDerivationInputs, a typed member) and is compared on the Rust arm. The second
  *    case runs the same lifecycle with an adapter whose publishItems writes the event without the derivation stamp, so
- *    every other chronicle member is compared on the Rust arm now. The chronicle ledger (`chronicle_page_state`) has
+ *    the chronicle members are compared apart from the derivation edges. The chronicle ledger (`chronicle_page_state`) has
  *    no Rust store yet: listChronicleOwnedHashes answers [] and hasChronicleSkipDecision false, which is what a SQL
  *    brain answers when the ledger holds nothing for the page, as here.
  *  - Why existing coverage misses it: test/trust-taint.test.ts publishes one event on PGLite only and reads it through
