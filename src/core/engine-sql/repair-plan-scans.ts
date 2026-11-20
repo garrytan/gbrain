@@ -57,6 +57,15 @@ export async function countSegmentedOriginPages(exec: LegacyUnscopedRead, source
 }
 
 /**
+ * The live segmented pages of source `sourceId`, by slug in byte order (`gbrain repair segmented-mirror`'s preview walk;
+ * the text it sent through executeRaw, with `COLLATE "C"` so Postgres orders as PGLite does).
+ */
+export async function listSegmentedPageSlugs(exec: LegacyUnscopedRead, sourceId: string): Promise<string[]> {
+  const rows = await exec.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND body_storage='segmented' AND deleted_at IS NULL ORDER BY slug COLLATE "C"`, [sourceId]);
+  return rows.map(row => row.slug);
+}
+
+/**
  * GST-1209: the live (not deleted) pages of unarchived sources stored in segments whose live generation's rows do not cover body_bytes gapless
  * from 0, so every read of them refuses page_body_rows_unreadable. One aggregate per page over its live rows, read-only;
  * `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).

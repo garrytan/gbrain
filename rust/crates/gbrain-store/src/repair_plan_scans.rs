@@ -1,7 +1,8 @@
 //! The plan reads of the `frontmatter` and `segmented-tiling` repairs and the source hold
 //! listing every sync hold reader starts from (`src/core/engine-sql/repair-plan-scans.ts`).
 //!
-//! Members: listPagesByOriginPath, countSegmentedOriginPages, listUntiledSegmentedPages,
+//! Members: listPagesByOriginPath, countSegmentedOriginPages, listSegmentedPageSlugs,
+//! listUntiledSegmentedPages,
 //! listSourceHoldRecords, and readRepairBusyRows (`src/core/engine-sql/repair-busy.ts`).
 //!
 //! Each member reads the records once and filters them as the SQL's `WHERE` does. A live page has
@@ -142,6 +143,20 @@ impl Store {
             }
         }
         Ok(n)
+    }
+
+    /// `listSegmentedPageSlugs(sourceId)`: the slugs of the live pages of `source_id` stored in
+    /// segments, file-backed or not, in byte order.
+    pub fn list_segmented_page_slugs(&self, source_id: &str) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut slugs = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.source_id == source_id && live(&page) && body_segmented(&*read, &page)? {
+                slugs.push(page.slug);
+            }
+        }
+        slugs.sort();
+        Ok(slugs)
     }
 
     /// `listUntiledSegmentedPages({ sourceIds, slugs, limit })`: the live segmented pages of

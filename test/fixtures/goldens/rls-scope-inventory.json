@@ -7226,6 +7226,7 @@
         "listResumableRefreshes": "none",
         "listRetiredDeactivations": "none",
         "listSafeChunksPending": "none",
+        "listSegmentedPageSlugs": "none",
         "listSegmentedPages": "none",
         "listSegmentedPagesBySlug": "none",
         "listSessionFactTwins": "none",

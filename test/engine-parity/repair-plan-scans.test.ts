@@ -74,7 +74,7 @@ describe('engine parity: repair plan scans', () => {
   parityTest('frontmatter and segmented-tiling plan from the same pages on every engine', {
     methods: ['putPage', 'softDeletePage', 'setConfig', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts',
       'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction',
-      'listPagesByOriginPath', 'countSegmentedOriginPages', 'listUntiledSegmentedPages'],
+      'listPagesByOriginPath', 'countSegmentedOriginPages', 'listSegmentedPageSlugs', 'listUntiledSegmentedPages'],
     timeout: 60_000,
   }, async (engine) => withHome(async () => {
     await put(engine, 'notes/b-example', 'x'.repeat(450), 'notes/b-example.md');
@@ -104,6 +104,8 @@ describe('engine parity: repair plan scans', () => {
       noOrigins: await engine.listPagesByOriginPath('other-example'),
       segmented: await engine.countSegmentedOriginPages(['default']),
       segmentedElsewhere: await engine.countSegmentedOriginPages(['other-example']),
+      segmentedSlugs: await engine.listSegmentedPageSlugs('default'),
+      segmentedSlugsElsewhere: await engine.listSegmentedPageSlugs('other-example'),
       healthy, untiled,
       bySlug: (await engine.listUntiledSegmentedPages({ slugs: ['notes/long-example'] })).map(row => row.slug),
       capped: (await engine.listUntiledSegmentedPages({ limit: 1 })).map(row => row.slug),

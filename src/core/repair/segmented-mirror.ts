@@ -103,8 +103,7 @@ export async function scanSegmentedMirrors(engine: BrainEngine, sourceIds: reado
   for (const sourceId of sourceIds) {
     const binding = await getWorktreeBinding(engine, sourceId, hostId);
     if (!binding) continue;
-    const slugs = (await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND body_storage='segmented' AND deleted_at IS NULL ORDER BY slug", [sourceId]))
-      .map(row => row.slug);
+    const slugs = await engine.listSegmentedPageSlugs(sourceId);
     if (!slugs.length) continue;
     if (binding.owner_host_id !== hostId || !binding.local_path) {
       hold({ source_id: sourceId, slug: '*', reason: 'not_owner_host',
@@ -246,8 +245,7 @@ export const segmentedMirrorRepair: RepairHandler = {
       emptyHash: async () => hashOf(scope, selection, (await scanSegmentedMirrors(engine, scope.source_ids)).items) })).items;
     if (approved.some(entry => JSON.stringify(entry.selection) !== JSON.stringify(selection))) throw previewChangedError(expect, command);
     const stale = approved.map(({ selection: _selection, ...entry }) => entry);
-    const admitted = new Set((await engine.executeRaw<{ request_id: string }>('SELECT request_id::text AS request_id FROM persistence_requests WHERE request_id=ANY($1::uuid[])',
-      [stale.map(entry => remirrorRequestId(expect, entry))])).map(row => row.request_id));
+    const admitted = new Set((await engine.listWriteRequestsByRequestIds(stale.map(entry => remirrorRequestId(expect, entry)))).map(row => row.request_id));
     // Every page not yet admitted under this hash still has the revision and file bytes the user saw, or nothing is written.
     for (const entry of stale) {
       if (admitted.has(remirrorRequestId(expect, entry))) continue;

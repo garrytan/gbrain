@@ -209,6 +209,7 @@ page, manifest and checkpoint records and filters them as the SQL's `WHERE` does
 | --- | --- |
 | `listPagesByOriginPath(sourceId)` | live pages recording a `source_path`, with the first 400 characters of compiled truth (null when the page stores none inline), by slug in byte order |
 | `countSegmentedOriginPages(sourceIds)` | live pages recording a `source_path` whose `body_storage` is `segmented` |
+| `listSegmentedPageSlugs(sourceId)` | the slugs of the source's live pages whose `body_storage` is `segmented`, file-backed or not, in byte order (the `segmented-mirror` preview walk) |
 | `listUntiledSegmentedPages({ sourceIds, slugs, limit })` | live segmented pages of unarchived sources whose live generation's published rows, by seq, leave a gap or do not sum to `body_bytes` (a NULL `body_bytes` counts only a gap), by source then slug, at most `limit` (default 1000) |
 | `listSourceHoldRecords(op, { sourceIds, runId })` | the first record of each `op` checkpoint whose `source_id` and `incarnation` name an existing source's current incarnation, narrowed by source and `run_id`, by source then fingerprint in byte order; `mirror_read_only` is the source's `config.mirror_read_only` |
 

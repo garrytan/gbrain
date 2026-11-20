@@ -1797,6 +1797,7 @@ export class PostgresEngine implements BrainEngine {
   listPageTruths(ids: readonly number[], opts?: { timeoutMs?: number }) { return repairFenceScansImpl.listPageTruths(this.executeRaw.bind(this), ids, opts?.timeoutMs); }
   listPagesByOriginPath(sourceId: string) { return repairPlanScansImpl.listPagesByOriginPath(this.repairBookkeepingReads, sourceId); }
   countSegmentedOriginPages(sourceIds: readonly string[]) { return repairPlanScansImpl.countSegmentedOriginPages(this.repairBookkeepingReads, sourceIds); }
+  listSegmentedPageSlugs(sourceId: string) { return repairPlanScansImpl.listSegmentedPageSlugs(this.repairBookkeepingReads, sourceId); }
   listProvenAttributionTargets(table: AttributionTable, sourceIds: readonly string[]) { return repairPlanScansImpl.listProvenAttributionTargets(this.repairBookkeepingReads, table, sourceIds); }
   countUnfilledAttribution(table: AttributionTable, sourceIds: readonly string[]) { return repairPlanScansImpl.countUnfilledAttribution(this.repairBookkeepingReads, table, sourceIds); }
   listFailedWriteRequests(sourceIds: readonly string[], query: repairPlanScansImpl.FailedWriteQuery) { return repairPlanScansImpl.listFailedWriteRequests(this.repairBookkeepingReads, sourceIds, query); }

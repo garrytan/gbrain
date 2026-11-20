@@ -327,6 +327,17 @@ impl Brain {
         self.run(env, move |s| s.count_segmented_origin_pages(&source_ids))
     }
 
+    /// `listSegmentedPageSlugs(sourceId)`: resolves the slugs of the source's live segmented
+    /// pages, in byte order.
+    #[napi]
+    pub fn list_segmented_page_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_segmented_page_slugs(&source_id))
+    }
+
     /// `listProvenAttributionTargets(table, sourceIds)`: resolves the ids of the `table` rows of
     /// the sources with no attribution that exactly one committed request proves, ascending.
     #[napi]

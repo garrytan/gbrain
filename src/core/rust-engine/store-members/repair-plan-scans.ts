@@ -18,6 +18,9 @@ export const listPagesByOriginPath: StoreMember<[sourceId: string], OriginPathPa
 export const countSegmentedOriginPages: StoreMember<[sourceIds: readonly string[]], number> = async (brain, sourceIds) =>
   Number(await storeCall({ member: 'countSegmentedOriginPages' }, () => brain.countSegmentedOriginPages([...sourceIds])));
 
+export const listSegmentedPageSlugs: StoreMember<[sourceId: string], string[]> = (brain, sourceId) =>
+  storeCall({ member: 'listSegmentedPageSlugs' }, () => brain.listSegmentedPageSlugs(sourceId));
+
 export const listUntiledSegmentedPages: StoreMember<[opts?: UntiledPageQuery], UntiledPage[]> = async (brain, opts = {}) => {
   const limit = Math.max(0, Math.floor(opts.limit ?? 1000));
   const rows = await storeCall({ member: 'listUntiledSegmentedPages' }, () =>

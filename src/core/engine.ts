@@ -1736,6 +1736,8 @@ export interface BrainEngine {
   listPagesByOriginPath(sourceId: string): Promise<OriginPathPageRow[]>;
   /** How many live file-backed pages of `sourceIds` store their body in segments. */
   countSegmentedOriginPages(sourceIds: readonly string[]): Promise<number>;
+  /** The live segmented pages of `sourceId`, by slug in byte order (engine-sql/repair-plan-scans.ts; repair segmented-mirror). */
+  listSegmentedPageSlugs(sourceId: string): Promise<string[]>;
   /** attribution-backfill: ids of the `table` rows of `sourceIds` with no attribution that exactly one committed request proves, ascending. */
   listProvenAttributionTargets(table: AttributionTable, sourceIds: readonly string[]): Promise<number[]>;
   /** attribution-backfill: how many `table` rows of `sourceIds` have no attribution. */

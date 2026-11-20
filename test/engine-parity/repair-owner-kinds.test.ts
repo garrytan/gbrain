@@ -17,6 +17,10 @@
  *    refuses the merge by name (`engine_capability_missing`, raw_sql, "gbrain repair legacy-twins merge") until the
  *    merge moves to typed members. Before batch 8 a Rust brain stopped at the raw import-record read (ghost-pages)
  *    and the raw twin-merge conflict read (legacy-twins).
+ *  - segmented-mirror on an owned brain: the preview walks the source's segmented pages (listSegmentedPageSlugs) and
+ *    lists none when no page has a withdrawal ledger, and the apply of that empty preview is a no-op, on every arm.
+ *    Before this case a Rust brain stopped at the raw segmented-slug read. A page with a withdrawal ledger still
+ *    reaches the raw fence overlay of prepareFileTarget, which waits for the managed_persistence capability.
  *  - Seam: none.
  */
 import { describe, expect } from 'bun:test';
@@ -32,6 +36,7 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
+import { publishSegmentedPage, segmentText } from '../helpers/page-body-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -159,4 +164,14 @@ describe('engine parity: repair kinds that need the owner host', () => {
       throw err;
     }
   }));
+
+  parityTest('on a brain this host owns, segmented-mirror walks the segmented pages and lists none without a withdrawal', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'createSegmentedPageShell', 'flipBodyGeneration', 'listSegmentedPageSlugs',
+      'readPageSnapshot'],
+    timeout: 60_000,
+  }, async (engine) => ownedBrain(engine, async (root) => {
+    await put(engine, root, 'notes/plain', 'notes/plain.md', true);
+    await publishSegmentedPage(engine, 'notes/seg-b', [segmentText('second segmented body\n')]);
+    await publishSegmentedPage(engine, 'notes/seg-a', [segmentText('first segmented body\n')]);
+  }, async (root) => ({ ...(await run(engine, 'segmented-mirror', root)), slugs: await engine.listSegmentedPageSlugs('default') })));
 });

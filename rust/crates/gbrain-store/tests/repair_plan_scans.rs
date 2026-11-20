@@ -169,12 +169,23 @@ fn origin_path_pages_and_segmented_count() {
             .unwrap(),
         0
     );
+    assert_eq!(
+        store.list_segmented_page_slugs("default").unwrap(),
+        vec!["seg".to_owned()]
+    );
+    assert!(store.list_segmented_page_slugs("other").unwrap().is_empty());
     store.soft_delete_page("seg", None).unwrap();
     assert_eq!(
         store
             .count_segmented_origin_pages(&ids(&["default"]))
             .unwrap(),
         0
+    );
+    assert!(
+        store
+            .list_segmented_page_slugs("default")
+            .unwrap()
+            .is_empty()
     );
 }
 
