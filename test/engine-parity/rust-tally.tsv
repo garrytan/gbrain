@@ -119,7 +119,7 @@ test/engine-parity/search.test.ts	23	0
 test/engine-parity/segmented-body.test.ts	19	1
 test/engine-parity/source-admin-writes.test.ts	1	0
 test/engine-parity/source-archive.test.ts	6	0
-test/engine-parity/source-delete.test.ts	3	0
+test/engine-parity/source-delete.test.ts	4	0
 test/engine-parity/source-resolver-reads.test.ts	14	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	3	0
