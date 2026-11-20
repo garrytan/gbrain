@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 780/780
+# covered: 792/792
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 48/48
+# segmented_body: 60/60
 # versions: 5/5
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -77,15 +77,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	82	no	yes	yes	serves
+transaction	lifecycle	yes	83	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	97	yes	yes	yes	serves
+getPage	pages	yes	100	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	344	yes	yes	yes	serves
+putPage	pages	yes	345	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -164,7 +164,7 @@ replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
 ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
 countPendingProjectionPages	retrieval_coverage	yes	9	no	yes	yes	serves
-countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
+countEmbeddingHeldPages	retrieval_coverage	yes	2	no	yes	yes	serves
 projectionRebuildProgress	retrieval_coverage	yes	4	no	yes	yes	serves
 readProjectionReadinessGeneration	retrieval_coverage	yes	2	no	yes	yes	serves
 readProjectionReadiness	retrieval_coverage	yes	5	no	yes	yes	serves
@@ -188,12 +188,12 @@ sealChunks	chunks	yes	47	no	yes	yes	serves
 getChunks	chunks	yes	32	yes	yes	yes	serves
 getChunkPage	chunks	yes	11	no	yes	yes	serves
 getChunkWindows	chunks	yes	11	no	yes	yes	serves
-countStaleChunks	chunks	yes	5	no	yes	yes	serves
-sumStaleChunkChars	chunks	yes	2	no	yes	yes	serves
+countStaleChunks	chunks	yes	6	no	yes	yes	serves
+sumStaleChunkChars	chunks	yes	3	no	yes	yes	serves
 setPageEmbeddingSignature	chunks	yes	1	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
-listStaleChunks	chunks	yes	2	no	yes	yes	serves
+listStaleChunks	chunks	yes	3	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	5	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
@@ -316,9 +316,9 @@ findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	10	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	11	no	yes	yes	serves
-readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
+readSegmentTexts	segmented_body	yes	9	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
-readManifest	segmented_body	yes	13	no	yes	yes	serves
+readManifest	segmented_body	yes	14	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	11	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	19	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	20	no	yes	yes	serves
@@ -354,14 +354,26 @@ splitManifestGeneration	segmented_body	yes	1	no	yes	yes	serves
 publishRebuiltGeneration	segmented_body	yes	1	no	yes	yes	serves
 setSegmentedVersionHash	segmented_body	yes	1	no	yes	yes	serves
 deleteRewrittenDerivationRows	segmented_body	yes	1	no	yes	yes	serves
-readSegmentedEmbedPage	segmented_body	yes	2	no	yes	yes	serves
+readSegmentedEmbedPage	segmented_body	yes	3	no	yes	yes	serves
 hasLiveSegmentedPage	segmented_body	yes	1	no	yes	yes	serves
-countSegmentedEmbedRows	segmented_body	yes	1	no	yes	yes	serves
-listSegmentedStaleRows	segmented_body	yes	2	no	yes	yes	serves
-readSegmentChunkInputHashes	segmented_body	yes	1	no	yes	yes	serves
-installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
+countSegmentedEmbedRows	segmented_body	yes	2	no	yes	yes	serves
+listSegmentedStaleRows	segmented_body	yes	3	no	yes	yes	serves
+readSegmentChunkInputHashes	segmented_body	yes	2	no	yes	yes	serves
+installSegmentedVectors	segmented_body	yes	3	no	yes	yes	serves
 listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
 listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
+takePageEmbeddingLease	segmented_body	yes	1	no	yes	yes	serves
+renewPageEmbeddingLease	segmented_body	yes	1	no	yes	yes	serves
+releasePageEmbeddingLease	segmented_body	yes	1	no	yes	yes	serves
+listVectorlessChunkIndexes	segmented_body	yes	1	no	yes	yes	serves
+readPageEmbeddingHolds	segmented_body	yes	1	no	yes	yes	serves
+writePageEmbeddingHold	segmented_body	yes	3	no	yes	yes	serves
+openPageEmbeddingHold	segmented_body	yes	2	no	yes	yes	serves
+lockPageSpendLedger	segmented_body	yes	1	no	yes	yes	serves
+writePageSpendReservation	segmented_body	yes	1	no	yes	yes	serves
+settlePageSpendReservation	segmented_body	yes	1	no	yes	yes	serves
+listBudgetLimitedPageRows	segmented_body	yes	1	no	yes	yes	serves
+readPageSizeStateRows	segmented_body	yes	1	no	yes	yes	serves
 createVersion	versions	yes	20	no	yes	yes	serves
 getVersions	versions	yes	9	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
@@ -383,7 +395,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	30	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
