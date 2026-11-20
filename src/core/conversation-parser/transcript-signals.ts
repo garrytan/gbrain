@@ -31,6 +31,18 @@ const TRANSCRIPT_HEADING_RX = /^#{1,6}\s*(?:raw\s+)?transcript\b/im;
  */
 const TIME_TOKEN_RX = /[[(]?\b\d{1,2}:\d{2}(?::\d{2})?\b\s*(?:[APap]\.?[Mm]\.?)?[\])]?/;
 
+// A labeled calendar field whose entire value is a date and time describes
+// the meeting record itself. It contributes no dialogue. Keep unknown timed
+// formats as signals and let explicit transcript headings/sidecars win.
+const CALENDAR_FIELD = '(?:time|start time|end time|created at|creation time|时间|开始时间|结束时间|创建时间)';
+const CLOCK_VALUE = String.raw`\d{1,2}:\d{2}(?::\d{2})?`;
+const ZONE_VALUE = String.raw`(?:\s+(?:[A-Za-z_]+(?:\/[A-Za-z_+-]+)+|UTC|GMT)|Z|[+-]\d{2}:?\d{2})?`;
+const CALENDAR_TIME_FIELD_RX = new RegExp(
+  String.raw`^\s*[-*+]\s+${CALENDAR_FIELD}\s*[:：]\s*\d{4}-\d{2}-\d{2}[ T]${CLOCK_VALUE}` +
+  String.raw`(?:\s*[-–—]\s*${CLOCK_VALUE})?${ZONE_VALUE}\s*$`,
+  'i',
+);
+
 /** Min timestamped lines + min share of non-blank lines for the density
  *  signal. Mirrors the parser's own density-floor philosophy
  *  (SCORING_MIN_ACCEPTANCE): a couple of times in an agenda list is not a
@@ -59,7 +71,7 @@ export function isTranscriptClaiming(page: Page | undefined, body: string): bool
   if (nonBlank.length === 0) return false;
   let timed = 0;
   for (const line of nonBlank) {
-    if (TIME_TOKEN_RX.test(line.slice(0, 24))) timed++;
+    if (TIME_TOKEN_RX.test(line.slice(0, 24)) && !CALENDAR_TIME_FIELD_RX.test(line)) timed++;
   }
   return timed >= TIME_DENSITY_MIN_LINES && timed / nonBlank.length >= TIME_DENSITY_MIN_SHARE;
 }
