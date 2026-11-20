@@ -1301,6 +1301,8 @@ export const RUST_ENGINE_MEMBERS = {
   listTakeRowsForPage: 'takes',
   listHeldFenceTakeRows: 'takes',
   readTakePreimages: 'takes',
+  readTakeRowTrust: 'takes',
+  readTakeTrustRef: 'takes',
   countMcpResolvedTakes: 'takes',
   listTakeSupersessionCandidates: 'takes',
   countZeroWeightWithTakes: 'salience',

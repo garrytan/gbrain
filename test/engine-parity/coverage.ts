@@ -93,7 +93,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
     'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows',
     // group D (takes reads)
-    'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes', 'listTakeRowsForPage', 'readTakePreimages', 'countMcpResolvedTakes',
+    'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes', 'listTakeRowsForPage', 'readTakePreimages', 'readTakeRowTrust', 'readTakeTrustRef', 'countMcpResolvedTakes',
     'listTakeSupersessionCandidates', 'listHeldFenceTakeRows'],
   dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
   contradictions: ['writeContradictionsRun', 'loadContradictionsTrend', 'getContradictionCacheEntry', 'putContradictionCacheEntry',

@@ -102,12 +102,14 @@ The actor match of `cancelJobs` and `listJobPage` is `jobActorSql`: the `grant.a
 distinct elements sorted and joined with `,` when it is an array (`''` when empty), `!` for any other
 value, and `''` when missing. A NULL authority or no grant matches the four `''`.
 
-Delegated client admission (`admitJob` with a `lock` or `checkCapacity` policy, and `retryJob` of a delegated
-job) runs the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`): the job
-reads, `countOpenJobsByOwner` and `readJobSourceState` come from the store. The store keeps the `oauth_clients` row ([oauth-clients.md](oauth-clients.md)), so the handle serves the grant read
-(`readOauthClient`) and the active-source list (`listAllSources`) and a missing client is denied as on PGLite. It holds
-no row lock, so `lockOAuthClient` locks nothing and a policy that took it refuses (`engine_capability_missing`,
-capability `minion_queue`) before anything is written.
+Delegated client admission (`admitJob` with a `lock` or `checkCapacity` policy) runs in one engine transaction, in
+the SQL order: the policy's lock, then a store admission with `capacityCheck: true` that answers a coalesce (or a
+conflict) or stops where the capacity check runs and answers `capacity` with nothing written, then the policy's
+capacity check on the transaction, then the store admission. The policy reads the transaction's state
+(`countOpenJobsByOwner`, `readOauthClient`, `listAllSources`), and the store admits one write transaction at a time,
+so the check and the insert are one admission. `lockOAuthClient` resolves with nothing to do: inside a transaction the
+store's single writer already holds what the row lock holds, and outside one Postgres releases the lock at once.
+`retryJob` reads the job, runs the policy and updates the job in one engine transaction, as PGLite does.
 
 `MinionQueue.retryJob` runs the job authority check first. An application job needs no read. An agent job
 (`remote_agent`) reads its source with `readJobSourceState`, so a source that is gone, archived or created again
@@ -117,9 +119,7 @@ The archived-source branch is pinned by cargo only (`job_source_state_reads_arch
 a mutant that always reads `archived` as false passes parity and fails cargo.
 A generic remote job (`remote_generic`) reads its principal first, through the typed `readOauthClient` or
 `readJobPrincipal` (both served by the store), then its source registration (`SELECT id, local_path, config, archived,
-created_at FROM sources WHERE id = $1`, caller raw SQL), so its submit and its retry refuse at that source read. A policy that got past the
-lock would still refuse before the write: the lock, the capacity count and the write are separate store calls, so
-they are not one admission. `lockOAuthClient` called directly is not served and refuses the same way.
+created_at FROM sources WHERE id = $1`, caller raw SQL), so its submit and its retry refuse at that source read.
 
 Differences from PGLite:
 

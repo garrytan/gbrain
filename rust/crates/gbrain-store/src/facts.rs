@@ -61,6 +61,7 @@ pub mod trust_reads;
 mod widen;
 
 pub use crate::owner_only::OwnerOnlyForm;
+pub(crate) use embedding::cosine_distance;
 pub(crate) use embedding::md5_hex;
 pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};

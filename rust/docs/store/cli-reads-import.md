@@ -48,7 +48,8 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   the same activation test as a page, on the row's own receipts. A fact or take is `contested` when a pending
   `supersede_fact` or `supersede_take` proposal names it (`trust::proposals::contested_ref`, the lowest id first):
   `tp<id>:challenger` when it is the proposal's related row, `tp<id>:challenged` otherwise. A timeline row is never
-  contested.
+  contested. Each row's `write_origin` reads in jsonb key order (`pg_text::jsonb_value`), as the column
+  returns it.
 - **Knowledge revision.** Every stored page has a UUID `knowledge_revision`; it is never `null`. The extract stamp's
   "no revision" sentinel therefore never matches a store page, as it never matches a Postgres page written since the
   column became `NOT NULL`.

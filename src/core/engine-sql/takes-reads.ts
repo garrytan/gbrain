@@ -1,12 +1,14 @@
 /**
  * The small reads that doctor, onboarding, the fact purge, the fence import, the scorecard's MCP count and the take
- * supersession repair made through `executeRaw`: take counts and rows, the pages whose salience weight lags their
+ * supersession repair made through `executeRaw`, and the take trust reads of the take write gate, the accepted-takes and
+ * lost-fence-rows repairs and the trust explainers: take counts and rows, the pages whose salience weight lags their
  * takes, and whether a source owns unresolved code edges. SQL once for both engines, so a store that is not SQL
  * serves the same members (rust/docs/store/takes-reads.md).
  *
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
 import type { BrainEngine } from '../engine.ts';
+import { QUARANTINE_KEY } from '../quarantine.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
@@ -208,4 +210,35 @@ export async function readTakePreimages(tx: Raw, read: TakePreimageRead): Promis
   }
   return tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(
     TAKE_PREIMAGES_SQL.rowNum, [read.pageId, [...read.gone], incoming]);
+}
+
+/** The take at a page's row number: its id, claim and stored trust tier (the trust reads of the take write gate). */
+export async function readTakeRowTrust(tx: Raw, pageId: number, rowNum: number): Promise<{ id: number; claim: string; trust_tier: string } | null> {
+  const [row] = await tx.executeRaw<{ id: number | string; claim: string; trust_tier: string }>(
+    'SELECT id, claim, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2', [pageId, rowNum]);
+  return row ? { id: Number(row.id), claim: row.claim, trust_tier: row.trust_tier } : null;
+}
+
+export interface TakeTrustRef {
+  id: number;
+  /** The source of the take's page. */
+  source_id: string;
+  claim: string;
+  trust_tier: string;
+  write_origin: Record<string, unknown> | null;
+  active: boolean;
+  /** The take's page carries the quarantine frontmatter key. */
+  quarantined: boolean;
+}
+
+/** A take by id with its page's source and quarantine key, as `gbrain trust explain` reads it. */
+export async function readTakeTrustRef(tx: Raw, id: number): Promise<TakeTrustRef | null> {
+  const [row] = await tx.executeRaw<Omit<TakeTrustRef, 'id' | 'write_origin'> & { id: number | string; write_origin: unknown }>(
+    `SELECT t.id, p.source_id, t.claim, t.trust_tier, t.write_origin, t.active,
+            (COALESCE(p.frontmatter, '{}'::jsonb) ? $2::text) AS quarantined
+       FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1`, [id, QUARANTINE_KEY]);
+  if (!row) return null;
+  const origin = typeof row.write_origin === 'string' ? JSON.parse(row.write_origin) as Record<string, unknown> : (row.write_origin as Record<string, unknown> | null);
+  return { id: Number(row.id), source_id: row.source_id, claim: row.claim, trust_tier: row.trust_tier, write_origin: origin ?? null,
+    active: !!row.active, quarantined: !!row.quarantined };
 }

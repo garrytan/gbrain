@@ -3,8 +3,10 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 A fresh brain has the config entry `version`, set to the `schemaVersion` given to `open`
-(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 319 today). Values are strings and keys
-cannot contain NUL.
+(`getConfig('version')` equals `LATEST_SCHEMA_VERSION`, 319 today). A fresh brain records
+`write_gate.scan_baseline` the way migration v227 does on an empty SQL brain (the `jsonb` text Postgres
+prints): every table at `0`, under the `writeGateDetectorVersion` that `open` gets (the engine passes
+`WRITE_GATE_DETECTOR_VERSION`; `2` when none is given), so doctor `trust_scan` counts no row written later. Values are strings and keys cannot contain NUL.
 
 `open` also writes the caller's `embeddingModel`, `embeddingDimensions` and `chunkStrategy` (each when
 given) as the config entries `embedding_model`, `embedding_dimensions` and `chunk_strategy`, for a fresh

@@ -8707,6 +8707,8 @@
         "readSyncDispatchRow": "none",
         "readSyncPassRow": "none",
         "readTakePreimages": "none",
+        "readTakeRowTrust": "none",
+        "readTakeTrustRef": "none",
         "readTerminalFailureGroups": "none",
         "readTokenLifetimeClampedClients": "none",
         "readTopologyChange": "none",

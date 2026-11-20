@@ -117,6 +117,10 @@ pub struct OpenOptions {
     /// `chunk_strategy`, the rows the SQL engines' schema seeds. The store has no default of
     /// its own; an existing brain keeps the rows it has.
     pub initial_config: Vec<(String, String)>,
+    /// The caller's write-gate detector version (the TypeScript `WRITE_GATE_DETECTOR_VERSION`). A fresh
+    /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
+    /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
+    pub write_gate_detector_version: Option<u32>,
 }
 
 impl Default for OpenOptions {
@@ -127,6 +131,7 @@ impl Default for OpenOptions {
             catalog_version: 0,
             created_by: format!("gbrain-store {}", env!("CARGO_PKG_VERSION")),
             initial_config: Vec::new(),
+            write_gate_detector_version: None,
         }
     }
 }
@@ -339,6 +344,13 @@ pub(crate) struct StoredFormat {
     pub created_at_us: i64,
 }
 
+/// The config key of the write gate's scan baseline (TypeScript `WRITE_GATE_SCAN_BASELINE_KEY`).
+pub const WRITE_GATE_SCAN_BASELINE_KEY: &str = "write_gate.scan_baseline";
+
+/// The detector version a fresh brain's scan baseline carries when the caller names none (the TypeScript
+/// `WRITE_GATE_DETECTOR_VERSION` when this store was written).
+pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
+
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
 /// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the trust backfill
 /// completion and the write-gate scan baseline (what migrations v226 and v227 write on an empty brain), the
@@ -357,10 +369,15 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
         format!("{}Z", &now[..now.len() - 4]).as_bytes(),
     )?;
     // Migration v227: no row is older than the write gate, so the legacy trust scan and `trust claim-sources` have
-    // nothing to cover (`write_gate.scan_baseline`).
+    // nothing to cover (`write_gate.scan_baseline`), recorded under the caller's detector version.
     tx.put(
-        &keys::text(keys::CONFIG, &["write_gate.scan_baseline"]),
-        br#"{"detector_version":2,"until":{"facts":0,"pages":0,"takes":0,"timeline_entries":0}}"#,
+        &keys::text(keys::CONFIG, &[WRITE_GATE_SCAN_BASELINE_KEY]),
+        scan_baseline(
+            options
+                .write_gate_detector_version
+                .unwrap_or(DEFAULT_WRITE_GATE_DETECTOR_VERSION),
+        )
+        .as_bytes(),
     )?;
     for (key, value) in &options.initial_config {
         if key.is_empty() || key == "version" {
@@ -373,4 +390,12 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
     access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)?;
     shared_skill_members::seed_state(tx, env)
+}
+
+/// The scan baseline of an empty brain, as Postgres prints the `jsonb` that migration v227 stores
+/// (shorter keys first): the gate is live from the first row, so the legacy scan has nothing to read.
+fn scan_baseline(detector: u32) -> String {
+    format!(
+        r#"{{"until": {{"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}}, "detector_version": {detector}}}"#
+    )
 }

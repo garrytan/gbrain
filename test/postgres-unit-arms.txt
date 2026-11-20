@@ -255,8 +255,12 @@ test/engine-parity/sync-aliases.test.ts
 test/engine-parity/sync-requests.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/take-held-rows.test.ts
+test/engine-parity/take-trust-fields.test.ts
+test/engine-parity/take-trust-reads.test.ts
+test/engine-parity/take-vector-search.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
+test/engine-parity/think-gather-takes.test.ts
 test/engine-parity/timeline-held-rows.test.ts
 test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts

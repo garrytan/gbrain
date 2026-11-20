@@ -23,7 +23,10 @@ fn insert(name: &str, extra: Value) -> Value {
     base
 }
 
-fn admit(b: &Brain, spec: Value) -> gbrain_store::Result<gbrain_store::jobs::AdmitOutcome> {
+fn admit(
+    b: &gbrain_store::Store,
+    spec: Value,
+) -> gbrain_store::Result<gbrain_store::jobs::AdmitOutcome> {
     let mut spec = spec;
     if spec.get("maxSpawnDepth").is_none() {
         spec["maxSpawnDepth"] = json!(5);
@@ -32,7 +35,7 @@ fn admit(b: &Brain, spec: Value) -> gbrain_store::Result<gbrain_store::jobs::Adm
     b.admit_job(&spec)
 }
 
-fn add(b: &Brain, name: &str, extra: Value) -> i64 {
+fn add(b: &gbrain_store::Store, name: &str, extra: Value) -> i64 {
     let out = admit(b, json!({ "insert": insert(name, extra) })).unwrap();
     assert_eq!(out.outcome, "inserted");
     out.row["id"].as_i64().unwrap()
@@ -212,4 +215,69 @@ fn list_jobs_filters_and_orders_newest_first() {
     assert_eq!(ids(json!({})), vec![c, a]);
     assert_eq!(ids(json!({"name": "work"})), vec![a]);
     assert_eq!(ids(json!({"limit": 1, "offset": 1})), vec![a]);
+}
+
+#[test]
+fn a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing() {
+    let b = brain("jobs-capacity-probe");
+    let probe = |extra: Value, more: Value| {
+        let mut spec = json!({"insert": insert("work", extra), "capacityCheck": true});
+        for (k, v) in more.as_object().unwrap() {
+            spec[k] = v.clone();
+        }
+        admit(&b, spec).unwrap()
+    };
+    // No row yet: the probe stops where the capacity check runs, before the quota, and inserts nothing.
+    let fresh = probe(
+        json!({"idempotency_key": "k1"}),
+        json!({"quotaMaxWaiting": 0}),
+    );
+    assert_eq!(
+        (fresh.outcome, fresh.row.clone()),
+        ("capacity", Value::Null)
+    );
+    assert!(b.list_jobs(&ListFilter::default()).unwrap().is_empty());
+
+    // A live row under the key coalesces exactly as a full admission does.
+    let first = add(&b, "work", json!({"idempotency_key": "k1"}));
+    let again = probe(json!({"idempotency_key": "k1"}), json!({}));
+    assert_eq!(
+        (again.outcome, again.row["id"].as_i64()),
+        ("coalesced", Some(first))
+    );
+
+    // A dead holder is released by a full admission; the probe answers capacity and keeps no release.
+    claim(&b, "w:1").unwrap();
+    b.fail_job(first, "w:1", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
+    let released = probe(json!({"idempotency_key": "k1"}), json!({}));
+    assert_eq!(released.outcome, "capacity");
+    assert_eq!(job(&b, first)["idempotency_key"], "k1");
+    assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+}
+
+#[test]
+fn admit_job_runs_as_a_statement_of_an_open_transaction() {
+    let b = brain("jobs-admit-in-transaction");
+    let tx = b.begin_transaction(false).unwrap();
+    // The probe and the admission run on the bound store; the probe keeps nothing.
+    let probe = admit(
+        &tx,
+        json!({"insert": insert("work", json!({})), "capacityCheck": true}),
+    )
+    .unwrap();
+    assert_eq!(probe.outcome, "capacity");
+    let out = admit(&tx, json!({"insert": insert("work", json!({}))})).unwrap();
+    assert_eq!(out.outcome, "inserted");
+    let id = out.row["id"].as_i64().unwrap();
+    assert_eq!(tx.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+    tx.commit_transaction().unwrap();
+    assert_eq!(job(&b, id)["status"], "waiting");
+
+    // A transaction that rolls back keeps no admitted job.
+    let tx = b.begin_transaction(false).unwrap();
+    add(&tx, "work", json!({}));
+    tx.rollback_transaction().unwrap();
+    assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
 }

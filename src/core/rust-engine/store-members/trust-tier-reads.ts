@@ -75,7 +75,6 @@ export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
 
 export const listTrustScanRows: Member<'listTrustScanRows'> = (brain, spec) => {
   const member = 'listTrustScanRows';
-  if (!SCAN_TABLES.has(spec.table)) refuseMember(member, `the ${spec.table} table, whose rows the store does not stamp`);
   requireInteger(member, 'cursor', spec.afterId);
   requireCount(member, 'limit', spec.limit);
   return storeCall({ member }, () => brain.listTrustScanRows({ table: spec.table, afterId: spec.afterId, limit: spec.limit, tiers: [...spec.tiers] }));
@@ -83,7 +82,6 @@ export const listTrustScanRows: Member<'listTrustScanRows'> = (brain, spec) => {
 
 export const countUnscannedTrustRows: Member<'countUnscannedTrustRows'> = (brain, spec) => {
   const member = 'countUnscannedTrustRows';
-  if (!SCAN_TABLES.has(spec.table)) refuseMember(member, `the ${spec.table} table, whose rows the store does not stamp`);
   requireInteger(member, 'cursor', spec.afterId);
   if (spec.until !== null) requireInteger(member, 'ceiling', spec.until);
   return storeCall({ member }, () => brain.countUnscannedTrustRows({ table: spec.table, afterId: spec.afterId, until: spec.until, tiers: [...spec.tiers] }));

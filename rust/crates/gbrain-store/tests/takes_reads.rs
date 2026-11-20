@@ -1,6 +1,7 @@
 //! The count and list reads of takes, salience and code edges: `countOffGridTakeWeights`, `countTakes`,
-//! `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`, `listTakeSupersessionCandidates`,
-//! `countZeroWeightWithTakes`, `hasCodeEdgesSymbol` and `readTakePreimages`, matched to the SQL in
+//! `planFactPurgeTakes`, `listTakeRowsForPage`, `readTakeRowTrust`, `readTakeTrustRef`,
+//! `countMcpResolvedTakes`, `listTakeSupersessionCandidates`, `countZeroWeightWithTakes`,
+//! `hasCodeEdgesSymbol` and `readTakePreimages`, matched to the SQL in
 //! `src/core/engine-sql/takes-reads.ts`.
 
 mod memory_env;
@@ -611,4 +612,94 @@ fn take_preimages_list_the_gone_and_replaced_takes_once_per_joined_row() {
     assert!(b.read_take_preimages(&de(none)).unwrap().is_empty());
     let bad = json!({"pageId": a, "by": "slug", "gone": [], "incoming": []});
     assert!(b.read_take_preimages(&de(bad)).is_err());
+}
+
+/// Takes written in one transaction under a declared tier and origin.
+fn add_declared(b: &Brain, tier: &str, origin: Value, rows: &[TakeInput]) {
+    let tx = b.begin_transaction(false).unwrap();
+    let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+    tx.apply_write_trust(&names, &[tier.into(), origin.to_string()])
+        .unwrap();
+    tx.add_takes_batch(rows).unwrap();
+    tx.commit_transaction().unwrap();
+}
+
+#[test]
+fn a_take_row_reads_back_its_id_claim_and_stored_tier() {
+    let b = brain("takes-reads-row-trust");
+    let p = page(&b, "default", "people/a-example");
+    add_declared(
+        &b,
+        "agent_written",
+        json!({"channel": "agent"}),
+        &[take(p, 1, "agent claim", json!({}))],
+    );
+    add(&b, &[take(p, 2, "undeclared claim", json!({}))]);
+    let one = b.read_take_row_trust(p as i64, 1).unwrap().unwrap();
+    assert_eq!(
+        one,
+        json!({"id": take_id(&b, p, 1), "claim": "agent claim", "trust_tier": "agent_written"})
+    );
+    let two = b.read_take_row_trust(p as i64, 2).unwrap().unwrap();
+    assert_eq!(two["trust_tier"], "unknown");
+    assert_eq!(b.read_take_row_trust(p as i64, 9).unwrap(), None);
+    assert_eq!(b.read_take_row_trust(p as i64 + 1000, 1).unwrap(), None);
+    assert_eq!(b.read_take_row_trust(-1, 1).unwrap(), None);
+    assert_eq!(
+        b.read_take_row_trust(p as i64, i64::from(i32::MAX) + 1)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_take_trust_ref_reads_its_page_source_origin_in_jsonb_order_activity_and_quarantine() {
+    let b = brain("takes-reads-trust-ref");
+    source(&b, "other");
+    let p = page(&b, "other", "people/a-example");
+    let q = page_with(
+        &b,
+        "default",
+        "people/b-example",
+        json!({"quarantine": {"reason": "test"}}),
+    );
+    add_declared(
+        &b,
+        "agent_written",
+        json!({"zz": 1, "a": {"y": 1, "x": 2}, "mm": 3}),
+        &[
+            take(p, 1, "agent claim", json!({})),
+            take(p, 2, "inactive", json!({"active": false})),
+        ],
+    );
+    add(&b, &[take(q, 1, "quarantined claim", json!({}))]);
+    let id = take_id(&b, p, 1);
+    let agent = b.read_take_trust_ref(id as i64).unwrap().unwrap();
+    assert_eq!(agent["source_id"], "other");
+    assert_eq!(agent["claim"], "agent claim");
+    assert_eq!(agent["trust_tier"], "agent_written");
+    assert_eq!(agent["active"], true);
+    assert_eq!(agent["quarantined"], false);
+    let keys: Vec<&String> = agent["write_origin"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["a", "mm", "zz"]);
+    let inner: Vec<&String> = agent["write_origin"]["a"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .collect();
+    assert_eq!(inner, ["x", "y"]);
+    let inactive = b
+        .read_take_trust_ref(take_id(&b, p, 2) as i64)
+        .unwrap()
+        .unwrap();
+    assert_eq!(inactive["active"], false);
+    let quarantined = b
+        .read_take_trust_ref(take_id(&b, q, 1) as i64)
+        .unwrap()
+        .unwrap();
+    assert_eq!(quarantined["quarantined"], true);
+    assert_eq!(quarantined["trust_tier"], "unknown");
+    assert_eq!(quarantined["write_origin"], Value::Null);
+    assert_eq!(b.read_take_trust_ref(987_654_321).unwrap(), None);
+    assert_eq!(b.read_take_trust_ref(-1).unwrap(), None);
 }

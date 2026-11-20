@@ -38,10 +38,9 @@ Matching Postgres:
 Differences from PGLite and PostgreSQL (each ends on a typed `engine_capability_missing` refusal from the member, which
 the cache module rethrows, never a silent difference):
 
-- A `cluster_generation` or `xmin_max` beyond 2^53 (a `bigint` the JS number cannot hold exactly). Postgres and PGLite
-  store it; the store refuses rather than round it.
 - A `max_chunk_updated_at` that is not an ISO-8601 timestamp (`2026-01-02` and other loose spellings the SQL parser
-  accepts).
+  accepts) but may be a time Postgres reads (it has a digit, or is a word such as `epoch` or `now`). Text with no
+  digit that is not such a word is the bind error Postgres raises, logged and skipped as on PGLite.
 - There is no snapshot-isolation path to refuse: `OPTS.useSnapshotIsolation` is absent from the code and `xmin_max`
   is stored but never read.
 

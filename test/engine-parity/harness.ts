@@ -34,6 +34,7 @@ import type { EngineConfig } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
+import { WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
@@ -171,10 +172,11 @@ async function seedTrustPolicyState(engine: BrainEngine): Promise<void> {
 }
 
 /**
- * Config rows a fresh brain is created with (src/schema.sql seeds them; the Rust store writes them on create).
+ * Config rows a fresh brain is created with (src/schema.sql seeds them, migration v227 records the write gate's scan
+ * baseline; the Rust store writes them on create).
  * The SQL arms' reset empties config, so it puts back what the arm's own fresh brain recorded.
  */
-const SEED_CONFIG_KEYS = ['version', 'embedding_model', 'embedding_dimensions', 'chunk_strategy'] as const;
+const SEED_CONFIG_KEYS = ['version', 'embedding_model', 'embedding_dimensions', 'chunk_strategy', WRITE_GATE_SCAN_BASELINE_KEY] as const;
 const seededConfig = new WeakMap<ParityArm, Array<[string, string]>>();
 
 async function withSeededConfig(arm: ParityArm, reset: () => Promise<void>): Promise<void> {

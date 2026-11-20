@@ -4,10 +4,11 @@
  *
  * `countMcpResolvedTakes` reads the caller's source and holder scope. Under `excludePrivate` the SQL adds the page
  * policy of the caller in context (`privatePagesFilterForCaller('p')`): `storePagePolicy` sends the flags the store
- * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
- * whose member pages, grants or lineage widen the policy.
+ * applies, with the caller's reader identity and private-readable grant (the same caller the scorecard it decorates
+ * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
+ * the policy.
  */
-import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakeTrustRef } from '../../engine-sql/takes-reads.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -39,6 +40,12 @@ export const readTakePreimages: StoreMember<[read: TakePreimageRead], Array<{ pr
     pageId: read.pageId, by: read.by, gone: [...read.gone], incoming: read.incoming.map(take => ({ ...take })),
   }));
 };
+
+export const readTakeRowTrust: StoreMember<[pageId: number, rowNum: number], { id: number; claim: string; trust_tier: string } | null> =
+  (brain, pageId, rowNum) => storeCall({ member: 'readTakeRowTrust' }, () => brain.readTakeRowTrust(pageId, rowNum));
+
+export const readTakeTrustRef: StoreMember<[id: number], TakeTrustRef | null> = (brain, id) =>
+  storeCall({ member: 'readTakeTrustRef' }, () => brain.readTakeTrustRef(id));
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });

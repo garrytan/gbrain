@@ -1,5 +1,5 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
-//! repair sites (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
+//! repair sites, and the take trust reads (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
 
 use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput, TakePreimageInput};
 use napi::Env;
@@ -57,6 +57,26 @@ impl Brain {
             let input: TakePreimageInput = required(input, "readTakePreimages input")?;
             s.read_take_preimages(&input)
         })
+    }
+
+    /// `readTakeRowTrust(pageId, rowNum)`: `{ id, claim, trust_tier }` or null.
+    #[napi]
+    pub fn read_take_row_trust<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_num: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_take_row_trust(page_id as i64, row_num as i64)
+        })
+    }
+
+    /// `readTakeTrustRef(id)`: `{ id, source_id, claim, trust_tier, write_origin, active,
+    /// quarantined }` or null.
+    #[napi]
+    pub fn read_take_trust_ref<'env>(&self, env: &'env Env, id: f64) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_take_trust_ref(id as i64))
     }
 
     /// `countMcpResolvedTakes({ sourceIds, holders, excludePrivate })`: resolves the count.

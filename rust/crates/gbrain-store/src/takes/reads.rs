@@ -4,7 +4,12 @@
 //! answers match its SQL row for row.
 //!
 //! Members: countOffGridTakeWeights, countTakes, planFactPurgeTakes, listTakeRowsForPage,
-//! countMcpResolvedTakes, listTakeSupersessionCandidates.
+//! readTakeRowTrust, readTakeTrustRef, countMcpResolvedTakes, listTakeSupersessionCandidates.
+//!
+//! `readTakeRowTrust` and `readTakeTrustRef` are the take trust reads of the take write gate, the
+//! accepted-takes and lost-fence-rows repairs and the trust explainers. The tier reads as the column
+//! stores it (`unknown` when unset); `write_origin` reads in jsonb key order
+//! (`pg_text::jsonb_value`), as the column returns it.
 //!
 //! A take is scoped by the page it hangs on, read now (its `source_id` and `slug`), not by the
 //! source it was inserted under. No read here hides a soft-deleted page unless its SQL does.
@@ -12,8 +17,12 @@
 //! `facts/privacy.rs`) the way the salience reads do.
 
 use super::*;
+use crate::cli_reads::pg_text::jsonb_value;
 use crate::facts::{PrivacyPolicy, fact_fingerprint, page_hidden, read_fact};
 use crate::timeline_queries::timestamptz_text;
+
+/// The frontmatter key that quarantines a page (`QUARANTINE_KEY`, src/core/quarantine.ts).
+const QUARANTINE_KEY: &str = "quarantine";
 
 /// The widest `10^-exp` the grid check works on exactly. A weight with more places than this is
 /// within 1e-30 of zero, and zero is on the grid.
@@ -242,6 +251,42 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `readTakeRowTrust(pageId, rowNum)`: `{ id, claim, trust_tier }` of the take at that row
+    /// number, or null when the page has none there.
+    pub fn read_take_row_trust(&self, page_id: i64, row_num: i64) -> Result<Option<Value>> {
+        let (Ok(page_id), Ok(row_num)) = (u64::try_from(page_id), i32::try_from(row_num)) else {
+            return Ok(None);
+        };
+        Ok(take_at(&*self.read()?, page_id, row_num)?.map(
+            |t| json!({ "id": t.id, "claim": t.claim, "trust_tier": t.trust.tier().as_str() }),
+        ))
+    }
+
+    /// `readTakeTrustRef(id)`: `{ id, source_id, claim, trust_tier, write_origin, active,
+    /// quarantined }` of the take, its page's source and whether that page's frontmatter holds the
+    /// quarantine key; null for an unknown id.
+    pub fn read_take_trust_ref(&self, id: i64) -> Result<Option<Value>> {
+        let Ok(id) = u64::try_from(id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        let Some(take) = read_take(&*read, id)? else {
+            return Ok(None);
+        };
+        let Some(page) = read_page_by_id(&*read, take.page_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(json!({
+            "id": take.id,
+            "source_id": page.source_id,
+            "claim": take.claim,
+            "trust_tier": take.trust.tier().as_str(),
+            "write_origin": take.trust.write_origin.as_ref().map(jsonb_value),
+            "active": take.active,
+            "quarantined": page.frontmatter.contains_key(QUARANTINE_KEY),
+        })))
     }
 
     /// `countMcpResolvedTakes(scope)`: the resolved takes whose `resolved_by` starts with `mcp:`,

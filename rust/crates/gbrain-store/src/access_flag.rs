@@ -302,11 +302,10 @@ mod tests {
 
         // Raw write handles, each reviewed: the kv layer itself, the brain-create write and
         // `Store::write` (lib.rs), a transaction's base handle (its statements run through the
-        // bound arm of `Store::write`) and its counter flush, this module's open-time scan, and
-        // job admission (no page records).
+        // bound arm of `Store::write`) and its counter flush, and this module's open-time scan. Job
+        // admission writes through `Store::write`.
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
-            ("jobs.rs", 1),
             ("kv.rs", 1),
             ("lib.rs", 2),
             ("redb_kv.rs", 3),

@@ -39,7 +39,7 @@ The relower candidates loop of `trust backfill` is classifier SQL and stays a ra
 a new brain has no row to backfill or scan:
 
 - `trust.backfill_completed_at`: the store clock as millisecond ISO text (v226). Without it `trust_tiers` warned "backfill has not run".
-- `write_gate.scan_baseline`: `{"detector_version":2,"until":{"facts":0,"pages":0,"takes":0,"timeline_entries":0}}` (v227). Without it `trust_scan`
+- `write_gate.scan_baseline`: `{"until": {"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}, "detector_version": 2}` (v227, the `jsonb` text Postgres prints; the detector is the caller's `writeGateDetectorVersion`). Without it `trust_scan`
   and `trust_sources_unclaimed` counted every row as unscanned or legacy.
 
 Both are in `SEED_CONFIG_KEYS` (`src/core/persistence/engine-graduation.ts`), so graduation does not count them as user-set config.

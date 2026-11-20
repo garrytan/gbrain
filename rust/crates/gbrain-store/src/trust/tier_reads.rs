@@ -11,7 +11,8 @@
 //!   reads that quote a third-party page's rows.
 //!
 //! They read the tier and write origin fields of the page, fact, take, timeline entry and version records
-//! (`trust::stamp`); no read needs a key range of its own, so the family adds no key prefix.
+//! (`trust::stamp`, `trust::row_trust`); no read needs a key range of its own, so the family adds no
+//! key prefix.
 //!
 //! The TypeScript members (src/core/rust-engine/store-members/trust-tier-reads.ts) refuse what the
 //! store does not model: a caller page policy that is not the no-caller one, and a cursor, limit or
@@ -21,6 +22,7 @@
 use super::{TrustPolicy, TrustTier, activation_suppressed, withdrawals};
 use crate::Store;
 use crate::cli_reads::doctor_facts_trust::timeline_entries;
+use crate::cli_reads::pg_text::jsonb_value;
 use crate::error::{Result, StoreError};
 use crate::facts::trust_reads::all_fact_rows;
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -245,7 +247,7 @@ impl Store {
         Ok(out)
     }
 
-    /// `listTrustScanRows`: the live pages (or the facts) with an id above `afterId` whose stored
+    /// `listTrustScanRows`: the live pages (or the facts, takes or timeline entries) with an id above `afterId` whose stored
     /// tier is listed, by id, at most `limit`: the id, source, tier and write origin, then the
     /// table's content columns.
     pub fn list_trust_scan_rows(&self, q: &TrustScanQuery) -> Result<Vec<Value>> {
@@ -335,13 +337,14 @@ impl Store {
                     ));
                 }
             }
+            // A take or timeline row reads its source from its page (the SQL joins `pages`, with no
+            // deleted filter); a row whose page is gone has no join partner.
             ScanTable::Takes => {
                 for take in all_takes(read)? {
                     let tier = take.trust.tier();
                     if !above(take.id) || !tiers.contains(tier.as_str()) {
                         continue;
                     }
-                    // The SQL joins `pages` for the source: a take whose page is gone is not read.
                     let Some(page) = read_page_by_id(read, take.page_id)? else {
                         continue;
                     };
@@ -351,7 +354,7 @@ impl Store {
                             "id": take.id,
                             "source_id": page.source_id,
                             "trust_tier": tier.as_str(),
-                            "write_origin": take.trust.write_origin,
+                            "write_origin": take.trust.write_origin.as_ref().map(jsonb_value),
                             "claim": take.claim,
                             "source": take.source,
                         }),
@@ -373,7 +376,7 @@ impl Store {
                             "id": entry.id,
                             "source_id": page.source_id,
                             "trust_tier": tier.as_str(),
-                            "write_origin": entry.trust.write_origin,
+                            "write_origin": entry.trust.write_origin.as_ref().map(jsonb_value),
                             "summary": entry.summary,
                             "detail": entry.detail,
                             "source": entry.source,

@@ -440,7 +440,7 @@ describe('engine parity: excludePrivate on tags and takes', () => {
   );
 
   /** One resolved bet per fixture page (claim `probe claim <slug>`), plus a private page's bet in `other`. */
-  async function withTakes(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+  async function withTakes(engine: BrainEngine, backend: Parameters<typeof createSource>[1], resolvedBy = 'garry') {
     await fixture(engine, backend);
     const slugOf = new Map<number, string>();
     let n = 0;
@@ -449,13 +449,13 @@ describe('engine parity: excludePrivate on tags and takes', () => {
       slugOf.set(id, slug);
       const weight = [0.15, 0.35, 0.55, 0.75, 0.95][n % 5]!;
       await engine.addTakesBatch([{ page_id: id, row_num: 1, claim: `probe claim ${slug}`, kind: 'bet', holder: 'garry', weight }]);
-      await engine.resolveTake(id, 1, { quality: n % 3 === 0 ? 'incorrect' : 'correct', resolvedBy: 'garry' });
+      await engine.resolveTake(id, 1, { quality: n % 3 === 0 ? 'incorrect' : 'correct', resolvedBy });
       n++;
     }
     const other = Number((await engine.getPage('notes/private', { sourceId: 'other' }))!.id);
     slugOf.set(other, 'other:notes/private');
     await engine.addTakesBatch([{ page_id: other, row_num: 1, claim: 'probe claim other private', kind: 'bet', holder: 'garry', weight: 0.9 }]);
-    await engine.resolveTake(other, 1, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(other, 1, { quality: 'correct', resolvedBy });
     return slugOf;
   }
   type Reads = { list: string[]; search: string[]; card: unknown; curve: unknown };
@@ -531,6 +531,27 @@ describe('engine parity: excludePrivate on tags and takes', () => {
       expect(garry.brier).toBe(round(plain.brier));
       expect(nobody).toEqual({ bets: 0, brier: null, curve: [] });
       return { garry, nobody };
+    },
+  );
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'getPage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      // takes_scorecard adds this count to its answer: a caller the scorecard serves must be served here too.
+      await withTakes(engine, backend, 'mcp:probe-client');
+      const count = (sourceIds: string[] | null, excludePrivate: boolean) =>
+        engine.countMcpResolvedTakes({ sourceIds, holders: ['garry'], excludePrivate });
+      const all = await count(null, false);
+      const plain = await count(['default'], true);
+      const caller = await asCaller(() => count(['default'], true));
+      const callerFederated = await asCaller(() => count(['default', 'other'], true));
+      expect(all).toBe(PAGES.length + 1);
+      expect(plain).toBe(KEPT.length);
+      expect(caller).toEqual({ member: CALLER_KEPT.member.length, granted: CALLER_KEPT.granted.length });
+      // The grant names `default` only: the private page's take in `other` stays out of the count.
+      expect(callerFederated).toEqual(caller);
+      return { all, plain, caller, callerFederated };
     },
   );
 });

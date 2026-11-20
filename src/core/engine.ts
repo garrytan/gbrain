@@ -127,7 +127,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec, TakePreimage, TakePreimageRead } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
@@ -4798,6 +4798,10 @@ export interface BrainEngine {
   listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
   /** The takes generation adapter's before-states: the takes a write deletes (`gone`) or replaces at their row number, by row number. */
   readTakePreimages(read: TakePreimageRead): Promise<Array<{ preimage: TakePreimage; gone: boolean }>>;
+  /** The take at a page's row number with its claim and stored trust tier; null when the page has none there. */
+  readTakeRowTrust(pageId: number, rowNum: number): Promise<{ id: number; claim: string; trust_tier: string } | null>;
+  /** A take by id with its page's source, its trust tier and origin, whether it is active and its page quarantined. */
+  readTakeTrustRef(id: number): Promise<TakeTrustRef | null>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
