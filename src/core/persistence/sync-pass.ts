@@ -544,16 +544,56 @@ async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, w
 }
 
 /** Deletion markers of the incarnation (a primary-key range read); none exist before PR 4b. */
-async function readMarkers(exec: Exec, sourceId: string, incarnation: string): Promise<Map<string, { kind: 'deleted' | 'legacy'; blobOids: string[]; deletion: string | null }>> {
+async function readMarkers(exec: Exec, sourceId: string, incarnation: string): Promise<Map<string, { kind: 'deleted' | 'legacy'; blobOids: string[]; deletion: string | null; slug: string | null; pageId: number | null }>> {
   const prefix = `${sourceId}:${incarnation}:`;
   // `starts_with`, not a range: under a linguistic collation (en_US) a `< prefix || U+FFFF` bound matches nothing.
-  const rows = await exec.executeRaw<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown; deletion?: unknown } | null }>(
+  const rows = await exec.executeRaw<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown; deletion?: unknown; slug?: unknown; page_id?: unknown } | null }>(
     'SELECT fingerprint, completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND starts_with(fingerprint, $2)',
     [SYNC_ORIGIN_DELETED_OP, prefix]);
   return new Map(rows.filter(row => !isWindowsColonTarget(row.fingerprint.slice(prefix.length))).map(row => [syncOriginPath(row.fingerprint.slice(prefix.length)), {
     kind: row.value?.kind === 'legacy' ? 'legacy' as const : 'deleted' as const,
     blobOids: Array.isArray(row.value?.blob_oids) ? (row.value!.blob_oids as unknown[]).filter((oid): oid is string => typeof oid === 'string') : [],
-    deletion: typeof row.value?.deletion === 'string' ? row.value.deletion : null }]));
+    deletion: typeof row.value?.deletion === 'string' ? row.value.deletion : null,
+    slug: typeof row.value?.slug === 'string' ? row.value.slug : null, pageId: Number.isSafeInteger(row.value?.page_id) ? row.value!.page_id as number : null }]));
+}
+
+/**
+ * LC-1: the paths `readFileRemovingDeletes` is asked about, read for them alone: a deleted page (or a deletion marker with
+ * no page row) whose path holds a file again. A deleted page with no file, or no deleted page, reads none.
+ */
+async function readRemovedFiles(exec: Exec, sourceId: string, input: { pages: PageTable; byOrigin: ReadonlyMap<string, number>;
+  markers: ReadonlyMap<string, { kind: 'deleted' | 'legacy'; slug: string | null; pageId: number | null }>; gitPathOf: (origin: string) => string; filed: (path: string) => boolean }): Promise<Set<string>> {
+  const { pages, byOrigin } = input, asks: Array<{ path: string; slug: string; pageId: number }> = [];
+  for (const [path, at] of byOrigin) if (pages.deleted(at) && input.filed(path)) asks.push({ path, slug: pages.slug[at]!, pageId: Number(pages.id[at]) });
+  for (const [origin, marker] of input.markers) {
+    const path = input.gitPathOf(origin);
+    if (marker.kind === 'deleted' && marker.slug && marker.pageId !== null && !byOrigin.has(path) && input.filed(path)) asks.push({ path, slug: marker.slug, pageId: marker.pageId });
+  }
+  return asks.length ? readFileRemovingDeletes(exec, sourceId, asks) : new Set<string>();
+}
+
+/**
+ * LC-1 (decision E1): the paths whose deleted page (by slug and page id) a person's delete removed the file of: a committed
+ * `delete_page` whose write-through wrote the removal (`outcome.write_through.written`), with no committed `restore_page` of
+ * the slug after it. An owner purge of the page (`purge` without `retention`) tombstones its content source-wide, so its
+ * bytes can never be saved again and its path keeps settling `deleted_same`; the retention purge of `gbrain pages
+ * purge-deleted` does not. One indexed read (`persistence_requests_slug_sequence`) per chunk of such paths.
+ */
+export async function readFileRemovingDeletes(exec: Exec, sourceId: string, asks: ReadonlyArray<{ path: string; slug: string; pageId: number }>): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < asks.length; i += 5_000) {
+    const chunk = asks.slice(i, i + 5_000);
+    const rows = await exec.executeRaw<{ path: string }>(`SELECT x.path FROM unnest($2::text[], $3::text[], $4::int[]) AS x(path, slug, page_id)
+      WHERE EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=x.slug AND r.state='committed' AND r.operation='delete_page'
+        AND (r.page_id IS NULL OR r.page_id=x.page_id) AND r.outcome->'write_through'->>'written'='true'
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests l WHERE l.source_id=r.source_id AND l.slug=r.slug AND l.sequence>r.sequence
+          AND l.state='committed' AND l.operation='restore_page'))
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests o WHERE o.source_id=$1 AND o.slug=x.slug AND o.state='committed' AND o.operation='delete_page'
+        AND (o.page_id IS NULL OR o.page_id=x.page_id) AND o.intent->>'purge'='true' AND o.intent->>'retention' IS DISTINCT FROM 'true')`,
+      [sourceId, chunk.map(ask => ask.path), chunk.map(ask => ask.slug), chunk.map(ask => ask.pageId)]);
+    for (const row of rows) found.add(row.path);
+  }
+  return found;
 }
 
 /**
@@ -781,7 +821,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     return { baseline: !deleted && revision == null && level !== null && !names && inLevel(path),
       unproven: pages.requestId[i] !== null && (deleted || level === null || !names || revision == null || String(revision) !== pages.revision[i]) };
   }, step);
-  const attestationStatements = unproven.length ? await readAttestations(engine, engineKind, sourceId, incarnation, pages, unproven) : 0;
+  const attestationStatements = unproven.length ? await readAttestations(engine, engineKind, sourceId, incarnation, pages, unproven) : 0, removedFile = await readRemovedFiles(engine, sourceId, { pages, byOrigin, markers, gitPathOf, filed: path => levelOf(path, probes.get(path)) !== null });
   timings.A = t();
 
   const baselineCommit = (context.source.last_commit && await revParse(gitRoot, context.source.last_commit)) || null;
@@ -840,7 +880,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
       spelling: legacySpelling.has(path) ? 'legacy' : twins.has(path),
       episodeUnsatisfied: input.pass ? !!input.pass.episodeFullId && live && (record ? pages.fullEpisode[at!] : undefined) !== input.pass.episodeFullId
         : input.full === true && live,
-      derivedCurrent: live && pages.derivedCurrent(at!), fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true,
+      derivedCurrent: live && pages.derivedCurrent(at!), fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true, ...(removedFile.has(path) ? { removedFile: true as const } : {}),
       keepDb: !mirror && keepDbPrefixes.length > 0 && row && isKeepDbSlug(pages.slug[at!]!, keepDbPrefixes), dbOnly: row && (dbOnlyUnknown ? isDeclaredDbOnlySlug(pages.slug[at!]!, storage) || 'unknown' : dbOnlyVerdict(pages.slug[at!]!, storage)),
       openWork: row && open.pageIds.has(Number(pages.id[at!])) || open.origins.has(origin),
     };
@@ -890,7 +930,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     const claimed = claimants.get(path);
     const { ambiguous } = claimed ? selectOriginClaimant(claimed.map(page => ({ deleted_at: pages.deleted(page) ? true : null }))) : { ambiguous: null };
     const named = ambiguous ? claimed!.filter(page => ambiguous === 'several_tombstones' || !pages.deleted(page)) : [], ambiguousOrigin = ambiguous ? { kind: ambiguous, slugs: named.map(page => pages.slug[page]!), ids: named.map(page => Number(pages.id[page])) } : undefined;
-    if (mode === 'committed' && tree.has(path) && (!settledBeforeDirtiness.has(result.cls) || staged)) { candidates.push(path); candidateAt.push(paths.length); }
+    if (mode === 'committed' && tree.has(path) && (!settledBeforeDirtiness.has(result.cls) || result.restored || staged)) { candidates.push(path); candidateAt.push(paths.length); }
     else {
       // The row's fields the level keeps are copied onto the entry; only a candidate's row is read again (its dirtiness re-classifies it).
       if (!keepClaims) byOrigin.delete(path);

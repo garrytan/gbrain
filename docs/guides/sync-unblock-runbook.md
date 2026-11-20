@@ -458,7 +458,8 @@ it, and a `--full` continues until every path it covers is settled.
   `kept` (the commit no longer has a file that is still on disk, or the page
   is under a declared `storage.db_only` dir, so its page stays), `untracked` (a file on disk the commit does not have, with no
   page), `gone` (no file and no live page), `deleted_same` and `legacy_same` (a page a person deleted whose
-  file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
+  file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back; a file
+  `gbrain delete` removed that comes back is held for [`repair file-drift`](repair.md#file-drift-restored)), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
   informational, and `gbrain repair file-drift --prefer database` writes one
   back to its file if the owner wants it: its preview names any file change

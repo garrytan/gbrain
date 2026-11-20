@@ -3742,6 +3742,20 @@ and a deleted side refuses without `--state`
 the two `--prefer` values do opposite things in each state. Those two refusals
 apply to a `--prefer` preview only.
 
+<a id="file-drift-restored"></a>**A file restored after `gbrain delete`.** When
+`gbrain delete` removed the page's file and the same file comes back (for
+example `git checkout -- <path>` or a commit that re-adds it), the next managed
+sync holds it `file_drift` on the deleted side with `restored: true`:
+`tombstone_edited` while the page is soft-deleted, `purged_differs` after the
+retention purge. The page stays deleted until you pick a side: `--prefer file`
+restores the page (or, once purged, imports the file as a new page) and
+`--prefer database` keeps the deletion and removes the file. Sync never brings
+the page back by itself. `gbrain sources status <id>` and doctor
+(`git_held_files`) list the hold with the command that resolves it. A deletion that stands settles with no hold:
+a delete whose removal of the file is not committed yet, a delete that left the
+file (`sync.write_through` off, a read-only mirror), a `--purge` delete, and a
+git-canonical (strict) source.
+
 <a id="file-drift-compare"></a>**Compare before you pick a side** (GST-2568). Any selection (`--slug`,
 `--request`, `--all-drifted` or `--held`, with its narrowing flags) without
 `--prefer` compares each page with its file and writes nothing. Each page
