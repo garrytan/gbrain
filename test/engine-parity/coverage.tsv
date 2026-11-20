@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1112/1119
+# covered: 1116/1123
 # lifecycle: 9/9
 # pages: 61/61
 # search: 7/7
@@ -47,7 +47,7 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 12/12
 # facts_purge: 18/18
-# facts_repair: 10/10
+# facts_repair: 14/14
 # facts_trust: 10/10
 # trust_tier_reads: 16/16
 # memory_mutation_reads: 12/12
@@ -98,7 +98,7 @@ getPage	pages	yes	138	yes	yes	yes	serves
 readPageSnapshot	pages	yes	39	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	593	yes	yes	yes	serves
+putPage	pages	yes	596	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -151,7 +151,7 @@ listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
-readLivePageIdBySlug	pages	yes	1	no	yes	yes	serves
+readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
@@ -355,7 +355,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	67	yes	yes	yes	serves
-insertFacts	facts	yes	95	no	yes	yes	serves
+insertFacts	facts	yes	100	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	37	no	yes	yes	serves
 listFactsByEntity	facts	yes	29	yes	yes	yes	serves
@@ -366,7 +366,7 @@ listSupersessions	facts	yes	7	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	2	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
-consolidateFact	facts	yes	4	no	yes	yes	serves
+consolidateFact	facts	yes	6	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	15	no	yes	yes	serves
@@ -376,8 +376,8 @@ stageManifestRows	segmented_body	yes	17	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	10	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	25	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	29	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	26	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	30	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	7	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	18	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	17	no	yes	yes	serves
@@ -810,7 +810,11 @@ listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
 listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 countLabelFacts	facts_repair	yes	2	no	yes	yes	serves
-listExtractorFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+listExtractorFactsForClassification	facts_repair	yes	2	no	yes	yes	serves
+listClosedConsolidationTies	facts_repair	yes	1	no	yes	yes	serves
+listPagelessEntityFacts	facts_repair	yes	1	no	yes	yes	serves
+listOntologyFactCandidates	facts_repair	yes	1	no	yes	yes	serves
+listDuplicateFactRows	facts_repair	yes	1	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	3	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	2	no	yes	yes	serves
 listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
@@ -886,7 +890,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	19	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	20	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	3	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
@@ -973,7 +977,7 @@ appendOpCheckpointPaths	write_misc	yes	4	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	14	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	16	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	20	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	3	no	yes	yes	serves
@@ -1027,7 +1031,7 @@ readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
 readFolderAccess	write_misc	yes	7	no	yes	yes	serves
-listSourceIncarnations	repair_bookkeeping	yes	4	no	yes	yes	serves
+listSourceIncarnations	repair_bookkeeping	yes	9	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
 readLoopFactState	repair_bookkeeping	yes	2	no	yes	yes	serves
@@ -1071,7 +1075,7 @@ listAtomFenceCandidates	repair_bookkeeping	yes	1	no	yes	yes	serves
 listPageTruths	repair_bookkeeping	yes	1	no	yes	yes	serves
 listPagesByOriginPath	repair_bookkeeping	yes	1	no	yes	yes	serves
 countSegmentedOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
-listSegmentedPageSlugs	repair_bookkeeping	yes	2	no	yes	yes	serves
+listSegmentedPageSlugs	repair_bookkeeping	yes	3	no	yes	yes	serves
 listProvenAttributionTargets	repair_bookkeeping	yes	1	no	yes	yes	serves
 countUnfilledAttribution	repair_bookkeeping	yes	1	no	yes	yes	serves
 listFailedWriteRequests	repair_bookkeeping	yes	2	no	yes	yes	serves

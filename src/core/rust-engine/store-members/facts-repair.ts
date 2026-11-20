@@ -104,3 +104,20 @@ export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sour
 /** `listUnwithdrawnFacts`: the store answers the rows in the SQL's order with its columns. */
 export const listUnwithdrawnFacts: Member<'listUnwithdrawnFacts'> = (brain, sourceIds, slug, fenceKind) =>
   storeCall({ member: 'listUnwithdrawnFacts' }, () => brain.listUnwithdrawnFacts({ sourceIds, slug, fenceKind }));
+
+/**
+ * The previews of `gbrain repair consolidate-ties`, `facts-rehome`, `ontology-facts` and `duplicate-facts`: the store reads its
+ * facts (and pages and withdrawals) and answers the rows of the SQL in its order. Text columns order by byte, as the lowercase
+ * ids, slugs and hex fingerprints they hold do under a database collation.
+ */
+export const listClosedConsolidationTies: Member<'listClosedConsolidationTies'> = (brain, sourceIds) =>
+  storeCall({ member: 'listClosedConsolidationTies' }, () => brain.listClosedConsolidationTies({ sourceIds }));
+
+export const listPagelessEntityFacts: Member<'listPagelessEntityFacts'> = (brain, sourceIds) =>
+  storeCall({ member: 'listPagelessEntityFacts' }, () => brain.listPagelessEntityFacts({ sourceIds }));
+
+export const listOntologyFactCandidates: Member<'listOntologyFactCandidates'> = (brain, sourceIds) =>
+  storeCall({ member: 'listOntologyFactCandidates' }, () => brain.listOntologyFactCandidates({ sourceIds }));
+
+export const listDuplicateFactRows: Member<'listDuplicateFactRows'> = (brain, sourceIds, excludedSources) =>
+  storeCall({ member: 'listDuplicateFactRows' }, () => brain.listDuplicateFactRows({ sourceIds, excludedSources }));

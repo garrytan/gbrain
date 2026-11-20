@@ -3861,6 +3861,14 @@ export interface BrainEngine {
   countLabelFacts(sourceIds: string[], cap: number, args: FactsRepairSql.LabelFactCountArgs): Promise<{ count: number; capped: boolean }>;
   /** Expired fenceless extractor facts of these sources (or of one page `slug`) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. Reads persistence_requests and fact_withdrawals. */
   listExtractorFactsForClassification(sourceIds: string[], slug: string | null): Promise<FactsRepairSql.ExtractorFactRow[]>;
+  /** Active typed facts consolidation closed at their own instant, with the facts of their take that state the same claim then, in (source, id) order. Backs `gbrain repair consolidate-ties`' preview. */
+  listClosedConsolidationTies(sourceIds: string[]): Promise<FactsRepairSql.ClosedTieRow[]>;
+  /** Every `entity_slug` of these sources with no live page: its database-only fact ids and its fenced fact count, in (source, slug) order. Backs `gbrain repair facts-rehome`'s preview. */
+  listPagelessEntityFacts(sourceIds: string[]): Promise<FactsRepairSql.PagelessEntityRow[]>;
+  /** Ontology rows of these sources carrying the fence step's signature, with their withdrawn, consolidated and duplicate flags, in id order. Reads fact_withdrawals. Backs `gbrain repair ontology-facts` and doctor's ontology check. */
+  listOntologyFactCandidates(sourceIds: string[]): Promise<FactsRepairSql.OntologyCandidateRow[]>;
+  /** Active facts sharing a source, visibility, speaker and fingerprint with another, less the audit sources `excludedSources`, in (source, visibility, fingerprint, speaker, fenced first, created_at, id) order. Backs `gbrain repair duplicate-facts`' preview. */
+  listDuplicateFactRows(sourceIds: string[], excludedSources: string[]): Promise<FactsRepairSql.DuplicateFactRow[]>;
   /** The bounded count of facts of a purged page, by class, capped at `cap`. Reads page_purges, fact_withdrawals and open_loops. */
   countPurgedPageFacts(sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }>;
   /** Facts a facts-fence generation (`fenceKind`) retired that no withdrawal covers, in (source, page, id) order; `slug` null is every page. Reads derived_generations, derived_generation_items and fact_withdrawals. */

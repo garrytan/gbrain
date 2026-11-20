@@ -237,9 +237,14 @@ export const extractorFactsRepair: RepairHandler = {
       const managed = await managedPersistenceEnabled(engine);
       const facts = await classifyExtractorFacts(engine, scope.source_ids, { managed });
       const hash = previewHash(await hashParts(engine, scope, includeAmbiguous, facts));
-      const pageIds = new Map((await engine.executeRaw<{ id: number | string; source_id: string; slug: string }>(
-        'SELECT id, source_id, slug FROM pages WHERE source_id=ANY($1::text[]) AND slug=ANY($2::text[]) AND deleted_at IS NULL',
-        [scope.source_ids, [...new Set(facts.map(f => f.slug))]])).map(row => [`${row.source_id}\u0000${row.slug}`, Number(row.id)]));
+      // The live page of each listed fact's (source, slug), one typed read per page (every engine serves it).
+      const pageIds = new Map<string, number>();
+      for (const fact of facts) {
+        const key = `${fact.source_id}\u0000${fact.slug}`;
+        if (pageIds.has(key) || !scope.source_ids.includes(fact.source_id)) continue;
+        const id = await engine.readLivePageIdBySlug(fact.slug, fact.source_id);
+        if (id !== null) pageIds.set(key, Number(id));
+      }
       const pages = new Map<string, ExtractorFactsPage>();
       for (const fact of facts) {
         if (fact.class === 'excluded' || fact.class === 'ambiguous' && !includeAmbiguous) continue;

@@ -54,15 +54,7 @@ export interface PagelessEntity {
 
 /** Every page-less entity slug of these sources, classified, in (source, slug) order. Read-only. */
 export async function classifyPagelessEntities(engine: BrainEngine, sourceIds: string[]): Promise<PagelessEntity[]> {
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }>(`
-    SELECT f.source_id, f.entity_slug AS slug,
-           array_agg(f.id ORDER BY f.id) FILTER (WHERE f.row_num IS NULL) AS ids,
-           count(*) FILTER (WHERE f.row_num IS NOT NULL) AS fenced
-      FROM facts f
-     WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id, f.entity_slug`, [sourceIds]);
+  const rows = await engine.listPagelessEntityFacts(sourceIds);
   const out: PagelessEntity[] = [];
   for (const row of rows) {
     const ids = (row.ids ?? []).map(Number);

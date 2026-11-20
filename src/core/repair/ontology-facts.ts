@@ -39,18 +39,11 @@
 import type { BrainEngine } from '../engine.ts';
 import { NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { OperationError } from '../ops/contract.ts';
+import { DUPLICATE_SQL, EXPIRY_TEXT } from '../engine-sql/facts-repair.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
-
-/** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
-const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-
-/** An observation with the same dedup key as `f` once its provenance is restored (the ontology unique index). */
-const DUPLICATE_SQL = (f: string) => `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=${f}.source_id AND d.entity_slug=${f}.entity_slug
-  AND d.dimension=${f}.dimension AND d.value_hash=${f}.value_hash AND d.source_markdown_slug=${f}.source
-  AND d.valid_from=${f}.valid_from AND d.id<>${f}.id)`;
 
 export interface OntologyFactCandidate {
   id: number;
@@ -68,25 +61,9 @@ export interface OntologyFactCandidate {
   reason: string;
 }
 
-interface CandidateRow {
-  id: number | string; source_id: string; entity_slug: string; dimension: string; source: string; page: string | null;
-  row_num: number | string | null; expired_at: string | null; withdrawn: boolean; consolidated: boolean; duplicate: boolean;
-}
-
 /** Every candidate of these sources, classified, in id order. Read-only; also the doctor check's count. */
 export async function classifyOntologyFacts(db: BrainEngine, sourceIds: string[]): Promise<OntologyFactCandidate[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.source, f.source_markdown_slug AS page, f.row_num,
-           ${EXPIRY_TEXT('f.expired_at')} AS expired_at,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND (w.subject='*' OR w.subject=f.entity_slug)
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
-           f.consolidated_into IS NOT NULL AS consolidated,
-           ${DUPLICATE_SQL('f')} AS duplicate
-      FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
-       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${NOT_CONVERSATION_SLOT_SQL}
-     ORDER BY f.id`, [sourceIds]);
+  const rows = await db.listOntologyFactCandidates(sourceIds);
   return rows.map(row => {
     const [klass, reason] = row.withdrawn ? ['excluded', 'withdrawn'] as const
       : row.consolidated ? ['excluded', 'consolidated'] as const

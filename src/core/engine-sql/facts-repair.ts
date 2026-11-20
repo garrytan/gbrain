@@ -5,6 +5,7 @@
  */
 import { contextHeadSql, PAGE_EXTRACTION_SOURCE_LIST } from '../facts/gone-page-facts.ts';
 import { withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
 import { derivationPrivateSql, privateSnapshotFilterFragment } from '../search/private-visibility.ts';
 import type { FactAttribution } from '../engine.ts';
@@ -294,4 +295,94 @@ export async function listWorldFactsFromPrivateSources(raw: EngineRawRead, sourc
       AND ((h.id IS NOT NULL AND h.deleted_at IS NULL AND ${trustedSql(derivationPrivateSql('h'))}) OR (o.id IS NOT NULL AND ${trustedSql(derivationPrivateSql('o'))}))
     ORDER BY f.id`);
   return raw<WorldFactFromPrivateSourceRow>(text, params);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Repair previews: consolidate-ties, facts-rehome, ontology-facts and duplicate-facts (src/core/repair/*.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface ClosedTieRow {
+  source_id: string; id: number | string; entity_slug: string; take_id: number | string; valid_from: string;
+  partners: Array<number | string> | null;
+}
+
+/** Every active typed fact the pre-#6023 consolidation writeback closed at its own instant, with the facts of its take that state the same claim then (`partners`, null for none), in (source, id) order. */
+export async function listClosedConsolidationTies(raw: EngineRawRead, sourceIds: string[]): Promise<ClosedTieRow[]> {
+  return raw<ClosedTieRow>(`
+    SELECT f.source_id, f.id, f.entity_slug, f.consolidated_into AS take_id, f.valid_from::text AS valid_from,
+           (SELECT array_agg(g.id ORDER BY g.id) FROM facts g
+             WHERE g.source_id = f.source_id AND g.id <> f.id AND g.consolidated_into = f.consolidated_into
+               AND g.claim_metric = f.claim_metric AND g.claim_unit IS NOT DISTINCT FROM f.claim_unit
+               AND g.claim_period IS NOT DISTINCT FROM f.claim_period AND g.valid_from = f.valid_from) AS partners
+      FROM facts f
+     WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
+       AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
+     ORDER BY f.source_id, f.id`, [sourceIds]);
+}
+
+export interface PagelessEntityRow { source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }
+
+/** Every `entity_slug` of these sources that no live page answers for, with its database-only fact ids (null for none) and its fenced fact count, in (source, slug) order. */
+export async function listPagelessEntityFacts(raw: EngineRawRead, sourceIds: string[]): Promise<PagelessEntityRow[]> {
+  return raw<PagelessEntityRow>(`
+    SELECT f.source_id, f.entity_slug AS slug,
+           array_agg(f.id ORDER BY f.id) FILTER (WHERE f.row_num IS NULL) AS ids,
+           count(*) FILTER (WHERE f.row_num IS NOT NULL) AS fenced
+      FROM facts f
+     WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     GROUP BY f.source_id, f.entity_slug
+     ORDER BY f.source_id, f.entity_slug`, [sourceIds]);
+}
+
+/** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
+export const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+/** An observation with the same dedup key as `f` once its provenance is restored (the ontology unique index). */
+export const DUPLICATE_SQL = (f: string) => `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=${f}.source_id AND d.entity_slug=${f}.entity_slug
+  AND d.dimension=${f}.dimension AND d.value_hash=${f}.value_hash AND d.source_markdown_slug=${f}.source
+  AND d.valid_from=${f}.valid_from AND d.id<>${f}.id)`;
+
+export interface OntologyCandidateRow {
+  id: number | string; source_id: string; entity_slug: string; dimension: string; source: string; page: string | null;
+  row_num: number | string | null; expired_at: string | null; withdrawn: boolean; consolidated: boolean; duplicate: boolean;
+}
+
+/** Ontology rows of these sources that carry the fence step's signature (a fence row number or a provenance other than `source`), with whether a withdrawal covers each, whether it was consolidated and whether restoring it would duplicate an observation, in id order. Reads fact_withdrawals. */
+export async function listOntologyFactCandidates(raw: EngineRawRead, sourceIds: string[]): Promise<OntologyCandidateRow[]> {
+  return raw<OntologyCandidateRow>(`
+    SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.source, f.source_markdown_slug AS page, f.row_num,
+           ${EXPIRY_TEXT('f.expired_at')} AS expired_at,
+           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
+             AND (w.subject='*' OR w.subject=f.entity_slug)
+             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
+           f.consolidated_into IS NOT NULL AS consolidated,
+           ${DUPLICATE_SQL('f')} AS duplicate
+      FROM facts f
+     WHERE f.source_id=ANY($1::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
+       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${NOT_CONVERSATION_SLOT_SQL}
+     ORDER BY f.id`, [sourceIds]);
+}
+
+export interface DuplicateFactRow {
+  id: number | string; source_id: string; visibility: string; fp: string; fact: string; entity_slug: string | null;
+  fenced: boolean; row_num: number | string | null; source_markdown_slug: string | null; speaker: string;
+}
+
+/** The active, unexpired, valid, unsuperseded facts of these sources (less the audit sources `excludedSources`) that share a source, visibility, speaker and fingerprint with another such fact, in (source, visibility, fingerprint, speaker, fenced first, created_at, id) order. */
+export async function listDuplicateFactRows(raw: EngineRawRead, sourceIds: string[], excludedSources: string[]): Promise<DuplicateFactRow[]> {
+  // The statement's `SELECT *` also returns `created_at` (the order) and `n` (the filter); the row keeps the columns its caller reads.
+  const rows = await raw<DuplicateFactRow>(`
+    SELECT * FROM (
+      SELECT f.id, f.source_id, f.visibility, gbrain_fact_fingerprint(f.fact) AS fp, f.fact, f.entity_slug, f.row_num, f.source_markdown_slug, f.created_at,
+             COALESCE(f.attributed_to, '') AS speaker,
+             (f.row_num IS NOT NULL AND f.source_markdown_slug IS NOT NULL AND COALESCE(f.source, '') NOT LIKE 'cli:%') AS fenced,
+             count(*) OVER (PARTITION BY f.source_id, f.visibility, COALESCE(f.attributed_to, ''), gbrain_fact_fingerprint(f.fact)) AS n
+        FROM facts f
+       WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+         AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
+    ) d WHERE d.n > 1
+    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.fenced DESC, d.created_at, d.id`, [sourceIds, excludedSources]);
+  return rows.map(r => ({ id: r.id, source_id: r.source_id, visibility: r.visibility, fp: r.fp, fact: r.fact, entity_slug: r.entity_slug, fenced: r.fenced,
+    row_num: r.row_num, source_markdown_slug: r.source_markdown_slug, speaker: r.speaker }));
 }

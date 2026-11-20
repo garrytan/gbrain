@@ -935,6 +935,10 @@ Facts and their supersession chains.
     FTS language and the `CORRECTION_CUE` cue only. Pinned by `test/engine-parity/facts-trust-owner.test.ts`.
     `listExtractorFactsForClassification` (`store-members/facts-repair.ts`, `facts/extractor_classify.rs`) reads its
     receipts from the write journal's committed requests. Pinned by `test/engine-parity/facts-repair.test.ts`.
+    The four repair previews that list facts (`gbrain repair consolidate-ties`, `facts-rehome`, `ontology-facts` and `duplicate-facts`)
+    read through `listClosedConsolidationTies`, `listPagelessEntityFacts`, `listOntologyFactCandidates` and `listDuplicateFactRows`
+    (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
+    `test/engine-parity/repair-facts-previews.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

@@ -17,6 +17,7 @@ use gbrain_store::facts::generations::UnwithdrawnArgs;
 use gbrain_store::facts::repair::{
     ClassifyArgs, LabelCountArgs, PurgedCountArgs, TwinArgs, WorldFactArgs,
 };
+use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs};
 
 #[napi]
 impl Brain {
@@ -127,6 +128,58 @@ impl Brain {
         self.run(env, move |s| {
             let a: UnwithdrawnArgs = required(args, "listUnwithdrawnFacts args")?;
             s.list_unwithdrawn_facts(&a)
+        })
+    }
+
+    /// `listClosedConsolidationTies({ sourceIds })`: resolves the facts consolidation closed at their own instant, with their partners.
+    #[napi]
+    pub fn list_closed_consolidation_ties<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SourcesArgs = required(args, "listClosedConsolidationTies args")?;
+            s.list_closed_consolidation_ties(&a)
+        })
+    }
+
+    /// `listPagelessEntityFacts({ sourceIds })`: resolves each entity slug with no live page: its database-only fact ids and its fenced count.
+    #[napi]
+    pub fn list_pageless_entity_facts<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SourcesArgs = required(args, "listPagelessEntityFacts args")?;
+            s.list_pageless_entity_facts(&a)
+        })
+    }
+
+    /// `listOntologyFactCandidates({ sourceIds })`: resolves the ontology rows with the fence step's signature and their flags.
+    #[napi]
+    pub fn list_ontology_fact_candidates<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SourcesArgs = required(args, "listOntologyFactCandidates args")?;
+            s.list_ontology_fact_candidates(&a)
+        })
+    }
+
+    /// `listDuplicateFactRows({ sourceIds, excludedSources })`: resolves the facts that share a fingerprint with another active fact.
+    #[napi]
+    pub fn list_duplicate_fact_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DuplicateRowsArgs = required(args, "listDuplicateFactRows args")?;
+            s.list_duplicate_fact_rows(&a)
         })
     }
 }

@@ -1667,6 +1667,10 @@ export class PGLiteEngine implements BrainEngine {
   listCapturedFactsForClassification(sourceIds: string[], lanes: string[], ids: number[] | null) { return factsRepairImpl.listCapturedFactsForClassification(this.rawRead, sourceIds, lanes, ids); }
   countLabelFacts(sourceIds: string[], cap: number, args: factsRepairImpl.LabelFactCountArgs) { return factsRepairImpl.countLabelFacts(this.rawRead, sourceIds, cap, args); }
   listExtractorFactsForClassification(sourceIds: string[], slug: string | null) { return factsRepairImpl.listExtractorFactsForClassification(this.rawRead, sourceIds, slug); }
+  listClosedConsolidationTies(sourceIds: string[]) { return factsRepairImpl.listClosedConsolidationTies(this.rawRead, sourceIds); }
+  listPagelessEntityFacts(sourceIds: string[]) { return factsRepairImpl.listPagelessEntityFacts(this.rawRead, sourceIds); }
+  listOntologyFactCandidates(sourceIds: string[]) { return factsRepairImpl.listOntologyFactCandidates(this.rawRead, sourceIds); }
+  listDuplicateFactRows(sourceIds: string[], excludedSources: string[]) { return factsRepairImpl.listDuplicateFactRows(this.rawRead, sourceIds, excludedSources); }
   countPurgedPageFacts(sourceIds: string[], cap: number) { return factsRepairImpl.countPurgedPageFacts(this.rawRead, sourceIds, cap); }
   listUnwithdrawnFacts(sourceIds: string[], slug: string | null, fenceKind: string) { return factsRepairImpl.listUnwithdrawnFacts(this.rawRead, sourceIds, slug, fenceKind); }
   listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listWorldFactsFromPrivateSources(this.rawRead, sourceIds, ids); }
