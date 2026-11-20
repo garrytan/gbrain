@@ -2,6 +2,9 @@
 //! block; napi-rs merges the blocks into one JavaScript class. Every family is listed once, here,
 //! so building a family never edits this list.
 
+mod access_rules;
+mod belief_ledger;
+mod belief_purge;
 mod chunks;
 mod cli_entities;
 mod cli_reads_export;
@@ -45,6 +48,7 @@ mod code_edges;
 mod contradictions;
 mod decide_store;
 mod dream;
+mod dream_config;
 mod embedding_catalog;
 mod embedding_install;
 mod embeddings;
@@ -54,6 +58,7 @@ mod extraction;
 mod facts;
 mod facts_cycle;
 mod facts_doctor;
+mod facts_holding_purges;
 mod facts_loops;
 mod facts_purge;
 mod facts_repair;
@@ -69,6 +74,8 @@ mod ontology;
 mod page_body;
 mod page_embedding_budget;
 mod page_ops;
+mod purge_effects;
+mod purge_plan;
 mod raw_files;
 mod relations;
 mod salience;

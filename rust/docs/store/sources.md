@@ -16,6 +16,8 @@ until the first stamp; the import members read and write it ([import-members.md]
 | `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; `patch` is merged one level deep, and a `null` value is kept as JSON `null` (it does not remove the key) | `updateSourceConfig` |
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
+| `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
+| `brain.readSourcePurgeEpoch(id)` | `number`, the source's stored `purge_epoch` (0 until a purge raises it; archived sources answer too), or `null` for an unknown source | `readSourcePurgeEpoch` (the belief ledger's prepared-epoch check, the sync reason scan) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way

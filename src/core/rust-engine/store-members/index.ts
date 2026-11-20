@@ -41,6 +41,9 @@ import * as trustWithdrawals from './trust-withdrawals.ts';
 import * as openLoops from './open-loops.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
+import * as filesSources from './files-sources.ts';
+import * as dreamConfig from './dream-config.ts';
+import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
@@ -52,6 +55,10 @@ import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
+import * as purgePlan from './purge-plan.ts';
+import * as purgeEffects from './purge-effects.ts';
+import * as beliefPurge from './belief-purge.ts';
+import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
@@ -74,6 +81,7 @@ import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
+import * as accessPolicy from './access-policy.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
@@ -97,6 +105,7 @@ import * as writeContext from './write-context.ts';
 import { initSchema } from './init-schema.ts';
 import * as graduationCatalog from './graduation-catalog.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as beliefLedger from './belief-ledger.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -110,17 +119,19 @@ export const STORE_MEMBERS = {
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources,
+  ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
+  // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
+  ...beliefLedger,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
@@ -148,6 +159,8 @@ export const STORE_MEMBERS = {
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
+  // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
+  ...accessPolicy,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

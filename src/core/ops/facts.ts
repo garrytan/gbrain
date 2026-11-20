@@ -704,7 +704,7 @@ const dropAll = <T>(items: T[]) => ({ items: [] as T[], meta: { budget: 0, used:
 async function withProvenance<T extends { id: number }>(engine: BrainEngine, sourceId: string, facts: T[]): Promise<Array<T & { provenance: string | null }>> {
   if (facts.length === 0) return [];
   const rows = await engine.listFactProvenance(sourceId, facts.map((f) => f.id)).catch(() => []);
-  const byId = new Map(rows.map((r) => [r.id, r.source]));
+  const byId = new Map(rows.map((r) => [Number(r.id), r.source]));
   return facts.map((f) => ({ ...f, provenance: byId.get(f.id) ?? null }));
 }
 

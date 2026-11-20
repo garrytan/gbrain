@@ -190,6 +190,8 @@ export function residentNotifierOptions(engine: BrainEngine, opts: ResidentNotif
  */
 export function startResidentNotifier(engine: BrainEngine, opts: ResidentNotifierOptions): CommitNotifier | null {
   if (notifierDisabledByEnv(opts.env ?? process.env)) { try { opts.log(`[notifier:${opts.resident}] off (GBRAIN_NOTIFIER=0); commits on this host are not synced by this process`); } catch { /* log only */ } return null; }
+  // A Rust brain's store has no notifier lease, coverage or marker tables: no resident can own or record anything.
+  if (engine.kind === 'rust') { try { opts.log(`[notifier:${opts.resident}] off (Rust brain: the store has no notifier tables); commits on this host are not synced by this process`); } catch { /* log only */ } return null; }
   const notifier = startCommitNotifier(residentNotifierOptions(engine, opts));
   const entry = { notifier, resident: opts.resident };
   active = entry;

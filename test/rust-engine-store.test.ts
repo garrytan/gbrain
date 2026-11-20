@@ -24,6 +24,8 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { readSourceFreshness } from '../src/core/notifier/status.ts';
+import { startResidentNotifier } from '../src/core/notifier/resident.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
 import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
@@ -307,6 +309,42 @@ describe('Rust engine on the store', () => {
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
     const { engine } = await open();
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+  });
+
+  withAddon('search on a Rust brain carries no freshness notice, as a brain without the notifier tables does', async () => {
+    const { engine } = await open();
+    await engine.setConfig('sync.on_commit', 'true');
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    try {
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
+      expect(await readSourceFreshness(engine, {})).toEqual([]);
+    } finally { console.error = original; }
+    expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
+  });
+
+  withAddon('a resident on a Rust brain starts no commit notifier and says so', async () => {
+    const { engine } = await open();
+    const lines: string[] = [];
+    const notifier = startResidentNotifier(engine, { resident: 'serve', log: line => lines.push(line), env: {} });
+    if (notifier) await notifier.stop();
+    expect(notifier).toBeNull();
+    expect(lines).toEqual(['[notifier:serve] off (Rust brain: the store has no notifier tables); commits on this host are not synced by this process']);
+  });
+
+  withAddon('a withdrawal on a Rust brain moves the hot-memory withdrawal watermark of its source only', async () => {
+    const { engine } = await open();
+    await engine.openStore('test').brain.upsertSource({ id: 'work', name: 'work', config: {} });
+    const before = await engine.readFactCacheWatermark('default');
+    const otherBefore = await engine.readFactCacheWatermark('work');
+    await engine.insertFactWithdrawal('default', 'private', 'claim one', 'people/x', '2026-03-09T10:00:00.000Z');
+    const after = await engine.readFactCacheWatermark('default');
+    // facts/meta-hook.ts keys the hot-memory cache on these fields; a watermark that stays put serves a forgotten fact.
+    expect(after).not.toEqual(before);
+    expect(after.withdrawals).toBe(before.withdrawals + 1);
+    expect(after.latest_withdrawn_at).toBe('2026-03-09T10:00:00.000000Z');
+    expect(await engine.readFactCacheWatermark('work')).toEqual(otherBefore);
   });
 });
 

@@ -69,8 +69,7 @@ const n = (v: unknown) => Number(v ?? 0);
 export async function unlinkedFactsStats(engine: BrainEngine, sourceIds?: readonly string[]): Promise<UnlinkedFactsStats | null> {
   const [tables] = answersFromCatalog(engine)
     ? [{ facts: catalogTableExists(engine, 'facts'), attempts: catalogTableExists(engine, 'fact_relink_attempts') }]
-    : await engine.executeRaw<{ facts: string | null; attempts: string | null }>(
-      `SELECT to_regclass('facts')::text AS facts, to_regclass('fact_relink_attempts')::text AS attempts`);
+    : [await engine.readFactTableCatalog()];
   if (!tables?.facts) return null;
   const hasAttempts = !!tables.attempts;
   const ids = sourceIds?.length ? [...sourceIds] : sortSourcesById(await engine.listAllSources({ includeArchived: true })).map((r) => r.id);

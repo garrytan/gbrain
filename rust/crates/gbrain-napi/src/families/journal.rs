@@ -394,6 +394,19 @@ impl Brain {
         })
     }
 
+    /// `readWriteWatermarkRow`'s journal half for one source incarnation (null for an absent source).
+    #[napi]
+    pub fn read_request_watermark<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_request_watermark(&source_id, incarnation.as_deref())
+        })
+    }
+
     #[napi]
     pub fn read_source_membership<'env>(
         &self,
@@ -809,6 +822,31 @@ impl Brain {
         })
     }
 
+    /// `listQueuedPageProjections(filter)`: `{ source_id, source_incarnation, slug, revision,
+    /// page_kind, updated_at }` rows in walk order.
+    #[napi]
+    pub fn list_queued_page_projections<'env>(
+        &self,
+        env: &'env Env,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_queued_page_projections(&required(filter, "listQueuedPageProjections filter")?)
+        })
+    }
+
+    /// `readProjectionJobReason(key)`: the job's reason, or `null`.
+    #[napi]
+    pub fn read_projection_job_reason<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_projection_job_reason(&required(key, "readProjectionJobReason key")?)
+        })
+    }
+
     /// `deleteProjectionJob({ sourceIncarnation, slug, revision })`.
     #[napi]
     pub fn delete_projection_job<'env>(
@@ -831,6 +869,42 @@ impl Brain {
         self.run(env, move |s| {
             s.mark_projection_rebuild_failed(&required(job, "markProjectionRebuildFailed job")?)
         })
+    }
+
+    /// `readChunkKeepState(pageId, provenanceModel, column)`: the `embedding` column's width is
+    /// `dims`. `{ id, embedding_input_hash, movable }` rows.
+    #[napi]
+    pub fn read_chunk_keep_state<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_chunk_keep_state(page_id, model.as_deref(), dims)
+        })
+    }
+
+    /// `clearUnkeptChunkVectors(pageId, provenanceModel, column, currentIds)`: resolves null.
+    #[napi]
+    pub fn clear_unkept_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+        current_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.clear_unkept_chunk_vectors(page_id, model.as_deref(), dims, &current_ids)
+        })
+    }
+
+    /// `hasDrainableProjectionJob()`: whether a drainable job is queued.
+    #[napi]
+    pub fn has_drainable_projection_job<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_drainable_projection_job())
     }
 
     /// `insertTopologyChange(input)`: the stored row.

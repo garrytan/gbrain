@@ -131,10 +131,8 @@ async function loadContained(engine: BrainEngine): Promise<Record<string, string
 export async function recordContainedPaidFailure(engine: BrainEngine, phase: string, sourceId: string): Promise<void> {
   const baseKey = `${DREAM_PHASE_KEY_PREFIX}${phase}:${sourceId}`;
   await engine.transaction(async tx => {
-    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, '{}') ON CONFLICT (key) DO NOTHING", [DREAM_BREAKER_CONTAINED_KEY]);
-    const [row] = await tx.executeRaw<{ value: string; now: string }>(
-      `SELECT value, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now FROM config WHERE key=$1 FOR UPDATE`,
-      [DREAM_BREAKER_CONTAINED_KEY]);
+    await tx.ensureDreamMapConfigRow(DREAM_BREAKER_CONTAINED_KEY);
+    const row = await tx.lockDreamMapConfigRow(DREAM_BREAKER_CONTAINED_KEY);
     let current: Record<string, unknown> = {};
     try { const parsed = JSON.parse(row?.value ?? '{}'); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) current = parsed; } catch { /* rewrite a corrupt value */ }
     const cutoff = Date.parse(row!.now) - 24 * 3_600_000;
@@ -144,7 +142,7 @@ export async function recordContainedPaidFailure(engine: BrainEngine, phase: str
       if (kept.length) next[key] = kept;
     }
     next[baseKey] = [...next[baseKey] ?? [], row!.now].slice(-50);
-    await tx.executeRaw('UPDATE config SET value=$2 WHERE key=$1', [DREAM_BREAKER_CONTAINED_KEY, JSON.stringify(next)]);
+    await tx.writeDreamMapConfigRow(DREAM_BREAKER_CONTAINED_KEY, JSON.stringify(next));
   });
 }
 
@@ -226,14 +224,5 @@ export function dreamBreakerRefusal(breaker: DreamBreaker, baseKey: string): str
  * keys both survive. Stored in config, so it survives restarts.
  */
 export async function resetDreamBreakerKey(engine: BrainEngine, baseKey: string): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO config (key, value)
-       VALUES ($1, jsonb_build_object($2::text, to_char((now() + interval '1 millisecond') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))::text)
-     ON CONFLICT (key) DO UPDATE SET value = ((
-       SELECT COALESCE(jsonb_object_agg(entry.key, entry.value), '{}'::jsonb)
-         FROM jsonb_each_text(CASE WHEN jsonb_typeof(gbrain_try_jsonb(config.value)) = 'object' THEN gbrain_try_jsonb(config.value) ELSE '{}'::jsonb END) entry
-        WHERE entry.key <> $2::text AND entry.value ~ '^[0-9]{4}-' AND entry.value::timestamptz > now() - interval '24 hours'
-     ) || EXCLUDED.value::jsonb)::text`,
-    [DREAM_BREAKER_RESETS_KEY, dreamBreakerBaseKey(baseKey)],
-  );
+  await engine.recordDreamBreakerReset(DREAM_BREAKER_RESETS_KEY, dreamBreakerBaseKey(baseKey));
 }

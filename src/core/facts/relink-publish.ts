@@ -134,10 +134,7 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
     }
     // The page projection indexes one active fence row per (claim, source), whatever
     // its visibility; a second one would be expired right after it was linked.
-    const [same] = await db.executeRaw<{ id: number | string; visibility: string }>(
-      `SELECT id, visibility FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL
-         AND expired_at IS NULL AND fact=$3 AND source IS NOT DISTINCT FROM $4 ORDER BY id LIMIT 1`,
-      [row.source_id, row.slug, String(v.fact), v.source ?? null]);
+    const same = await db.findSameClaimFenceRow(row.source_id, row.slug, String(v.fact), (v.source as string | null | undefined) ?? null);
     if (same) {
       out.push(same.visibility === visibility ? { id: f.id, action: 'retire', duplicateOf: Number(same.id), context: v.context as string | null }
         : { id: f.id, action: 'skip', reason: 'visibility_conflict' });
@@ -146,11 +143,7 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
     // B-10: an ontology observation the page already holds at the same key would collide on
     // idx_facts_ontology_stint_dedup once linked; it retires as that row's duplicate instead.
     if (v.dimension != null) {
-      const [held] = await db.executeRaw<{ id: number | string }>(
-        `SELECT t.id FROM facts m JOIN facts t ON t.source_id = m.source_id AND t.dimension = m.dimension AND t.value_hash = m.value_hash
-             AND t.valid_from = m.valid_from AND t.id <> m.id
-           WHERE m.source_id=$1 AND m.id=$3 AND t.entity_slug=$2 AND t.source_markdown_slug=$2
-           ORDER BY (t.expired_at IS NULL) DESC, t.id LIMIT 1`, [row.source_id, row.slug, f.id]);
+      const held = await db.findOntologyTwin(row.source_id, row.slug, f.id);
       if (held) {
         out.push({ id: f.id, action: 'retire', duplicateOf: Number(held.id), context: v.context as string | null });
         continue;
@@ -208,9 +201,8 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     if (target.fixes.length) normalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
       writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
     const parsed = parseFactsFence(body);
-    const [max] = await engine.executeRaw<{ n: number }>(
-      'SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
-    let next = Math.max(Number(max?.n ?? 0), 0, ...parsed.facts.map(f => f.rowNum)) + 1;
+    const max = await engine.maxFenceRowNum(row.source_id, row.slug);
+    let next = Math.max(max, 0, ...parsed.facts.map(f => f.rowNum)) + 1;
     for (const link of links) {
       const v = link.value;
       const rowNum = next++;
@@ -291,8 +283,7 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
   assertPersistenceAccepting(engine);
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
-  const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
-    "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
+  const source = await engine.readRelinkSource(sourceId);
   if (!source || source.archived) {
     throw opError('source_changed', 'The relink source is not active.', `Source ${sourceId} is archived or not registered; run gbrain facts relink with --source set to an active source.`,
       { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', why: 'Lists the registered sources and whether each is archived.', requires_exclusive: false } });

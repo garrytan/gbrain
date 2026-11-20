@@ -5,7 +5,8 @@
  */
 import type { Chunk, ChunkInput } from '../../types.ts';
 import { prepareChunks, textColumnModel } from '../chunk-input.ts';
-import { toChunk } from '../store-codec.ts';
+import { toChunk, toGetPage } from '../store-codec.ts';
+import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -53,7 +54,11 @@ export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts
 export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }], void> =
   async (brain, slug, chunks, opts) => {
     const sourceId = opts?.sourceId ?? 'default';
-    const current: { page: { deleted_at: unknown; timeline: string | null }; revision: string } | null = await storeCall({ member: 'sealChunks', slug }, () => brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }));
+    // PGLite seals the overlaid timeline (its readPageSnapshot strikes withdrawn fence rows), so the store's is overlaid here.
+    const stored: StoreSnapshot | null = await storeCall({ member: 'sealChunks', slug }, () => brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }));
+    // A segmented page has no whole body to overlay (toGetPage refuses it); the store refuses its seal as PGLite does.
+    const segmented = (stored?.page as { body_storage?: string } | undefined)?.body_storage === 'segmented';
+    const current = stored === null ? null : segmented ? stored : overlayStoreSnapshot({ ...stored, page: toGetPage(stored.page) });
     if (!current || current.page.deleted_at) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const timeline = current.page.timeline;
     const searchTimeline = typeof timeline === 'string' ? sanitizeRemoteBody(timeline) : undefined;

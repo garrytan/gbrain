@@ -455,6 +455,30 @@ impl Store {
         Ok(count)
     }
 
+    /// `countBrainLivePages` (`engine-sql/health.ts`): live pages in every source.
+    pub fn count_brain_live_pages(&self) -> Result<u64> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?.iter().filter(|p| live(p)).count() as u64)
+    }
+
+    /// `readBrainMaturity` (`engine-sql/health.ts`): live pages and unexpired facts in every
+    /// source, and `since`, the earliest `created_at` of any source or page (soft-deleted pages
+    /// count, as `MIN(created_at) FROM pages` does), or null when there is neither.
+    pub fn read_brain_maturity(&self) -> Result<Value> {
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let since = all_sources(&*read)?
+            .iter()
+            .map(|s| s.created_at_us)
+            .chain(pages.iter().map(|p| p.created_at_us))
+            .min();
+        Ok(json!({
+            "pages": pages.iter().filter(|p| live(p)).count() as u64,
+            "facts": crate::facts::count_unexpired(&*read)?,
+            "since": since.map(iso),
+        }))
+    }
+
     /// `logIngest`: appends one row. A NULL column fails as Postgres's NOT NULL check does, in
     /// column order.
     pub fn log_ingest(&self, input: &IngestInput) -> Result<()> {
@@ -715,6 +739,30 @@ impl Store {
         }
         Ok(json!({ "baseline": baseline_rows, "today": today_rows }))
     }
+}
+
+/// The `ingest_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<IngestRecord>(read, &[keys::INGEST_LOG])?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![
+                ("summary", ProbeCell::text(&r.summary)),
+                (
+                    "pages_updated",
+                    if r.pages_updated.is_null() {
+                        ProbeCell::Null
+                    } else {
+                        ProbeCell::jsonb(&r.pages_updated)
+                    },
+                ),
+            ],
+            source_id: Some(r.source_id),
+        })
+        .collect())
 }
 
 #[cfg(test)]

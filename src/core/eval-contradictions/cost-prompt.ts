@@ -52,12 +52,7 @@ export type CostPromptResult =
 /** Read the prompt_version of the most recent persisted run. */
 async function readLastPromptVersion(engine: BrainEngine): Promise<string | null> {
   try {
-    const rows = await engine.executeRaw<{ prompt_version: string }>(
-      `SELECT prompt_version FROM eval_contradictions_runs ORDER BY ran_at DESC LIMIT 1`,
-    );
-    if (rows && rows.length > 0 && typeof rows[0].prompt_version === 'string') {
-      return rows[0].prompt_version;
-    }
+    return await engine.readLastContradictionsPromptVersion();
   } catch {
     // Table missing (pre-v0.32 brains) or transient error — treat as null
     // (which fires the prompt on first run, the correct default).

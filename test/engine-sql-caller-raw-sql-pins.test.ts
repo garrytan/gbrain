@@ -14,8 +14,13 @@
 import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
+import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
+import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
+import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
+import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
@@ -329,7 +334,348 @@ const PINS: Pin[] = [
     case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
     texts: ['SELECT config FROM sources WHERE id = $1'],
   },
+  {
+    from: 'src/core/entities/resolve.ts:162 tryOrgDirVariant',
+    case: { method: 'readLiveSlugs', variant: 'default', run: e => e.readLiveSlugs('default', ['orgs/acme', 'organizations/acme']) },
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])'],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:360 findExactBasenameCandidates',
+    case: { method: 'readLiveSlugs', variant: 'limit_2', run: e => e.readLiveSlugs('default', ['people/alice-example', 'companies/alice-example'], { limit: 2 }) },
+    texts: [`SELECT slug FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
+        LIMIT 2`],
+  },
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).map(([privacy, predicate]): Pin => ({
+    from: `src/core/entities/resolve.ts:478 resolveStrictEntityReference live (privacy ${privacy})`,
+    case: { method: 'readLivePageTypes', variant: privacy, run: e => e.readLivePageTypes('default', ['people/alice-example'], privacy) },
+    texts: () => [`SELECT p.slug, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${predicate()}`],
+  })),
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).flatMap(([privacy, predicate]): Pin[] => [
+    {
+      from: `src/core/entities/resolve.ts:519 resolveStrictEntityReference same name (privacy ${privacy})`,
+      case: { method: 'readTrigramCandidates', variant: `same_name_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'same_name', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
+      texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
+          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${predicate()} AND NOT ${retiredPageSql('p')}
+            AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
+          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+          LIMIT 5`],
+    },
+    {
+      from: `src/core/entities/resolve.ts:567 entityReferenceCandidates near (privacy ${privacy})`,
+      case: { method: 'readTrigramCandidates', variant: `near_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'near', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
+      texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} ${predicate()}
+        AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
+      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+      LIMIT 20`],
+    },
+  ]),
+  {
+    from: 'src/core/entities/resolve.ts:857 tryFuzzyMatch',
+    case: { method: 'readTrigramCandidates', variant: 'fuzzy', run: e => e.readTrigramCandidates('default', { arm: 'fuzzy', titleLc: 'alice example', slugFragment: 'alice-example' }) },
+    texts: () => [`SELECT slug, title, type,
+         GREATEST(
+           similarity(lower(title), $2),
+           similarity(slug, $3)
+         ) AS score
+       FROM pages
+       WHERE source_id = $1
+         AND deleted_at IS NULL
+         AND NOT ${retiredPageSql('pages')}
+         AND (
+           lower(title) % $2
+           OR slug ILIKE '%' || $3 || '%'
+         )
+       ORDER BY score DESC, slug ASC
+       LIMIT 5`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:686 findPrefixCandidates',
+    case: { method: 'readPrefixCandidates', variant: 'patterns', run: e => e.readPrefixCandidates('default', { patterns: ['people/alice', 'people/alice-%'] }) },
+    texts: () => [`SELECT p.slug,
+              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
+               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                AS connection_count
+       FROM pages p
+       WHERE p.source_id = $1
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}
+         AND p.slug LIKE ANY($2::text[])
+       ORDER BY connection_count DESC, p.slug ASC
+       LIMIT 10`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:769 tryPrefixExpansion',
+    case: { method: 'readPrefixCandidates', variant: 'pattern', run: e => e.readPrefixCandidates('default', { pattern: 'people/alice-%' }) },
+    texts: () => [`SELECT p.slug,
+                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
+                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                  AS connection_count
+         FROM pages p
+         WHERE p.source_id = $1
+           AND p.deleted_at IS NULL
+           AND NOT ${retiredPageSql('p')}
+           AND p.slug LIKE $2
+         ORDER BY connection_count DESC, p.slug ASC
+         LIMIT 5`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:732 tryUnambiguousPrefixExpansion dirs',
+    case: { method: 'readPrefixDirs', variant: 'default', run: e => e.readPrefixDirs('default', ['people/alice', 'people/alice-%']) },
+    texts: () => [`SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
+        LIMIT 2`],
+  },
+  {
+    from: 'src/core/entities/resolve.ts:739 tryUnambiguousPrefixExpansion exact titles',
+    case: { method: 'readPrefixTitleMatches', variant: 'default', run: e => e.readPrefixTitleMatches('default', ['companies/acme', 'companies/acme-%'], 'Acme') },
+    texts: () => [`SELECT slug, title FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')}
+          AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
+        LIMIT 3`],
+  },
+  ...([
+    ['none', () => ''],
+    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
+    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
+  ] as const).map(([privacy, predicate]): Pin => ({
+    from: `src/core/entities/resolve.ts:552 entityReferenceCandidates named (privacy ${privacy})`,
+    case: { method: 'readNamedEntitySlugs', variant: privacy, run: e => e.readNamedEntitySlugs('default', ['companies/acme', 'orgs/acme'], privacy) },
+    texts: () => [`SELECT p.slug FROM pages p
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${predicate()}
+      ORDER BY p.slug LIMIT 5`],
+  })),
+  ...([
+    ['all', {}],
+    ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
+  ] as const).map(([variant, opts]): Pin => ({
+    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
+    case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
+    texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
+    ORDER BY s.id,h.fingerprint`],
+  })),
+  {
+    from: 'src/core/sync-dispatch-read.ts:51 syncDispatchRow',
+    case: { method: 'readSyncDispatchRow', variant: 'default', run: e => e.readSyncDispatchRow('default') },
+    texts: () => [`SELECT s.id, s.archived, s.config, s.incarnation::text AS incarnation, s.local_path,
+  EXISTS(SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation) AS claimed,
+  EXISTS(SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain') AS company_receipt,
+  (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (${MANAGED_MODE_SQL}) m) AS modes
+  FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`],
+  },
+  {
+    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, which the check ignores.
+    from: 'src/core/persistence/sync-authority.ts:122 validateSyncAuthority (SELECT created_at FROM sources WHERE id=$1)',
+    case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
+    texts: ['SELECT archived, created_at FROM sources WHERE id = $1'],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1186 readGitHoldRetryPaths',
+    case: { method: 'readGitHoldRetryRequest', variant: 'default', run: e => e.readGitHoldRetryRequest('default:1') },
+    texts: ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
+  {
+    from: 'src/core/reason-trailers.ts:151 scanSyncReasons',
+    case: { method: 'readReasonPurgeTombstones', variant: 'default', run: e => e.readReasonPurgeTombstones('default') },
+    texts: ['SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/reason-trailers.ts:262 cachedSyncReasonScan',
+    case: { method: 'readSourcePurgeEpoch', variant: 'default', run: e => e.readSourcePurgeEpoch('default') },
+    texts: ['SELECT purge_epoch FROM sources WHERE id = $1'],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1452,1458 buildHoldReport',
+    case: { method: 'readGitHoldReportInputs', variant: 'default', run: e => e.readGitHoldReportInputs('default', 'default:1') },
+    texts: [`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
+      COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
+      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
+      COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
+    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`, "SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1"],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:88,92 readWriteWatermark',
+    case: { method: 'readWriteWatermarkRow', variant: 'default', run: e => e.readWriteWatermarkRow('default') },
+    texts: [`SELECT s.last_commit, s.last_sync_at, p.pending_min, p.pending_count, p.pending_since
+    FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
+      WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`,
+    'SELECT max(sequence) AS sequence FROM persistence_requests'],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',
+    case: { method: 'readSourceCheckoutRoot', variant: 'default', run: e => e.readSourceCheckoutRoot('default', null) },
+    texts: [`SELECT s.incarnation::text AS incarnation,
+      COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
+        WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`],
+  },
+  {
+    from: 'src/core/persistence/applied-watermark.ts:132 readAppliedWatermark',
+    case: { method: 'readUnembeddedPageSummary', variant: 'default', run: e => e.readUnembeddedPageSummary('default', 'embedding') },
+    texts: () => [`WITH w AS (SELECT DISTINCT p.id, p.updated_at FROM content_chunks cc
+        JOIN pages p ON p.id=cc.page_id WHERE ${`cc.${quoteIdentifier('embedding')}`} IS NULL AND p.source_id=$1 AND p.deleted_at IS NULL AND ${chunkGenerationFilter('p', 'cc')}
+          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip'))
+      SELECT count(*) AS pages, min(w.updated_at) AS oldest,
+        (SELECT count(*) FROM w JOIN page_embedding_budget b ON b.page_id=w.id JOIN pages p ON p.id=w.id WHERE ${budgetRowAppliesFilter('b', 'p')}) AS held FROM w`],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:144 assertCurrentRemoteJobPrincipal (OAuth client)',
+    case: { method: 'readJobPrincipal', variant: 'oauth-client', run: e => e.readJobPrincipal({ kind: 'oauth_client', id: 'client-1' }) },
+    texts: ['SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:160 assertCurrentRemoteJobPrincipal (legacy token)',
+    case: { method: 'readJobPrincipal', variant: 'legacy-token', run: e => e.readJobPrincipal({ kind: 'legacy_token', id: 'tok-1' }) },
+    texts: ['SELECT * FROM access_tokens WHERE id = $1'],
+  },
+  {
+    from: 'src/core/access/policy.ts:92 readAccessStore (at 6e123afe98)',
+    case: { method: 'readAccessStoreConfig', variant: 'default', run: e => e.readAccessStoreConfig('src-a') },
+    texts: [`SELECT config->>'access_store' AS store FROM sources WHERE id = $1`],
+  },
+  {
+    from: 'src/core/access/policy.ts:99 writeAccessStore (at 6e123afe98)',
+    case: { method: 'writeAccessStoreConfig', variant: 'default', run: e => e.writeAccessStoreConfig('src-a', 'database') },
+    texts: [`UPDATE sources SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{access_store}', to_jsonb($2::text)) WHERE id = $1`],
+  },
+  {
+    from: 'src/core/access/policy.ts:104 ensurePolicyState (at 6e123afe98)',
+    case: { method: 'ensureAccessPolicyState', variant: 'default', run: e => e.ensureAccessPolicyState('src-a') },
+    texts: ['INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING'],
+  },
+  {
+    from: 'src/core/access/policy.ts:112 and :113 lockSource (at 6e123afe98)',
+    case: { method: 'lockAccessPolicy', variant: 'default', run: e => e.lockAccessPolicy('src-a') },
+    texts: ['SELECT 1 FROM sources WHERE id = $1 FOR NO KEY UPDATE', 'SELECT 1 FROM access_policy_state WHERE source_id = $1 FOR UPDATE'],
+  },
+  {
+    from: 'src/core/access/policy.ts:117 appliedRules (at 6e123afe98)',
+    case: { method: 'listAccessRules', variant: 'default', run: e => e.listAccessRules('src-a') },
+    texts: ['SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id'],
+  },
+  {
+    from: 'src/core/access/policy.ts:123 listRevisions (at 6e123afe98)',
+    case: { method: 'readAccessPolicyRevisions', variant: 'recent', run: e => e.readAccessPolicyRevisions({ by: 'recent', sourceId: 'src-a', limit: 50 }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT $2'],
+  },
+  {
+    from: 'src/core/access/policy.ts:130 getRevision (latest) (at 6e123afe98)',
+    case: { method: 'readAccessPolicyRevisions', variant: 'latest', run: e => e.readAccessPolicyRevisions({ by: 'latest', sourceId: 'src-a' }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT 1'],
+  },
+  {
+    from: 'src/core/access/policy.ts:131 getRevision (one revision) (at 6e123afe98)',
+    case: { method: 'readAccessPolicyRevisions', variant: 'revision', run: e => e.readAccessPolicyRevisions({ by: 'revision', sourceId: 'src-a', revision: 2 }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE source_id = $1 AND revision = $2'],
+  },
+  {
+    from: 'src/core/access/policy.ts:246 proposeRevision (idempotency read) (at 6e123afe98)',
+    case: { method: 'readAccessPolicyRevisions', variant: 'operation', run: e => e.readAccessPolicyRevisions({ by: 'operation', operationId: 'op-1' }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE operation_id = $1'],
+  },
+  {
+    from: 'src/core/access/policy.ts:136 coverageRows (at 6e123afe98)',
+    case: { method: 'listAccessCoverage', variant: 'default', run: e => e.listAccessCoverage('src-a') },
+    texts: ['SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason, prefix'],
+  },
+  {
+    from: 'src/core/access/policy.ts:151 requireReadableAccessState (at 6e123afe98)',
+    case: { method: 'readAccessStateUnreadable', variant: 'default', run: e => e.readAccessStateUnreadable() },
+    texts: ['SELECT gbrain_access_state_unreadable() AS unreadable'],
+  },
+  {
+    from: 'src/core/access/policy.ts:168, :174 and :179 installRulebook (at 6e123afe98)',
+    case: { method: 'applyAccessRuleChanges', variant: 'default', run: e => e.applyAccessRuleChanges('src-a', { remove: ['old'], insert: [{ rule_id: 'team', prefix: 'team/', readable_by: ['member:alice-example'], covers_derived: true }], pending: ['team/'], revision: 2, actor: 'cli' }) },
+    texts: ['DELETE FROM access_rules WHERE source_id = $1 AND rule_id = $2', 'INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, created_by, covers_derived) VALUES ($1, $2, $3, $4::text[], $5, $6, $7)', `INSERT INTO access_pending_coverage (source_id, prefix, reason, revision) VALUES ($1, $2, 'pending', $3)
+      ON CONFLICT (source_id, prefix, reason) DO UPDATE SET revision = EXCLUDED.revision`],
+  },
+  {
+    from: 'src/core/access/policy.ts:198 restampSource (batched window) (at 6e123afe98)',
+    case: { method: 'restampAccessWindow', variant: 'default', run: e => e.restampAccessWindow('src-a', 0, 2000) },
+    texts: [`WITH w AS (SELECT id FROM pages WHERE source_id = $1 AND id > $2 ORDER BY id LIMIT $3),
+        u AS (UPDATE pages p SET folder_rule_ids = gbrain_access_folder_rules(p.source_id, p.slug) FROM w
+              WHERE p.id = w.id AND p.folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(p.source_id, p.slug) RETURNING p.id)
+      SELECT (SELECT max(id) FROM w) AS last, (SELECT count(*) FROM w)::int AS scanned, (SELECT count(*) FROM u)::int AS changed`],
+  },
+  {
+    from: 'src/core/access/policy.ts:212, :216 and :217 restampSource (final pass) (at 6e123afe98)',
+    case: { method: 'finishAccessRestamp', variant: 'default', run: e => e.finishAccessRestamp('src-a') },
+    texts: [`UPDATE pages SET folder_rule_ids = gbrain_access_folder_rules(source_id, slug)
+        WHERE source_id = $1 AND folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug) RETURNING id`, `DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'pending'`, 'UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/policy.ts:263 proposeRevision (revision insert) (at 6e123afe98)',
+    case: { method: 'insertAccessPolicyRevision', variant: 'default', run: e => e.insertAccessPolicyRevision({ source_id: 'src-a', revision: 2, rules: [], digest: 'd', change_kind: 'narrowing', origin: 'cli', operation_id: null, proposed_by: 'cli', approved_by: 'auto:narrowing', approved: true }) },
+    texts: [`INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, operation_id, proposed_by, approved_by, approved_at)
+      VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, CASE WHEN $10::boolean THEN now() END)`],
+  },
+  {
+    from: 'src/core/access/policy.ts:268 proposeRevision (applied mark) (at 6e123afe98)',
+    case: { method: 'markAccessRevisionsApplied', variant: 'all', run: e => e.markAccessRevisionsApplied('src-a') },
+    texts: ['UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/policy.ts:388 applyApproved (applied mark) (at 6e123afe98)',
+    case: { method: 'markAccessRevisionsApplied', variant: 'up-to', run: e => e.markAccessRevisionsApplied('src-a', 3) },
+    texts: ['UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL AND revision <= $2'],
+  },
+  {
+    from: 'src/core/access/policy.ts:387 applyApproved (approval) (at 6e123afe98)',
+    case: { method: 'approveAccessPolicyRevision', variant: 'default', run: e => e.approveAccessPolicyRevision('src-a', 3, 'cli') },
+    texts: ['UPDATE access_policy_revisions SET approved_by = $3, approved_at = now() WHERE source_id = $1 AND revision = $2'],
+  },
+  {
+    from: 'src/core/access/policy.ts:296 resumePolicy (at 6e123afe98)',
+    case: { method: 'hasAccessPolicyState', variant: 'default', run: e => e.hasAccessPolicyState('src-a') },
+    texts: ['SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/access/policy.ts:348 previewApply (derived release) (at 6e123afe98)',
+    case: { method: 'listAccessPrefixSlugs', variant: 'one-prefix', run: e => e.listAccessPrefixSlugs('src-a', 'team/') },
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug'],
+  },
+  {
+    from: 'src/core/access/policy.ts:354 previewApply (widened prefixes) (at 6e123afe98)',
+    case: { method: 'listAccessPrefixSlugs', variant: 'prefixes', run: e => e.listAccessPrefixSlugs('src-a', ['team/', 'old/']) },
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug'],
+  },
+  {
+    from: 'src/core/access/policy.ts:420 policyStatus (at 6e123afe98)',
+    case: { method: 'readAccessPolicyMarks', variant: 'default', run: e => e.readAccessPolicyMarks('src-a') },
+    texts: ['SELECT max(revision) FILTER (WHERE applied_at IS NOT NULL) AS applied, max(revision) FILTER (WHERE approved_at IS NOT NULL) AS approved FROM access_policy_revisions WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/access/policy.ts:420 and :431 policyStatus (with an operation) (at 6e123afe98)',
+    case: { method: 'readAccessPolicyMarks', variant: 'operation', run: e => e.readAccessPolicyMarks('src-a', 'op-1') },
+    texts: ['SELECT max(revision) FILTER (WHERE applied_at IS NOT NULL) AS applied, max(revision) FILTER (WHERE approved_at IS NOT NULL) AS approved FROM access_policy_revisions WHERE source_id = $1', 'SELECT revision, applied_at, approved_at FROM access_policy_revisions WHERE source_id = $1 AND operation_id = $2'],
+  },
+  {
+    from: 'src/core/access/policy.ts:450 and :452 markPolicyInvalid (at 6e123afe98)',
+    case: { method: 'replaceAccessInvalidCoverage', variant: 'prefixes', run: e => e.replaceAccessInvalidCoverage('src-a', ['bad/'], { line: 3 }) },
+    texts: [`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`, `INSERT INTO access_pending_coverage (source_id, prefix, reason, detail) VALUES ($1, $2, 'invalid', $3::text::jsonb)`],
+  },
+  {
+    from: 'src/core/access/policy.ts:459 clearPolicyInvalid (at 6e123afe98)',
+    case: { method: 'replaceAccessInvalidCoverage', variant: 'clear', run: e => e.replaceAccessInvalidCoverage('src-a', [], null) },
+    texts: [`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`],
+  },
 ];
+
+/** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
+const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
 function CARD_ROW_COLUMNS(): string {

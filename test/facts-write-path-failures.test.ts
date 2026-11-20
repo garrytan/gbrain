@@ -99,7 +99,7 @@ describe('facts write-path failures (B-21)', () => {
   });
 
   test('a failed DB row-number lookup is reported, not silent', async () => {
-    const broken = failing(/MAX\(row_num\)/, new Error('connection reset'));
+    const broken = failingMember('readFenceRowNumHint', new Error('connection reset'));
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const result = await writeFactsToFence(broken, { sourceId: 'default', localPath: brainDir, slug: 'people/alice-example', resolutionSource: 'exact_page' }, [input]);

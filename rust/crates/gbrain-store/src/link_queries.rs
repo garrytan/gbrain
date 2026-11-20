@@ -34,6 +34,7 @@
 
 use crate::Store;
 use crate::chunks::{in_live_body, read_chunks, read_segment_view, segmented};
+use crate::env::iso;
 use crate::error::{INVALID_ARGUMENT, INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy, page_hidden};
 use crate::keys;
@@ -50,6 +51,9 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+mod edge_filter;
+use edge_filter::edge_passes;
+pub use edge_filter::{DuringWindow, EdgeTemporalPolicy};
 pub(crate) mod link_temporal;
 pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
@@ -203,6 +207,8 @@ pub struct FanoutOptions {
     pub limit: usize,
     /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
     pub require_safe_chunks: bool,
+    /// `temporal` with the walk's `excludePrivate`: the relationship filter on every step edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
 }
 
 /// `ChainHopOpts`, the part the store reads. `neighborCap` arrives clamped to 1..=1000.
@@ -228,6 +234,9 @@ pub struct ChainHopOptions {
     /// context only when the evidence page is sealed and holds no facts / takes fence, `takes` only when it is sealed
     /// and holds no takes fence, and absent returns it whenever the evidence page is readable.
     pub text_gate: Option<String>,
+    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
+    /// degree edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
 }
 
 /// `DerivedLinkOrigin` without the refused `snapshot`.
@@ -411,7 +420,7 @@ fn protected_body(read: &dyn KvRead, page: &PageRecord, kinds: &[&str]) -> Resul
 }
 
 /// `rankingLinkSql`: the link may feed a ranking signal.
-fn ranks(link: &LinkRecord) -> bool {
+pub(crate) fn ranks(link: &LinkRecord) -> bool {
     !NON_RANKING_LINK_TYPES.contains(&link.link_type.as_str())
 }
 
@@ -445,7 +454,7 @@ fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
 }
 
 /// The links a page authored (`origin_page_id = id`), in id order.
-fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
+pub(crate) fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
     let mut refs = Vec::new();
     scan_prefix(
         read,
@@ -1306,6 +1315,7 @@ impl Store {
                 edges: Vec::new(),
             });
         }
+        let today = iso(self.env.now_micros())[..10].to_string();
         let mut nodes: HashMap<u64, FanoutNode> = HashMap::new();
         let mut incident: HashMap<u64, Vec<LinkRecord>> = HashMap::new();
         while let Some(row) = stack.pop() {
@@ -1361,6 +1371,11 @@ impl Store {
                     || link_types
                         .as_ref()
                         .is_some_and(|t| !t.contains(link.link_type.as_str()))
+                {
+                    continue;
+                }
+                if let Some(temporal) = &options.temporal
+                    && !edge_passes(&*read, &link, temporal, &today)?
                 {
                     continue;
                 }
@@ -1450,6 +1465,13 @@ impl Store {
             suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
+        let today = iso(self.env.now_micros())[..10].to_string();
+        let live = |link: &LinkRecord| -> Result<bool> {
+            match &options.temporal {
+                Some(temporal) => edge_passes(&*read, link, temporal, &today),
+                None => Ok(true),
+            }
+        };
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
         let frontier: BTreeSet<u64> = frontier.iter().copied().collect();
         let toward_object = options.toward == "object";
@@ -1473,7 +1495,8 @@ impl Store {
                 ) else {
                     continue;
                 };
-                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? {
+                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? || !live(&link)?
+                {
                     continue;
                 }
                 let forward = has(&options.subject_types, &lf.page_type)
@@ -1565,6 +1588,7 @@ impl Store {
                     || !has(&options.degree_link_types, &link.link_type)
                     || !not_mentions(&link)
                     || !ranks(&link)
+                    || !live(&link)?
                 {
                     continue;
                 }

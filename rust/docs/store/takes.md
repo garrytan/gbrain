@@ -17,6 +17,10 @@ Keys (tag `A`, `keys::TAKE`):
   synthesis page's source).
 - `A 0x04 <take page><row><synthesis page>` is empty: the reverse index a take delete walks.
 
+A take purge tombstone (`F 0x10`, [facts.md](facts.md#the-take-purge-ledger)) refuses a take whose claim it names:
+`addTakesBatch` checks every row and `supersedeTake` the new row with `purged_content`, as the `takes_refuse_purged`
+trigger does.
+
 `<row>` is `(row_num as u32 ^ 0x8000_0000)` big-endian, so negative row numbers sort first. A take keeps
 the `source_id` of its page and a `claim_rev` that moves each time the claim text changes (for the
 embedding staleness check owned by core). `addTakesBatch` that changes a take's claim drops the take's stored vector (`embeddings::remove_take_vector`, which also raises the vector generation), as Postgres nulls the embedding in that upsert; deleting a take deletes its vector too.

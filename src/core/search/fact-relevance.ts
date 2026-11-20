@@ -30,15 +30,11 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
-import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { namedEntity } from './entity-anchor.ts';
-import { poolWhere, FACT_POOL_COLUMNS, type FactPoolScope, type FactPoolFilters, type RelevanceVector } from '../engine-sql/facts-trust.ts';
-import { renderFragment } from '../engine-sql/fragment.ts';
-import { supportsHnswIterativeScan } from '../vector-index.ts';
-import { VECTOR_EXTENSION_VERSION_SQL } from './vector-statement.ts';
-import { withVectorSettings } from './vector-settings.ts';
+import type { FactPoolScope, FactPoolFilters, RelevanceVector } from '../engine-sql/facts-trust.ts';
+import { CALLED_OFF } from '../engine-sql/facts-recall.ts';
 import type { HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
 import { RETRACTION } from './saved-facts-match.ts';
 import type { SlotRow } from '../facts/slots.ts';
@@ -149,28 +145,11 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
   }
 }
 
-const COLS = FACT_POOL_COLUMNS;
-
 /** The facts embedding column's type and declared dimensions, or null when there is none. */
 async function factsEmbeddingColumn(engine: BrainEngine): Promise<{ type: string; dims: number } | null> {
-  const [row] = await engine.executeRaw<{ type: string; dims: number }>(
-    `SELECT t.typname AS type, a.atttypmod AS dims FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid
-     WHERE a.attrelid = to_regclass('facts') AND a.attname = 'embedding' AND NOT a.attisdropped`);
+  const row = await engine.readFactsEmbeddingColumn();
   return row && (row.type === 'vector' || row.type === 'halfvec') ? { type: row.type, dims: Number(row.dims) } : null;
 }
-
-/**
- * The pool's WHERE clause and its bound params ($1.. in order): the caller's
- * read policy plus the filters. Arms append their own params after these.
- */
-function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefined): { where: string; params: unknown[] } {
-  const { text, params } = renderFragment(poolWhere(scope, filters));
-  return { where: text, params };
-}
-
-/** The comparable-embedding predicate: same model, current text hash, same dimensions (`dims` null when the column declares the query's). */
-const comparable = (model: string, dims: string | null) =>
-  `f.embedding IS NOT NULL AND f.embedding_model = ${model} AND f.embedded_text_hash = md5(f.fact)${dims ? ` AND vector_dims(f.embedding) = ${dims}` : ''}`;
 
 /**
  * GST-1304: a question of up to MAX_QUERY_TERMS content terms is scored on them all. A longer one (a provider's
@@ -195,14 +174,9 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   opts: FactPoolOpts): Promise<FactPool> {
   const all = contentTerms(question);
   const searched = opts.distinctiveTerms && all.length > MAX_QUERY_TERMS ? all.slice(-SEARCH_TERMS) : all.slice(0, MAX_QUERY_TERMS);
-  const { where, params } = poolPredicate(scope, opts.filters);
   const column = queryEmbedding?.length ? await factsEmbeddingColumn(engine) : null;
   const cosine = !!column && (column.dims <= 0 || column.dims === queryEmbedding!.length);
-  const armParams = (extra: unknown[]) => [...params, ...extra];
-  const vec = cosine ? { lit: `[${Array.from(queryEmbedding!).join(',')}]`, cast: column!.type === 'halfvec' ? '::halfvec' : '::vector' } : null;
-  const n = params.length;
-  const simParams = vec ? [vec.lit, getEmbeddingModel(), queryEmbedding!.length] : [];
-  const simSql = vec ? `CASE WHEN ${comparable(`$${n + 2}`, `$${n + 3}`)} THEN 1 - (f.embedding <=> $${n + 1}${vec.cast}) END AS similarity` : 'NULL::float8 AS similarity';
+  const vec = cosine ? { lit: `[${Array.from(queryEmbedding!).join(',')}]`, type: column!.type === 'halfvec' ? 'halfvec' as const : 'vector' as const } : null;
   const allSim = vec && opts.cosineForAll;
   const found = new Map<number, FactCandidate>();
   const add = (rows: Array<FactCandidate & { similarity?: number | null }>, entity = false) => {
@@ -214,24 +188,15 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   };
 
   type Row = FactCandidate & { similarity?: number | null };
-  const vector: RelevanceVector | null = allSim ? { literal: vec!.lit, type: column!.type === 'halfvec' ? 'halfvec' : 'vector', model: getEmbeddingModel(), dims: queryEmbedding!.length } : null;
+  const vector: RelevanceVector | null = allSim ? { literal: vec!.lit, type: vec!.type, model: getEmbeddingModel(), dims: queryEmbedding!.length } : null;
   const keyword = async (): Promise<Row[]> => {
     if (!searched.length) return [];
     return engine.listFactsForRelevance({ arm: 'keyword', scope, filters: opts.filters, vector, terms: searched.join(' '), limit: opts.depth.keyword }) as Promise<Row[]>;
   };
   const nearest = async (): Promise<Row[]> => {
     if (!vec) return [];
-    const p = armParams(simParams);
-    const sql = `SELECT ${COLS}, ${simSql} FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
-       ORDER BY f.embedding <=> $${n + 1}${vec.cast} LIMIT $${p.length + 1}`;
-    const bound = [...p, opts.depth.cosine];
-    if (!opts.hnswIterativeScan) return engine.executeRaw<Row>(sql, bound);
-    return engine.transaction(async tx => {
-      const iterative = opts.hnswIterativeScan !== 'off'
-        && supportsHnswIterativeScan((await tx.executeRaw<{ extversion: string }>(VECTOR_EXTENSION_VERSION_SQL))[0]?.extversion);
-      return withVectorSettings((s, v) => tx.executeRaw(s, v), iterative, opts.depth.cosine, 20_000,
-        () => tx.executeRaw<Row>(sql, bound), undefined, opts.hnswIterativeScan);
-    });
+    return engine.listNearestFacts({ scope, filters: opts.filters, vector: { literal: vec.lit, type: vec.type, model: getEmbeddingModel(), dims: queryEmbedding!.length },
+      declared: column!.dims > 0, limit: opts.depth.cosine, hnswIterativeScan: opts.hnswIterativeScan });
   };
   const entityFacts = async (): Promise<Row[]> => {
     const sourceIds = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
@@ -272,14 +237,7 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
  */
 export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<Array<SlotRow & Omit<FactCandidate, 'entity'>>> {
   if (!slots.length) return [];
-  const { where, params } = poolPredicate(scope, { includeExpired: true });
-  const n = params.length;
-  return engine.executeRaw<SlotRow & Omit<FactCandidate, 'entity'>>(
-    `SELECT ${COLS} FROM facts f
-     WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
-       AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
-     ORDER BY f.valid_from, f.id`,
-    [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
+  return engine.listSlotRows(scope, slots);
 }
 
 /**
@@ -288,22 +246,13 @@ export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, sl
  */
 export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
   if (!keys.length) return [];
-  const { where, params } = poolPredicate(scope, undefined);
-  const n = params.length;
-  return engine.executeRaw<{ source_id: string; entity_slug: string }>(
-    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
-       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
+  return engine.listPoolUnbackedKeys(scope, keys, limit);
 }
 
-/** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */
-const CALLED_OFF = String.raw`rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned`;
-const CALL_OFF_SQL = String.raw`\m(${RETRACTION}|${CALLED_OFF})\M`;
+/** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words (`CALLED_OFF`, engine-sql/facts-recall.ts). Fixed, never configurable. */
 const CALL_OFF_WORDS = new RegExp(String.raw`\b(${RETRACTION}|${CALLED_OFF})\b`, 'gi');
 /** A cue a word or two after one of these is negated ("not cancelled", "wasn't called off", "isn't a rumour"). Fixed, never configurable. */
 const NEGATED = /(?:^|[^\p{L}\p{N}'’])(?:not|never|no|[\p{L}]+n['’]t)\s+(?:[\p{L}\p{N}'’-]+\s+)?$/iu;
-/** Cue facts read per entity at most, the newest first. */
-const CALL_OFF_DEPTH = 50;
 
 /**
  * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
@@ -319,14 +268,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
   const keyed = facts.filter(f => f.entity_slug);
   if (!keyed.length) return out;
   const pairs = [...new Map(keyed.map(f => [`${f.source_id}\u0000${f.entity_slug}`, f])).values()];
-  const { where, params } = poolPredicate(scope, undefined);
-  const n = params.length;
-  const cues = await engine.executeRaw<FactCandidate>(
-    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
-       FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
-         AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))) f
-     WHERE f.call_off_rank <= $${n + 4}`,
-    [...params, CALL_OFF_SQL, pairs.map(f => f.source_id), pairs.map(f => f.entity_slug), CALL_OFF_DEPTH]);
+  const cues = await engine.listCallOffCueFacts(scope, pairs.map(f => ({ source_id: f.source_id, entity_slug: f.entity_slug! })));
   const time = (v: Date | string) => new Date(v).getTime();
   const calledOff = (text: string) => [...text.matchAll(CALL_OFF_WORDS)].some(m => !NEGATED.test(text.slice(0, m.index)));
   const terms = (slug: string, text: string) => {
@@ -351,9 +293,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
 
 /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool (the namesake check runs on these before any ranking). */
 export async function poolEntityPairs(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>> {
-  const { where, params } = poolPredicate(scope, filters);
-  return engine.executeRaw<{ source_id: string; entity_slug: string }>(
-    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug IS NOT NULL ORDER BY f.source_id, f.entity_slug`, params);
+  return engine.listPoolEntityPairs(scope, filters);
 }
 
 export interface ScoredFact {

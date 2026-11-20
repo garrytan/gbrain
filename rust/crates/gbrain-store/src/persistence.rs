@@ -62,8 +62,11 @@ mod noop_settle;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod projection_rebuild;
+mod purge_effects;
 mod receipt_list;
 mod topology;
+pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
@@ -74,6 +77,12 @@ pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub use projection_rebuild::{
+    ProjectionJobKey, QueuedProjectionFilter, QueuedProjectionKey, QueuedProjectionPages,
+};
+pub use purge_effects::{
+    GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
+};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 
@@ -314,6 +323,38 @@ pub(crate) fn count_outstanding_by_source_in(
         .into_iter()
         .map(|(source_id, n)| json!({ "source_id": source_id, "n": n }))
         .collect())
+}
+
+/// The journal half of `readWriteWatermarkRow` (`engine-sql/applied-watermark-reads.ts`): the
+/// outstanding requests of one source incarnation (lowest sequence, how many, oldest admission) and,
+/// when none is outstanding, the newest sequence in the brain. `incarnation` is `None` for an absent
+/// source, which has no outstanding request.
+pub(crate) fn read_request_watermark_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: Option<&str>,
+) -> Result<Value> {
+    let all = all_requests(read)?;
+    let pending: Vec<_> = all
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && incarnation == Some(r.source_incarnation.as_str())
+                && OUTSTANDING_STATES.contains(&r.state.as_str())
+        })
+        .collect();
+    let pending_min = pending.iter().map(|r| r.sequence).min();
+    let pending_since = pending.iter().map(|r| r.created_at_us).min().map(iso);
+    let newest = match pending_min {
+        None => all.iter().map(|r| r.sequence).max(),
+        Some(_) => None,
+    };
+    Ok(json!({
+        "pending_min": pending_min,
+        "pending_count": pending.len(),
+        "pending_since": pending_since,
+        "newest_sequence": newest,
+    }))
 }
 
 /// `persistence/receipt-bytes.ts` `COMPACTED_HEADROOM_BYTES`.
@@ -1324,6 +1365,16 @@ impl Store {
         principal_id: &str,
     ) -> Result<Vec<Value>> {
         count_outstanding_by_source_in(&*self.read()?, principal_kind, principal_id)
+    }
+
+    /// `readWriteWatermarkRow`'s journal half: `{ pending_min, pending_count, pending_since,
+    /// newest_sequence }` of one source incarnation (`None` for an absent source).
+    pub fn read_request_watermark(
+        &self,
+        source_id: &str,
+        incarnation: Option<&str>,
+    ) -> Result<Value> {
+        read_request_watermark_in(&*self.read()?, source_id, incarnation)
     }
 
     /// `readCounterRows(keys)`: the counter rows that exist, in byte order (`COLLATE "C"`), unlocked.

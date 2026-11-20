@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
+import { dropRekeyDuplicates, type RekeyEngine } from '../facts/ontology-rekey.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -94,7 +94,7 @@ export async function moveSlugBindings(
 ): Promise<void> {
   if (oldSlug === newSlug) return;
   await tx.moveFactWithdrawalSubject(sourceId, oldSlug, newSlug);
-  type Savepoint = Pick<BrainEngine, 'executeRaw'>;
+  type Savepoint = Pick<BrainEngine, 'executeRaw'> & RekeyEngine;
   const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
   const statements: Array<(savepoint: Savepoint) => Promise<unknown>> = [
     savepoint => dropRekeyDuplicates(savepoint, sourceId, { where: 'f.entity_slug = $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: [oldSlug, newSlug] }),

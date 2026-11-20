@@ -1,6 +1,6 @@
 /**
- * The purge receipt's bounded probe (countPurgeProbe, src/core/engine-sql/purge-verify.ts) runs in its own transaction
- * under `SELECT set_config('statement_timeout',$1,true)`. A probe the server cancels at that timeout reports
+ * The purge receipt's bounded probe (boundedProbe, src/core/facts/purge-verify.ts) runs countPurgeProbe in its own
+ * transaction under `setPurgeProbeTimeout` (`SELECT set_config('statement_timeout',$1,true)`). A probe the server cancels at that timeout reports
  * `{ unverified: 'statement_deadline' }`, so the receipt says the store was not verified instead of failing or
  * claiming it is clean.
  *
@@ -18,15 +18,22 @@
  *  - Seam: a second real connection holds ACCESS EXCLUSIVE on `pages` (Postgres); a `transaction` that throws a 57014
  *    error stands in for the server (PGLite).
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { countPurgeProbe, type PurgeProbe } from '../src/core/engine-sql/purge-verify.ts';
+import type { PurgeProbe } from '../src/core/engine-sql/facts-purge-plan.ts';
+import { boundedProbe, __setPurgeProbeLimitsForTests } from '../src/core/facts/purge-verify.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const probe: PurgeProbe = { kind: 'slug_key', store: 'pages', sourceId: 'default', slug: 'notes/held' };
+
+/** The probe under `statementMs`, with a row bound of 10 and no receipt deadline. */
+function countPurgeProbe(engine: Pick<BrainEngine, 'transaction'>, p: PurgeProbe, limits: { rows: number; statementMs: number }) {
+  __setPurgeProbeLimitsForTests(limits);
+  return boundedProbe(engine as BrainEngine, p, Number.POSITIVE_INFINITY);
+}
 
 /** A second connection holding ACCESS EXCLUSIVE on `table` until `release` runs. */
 async function lockTable(url: string, table: 'pages') {
@@ -50,6 +57,7 @@ for (const backend of testBackends()) describe(`[${backend}] purge probe stateme
     await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'Body.', frontmatter: {} });
   }, 120_000);
   afterAll(async () => { if (close) await close(); else await engine.disconnect(); }, 60_000);
+  afterEach(() => { __setPurgeProbeLimitsForTests(null); });
 
   if (backend === 'postgres') {
     test('a probe blocked by a lock stops at its statement timeout as statement_deadline; the timeout stays local', async () => {

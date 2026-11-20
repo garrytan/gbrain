@@ -169,8 +169,7 @@ impl Brain {
         })
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with an access policy; none, as the store keeps
-    /// no folder rules.
+    /// `listAccessPolicySourceIds()`: the sources with access state, by source id.
     #[napi]
     pub fn list_access_policy_source_ids<'env>(
         &self,

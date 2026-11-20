@@ -124,3 +124,20 @@ test('a pending write hint names the applied read; an inspect-owner hint does no
   const inspect = pendingWriteHint({ request_id, state: 'queued', retry_after_ms: 30_000, diagnostic: { next_action: 'inspect_owner' } } as any);
   expect(inspect).not.toContain('--applied');
 });
+
+test('the watermark reads the source row, its checkout and its unembedded pages through typed engine members, not caller raw SQL', () => withEnv({ GBRAIN_HOME: home }, async () => {
+  const { id } = await syncedSource();
+  // The statements readWriteWatermark, readCheckoutRoot and readAppliedWatermark ran before they moved to engine members;
+  // a Rust brain refuses caller raw SQL.
+  const moved = (sql: string) => /persistence_requests|persistence_host_bindings|FROM content_chunks cc/.test(sql);
+  const strict = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return (sql: string, params?: unknown[]) => moved(sql) ? Promise.reject(new Error('caller raw SQL in the watermark')) : target.executeRaw(sql, params);
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) as BrainEngine;
+  const now = Date.now();
+  const expected = await readAppliedWatermark(engine, id, { now });
+  expect(await readAppliedWatermark(strict, id, { now })).toEqual(expected);
+  expect(await readWriteWatermark(strict, id, now)).toEqual(await readWriteWatermark(engine, id, now));
+  expect(expected.embedded_through.unembedded_pages + (expected.embedded_through.state === 'embeddings_off' ? 1 : 0)).toBeGreaterThan(0);
+}), 240_000);

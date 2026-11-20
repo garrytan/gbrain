@@ -1046,6 +1046,37 @@ impl Store {
     }
 }
 
+/// The `subagent_messages` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_message_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<MessageRecord>(read, &prefix(MSG))?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![("content_blocks", ProbeCell::jsonb(&r.content_blocks))],
+        })
+        .collect())
+}
+
+/// The `subagent_tool_executions` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_tool_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<ToolRecord>(read, &prefix(TOOL))?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("input", ProbeCell::jsonb(&r.input)),
+                ("output", ProbeCell::opt_jsonb_text(r.output.as_deref())),
+            ],
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

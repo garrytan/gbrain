@@ -313,6 +313,29 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     expect(importHistoryFor(await cachedSyncReasonScan(engines[0]!, range), file)).toEqual({ reason: 'Canary reason for source-a.', reasonSource: { commit: to, path: 'notes/a.md' }, historyGap: false });
     expect(importHistoryFor(await cachedSyncReasonScan(otherBrain, range), file)).toEqual({ reason: null, historyGap: false });
   }), 120_000);
+
+  test('the scan reads its purge epoch and its tombstones through typed engine members, not caller raw SQL', async () => inHome(async () => {
+    const id = `rt-typed-${++serial}`;
+    const root = newRepo({ 'notes/a.md': page('A one.'), 'notes/b.md': page('B one.') });
+    const from = git(root, 'rev-parse', 'HEAD');
+    write(root, { 'notes/a.md': page('A two.'), 'notes/b.md': page('B two.') });
+    const to = commit(root, 'edit', ['notes/a.md: Purged reason.', 'notes/b.md: Kept reason.']);
+    await otherBrain.executeRaw(`INSERT INTO sources(id, name, local_path, config) VALUES ($1, $1, $2, '{}')`, [id, root]);
+    await otherBrain.executeRaw('UPDATE sources SET purge_epoch = 1 WHERE id = $1', [id]);
+    await otherBrain.executeRaw('INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) VALUES ($1, $2, $3)', [id, to, 'notes/a.md']);
+    // The two statements scanSyncReasons and cachedSyncReasonScan ran before they moved to engine members; a Rust brain
+    // refuses caller raw SQL.
+    const moved = (sql: string) => /FROM reason_purge_tombstones|SELECT purge_epoch FROM sources/.test(sql);
+    const strict = new Proxy(otherBrain, { get(target, key) {
+      if (key === 'executeRaw') return (sql: string, params?: unknown[]) => moved(sql) ? Promise.reject(new Error('caller raw SQL in the reason scan')) : target.executeRaw(sql, params);
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }) as BrainEngine;
+    const range = { sourceId: id, sourceRoot: root, from, to };
+    const scan = await cachedSyncReasonScan(strict, range);
+    expect(importHistoryFor(scan, join(root, 'notes/a.md'))).toEqual({ reason: null, historyGap: false });
+    expect(importHistoryFor(scan, join(root, 'notes/b.md'))).toEqual({ reason: 'Kept reason.', reasonSource: { commit: to, path: 'notes/b.md' }, historyGap: false });
+  }), 120_000);
 });
 
 describe('A7: purge reaches change reasons', () => {

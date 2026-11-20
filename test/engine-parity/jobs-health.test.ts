@@ -2,7 +2,7 @@
  * BrainEngine parity — queue health reads (engine-sql/jobs-health.ts): the counts `gbrain doctor`'s queue checks, the
  * advisor's stalled-jobs collector and the submit-time queue probe ask of `minion_jobs`: readQueueHealthSignals,
  * listWaitingByQueue, readQueueDivergence, listQueueWedgeCounts, listPrivateQueueHealth, readWedgeSignals,
- * readOldestWaitingAge and listStuckActiveJobsByName.
+ * readOldestWaitingAge, countWaitingJobs and listStuckActiveJobsByName.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each read returns the same counts, ties, orders and nulls on every engine arm (PGLite always; Postgres
@@ -295,4 +295,16 @@ describe('engine parity: queue health reads', () => {
       await completed(engine, 'work');
       return await engine.listStuckActiveJobsByName();
     });
+
+  parityTest('countWaitingJobs counts waiting jobs and can leave out facts-absorb jobs', { methods: ['admitJob', 'countWaitingJobs'] }, async (engine) => {
+    const empty = await engine.countWaitingJobs(false);
+    await waiting(engine, 'work', 2);
+    await waiting(engine, 'facts-absorb', 1);
+    await add(engine, 'work', { status: 'delayed', delay_until: FAR });
+    await active(engine, 'busy', 'c1');
+    const all = await engine.countWaitingJobs(false);
+    const noAbsorb = await engine.countWaitingJobs(true);
+    expect({ empty, all, noAbsorb }).toEqual({ empty: 0, all: 3, noAbsorb: 2 });
+    return { empty, all, noAbsorb };
+  });
 });
