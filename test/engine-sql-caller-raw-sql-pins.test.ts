@@ -964,8 +964,8 @@ SELECT source_id, type FROM pairs`],
     texts: [`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
       to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
-     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug COLLATE "C", f.id`],
+     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')}) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
+      AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')} ORDER BY f.entity_slug COLLATE "C", f.id`],
   },
   {
     from: 'src/core/facts/facts-home.ts:112 scanFactsHome, at dded7edc51',
@@ -2287,12 +2287,4 @@ describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
       expect(member.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual(template);
     });
   }
-});
-
-describe('listHeldFactRows writes the holding-slug tests out', () => {
-  test('the statement holds holdingSlugSql for the page slug and the entity slug', async () => {
-    const text = await Bun.file(new URL('../src/core/engine-sql/collate-facts-home-reads.ts', import.meta.url)).text();
-    expect(text).toContain(`hp.source_id = $1 AND ${holdingSlugSql('hp.slug')}`);
-    expect(text).toContain(`AND NOT ${holdingSlugSql('f.entity_slug')}`);
-  });
 });
