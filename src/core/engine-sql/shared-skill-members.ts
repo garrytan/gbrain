@@ -86,7 +86,7 @@ export async function listSharedSkillCatalogHeads(exec: SqlExecutor, q: SharedSk
     AND ($3::text IS NULL OR h.source_id=$3) AND ($4::text IS NULL OR h.source_incarnation::text=$4)
     AND ($5::text IS NULL OR h.pack_id=$5) AND ($6::text IS NULL OR h.name=$6)
     AND ($7::boolean=false OR COALESCE((h.metadata->>'private')::boolean,false)=false)
-    ORDER BY h.source_id,h.source_incarnation,h.pack_id,h.name LIMIT $2`,
+    ORDER BY h.source_id COLLATE "C",h.source_incarnation,h.pack_id COLLATE "C",h.name COLLATE "C" LIMIT $2`,
   [q.sourceIds, q.limit, q.sourceId, q.sourceIncarnation, q.packId, q.name, q.hidePrivate]);
 }
 
@@ -102,7 +102,7 @@ export async function readSharedSkillPolicyRow(exec: SqlExecutor, sourceId: stri
 /** The sources a member may follow: not archived, in both lists (a null list matches all), by id, at most 65 rows. */
 export async function listSharedSkillFollowSources(exec: SqlExecutor, allowed: string[] | null, sourceIds: string[] | null): Promise<Array<{ id: string; incarnation: string }>> {
   return exec.executeRaw<{ id: string; incarnation: string }>(`SELECT id,incarnation FROM sources
-    WHERE NOT archived AND ($1::text[] IS NULL OR id=ANY($1::text[])) AND ($2::text[] IS NULL OR id=ANY($2::text[])) ORDER BY id LIMIT 65`, [allowed, sourceIds]);
+    WHERE NOT archived AND ($1::text[] IS NULL OR id=ANY($1::text[])) AND ($2::text[] IS NULL OR id=ANY($2::text[])) ORDER BY id COLLATE "C" LIMIT 65`, [allowed, sourceIds]);
 }
 
 /** The persistent brain id, locked FOR UPDATE (run it inside the join's transaction), or undefined without the row. */
