@@ -1,4 +1,8 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
+import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
+export type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
+export type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
@@ -2959,6 +2963,30 @@ export interface BrainEngine {
    * Callers decide what a malformed answer means; the direct-write guard refuses it (persistence/managed-mode.ts).
    */
   readManagedModeRows(): Promise<Array<{ enabled: unknown }>>;
+
+  // Reads the import, extract and company-brain paths ran through executeRaw (engine-sql/cli-reads-import.ts), each with its master statement text.
+  /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
+  listSourceRecords(): Promise<SourceRecordRow[]>;
+  /** A source's config and incarnation, or null for an unknown id. */
+  readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
+  /** Whether the source's current incarnation has a company-brain ingestion receipt. */
+  hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
+  /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
+  readDatabaseClock(): Promise<string>;
+  /** Every live page (of one source when given) with aliases and knowledge revision, by source then slug. */
+  listLinkPageMetadata(sourceId?: string): Promise<LinkPageMetadataRow[]>;
+  /** A page's stored non-event timeline rows, in no particular order. */
+  listStoredTimelineRows(sourceId: string, slug: string): Promise<StoredTimelineRow[]>;
+  /** The live pages among `refs` still at the knowledge revision each names, in no particular order. */
+  filterPagesAtRevision(refs: readonly PageAtRevisionRef[]): Promise<Array<{ slug: string; source_id: string }>>;
+  /** The first live page after `afterPageId` in id order, in any source, or null (engine-sql/cli-reads-ops.ts). */
+  nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
+  /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran (engine-sql/entity-reads.ts). */
+  readMentionLastPass(sourceId?: string | null): Promise<string | null>;
+  /** At most two of `slugs` holding a live page of the source (the exact-basename step of entity resolution; engine-sql/entity-reads.ts). */
+  findExactBasenameCandidates(sourceId: string, slugs: readonly string[]): Promise<string[]>;
+  /** The reads behind `describeJobs`: submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs (engine-sql/jobs-insight.ts). */
+  readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;

@@ -295,6 +295,20 @@ export const RUST_ENGINE_MEMBERS = {
   findOntologyConflicts: 'ontology',
   // persistence_journal
   readManagedModeRows: 'persistence_journal',
+  // N4 reads the Rust store does not serve through this engine yet (engine-sql/{cli-reads-import,cli-reads-ops,entity-reads}.ts):
+  // refused as the raw SQL they replace, so the reported capabilities stay as before.
+  listSourceRecords: 'raw_sql',
+  readSourceIncarnation: 'raw_sql',
+  hasCompanyBrainReceipt: 'raw_sql',
+  readDatabaseClock: 'raw_sql',
+  listLinkPageMetadata: 'raw_sql',
+  listStoredTimelineRows: 'raw_sql',
+  filterPagesAtRevision: 'raw_sql',
+  nextLivePageAfter: 'raw_sql',
+  readMentionLastPass: 'raw_sql',
+  findExactBasenameCandidates: 'raw_sql',
+  // The reads behind describeJobs (engine-sql/jobs-insight.ts), answered from the store's job rows (rust/crates/gbrain-store/src/jobs/insight.rs).
+  readJobInsight: 'minion_queue',
   readPersistenceBrainId: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',

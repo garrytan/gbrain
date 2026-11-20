@@ -21,9 +21,8 @@ export interface LinkPageMetadata {
   knowledge_revision: string;
 }
 
-export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<LinkPageMetadata[]> {
-  return engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'listLinkPageMetadata'>, sourceId?: string): Promise<LinkPageMetadata[]> {
+  return engine.listLinkPageMetadata(sourceId);
 }
 
 export function makeIndexedLinkResolver(pages: readonly LinkPageMetadata[], sourceId: string): SlugResolver {

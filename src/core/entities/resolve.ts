@@ -363,12 +363,7 @@ async function findExactBasenameCandidates(
   if (raw.includes('/') || !token.includes('-')) return [];
   let rows: Array<{ slug: string }>;
   try {
-    rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
-        LIMIT 2`,
-      [source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`)],
-    );
+    rows = (await engine.findExactBasenameCandidates(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`))).map(slug => ({ slug }));
   } catch {
     return [];
   }

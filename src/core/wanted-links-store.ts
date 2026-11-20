@@ -32,10 +32,8 @@ export interface WantedLinksReplacement {
 }
 
 /** The database clock as a UTC ISO string with microseconds, independent of the session's DateStyle. */
-export async function wantedReadAt(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
-  const [row] = await engine.executeRaw<{ at: string }>(
-    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
-  return row!.at;
+export async function wantedReadAt(engine: Pick<BrainEngine, 'readDatabaseClock'>): Promise<string> {
+  return engine.readDatabaseClock();
 }
 
 /**

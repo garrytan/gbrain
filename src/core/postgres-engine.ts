@@ -211,6 +211,11 @@ export function cancelSettleMs(): number {
 }
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
+import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
+import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
+import * as entityReadsImpl from './engine-sql/entity-reads.ts';
+import * as jobsInsight from './engine-sql/jobs-insight.ts';
+import type { PageAtRevisionRef } from './engine-sql/cli-reads-import.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
@@ -1103,6 +1108,23 @@ export class PostgresEngine implements BrainEngine {
   getSource(sourceId: string) { return this.preparationRead(exec => sourcesImpl.getSource(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw'), sourceId)); }
   getConfigValues(keys: readonly string[]) { return this.preparationRead(exec => configImpl.getConfigValues(unscopedExecutor(exec, 'config: keyed read ran unscoped through executeRaw'), keys)); }
   readManagedModeRows() { return this.preparationRead(exec => persistenceStateImpl.readManagedModeRows(unscopedExecutor(exec, 'persistence: managed-mode read ran unscoped through executeRaw'))); }
+
+  // The import, extract and company-brain reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
+  private get cliReads() { return unscopedExecutor(this.engineSql, 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
+  listSourceRecords() { return cliReadsImpl.listSourceRecords(this.cliReads); }
+  readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this.cliReads, sourceId); }
+  hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
+  readDatabaseClock() { return this.preparationRead(exec => cliReadsImpl.readDatabaseClock(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'))); }
+  listLinkPageMetadata(sourceId?: string) { return cliReadsImpl.listLinkPageMetadata(this.cliReads, sourceId); }
+  listStoredTimelineRows(sourceId: string, slug: string) { return cliReadsImpl.listStoredTimelineRows(this.cliReads, sourceId, slug); }
+  filterPagesAtRevision(refs: readonly PageAtRevisionRef[]) { return cliReadsImpl.filterPagesAtRevision(this.cliReads, refs); }
+  // The exact-phrase scan's next-page read (engine-sql/cli-reads-ops.ts), through this engine's executeRaw as before.
+  nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.executeRaw.bind(this), afterPageId); }
+  // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
+  readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }
+  findExactBasenameCandidates(sourceId: string, slugs: readonly string[]) { return this.preparationRead(exec => entityReadsImpl.findExactBasenameCandidates(unscopedExecutor(exec, 'entities: exact basename ran unscoped through executeRaw'), sourceId, slugs)); }
+  // The reads behind describeJobs (engine-sql/jobs-insight.ts).
+  async readJobInsight(spec: jobsInsight.JobInsightSpec) { return jobsInsight.readJobInsight(this, spec); }
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }
   readPersistenceBrainId() { return this.preparationRead(exec => persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(exec, 'persistence: brain identity read ran unscoped through executeRaw'))); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }

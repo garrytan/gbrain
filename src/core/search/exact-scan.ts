@@ -169,7 +169,7 @@ SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type, pp.matching_chunks
 }
 
 /** Runs the scan from `afterPageId` until the scope ends, the limit fills or the deadline passes. */
-export async function runExactScan(engine: Pick<BrainEngine, 'executeRaw'>, opts: ExactScanOpts): Promise<ExactScanResult> {
+export async function runExactScan(engine: Pick<BrainEngine, 'executeRaw' | 'nextLivePageAfter'>, opts: ExactScanOpts): Promise<ExactScanResult> {
   const matches: ExactMatch[] = [];
   const gaps: Array<{ page_id: number; slug: string; source_id: string; reason: ExactGapReason }> = [];
   let after = opts.afterPageId ?? 0;
@@ -189,8 +189,7 @@ export async function runExactScan(engine: Pick<BrainEngine, 'executeRaw'>, opts
       if (!isStatementTimeoutError(e)) throw e;
       if (Date.now() >= opts.deadlineMs) { reason = 'deadline'; break; }
       if (batch > 1) { batch = Math.max(1, Math.floor(batch / 2)); continue; }
-      const [next] = await engine.executeRaw<{ id: number; slug: string; source_id: string }>(
-        'SELECT id, slug, source_id FROM pages WHERE id > $1::int AND deleted_at IS NULL ORDER BY id LIMIT 1', [after]);
+      const next = await engine.nextLivePageAfter(after);
       if (!next) { done = true; break; }
       gaps.push({ page_id: Number(next.id), slug: next.slug, source_id: next.source_id, reason: 'scan_timeout' });
       after = Number(next.id);

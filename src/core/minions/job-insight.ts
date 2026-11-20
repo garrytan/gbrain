@@ -145,60 +145,35 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   const [clock] = await engine.executeRaw<{ now: string }>('SELECT now() AS now');
   const now = new Date(clock.now).getTime();
 
-  const meta = new Map((await engine.executeRaw<{ id: number; submitter: string | null; parent_owner: string | null }>(
-    `SELECT j.id, CASE WHEN j.submission_authority->>'kind' = 'application' THEN j.data->>'__submitter' END AS submitter,
-            p.data->>'__owner_client_id' AS parent_owner
-       FROM minion_jobs j LEFT JOIN minion_jobs p ON p.id = j.parent_job_id
-      WHERE j.id = ANY($1::int[])`, [ids])).map(r => [Number(r.id), r]));
-
   const waiting = jobs.filter(j => j.status === 'waiting');
+  const parents = jobs.filter(j => j.status === 'waiting-children');
+  const lockIds = [...new Set(jobs.filter(j => j.status === 'waiting' || j.status === 'delayed').flatMap(locksFor))];
+  // The six reads of the batch, run together by one engine member (engine-sql/jobs-insight.ts).
+  const read = await engine.readJobInsight({
+    jobIds: ids, waitingIds: waiting.map(j => j.id), waitingQueues: [...new Set(waiting.map(j => j.queue))],
+    parentIds: parents.map(j => j.id), lockIds, holderQueue: HOLDER_ROW_QUEUE, owner,
+  });
+
+  const meta = new Map(read.meta.map(r => [Number(r.id), r]));
+
   const positions = new Map<number, number>();
   const holders = new Map<string, Array<{ id: number; name: string; owner: string | null }>>();
-  if (waiting.length > 0) {
-    const ahead = await engine.executeRaw<{ id: number; ahead: number | string }>(
-      `SELECT j.id, (SELECT count(*) FROM minion_jobs w
-                      WHERE w.queue = j.queue AND w.status = 'waiting'
-                        AND (w.priority, w.created_at, w.id) < (j.priority, j.created_at, j.id)) AS ahead
-         FROM minion_jobs j WHERE j.id = ANY($1::int[])`, [waiting.map(j => j.id)]);
-    for (const r of ahead) positions.set(Number(r.id), num(r.ahead));
-    const active = await engine.executeRaw<{ id: number; name: string; queue: string; owner: string | null }>(
-      `SELECT id, name, queue, data->>'__owner_client_id' AS owner FROM minion_jobs
-        WHERE status = 'active' AND queue = ANY($1::text[]) AND queue <> $2 ORDER BY started_at ASC NULLS LAST, id ASC LIMIT 500`,
-      [[...new Set(waiting.map(j => j.queue))], HOLDER_ROW_QUEUE]);
-    for (const r of active) {
-      const list = holders.get(r.queue) ?? [];
-      list.push({ id: Number(r.id), name: r.name, owner: r.owner });
-      holders.set(r.queue, list);
-    }
+  for (const r of read.ahead) positions.set(Number(r.id), num(r.ahead));
+  for (const r of read.holders) {
+    const list = holders.get(r.queue) ?? [];
+    list.push({ id: Number(r.id), name: r.name, owner: r.owner });
+    holders.set(r.queue, list);
   }
 
   const children = new Map<number, Array<{ id: number; owner: string | null }>>();
-  const parents = jobs.filter(j => j.status === 'waiting-children');
-  if (parents.length > 0) {
-    const rows = await engine.executeRaw<{ id: number; parent_job_id: number; owner: string | null }>(
-      `SELECT id, parent_job_id, data->>'__owner_client_id' AS owner FROM minion_jobs
-        WHERE parent_job_id = ANY($1::int[]) AND status NOT IN ('completed','failed','dead','cancelled') ORDER BY id ASC`,
-      [parents.map(j => j.id)]);
-    for (const r of rows) {
-      const list = children.get(Number(r.parent_job_id)) ?? [];
-      list.push({ id: Number(r.id), owner: r.owner });
-      children.set(Number(r.parent_job_id), list);
-    }
+  for (const r of read.children) {
+    const list = children.get(Number(r.parent_job_id)) ?? [];
+    list.push({ id: Number(r.id), owner: r.owner });
+    children.set(Number(r.parent_job_id), list);
   }
 
   const locks = new Map<string, LockRow>();
-  const lockIds = [...new Set(jobs.filter(j => j.status === 'waiting' || j.status === 'delayed').flatMap(locksFor))];
-  if (lockIds.length > 0) {
-    const rows = await engine.executeRaw<LockRow & { id: string; beacon: unknown }>(
-      `SELECT l.id, l.holder_pid, l.holder_host, l.acquired_at, l.ttl_expires_at, b.data->'drain_lease_beacon' AS beacon,
-              h.data->>'__owner_client_id' AS holder_owner
-         FROM gbrain_cycle_locks l
-         LEFT JOIN minion_jobs b ON b.queue = $2 AND b.lock_token = l.acquisition_token::text
-         LEFT JOIN minion_jobs h ON (b.data->'drain_lease_beacon'->>'kind') = 'job'
-                                AND h.id::text = (b.data->'drain_lease_beacon'->>'id')
-        WHERE l.id = ANY($1::text[]) AND l.ttl_expires_at > now()`, [lockIds, HOLDER_ROW_QUEUE]);
-    for (const r of rows) locks.set(r.id, { ...r, beacon: record(r.beacon) });
-  }
+  for (const r of read.locks) locks.set(r.id, { ...r, beacon: record(r.beacon) });
 
   const spendRows = await engine.executeRaw<SpendRow>(
     `WITH RECURSIVE tree(root, id, owner, depth) AS (
@@ -214,13 +189,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
       WHERE t.id = t.root OR $2::text IS NULL OR t.owner = $2::text
       GROUP BY 1, 2`, [ids, owner]);
   const foreignTokens = new Map<number, { i: number; o: number; c: number }>();
-  if (owner !== null) {
-    const rows = await engine.executeRaw<{ parent_job_id: number; i: number | string; o: number | string; c: number | string }>(
-      `SELECT parent_job_id, sum(tokens_input) AS i, sum(tokens_output) AS o, sum(tokens_cache_read) AS c FROM minion_jobs
-        WHERE parent_job_id = ANY($1::int[]) AND status = 'completed' AND data->>'__owner_client_id' IS DISTINCT FROM $2::text
-        GROUP BY 1`, [ids, owner]);
-    for (const r of rows) foreignTokens.set(Number(r.parent_job_id), { i: num(r.i), o: num(r.o), c: num(r.c) });
-  }
+  for (const r of read.foreign_tokens) foreignTokens.set(Number(r.parent_job_id), { i: num(r.i), o: num(r.o), c: num(r.c) });
 
   const ctx: BlockCtx = { positions, holders, children, locks, owns, owner, remote: opts.remote === true };
   for (const job of jobs) {
