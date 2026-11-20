@@ -16,7 +16,9 @@ import type { EngineRawRead } from './cli-reads-ops.ts';
 
 /**
  * The members of this file. Each replaced a statement a doctor check ran through its deadline-bound executeRaw, so
- * src/core/statement-deadline.ts keeps that bound on them (BOUNDED_TYPED_READS).
+ * src/core/statement-deadline.ts keeps that bound on them (BOUNDED_TYPED_READS). A page purge's preparation reads
+ * `readRequestIndexStates` too, so it is a typed preparation read (persistence/bounded-reads.ts TYPED_PREPARATION_READS):
+ * on Postgres it runs through `ownRawRead` and ends at the claim's deadline and the clock's abort.
  */
 export const DOCTOR_HEALTH_MEMBERS: readonly string[] = [
   'countContextualRetrievalCoverage', 'countAbandonedThreads', 'countAppliedGradeVerdicts', 'countOrphanedEventProjections',

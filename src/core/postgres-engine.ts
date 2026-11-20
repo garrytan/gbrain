@@ -1293,7 +1293,7 @@ export class PostgresEngine implements BrainEngine {
   readTimelineDedupIndex() { return doctorHealthImpl.readTimelineDedupIndex(this.executeRaw.bind(this)); }
   readPagesUpsertArbiter() { return doctorHealthImpl.readPagesUpsertArbiter(this.executeRaw.bind(this)); }
   readRetrievalTrackingColumn() { return doctorHealthImpl.readRetrievalTrackingColumn(this.executeRaw.bind(this)); }
-  readRequestIndexStates(names: readonly string[]) { return doctorHealthImpl.readRequestIndexStates(this.executeRaw.bind(this), names); }
+  readRequestIndexStates(names: readonly string[]) { return this.ownRawRead(exec => doctorHealthImpl.readRequestIndexStates(exec.executeRaw.bind(exec), names)); }
   // Doctor reads, second set (engine-sql/doctor-derived.ts).
   readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.executeRaw.bind(this), opts); }
   countSafeIndexPending(sourceIds?: string[]) { return doctorDerivedImpl.countSafeIndexPending(this.executeRaw.bind(this), sourceIds); }
