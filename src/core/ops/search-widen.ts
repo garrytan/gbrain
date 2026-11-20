@@ -9,9 +9,7 @@ import { scanExactForCaller } from './search-exact.ts';
 import { applySearchFactsArm } from '../search/query-arms.ts';
 import type { SearchTimings } from '../search/stage-timings.ts';
 import { EXACT_MAX_LIMIT } from '../search/exact-scan.ts';
-import { EXACT_WIDEN_MAX_PAGES, EXACT_WIDEN_SECONDS, exactWidenEnabled, markExactWidened, mergeExactHits, widenPhrase, widenReason } from '../search/exact-widen.ts';
-
-export { exactWidenRan } from '../search/exact-widen.ts';
+import { EXACT_WIDEN_MAX_PAGES, EXACT_WIDEN_SECONDS, exactWidenEnabled, mergeExactHits, widenPhrase, widenReason } from '../search/exact-widen.ts';
 
 /** The facts arm for `search` (search/query-arms.ts applySearchFactsArm) under the op's scope and read policy, timed as the `facts_arm` stage. */
 export function searchFactsArm(ctx: OperationContext, p: Record<string, unknown>, query: string, results: SearchResult[],
@@ -25,8 +23,8 @@ export interface ExactWidenInput {
   /** The caller's row count. */
   limit: number;
   degraded?: ReadonlyArray<{ stage?: string; reason?: string }>;
-  /** The call's own timings object: the key meta reads `exact_widened` back by. */
-  callKey: object;
+  /** The call's own timings: `exactWidened` is set on it when the scan runs. */
+  timings: SearchTimings;
   /** types, where or a language or symbol constraint: the scan cannot honor them, so none runs. */
   filtered: boolean;
 }
@@ -46,18 +44,14 @@ export async function exactWiden(ctx: OperationContext, p: Record<string, unknow
     const phrase = widenPhrase(query);
     const reason = phrase && widenReason(results, phrase.terms, o.degraded);
     if (!phrase || !reason) return unchanged;
-    markExactWidened(o.callKey);
+    o.timings.exactWidened = true;
     const scan = await scanExactForCaller(ctx, { phrase: phrase.phrase, scope: o.scope, ...(o.scope.minTrust ? { minTrust: o.scope.minTrust } : {}),
       limit: Math.min(EXACT_MAX_LIMIT, results.length + EXACT_WIDEN_MAX_PAGES), deadlineMs: Date.now() + EXACT_WIDEN_SECONDS * 1000, ftsTerms: phrase.terms });
     if (!scan.visible.length) return unchanged;
-    const chunks = await ctx.engine.executeRaw<{ id: number; page_id: number; chunk_index: number }>(
-      `SELECT id, page_id, chunk_index FROM content_chunks WHERE (page_id, chunk_index) IN (SELECT * FROM unnest($1::int[], $2::int[]))`,
-      [scan.visible.map(m => m.page_id), scan.visible.map(m => m.snippets[0]?.chunk_index ?? 0)]);
-    const chunkId = new Map(chunks.map(c => [`${c.page_id}:${c.chunk_index}`, Number(c.id)]));
     const hits: SearchResult[] = scan.visible.filter(m => m.snippets.length).map(m => {
       const first = m.snippets[0]!;
       return { slug: m.slug, page_id: m.page_id, title: m.title, type: m.type as PageType, chunk_text: m.snippets.map(s => s.text).join('\n'), chunk_source: first.chunk_source as SearchResult['chunk_source'],
-        chunk_id: chunkId.get(`${m.page_id}:${first.chunk_index}`) ?? 0, chunk_index: first.chunk_index, score: 0, stale: false, source_id: m.source_id, widened: 'exact' as const };
+        chunk_id: first.chunk_id ?? 0, chunk_index: first.chunk_index, score: 0, stale: false, source_id: m.source_id, widened: 'exact' as const };
     });
     const merged = mergeExactHits(results, hits, o.limit, reason === 'thin');
     if (!merged.added.length) return unchanged;
