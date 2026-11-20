@@ -24,6 +24,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
+import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -100,6 +101,28 @@ describe('engine parity: search reads', () => {
       // that arm, so the arm-level proof is that it rejects rather than answers.
       if (backend === 'rust') throw failure;
       return { probeBefore, emptyBefore, probeAfter, seen, rejected: true };
+    },
+  );
+
+  // The exact-lookup tier reads supersedingPageSlugs under the page-read policy alone (not its own filters), so a store that
+  // refuses unknown options (the Rust arm) answers the healthy read and the replaced page stays out of the identity slot.
+  parityTest(
+    'structuralExactLookup: a replaced page never takes the identity slot, on every arm, and a healthy read reports no degraded stage',
+    { methods: ['putPage', 'addLink', 'supersedingPageSlugs'] },
+    async (engine) => {
+      await put(engine, 'notes/canon');
+      await put(engine, 'notes/stale');
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const degraded: Array<{ stage: string }> = [];
+      const slugsOfHits = async (query: string, opts: Record<string, unknown>) =>
+        (await structuralExactLookup(engine, query, { titleCandidates: [], excludeSlugs: [], degraded: degraded as never, ...opts })).map(h => h.slug);
+      const stale = await slugsOfHits('notes/stale', { sourceId: 'default' });
+      const canon = await slugsOfHits('notes/canon', { sourceId: 'default' });
+      const unscoped = await slugsOfHits('notes/stale', {});
+      expect(stale).toEqual([]);
+      expect(canon).toEqual(['notes/canon']);
+      expect(degraded).toEqual([]);
+      return { stale, canon, unscoped, degraded };
     },
   );
 

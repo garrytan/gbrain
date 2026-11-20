@@ -116,6 +116,7 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
   const exactLookupOpts: ExactLookupOpts = {
     ...identityTierOpts,
     titleCandidates: titleResults,
+    degraded: req.degraded,
     takesHoldersAllowList: opts?.takesHoldersAllowList,
     // #4480: gate tier injections on the caller's shape filters.
     type: opts?.type,

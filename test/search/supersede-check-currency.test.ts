@@ -12,6 +12,8 @@
  *  3. Existing coverage misses it: supersede-downrank.test.ts pins the memo (an edge minted inside
  *     the TTL "is skipped") and fail-open without a marker; no test reads the failure from
  *     meta.degraded or runs add-link between two searches in one process.
+ *     (c) the exact-lookup tier (a slug-shaped query puts the page at rank 1) says the same when ITS supersession
+ *     read fails, instead of letting the outdated page win the identity slot with no marker.
  *  4. Seam: engine.supersedingPageSlugs is patched to throw SQLSTATE 57014, as
  *     keyword-arm-timeout-cli-7171.test.ts does for the keyword arm. Real PGLite brain.
  */
@@ -22,6 +24,7 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
+import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
 
 const statementTimeout = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
 
@@ -149,5 +152,72 @@ describe('supersession check currency (PGLite)', () => {
     const rows = await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false });
     expect(slugs(rows)[0]).toBe('notes/pricing-v2');
     expect(rows.find(r => r.slug === 'notes/pricing-v1')?.superseded).toBe(true);
+  });
+
+  describe('exact-lookup tier (identity slot)', () => {
+    const refusal = () => Object.assign(new Error('links not served'), { code: 'engine_capability_missing' });
+
+    test('a slug-shaped query for the outdated page: its identity-slot read fails -> the page still comes back, with the degraded marker', async () => {
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      engine.supersedingPageSlugs = async () => { throw statementTimeout(); };
+      const degraded: Array<{ stage: string; reason?: string }> = [];
+      const hits = await structuralExactLookup(engine, 'notes/pricing-v1', { sourceId: 'default', degraded: degraded as never });
+      expect(hits.map(h => h.slug)).toEqual(['notes/pricing-v1']); // never hides a row
+      expect(degraded).toEqual([{ stage: 'supersede_check_failed', reason: 'timeout' }]);
+    });
+
+    // The first supersession read (the post-fusion stage) answers; the next one, the tier's own, times out. The post-fusion
+    // marker therefore cannot cover for the tier: only the tier's own report can put the marker in the response.
+    function failAfterFirstRead() {
+      let calls = 0;
+      engine.supersedingPageSlugs = async (ids: number[], policy?: Record<string, unknown>) => {
+        if (++calls > 1) throw statementTimeout();
+        return realSupersedingPageSlugs.call(engine, ids, policy as never);
+      };
+    }
+
+    for (const name of ['search', 'query'] as const) {
+      test(`${name} for the outdated page's slug: the tier's read fails -> the page takes rank 1 and _meta.degraded names supersede_check_failed`, async () => {
+        await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+        failAfterFirstRead();
+        meta = null;
+        const params = { query: 'notes/pricing-v1', use_cache: false, ...(name === 'query' ? { expand: false } : {}) };
+        const rows = await operationsByName[name].handler(ctx, params) as Array<{ slug: string }>;
+        expect(rows[0]?.slug).toBe('notes/pricing-v1'); // the outdated page holds the identity slot (the failed read cannot filter it)
+        expect(meta!.degraded).toContainEqual({ stage: 'supersede_check_failed', reason: 'timeout' });
+      });
+    }
+
+    test('healthy: the tier keeps the replaced page out of the identity slot and no marker is reported', async () => {
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      meta = null;
+      const rows = await operationsByName.search.handler(ctx, { query: 'notes/pricing-v1', use_cache: false }) as Array<{ slug: string; exact_lookup?: string }>;
+      expect(rows.some(r => r.exact_lookup === 'slug' && r.slug === 'notes/pricing-v1')).toBe(false);
+      expect((meta!.degraded as Array<{ stage: string }>).map(d => d.stage)).not.toContain('supersede_check_failed');
+    });
+
+    test('healthy: the replaced page never wins the identity slot, and no marker is stamped', async () => {
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      const degraded: Array<{ stage: string }> = [];
+      const hits = await structuralExactLookup(engine, 'notes/pricing-v1', { sourceId: 'default', degraded: degraded as never });
+      expect(hits).toEqual([]);
+      expect(degraded).toEqual([]);
+    });
+
+    test('a refused engine capability reaches the caller, not an empty identity slot', async () => {
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      const err = refusal();
+      engine.supersedingPageSlugs = async () => { throw err; };
+      await expect(structuralExactLookup(engine, 'notes/pricing-v1', { sourceId: 'default' })).rejects.toBe(err);
+    });
+
+    test('the supersession read gets the page-read policy only, never the tier\'s own filters (a store that refuses unknown options must not refuse a healthy read)', async () => {
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      let seen: Record<string, unknown> | undefined;
+      const real = realSupersedingPageSlugs.bind(engine);
+      engine.supersedingPageSlugs = async (ids: number[], policy?: Record<string, unknown>) => { seen = policy; return real(ids, policy as never); };
+      await structuralExactLookup(engine, 'notes/pricing-v1', { sourceId: 'default', titleCandidates: [], excludeSlugs: ['x'], type: 'note', degraded: [] });
+      expect(seen).toEqual({ sourceId: 'default' });
+    });
   });
 });
