@@ -13,7 +13,9 @@
  *     later; see comparablePairs) where the newer value is at least
  *     10% lower than the prior value. Threshold is configurable via the
  *     env var `GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD` (default 0.10).
- *     Only points with `claim_value !== null` participate.
+ *     Only points with `claim_value !== null` participate. A lower-is-better
+ *     metric (the LOWER_IS_BETTER constant / isLowerIsBetter) flips it: a rise of at
+ *     least the threshold is the regression and a drop is an improvement.
  *
  *   - Drift score (D-ENG-3): `1 - mean(cosine(emb[i], emb[i-1]))` over
  *     points with non-null embeddings. Clamped to [0, 1]. Returns null
@@ -29,13 +31,42 @@ export const DEFAULT_REGRESSION_THRESHOLD = 0.10;
 /** Schema version for the trajectory + scorecard JSON contract. Additive-only across releases. */
 export const TRAJECTORY_SCHEMA_VERSION = 1;
 
+/**
+ * The lower-is-better rule, in one place: for these metrics a rise is the regression and a drop is an improvement.
+ * `metrics` are exact names; `words` make any metric lower-is-better when one of its parts is that whole word
+ * (`lossless`, `costco`, `debtor` do not match). Change the list here and nowhere else.
+ */
+export const LOWER_IS_BETTER = {
+  metrics: ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn'],
+  words: ['cost', 'costs', 'expense', 'expenses', 'loss', 'losses', 'latency', 'payback', 'debt', 'debts'],
+} as const;
+
+/**
+ * True when a lower value of this metric is the good direction. The name is split on every run of
+ * non-alphanumeric characters (`_`, `-`, spaces, ...) and each part lowercased; it matches when the
+ * parts joined with `_` equal a LOWER_IS_BETTER.metrics name, or any one part is a LOWER_IS_BETTER.words word.
+ */
+export function isLowerIsBetter(metric: string): boolean {
+  const parts = metric.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (parts.length === 0) return false;
+  const metrics: readonly string[] = LOWER_IS_BETTER.metrics;
+  const words: readonly string[] = LOWER_IS_BETTER.words;
+  return metrics.includes(parts.join('_')) || parts.some(p => words.includes(p));
+}
+
 export interface TrajectoryRegression {
   metric: string;
   from_value: number;
   from_date: string;   // YYYY-MM-DD
   to_value: number;
   to_date: string;
-  delta_pct: number;   // negative for a numeric drop; may be < -1 across zero
+  /** Relative change over abs(from_value): negative for a drop, positive for a rise; may be < -1 across zero. */
+  delta_pct: number;
+  /**
+   * Which way the metric moved: 'down' for a regression on an ordinary metric, 'up' for one on a
+   * lower-is-better metric. Added within schema_version 1; older readers ignore it.
+   */
+  direction?: 'down' | 'up';
 }
 
 export interface TrajectoryStats {
@@ -117,7 +148,8 @@ export function comparablePairs(points: TrajectoryPoint[]): Array<[TrajectoryPoi
 /**
  * Detect chronological regressions in a sorted trajectory: every
  * comparablePairs pair whose newer value is lower than the older one by at
- * least the threshold. The relative delta uses `abs(older)` as the
+ * least the threshold (higher by at least the threshold for a
+ * lower-is-better metric, see isLowerIsBetter). The relative delta uses `abs(older)` as the
  * denominator so negative-valued metrics (net income, cash flow, etc.) do
  * not invert improvement and regression.
  */
@@ -133,7 +165,8 @@ export function detectRegressions(
     // can't compute a relative delta. Skip.
     if (oldVal === 0) continue;
     const delta = (newVal - oldVal) / Math.abs(oldVal);
-    if (delta <= -threshold) {
+    const lowerIsBetter = isLowerIsBetter(older.metric!);
+    if (lowerIsBetter ? delta >= threshold : delta <= -threshold) {
       out.push({
         metric: older.metric!,
         from_value: oldVal,
@@ -141,6 +174,7 @@ export function detectRegressions(
         to_value: newVal,
         to_date: toISODate(newer.valid_from),
         delta_pct: delta,
+        direction: lowerIsBetter ? 'up' : 'down',
       });
     }
   }

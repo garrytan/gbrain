@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+gbrain eval trajectory, gbrain founder scorecard and the find_trajectory tool now know that for some metrics lower is better. For burn_rate, churn_rate, cac, burn, churn and any metric with the whole word cost, expense, loss, latency, payback or debt (or costs, expenses, losses, debts), a drop is no longer a regression or red flag; a rise of 10% or more is, and the scorecard says "burn rose 33.3%". Every other metric still flags a 10% drop. Each regressions entry gains an optional direction field (down or up); schema_version stays 1. The scorecard's growth delta also divides by the absolute prior value, so a loss shrinking from -100000 to -50000 reads up.

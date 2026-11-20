@@ -27,7 +27,7 @@
  *       ...
  *     ],
  *     red_flags: [
- *       { kind: 'regression',        metric, text },
+ *       { kind: 'regression',        metric, text },   // text: "<metric> fell N% (...)", or "rose N%" for a lower-is-better metric
  *       { kind: 'narrative_drift',                text },
  *       { kind: 'missed_prediction',              text },
  *     ],
@@ -143,7 +143,7 @@ export function computeFounderScorecard(args: {
     redFlags.push({
       kind: 'regression',
       metric: r.metric,
-      text: `${r.metric} fell ${pct}% (${r.from_date} → ${r.to_date})`,
+      text: `${r.metric} ${r.delta_pct > 0 ? 'rose' : 'fell'} ${pct}% (${r.from_date} → ${r.to_date})`,
     });
   }
   if (drift_score !== null && drift_score >= driftRedFlag) {

@@ -288,3 +288,40 @@ describe('computeFounderScorecard — growth delta on negative-valued metrics', 
     expect(sc.growth_trajectory[0].latest_delta_pct).toBe(regression[0].delta_pct);
   });
 });
+
+// A drop on a lower-is-better metric (churn, burn ...) is an improvement, a rise is the red flag.
+describe('computeFounderScorecard — lower-is-better metrics', () => {
+  function card(points: TrajectoryPoint[]) {
+    return computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, points, takes: [],
+    });
+  }
+  const churn = (id: number, value: number, date: string) => ({ ...pt({ id, metric: 'churn', value, date }), unit: 'pct' });
+
+  test('falling churn 5 -> 3 pct raises no red flag', () => {
+    const sc = card([churn(1, 5, '2026-01-01'), churn(2, 3, '2026-02-01')]);
+    expect(sc.red_flags).toEqual([]);
+    // growth_trajectory stays a plain numeric direction: churn fell, so it reads down.
+    expect(sc.growth_trajectory).toEqual([{ metric: 'churn', direction: 'down', latest_delta_pct: -0.4 }]);
+  });
+
+  test('rising burn 150000 -> 200000 USD is a regression red flag that says it rose', () => {
+    const sc = card([
+      pt({ id: 1, metric: 'burn', value: 150000, date: '2026-01-01' }),
+      pt({ id: 2, metric: 'burn', value: 200000, date: '2026-02-01' }),
+    ]);
+    expect(sc.red_flags).toEqual([
+      { kind: 'regression', metric: 'burn', text: 'burn rose 33.3% (2026-01-01 → 2026-02-01)' },
+    ]);
+  });
+
+  test('falling ARR 200000 -> 150000 USD is still a regression red flag that says it fell', () => {
+    const sc = card([
+      pt({ id: 1, metric: 'arr', value: 200000, date: '2026-01-01' }),
+      pt({ id: 2, metric: 'arr', value: 150000, date: '2026-02-01' }),
+    ]);
+    expect(sc.red_flags).toEqual([
+      { kind: 'regression', metric: 'arr', text: 'arr fell 25.0% (2026-01-01 → 2026-02-01)' },
+    ]);
+  });
+});

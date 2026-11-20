@@ -4,6 +4,7 @@ import {
   DEFAULT_REGRESSION_THRESHOLD,
   detectRegressions,
 } from '../src/core/trajectory.ts';
+import * as trajectory from '../src/core/trajectory.ts';
 
 function point(args: {
   id: number;
@@ -119,5 +120,105 @@ describe('detectRegressions', () => {
       to_date: '2026-02-01',
     });
     expect(regs[0].delta_pct).toBeCloseTo(-1.0, 4);
+  });
+});
+
+// A drop on a lower-is-better metric (churn, burn, cost ...) is an improvement; a rise of at least the
+// threshold is the regression. Every other metric keeps the rule that a drop is the regression.
+describe('detectRegressions — lower-is-better metrics', () => {
+  function series(metric: string, unit: string, a: number, b: number): TrajectoryPoint[] {
+    return [
+      { ...point({ id: 1, metric, value: a, date: '2026-01-01' }), unit },
+      { ...point({ id: 2, metric, value: b, date: '2026-02-01' }), unit },
+    ];
+  }
+
+  test('falling churn 5 -> 3 pct is not a regression', () => {
+    expect(detectRegressions(series('churn', 'pct', 5, 3))).toEqual([]);
+    expect(detectRegressions(series('churn_rate', 'pct', 5, 3))).toEqual([]);
+  });
+
+  test('falling burn 200000 -> 150000 USD is not a regression', () => {
+    expect(detectRegressions(series('burn', 'USD', 200000, 150000))).toEqual([]);
+    expect(detectRegressions(series('burn_rate', 'USD', 200000, 150000))).toEqual([]);
+    expect(detectRegressions(series('cac', 'USD', 900, 600))).toEqual([]);
+  });
+
+  test('rising burn 150000 -> 200000 USD is a regression with a positive delta and direction up', () => {
+    const regs = detectRegressions(series('burn', 'USD', 150000, 200000));
+    expect(regs).toHaveLength(1);
+    expect(regs[0]).toMatchObject({
+      metric: 'burn', from_value: 150000, to_value: 200000, from_date: '2026-01-01', to_date: '2026-02-01', direction: 'up',
+    });
+    expect(regs[0].delta_pct).toBeCloseTo(1 / 3, 6);
+  });
+
+  test('rising churn 3 -> 5 pct is a regression, direction up', () => {
+    const regs = detectRegressions(series('churn', 'pct', 3, 5));
+    expect(regs).toHaveLength(1);
+    expect(regs[0].direction).toBe('up');
+    expect(regs[0].delta_pct).toBeCloseTo(2 / 3, 6);
+  });
+
+  test('a rise under the threshold on a lower-is-better metric is not a regression; at the threshold it is', () => {
+    expect(detectRegressions(series('burn', 'USD', 200000, 210000))).toEqual([]);
+    expect(detectRegressions(series('burn', 'USD', 200000, 220000), 0.10)).toHaveLength(1);
+  });
+
+  // Passes on the old code too: it guards the old rule for every other metric.
+  test('falling ARR 200000 -> 150000 USD is still a regression; rising ARR is not', () => {
+    const regs = detectRegressions(series('arr', 'USD', 200000, 150000));
+    expect(regs).toHaveLength(1);
+    expect(regs[0]).toMatchObject({ metric: 'arr', from_value: 200000, to_value: 150000 });
+    expect(regs[0].delta_pct).toBeCloseTo(-0.25, 6);
+    expect(detectRegressions(series('arr', 'USD', 150000, 200000))).toEqual([]);
+  });
+
+  test('every regression says which way the metric moved: down for ARR, up for burn', () => {
+    expect(detectRegressions(series('arr', 'USD', 200000, 150000))[0].direction).toBe('down');
+    expect(detectRegressions(series('burn', 'USD', 150000, 200000))[0].direction).toBe('up');
+  });
+
+  test('a lower-is-better metric with a negative value uses the abs() denominator', () => {
+    // The relative delta divides by abs(older), so a rise from -150 to -100 is +33.3%.
+    expect(detectRegressions(series('burn', 'USD', -100, -150))).toEqual([]);
+    const regs = detectRegressions(series('burn', 'USD', -150, -100));
+    expect(regs).toHaveLength(1);
+    expect(regs[0].delta_pct).toBeCloseTo(50 / 150, 6);
+  });
+});
+
+describe('isLowerIsBetter', () => {
+  const yes = (m: string) => expect(trajectory.isLowerIsBetter(m), m).toBe(true);
+  const no = (m: string) => expect(trajectory.isLowerIsBetter(m), m).toBe(false);
+
+  test('the exact names burn_rate, churn_rate, cac, burn and churn', () => {
+    for (const m of ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn']) yes(m);
+    expect(trajectory.LOWER_IS_BETTER.metrics).toEqual(['burn_rate', 'churn_rate', 'cac', 'burn', 'churn']);
+    expect(trajectory.LOWER_IS_BETTER.words).toEqual(
+      ['cost', 'costs', 'expense', 'expenses', 'loss', 'losses', 'latency', 'payback', 'debt', 'debts']);
+  });
+
+  test('a metric containing the whole word cost, expense, loss, latency, payback or debt', () => {
+    for (const m of ['cost', 'cloud_cost', 'cost_of_goods', 'expense', 'opex_expense', 'net_loss', 'loss_rate',
+      'p95_latency', 'payback', 'cac_payback', 'debt', 'debt_total']) yes(m);
+  });
+
+  test('the plain plurals costs, expenses, losses and debts', () => {
+    for (const m of ['costs', 'cloud_costs', 'expenses', 'losses', 'q1_losses', 'debts']) yes(m);
+  });
+
+  test('words are split on underscores, hyphens, spaces and other non-alphanumerics, then lowercased', () => {
+    for (const m of ['Cloud-Costs', 'cloud costs', 'P95.Latency', 'NET LOSS', 'cac/payback', 'Burn', ' churn ', 'BURN_RATE',
+      'burn-rate', 'burn rate']) yes(m);
+  });
+
+  test('a word that only contains a candidate is not lower-is-better (lossless, costco, debtor ...)', () => {
+    for (const m of ['lossless', 'costco', 'debtor', 'costly', 'glossary', 'accost', 'burnout', 'burn_out_score', 'churned',
+      'churn_rate_target', 'latencyz', 'paybacks']) no(m);
+  });
+
+  test('every other metric keeps the old rule', () => {
+    for (const m of ['mrr', 'arr', 'revenue', 'net_income', 'team_size', 'headcount', 'runway', 'cash', 'gross_margin', 'ltv']) no(m);
   });
 });
