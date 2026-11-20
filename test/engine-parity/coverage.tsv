@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1140/1143
+# covered: 1141/1143
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -16,7 +16,7 @@
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 46/46
-# extraction: 7/10
+# extraction: 8/10
 # links: 23/23
 # tags: 5/5
 # timeline: 23/23
@@ -231,7 +231,7 @@ countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 listFactsFencePages	extraction	no	0	no	-	-	-
-listSweepStalePages	extraction	no	0	no	-	-	-
+listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 addLink	links	yes	110	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
@@ -239,7 +239,7 @@ replaceDerivedLinks	links	yes	14	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	20	yes	yes	yes	serves
+getLinks	links	yes	21	yes	yes	yes	serves
 getBacklinks	links	yes	11	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	2	no	yes	yes	serves
@@ -272,7 +272,7 @@ countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
 addTimelineEntry	timeline	yes	39	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
-getTimeline	timeline	yes	18	yes	yes	yes	serves
+getTimeline	timeline	yes	19	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
