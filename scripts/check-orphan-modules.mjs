@@ -54,7 +54,6 @@ const ALLOWLIST = new Map([
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
-  { path: 'src/core/apple/send-sign.ts', reason: "held: the GBrain Helper send signer (plan plans/apple-send, PR S1); the agent's computer calls it today, and the apple-setup plan's gbrain apple send command wires it into the CLI" },
   { path: 'src/core/rust-engine.ts', reason: "held: the Rust engine shell (plan PR 8, docs/designs/RUST_ENGINE.md); the addon loader PR on rust-engine/core wires openRustEngine into engine construction" },
   { path: 'src/core/rust-engine/members.ts', reason: 'held: the Rust engine shell member table; reached through src/core/rust-engine.ts once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/election.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
