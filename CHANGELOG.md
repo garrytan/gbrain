@@ -10,6 +10,37 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.751.0] - 2026-11-20
+
+**Conversation fact extraction keeps a page's other facts when the model declines one window, and reads transcripts whose answers list bold labels.**
+
+### Fixed
+- When the extraction model refuses a window (or stops on a content filter), gbrain retries that window once as two halves, at most two more calls over the same text. Before, one refused window failed the whole page and none of its facts were saved. Whatever still declines is listed in `--json` `declined_windows` (page, start, end, reason) and in `failed_pages`, and the page stays unfinished so the next run tries it again. On a brain without a write owner the other windows' facts are published right away, and the note says how many new facts that added. A managed brain publishes nothing for that page until a run reads every window. Every other window failure still fails the page as before.
+- Anthropic refusals now read as `refusal` in logs and outcomes instead of `content_filter`: `@ai-sdk/anthropic` reports them as finish reason `content-filter` and keeps `refusal` in `rawFinishReason`, which the gateway now reads.
+- A transcript in the documented `**Speaker** (YYYY-MM-DD h:mm AM): text` shape whose answer lists several `**Label:** text` lines was skipped as unreadable, because the label list won the parser's first pick and was then rejected as a list of labels. The parser now moves on to the next format that clears the 5% floor, and the streaming detector for segmented pages does the same.
+- Pages skipped because no speaker turns parsed now say why: `--json` adds `unparsed_pages` (first 50, each with a page and its cause), and stderr prints a matching SKIP line.
+
+**Conversation pages now record which speaker is the brain's owner, when the importer can prove it.**
+
+<!-- behavior-change: speaker_owner_marker_gst3216 -->
+
+### Added
+- Conversation pages get a `speaker_owner` frontmatter entry (`label`, `basis`, `turns`, `member`) naming the speaker label whose turns are the owner's own. It is written only from the source's own signal: a Claude Code session typed in the interactive terminal (`entrypoint: cli` on every user turn), a Codex CLI or IDE session, the owner's own ChatGPT or Claude export, an iMessage the Mac marks as sent by you (label `Me`), and a Gmail message filed as SENT (a From line alone never counts, since the sender sets it). Claude Code SDK and `claude -p` runs, worker and sub-agent sessions, headless Codex (`exec`), Hermes, Grok, OpenClaw and meeting transcripts stay speaker-unknown, and so does any page where the owner's label is not unique.
+- The marker is honored only when a local importer wrote the page's current revision, its member is the member the page's source belongs to, and its shape is valid. A `speaker_owner` written by an MCP caller, or left after a remote edit of an imported page, is ignored, and a transcript re-import never carries one forward.
+- Pages imported before this release keep no marker: a transcript re-import never adds one, and the conversation archive adds it only to a day it rewrites anyway. Nothing reads the marker yet; a later release uses it to file the owner's own statements on the owner's page.
+
+**Your Mac's address book can feed your brain: the new apple-contacts source pulls contacts from GBrain Helper every 15 minutes into private, owner-only contact pages, links each one to the matching person by exact email or phone, and adds company, job title and groups to that person's page.**
+
+### Added
+- `gbrain sources add <id> --kind apple-contacts --helper-host <host> --token-file <0600 json>` (with `--helper-port`, `--proxy socks5h://host:port`, `--contacts-dir`, `--record`, `--dir`, `--sync-interval-min`) reads `GET /v1/contacts/changes` from GBrain Helper, page by page with a saved cursor. Contact pages live under `contacts/apple/`, are `visibility: private` and stay in the database even on a brain with a Git repository.
+- A contact whose email or phone equals the one on exactly one person page is linked to that person (an identity link); a contact matching two or more people waits in `gbrain sync status` under identity reviews until `gbrain dedupe` settles it. Names never match.
+- The matched `people/` page gets company, job title and group names as rows in its `## Facts` section, marked with the source `apple-contacts:<id>`. Phones and emails stay on the owner-only contact pages. A change replaces a row; a deleted contact, a lost match or a group left retires the rows (struck, not forgotten, so they come back with the contact), and nothing outside the Facts section changes: not the text, the frontmatter or the page's trust tier. A claim you saved yourself is never touched.
+- A full re-read that holds no contact with an email or phone, would delete every contact, or would delete more than 20% of them writes nothing (`apple_contacts_delete_floor`). A contact edited down to no email and no phone counts as a deletion. An incremental pull keeps the deletions it receives pending until the end of the run and applies them only if they pass the same floor; held ones show under `held_deletes` in `gbrain sync status` and cancel when the contact comes back. Deleted contacts are soft-deleted and can be restored. `--reset-checkpoint` is refused for this source; `gbrain sync --source <id> --full` reads every contact again.
+- A helper with its Contacts source turned off stops the run with `apple_contacts_disabled`, which names the config setting to change.
+- `gbrain whois` matches phone numbers in any format.
+
+<!-- behavior-change: whois_phone_numbers_gst3256 -->
+
 ## [0.60.750.0] - 2026-11-20
 
 **`gbrain check-resolvable` stops reporting three kinds of false alarm on large skill trees, and its `--fix --dry-run` preview now proposes only edits for findings the same run reports (GST-3155).**
