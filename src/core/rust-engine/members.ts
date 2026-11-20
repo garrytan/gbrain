@@ -902,7 +902,7 @@ export const RUST_ENGINE_MEMBERS = {
   listTakePreimages: 'takes',
   deleteTakesByIds: 'takes',
   findTakeId: 'takes',
-  // The Rust store keeps no take_grade_cache yet: `gbrain takes grades` stops on the typed `takes` refusal.
+  // The grade_takes verdict cache and `gbrain takes grades` (store A 0x05, takes/grades.rs).
   listLatestTakeGrades: 'takes',
   readTakeGrade: 'takes',
   insertTakeGrade: 'takes',

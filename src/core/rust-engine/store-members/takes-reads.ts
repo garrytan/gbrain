@@ -10,7 +10,10 @@
  * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
+import type {
+  HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow,
+  TakePreimage, TakesLeavingFence,
+} from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -111,4 +114,39 @@ export const findTakeId: StoreMember<[pageId: number, rowNum: number], number | 
   ints('findTakeId', [pageId, rowNum]);
   const id = await storeCall({ member: 'findTakeId' }, () => brain.findTakeId(pageId, rowNum)) as number | null;
   return id === null || id === undefined ? null : Number(id);
+};
+
+// The grade_takes verdict cache (take_grade_cache) and `gbrain takes grades`. A take id that is not an integer is
+// refused, as the SQL's bigint cast refuses it.
+const gradeKey = (member: string, key: TakeGradeKey): TakeGradeKey => {
+  ints(member, [key.takeId]);
+  return { takeId: key.takeId, promptVersion: key.promptVersion, judgeModelId: key.judgeModelId, evidenceSignature: key.evidenceSignature };
+};
+
+export const readTakeGrade: StoreMember<[key: TakeGradeKey], TakeGrade | null> = async (brain, key) => {
+  const row = await storeCall({ member: 'readTakeGrade' }, () => brain.readTakeGrade(gradeKey('readTakeGrade', key))) as TakeGrade | null;
+  return row ? { verdict: row.verdict, confidence: Number(row.confidence), applied: row.applied } : null;
+};
+
+export const insertTakeGrade: StoreMember<[row: TakeGradeKey & TakeGrade & { gradedAt?: string }], void> = async (brain, row) => {
+  const input = {
+    ...gradeKey('insertTakeGrade', row), verdict: row.verdict, confidence: row.confidence, applied: row.applied,
+    ...(row.gradedAt === undefined ? {} : { gradedAt: row.gradedAt }),
+  };
+  await storeCall({ member: 'insertTakeGrade' }, () => brain.insertTakeGrade(input));
+};
+
+export const deleteTakeGrade: StoreMember<[key: TakeGradeKey], void> = async (brain, key) => {
+  await storeCall({ member: 'deleteTakeGrade' }, () => brain.deleteTakeGrade(gradeKey('deleteTakeGrade', key)));
+};
+
+export const listLatestTakeGrades: StoreMember<[filter: TakeGradeFilter], TakeGradeRow[]> = async (brain, f) => {
+  ints('listLatestTakeGrades', [f.limit]);
+  const rows = await storeCall({ member: 'listLatestTakeGrades' }, () =>
+    brain.listLatestTakeGrades({ verdict: f.verdict, minConfidence: f.minConfidence, applied: f.applied, limit: f.limit })) as TakeGradeRow[];
+  return rows.map((r) => ({
+    take_id: Number(r.take_id), source_id: r.source_id, page_slug: r.page_slug, row_num: Number(r.row_num), claim: r.claim,
+    holder: r.holder, since_date: r.since_date, verdict: r.verdict, confidence: Number(r.confidence), applied: r.applied,
+    judge_model_id: r.judge_model_id, prompt_version: r.prompt_version, graded_at: new Date(r.graded_at).toISOString(),
+  }));
 };

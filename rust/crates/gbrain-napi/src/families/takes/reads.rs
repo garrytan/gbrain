@@ -1,8 +1,12 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
-//! repair sites, and the reads and the delete of `gbrain extract takes` (rust/docs/store/takes-reads.md).
+//! repair sites, the reads and the delete of `gbrain extract takes`, and the grade_takes verdict cache
+//! (rust/docs/store/takes-reads.md).
 //! Same shape as `../takes.rs`.
 
-use gbrain_store::takes::{IncomingTake, McpResolvedInput, PurgeTakesInput, TakesLeavingFence};
+use gbrain_store::takes::{
+    IncomingTake, McpResolvedInput, PurgeTakesInput, TakeGradeFilter, TakeGradeInput, TakeGradeKey,
+    TakesLeavingFence,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -171,5 +175,57 @@ impl Brain {
         row_num: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.find_take_id(page_id as i64, row_num as i64))
+    }
+    /// `readTakeGrade({ takeId, promptVersion, judgeModelId, evidenceSignature })`:
+    /// `{ verdict, confidence, applied }` or null.
+    #[napi]
+    pub fn read_take_grade<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: TakeGradeKey = required(input, "readTakeGrade key")?;
+            s.read_take_grade(&key)
+        })
+    }
+
+    /// `insertTakeGrade({ ...key, verdict, confidence, applied, gradedAt? })`: a row already at the key stays.
+    #[napi]
+    pub fn insert_take_grade<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: TakeGradeInput = required(input, "insertTakeGrade row")?;
+            s.insert_take_grade(&row)
+        })
+    }
+
+    /// `deleteTakeGrade(key)`: drops the cached verdict at the key.
+    #[napi]
+    pub fn delete_take_grade<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: TakeGradeKey = required(input, "deleteTakeGrade key")?;
+            s.delete_take_grade(&key)
+        })
+    }
+
+    /// `listLatestTakeGrades({ verdict, minConfidence, applied, limit })`: the newest verdict of each live take.
+    #[napi]
+    pub fn list_latest_take_grades<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter: TakeGradeFilter = required(input, "listLatestTakeGrades filter")?;
+            s.list_latest_take_grades(&filter)
+        })
     }
 }

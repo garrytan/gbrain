@@ -325,10 +325,10 @@ listTakeIdsLeavingFence	takes	yes	1	no	yes	yes	serves
 listTakePreimages	takes	yes	1	no	yes	yes	serves
 deleteTakesByIds	takes	yes	1	no	yes	yes	serves
 findTakeId	takes	yes	3	no	yes	yes	serves
-listLatestTakeGrades	takes	yes	1	no	yes	yes	refuses:takes
-readTakeGrade	takes	yes	1	no	yes	yes	refuses:takes
-insertTakeGrade	takes	yes	1	no	yes	yes	refuses:takes
-deleteTakeGrade	takes	yes	1	no	yes	yes	refuses:takes
+listLatestTakeGrades	takes	yes	1	no	yes	yes	serves
+readTakeGrade	takes	yes	1	no	yes	yes	serves
+insertTakeGrade	takes	yes	1	no	yes	yes	serves
+deleteTakeGrade	takes	yes	1	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	4	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves

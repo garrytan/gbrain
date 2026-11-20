@@ -2,7 +2,8 @@
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
 //! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
-//! `takes/reads.rs`, and the reads and the delete of `takes/extract.rs`.
+//! `takes/reads.rs`, the reads and the delete of `takes/extract.rs`, and the grade_takes verdict
+//! cache of `takes/grades.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -10,6 +11,8 @@
 //! - `A 0x02 <page id> <row_num>` -> the take id (u64 BE): the `UNIQUE (page_id, row_num)` index.
 //! - `A 0x03 <synthesis page id> <take page id> <take row_num>` -> `EvidenceRecord` (JSON).
 //! - `A 0x04 <take page id> <take row_num> <synthesis page id>` -> empty: the reverse index.
+//! - `A 0x05 <take id> <prompt> 0x00 <judge> 0x00 <signature>` -> a `take_grade_cache` row
+//!   (`takes/grades.rs`).
 //! - Id counter: `M next_take_id`. Every row an `addTakesBatch` call reads takes an id, as the
 //!   Postgres sequence default does, inserted or not.
 //!
@@ -37,9 +40,11 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
+mod grades;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
+pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};
 pub use reads::{McpResolvedInput, PurgeTakesInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";

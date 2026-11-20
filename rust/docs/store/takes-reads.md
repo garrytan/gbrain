@@ -57,3 +57,20 @@ The `preimage` object has the keys of `TAKE_PREIMAGE_SQL`; `resolved_at` is prin
 a `timestamptz`. The TypeScript members refuse an id that is not an integer. Pinned by
 `rust/crates/gbrain-store/tests/takes_extract.rs`, `test/engine-parity/extract-takes-reads.test.ts` and, for the
 Postgres text, `test/extract-takes-sql-pin.test.ts`.
+
+## The grade_takes verdict cache
+
+`gbrain takes grades` and the grade_takes cycle phase read and write `take_grade_cache` through four members. The store
+keeps each row at `A 0x05 <take id> <prompt_version> 0x00 <judge_model_id> 0x00 <evidence_signature>` (a JSON record:
+the key, `wave_version`, `graded_at`, the verdict, `confidence` as a `real` and `applied`), in `takes/grades.rs`.
+
+| Member | Returns | Used by |
+| --- | --- | --- |
+| `brain.readTakeGrade(key)` | `{ verdict, confidence, applied }` of the row at the key, or null | the phase's cache check |
+| `brain.insertTakeGrade({ ...key, verdict, confidence, applied, gradedAt? })` | stores the verdict unless a row holds the key (`ON CONFLICT DO NOTHING`); a verdict outside the four qualities fails `take_grade_cache_verdict_check`; `gradedAt` (ISO 8601) defaults to now | the phase's verdict write |
+| `brain.deleteTakeGrade(key)` | deletes the row at the key; a key with no row deletes nothing | the managed phase's rollback |
+| `brain.listLatestTakeGrades({ verdict, minConfidence, applied, limit })` | the newest row of each take on a live page, then the filters (`minConfidence` compares as a `real`), newest first (`graded_at`, then take id), at most `limit` rows, with the page's `source_id` and slug and the take's row, claim, holder and `since_date` | `gbrain takes grades` |
+
+Two rows of one take with the same `graded_at` are a tie that Postgres breaks arbitrarily; the store keeps the first
+in key order. undo-wave still deletes a wave's rows with raw SQL (calibration-profiles.md), so it stops on the typed
+`raw_sql` refusal. Pinned by the unit test in `takes/grades.rs` and `test/engine-parity/caller-typed-reads.test.ts`.
