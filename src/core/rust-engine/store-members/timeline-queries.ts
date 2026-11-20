@@ -1,7 +1,6 @@
 /**
  * Timeline reads by date: the Life Chronicle reads (BrainEngine getTimelineForDate, getSince, getOnThisDay,
- * getLastSeen). upsertEventProjection is not exported yet, so it refuses with `engine_capability_missing`: it writes
- * core timeline records and waits on the core timeline write helpers (docs/designs/RUST_ENGINE_INTERFACES.md).
+ * getLastSeen) and the event projection write (upsertEventProjection).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -38,4 +37,11 @@ export const getLastSeen: StoreMember<[entitySlug: string, opts?: PageReadScope 
     await storeCall({ member: 'getLastSeen', slug: entitySlug }, () => brain.getLastSeen(entitySlug, options));
   // The day count is the shared finalizer both SQL engines use.
   return finalizeLastSeen(entitySlug, row.last_date, row.last_event_slug, opts?.asof);
+};
+
+type EventProjection = { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string };
+
+export const upsertEventProjection: StoreMember<[opts: EventProjection], { projected: boolean }> = (brain, opts) => {
+  const options = takeOptions('upsertEventProjection', opts, ['depthSlug', 'eventSlug', 'date', 'summary', 'detail', 'sourceId']);
+  return storeCall({ member: 'upsertEventProjection' }, () => brain.upsertEventProjection(options));
 };
