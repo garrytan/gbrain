@@ -25,9 +25,9 @@ line of work moves the site; "by design" means the case tests a raw SQL path and
 | readChronicleLedgerStats lists reasons by byte | test `seedLedger` `executeRaw`, test:192 | C14 |
 | derivationNeedles lists claim needles by byte | `src/core/page-body/segment-derive.ts:357` `derivationNeedles` | C16 (`normalizeDerivationClaims`) |
 | readMissingTables lists missing tables by byte | test `executeRaw`, test:219 | by design: the case tests the SQL catalog path, so it stays a raw_sql stop |
-| readBudgetLimited lists held reasons by byte of source and reason | test `heldPage` seed `executeRaw`, test:75 | lane 14 (doctor-checks 0c4a1a0ae7: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
-| readBudgetLimited lists the held reasons of one source by byte | test `heldPage` seed `executeRaw`, test:75 | lane 14 (doctor-checks 0c4a1a0ae7: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
-| readBudgetLimited lists sources with equal pending chunks by byte of source id | test seed `executeRaw`, test:251 | lane 14 (doctor-checks 0c4a1a0ae7: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
+| readBudgetLimited lists held reasons by byte of source and reason | test `heldPage` seed `executeRaw`, test:75 | lane 14 (doctor-checks-2 9a3de15840: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
+| readBudgetLimited lists the held reasons of one source by byte | test `heldPage` seed `executeRaw`, test:75 | lane 14 (doctor-checks-2 9a3de15840: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
+| readBudgetLimited lists sources with equal pending chunks by byte of source id | test seed `executeRaw`, test:251 | lane 14 (doctor-checks-2 9a3de15840: `listBudgetLimitedRows` / `readBudgetHoldAge` refuse by name; flips through main) |
 | inspectSharedMemberMigration lists installations by byte of adapter | test seed `executeRaw`, test:260 | S09 (shared-skill members; the case itself is rewritten in C16, which then needs S09 first) |
 
 ## collate-command-listings.test.ts (2 equal, 4 stopped)
@@ -35,8 +35,8 @@ line of work moves the site; "by design" means the case tests a raw SQL path and
 | Case | Stops at | Owner |
 |---|---|---|
 | runReconcileLinks walks a source's markdown pages by byte slug | `src/commands/reconcile-links.ts:120` `runReconcileLinks` | C06 (`listMarkdownPageSlugs`) |
-| proposeVisibility lists its unmatched pages by source id, then slug | `src/core/access/open-pages.ts:159`, the open-scope read `withOpenScope` runs for `proposeVisibility` (the query in `src/commands/repair-propose.ts:123` comes next) | lane 10 (repair-rust cb7c502c0b) makes `proposeVisibility` refuse by name before any read; the typed open-pages read has no owner yet, so this stays a named stop |
-| the git-gap census counts links, holds and parked effects in byte key order | test seed `executeRaw`, test:109 (then `src/commands/sources-git-gap.ts` runs raw SQL) | lane 14 (doctor-checks 0c4a1a0ae7, named refusal; flips through main) |
+| proposeVisibility lists its unmatched pages by source id, then slug | `src/core/access/open-pages.ts:159`, the open-scope read `withOpenScope` runs for `proposeVisibility` (the query in `src/commands/repair-propose.ts:123` comes next) | lane 12 (access-reads-rust 432ac446f4) types the open-pages read at `open-pages.ts:159` as `engine.readAccessStateUnreadable()` with the rest of `withOpenScope`, pinned by `test/engine-parity/open-pages.test.ts`; then lane 10 (repair-rust cb7c502c0b) owns the named refusal at `repair-propose.ts:123` |
+| the git-gap census counts links, holds and parked effects in byte key order | test seed `executeRaw`, test:109 (then `src/commands/sources-git-gap.ts` runs raw SQL) | lane 14 (doctor-checks-2 9a3de15840, named refusal; flips through main) |
 | files verify reports its rows by byte storage path | test seed `executeRaw`, test:139 | C05 (the case is rewritten to seed through `upsertFile`) |
 
 ## collate-slug-sources.test.ts (1 equal, 5 stopped)
