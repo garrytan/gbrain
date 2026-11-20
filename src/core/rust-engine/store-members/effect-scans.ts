@@ -1,7 +1,8 @@
 /**
  * The effect scans the Rust store answers (engine-sql/persistence-effect-scans.ts): the reads the effect worker's pass
  * runs before it claims effects (listGatedMirrorRequests, listEffectRecoveries) and the claim's candidate read
- * (selectClaimableEffect), and a write receipt's read of its effects (readRequestEffects).
+ * (selectClaimableEffect), a write receipt's read of its effects (readRequestEffects), and the embedding effects
+ * `gbrain repair embedding-effects` settles (listEmbeddingCandidates).
  *
  * The worktree scans join persistence effects to the worktrees a host owns. The store keeps no worktree, so each one
  * answers no row; it still refuses the arguments the Postgres casts refuse (a host id that is not a uuid,
@@ -9,7 +10,7 @@
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Effect scans").
  */
-import type { GatedMirrorRequest, RequestEffectState } from '../../engine-sql/persistence-effect-scans.ts';
+import type { EmbeddingCandidate, GatedMirrorRequest, RequestEffectState } from '../../engine-sql/persistence-effect-scans.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** No request has a parked withdrawal mirror here, so none is requeued; the codes change nothing. */
@@ -30,3 +31,8 @@ export const selectClaimableEffect: StoreMember<[hostId: string, deadOwners: rea
 /** The request's stored effects, in kind order, or only its Git effect; a non-uuid request id refuses as `::uuid` does. */
 export const readRequestEffects: StoreMember<[requestId: string, kind?: 'git'], RequestEffectState[]> =
   (brain, requestId, kind) => storeCall({ member: 'readRequestEffects' }, () => brain.readRequestEffects(requestId, kind ?? null));
+
+/** The stale queued and failed embedding effects of committed writes, with the characters a retry would embed. */
+export const listEmbeddingCandidates: StoreMember<[sourceIds: readonly string[], neverRetried: readonly string[]], EmbeddingCandidate[]> =
+  (brain, sourceIds, neverRetried) => storeCall({ member: 'listEmbeddingCandidates' },
+    () => brain.listEmbeddingCandidates([...sourceIds], [...neverRetried]));

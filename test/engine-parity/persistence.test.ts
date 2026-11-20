@@ -652,6 +652,45 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('listEmbeddingCandidates lists a re-queued embedding effect of a committed write with the characters its retry embeds', {
+    methods: ['listEmbeddingCandidates', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters',
+      'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'putPage', 'getPage'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await engine.putPage('notes/parity', { type: 'note', title: 'Parity', compiled_truth: 'twelve chars', timeline: 'abc' });
+    const pageId = (await engine.getPage('notes/parity'))!.id;
+    const queue = async (requestId: string, data: Record<string, unknown>) => {
+      const id = await admitDirect(engine, requestId);
+      await engine.transactionDirect(async tx => {
+        await tx.declarePersistence();
+        return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+          effects: [{ kind: 'embedding', data: { ...data, repair_requeued_at: 'parity' } }, { kind: 'git', data: { relative_path: 'notes/parity.md' } }] });
+      });
+      return id;
+    };
+    const commit = async (id: string) => {
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state: 'committed', outcome: {}, errorCode: null, errorMessage: null, consumerVersion: 'parity', consumerHostId: null, errorDetail: null,
+        resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 0, terminalReservation: 4096, probePurges: false,
+      });
+    };
+    const never = ['targets_parked', 'embedding_zero_norm'];
+    const view = (rows: Awaited<ReturnType<BrainEngine['listEmbeddingCandidates']>>) =>
+      rows.map(r => ({ source_id: r.source_id, slug: r.slug, request_id: r.request_id, state: r.state, attempts: r.attempts, chars: r.chars }));
+    const page = await queue('b0000000-0000-4000-8000-0000000000b6', { slug: 'notes/parity', page_id: pageId });
+    const targets = await queue('b0000000-0000-4000-8000-0000000000b7', { targets: [{ slug: 'notes/parity', page_id: pageId }, { slug: 'notes/parity', page_id: pageId }] });
+    const queued = view(await engine.listEmbeddingCandidates(['default'], never));
+    await commit(page);
+    await commit(targets);
+    const answers = { queued, committed: view(await engine.listEmbeddingCandidates(['default'], never)),
+      otherSource: view(await engine.listEmbeddingCandidates(['other'], never)) };
+    const row = (request_id: string, chars: number) => ({ source_id: 'default', slug: 'notes/parity-example', request_id, state: 'queued' as const, attempts: 0, chars });
+    expect(answers).toEqual({ queued: [],
+      committed: [row('b0000000-0000-4000-8000-0000000000b6', 15), row('b0000000-0000-4000-8000-0000000000b7', 30)], otherSource: [] });
+    return answers;
+  });
+
   parityTest('the effect worker claims the due effect and settles each claim under its token, a stale token changing nothing', {
     methods: ['selectClaimableEffect', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow',
       'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'readRequestEffects', 'insertPublicationEffects', 'transactionDirect',

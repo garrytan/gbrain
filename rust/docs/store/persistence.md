@@ -300,6 +300,17 @@ foreign key), and so does an effect with no kind or no data. Nothing is stored o
 each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
 the reads a write receipt makes). A request id that is not a uuid refuses with the uuid syntax message.
 
+`brain.listEmbeddingCandidates(sourceIds, neverRetried)` resolves the embedding effects `gbrain repair
+embedding-effects` settles, in effect id order, as `{ effect_id, source_id, slug, request_id, state, attempts,
+chars }` (`listEmbeddingCandidates`, embedding_candidates.rs). A candidate belongs to a committed request on one
+of `sourceIds`, or on a source that is gone or has a new incarnation; it has no recovery and no execution token;
+and it failed, or it is queued and was last updated over an hour ago or carries `repair_requeued_at`. A failed
+effect whose code is in `neverRetried` is left out, and so is a failed effect with no code, as the SQL `NOT (...
+IN ...)` drops it. `chars` is the `compiled_truth` plus `timeline` length of the effect's `page_id`, the sum over its
+`targets` (a target named twice counts twice), or the sum over the source's live pages; 0 when no page matches.
+The repair's settle step stays on raw SQL, so a candidate here stops the repair's apply on the `raw_sql`
+refusal; an empty list previews and applies as Postgres does.
+
 The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
 exists, and the write's reservation stays charged until the effect ends.
 

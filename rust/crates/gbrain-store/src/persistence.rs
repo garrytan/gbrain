@@ -65,6 +65,7 @@ mod checkpoint_rows;
 mod effect_scans;
 mod effect_worker;
 mod effects;
+mod embedding_candidates;
 mod git_holds;
 mod housekeeping;
 mod idle_probe;

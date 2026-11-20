@@ -54,7 +54,7 @@ import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
-import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
+import type { EmbeddingCandidate, GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
 import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-probe.ts';
 import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from './engine-sql/persistence-embedding-noop-settle.ts';
@@ -4068,6 +4068,11 @@ export interface BrainEngine {
    * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
   readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
+  /**
+   * The stale queued and failed embedding effects of committed writes on `sourceIds` (or on a removed or replaced source
+   * incarnation), in effect id order, leaving out a failed effect whose code is in `neverRetried`.
+   */
+  listEmbeddingCandidates(sourceIds: readonly string[], neverRetried: readonly string[]): Promise<EmbeddingCandidate[]>;
 
   // Owner scans (engine-sql/persistence-owner-scans.ts): the reads the write owner's housekeeping sent through executeRaw.
   /**

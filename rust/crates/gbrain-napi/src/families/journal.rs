@@ -535,6 +535,20 @@ impl Brain {
         })
     }
 
+    /// `listEmbeddingCandidates(sourceIds, neverRetried)`: the stale queued and failed embedding
+    /// effects `gbrain repair embedding-effects` settles, in effect id order.
+    #[napi]
+    pub fn list_embedding_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        never_retried: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_embedding_candidates(&source_ids, &never_retried)
+        })
+    }
+
     /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or `null`.
     #[napi]
     pub fn select_claimable_effect<'env>(

@@ -194,7 +194,7 @@ fn reseal_held(read: &dyn KvRead, page: &PageRecord, producer: &str) -> Result<b
     )
 }
 
-fn chars(page: &PageRecord) -> u64 {
+pub(crate) fn chars(page: &PageRecord) -> u64 {
     match page.compiled_truth.as_deref() {
         None => 0,
         Some(body) => {
