@@ -1,12 +1,12 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
- * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
+ * reads and writes (readWriteRequest, readWriteRequests, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest, insertWriteRequestGroup,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource, and the effects a publication or a managed-request
- * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects).
+ * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects), the batch links re-arm (requeueBatchLinksEffects).
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -16,7 +16,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, BatchLinksRequeue, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
@@ -76,6 +76,17 @@ export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], Hel
 /** The request a principal admitted under `requestId`, or null. */
 export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =
   async (brain, kind, id, requestId) => requestRow(await storeCall({ member: 'readWriteRequest' }, () => brain.readWriteRequest({ kind, id }, requestId)));
+
+/** The requests a principal admitted under any of `requestIds`: one in-process store read per distinct id (a batch has at most 50). */
+export const readWriteRequests: StoreMember<[principalKind: string, principalId: string, requestIds: readonly string[]], WriteRequest[]> =
+  async (brain, kind, id, requestIds) => {
+    const rows: WriteRequest[] = [];
+    for (const requestId of new Set(requestIds)) {
+      const row = await readWriteRequest(brain, kind, id, requestId);
+      if (row) rows.push(row);
+    }
+    return rows;
+  };
 
 /**
  * One candidate page of `list_write_requests`: the principal's requests in one live source, newest sequence first,
@@ -144,6 +155,24 @@ export const lockPersistenceCounters: StoreMember<[keys: readonly string[]], Cou
 export const insertWriteRequest: StoreMember<[row: WriteRequestInsert], WriteRequest> = async (brain, row) =>
   requestRow<WriteRequest>(await storeCall({ member: 'insertWriteRequest' }, () => brain.insertWriteRequest(row)))!;
 
+/**
+ * A grouped admission: one insertWriteRequest per item, in item order, each reserving its own count, bytes and receipt
+ * on the group's counters, so the counters end where the grouped statement leaves them. The caller runs it inside its
+ * admission transaction, so the group lands whole or not at all.
+ */
+export const insertWriteRequestGroup: StoreMember<[group: WriteRequestGroupInsert], WriteRequest[]> = async (brain, group) => {
+  const rows: WriteRequest[] = [];
+  for (const item of group.items) {
+    rows.push(await insertWriteRequest(brain, { principalKind: group.principalKind, principalId: group.principalId, requestId: item.requestId,
+      operation: group.operation, sourceId: group.sourceId, sourceIncarnation: group.sourceIncarnation, pageId: item.pageId, slug: item.slug,
+      worktreeId: group.worktreeId, topologyGeneration: group.topologyGeneration, digest: item.digest, intent: item.intent, authority: group.authority,
+      intentBytes: item.intentBytes, terminalReservation: item.terminalReservation, targetKind: 'page', protocolVersion: 1,
+      admitterVersion: group.admitterVersion, admitterHostId: group.admitterHostId, counterKeys: group.counterKeys, clientRequestId: item.clientRequestId,
+      state: 'queued', deferredRefreshId: null }));
+  }
+  return rows;
+};
+
 /** The claim stamp; `passed_sync` is false and the refresh barrier never refuses (this engine has no worktrees). */
 export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string], ClaimedWriteRow | null> =
   async (brain, id, token, leaseMs, phaseJson) =>
@@ -175,6 +204,18 @@ export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec
 export const insertWithdrawalEffects: StoreMember<[spec: WithdrawalEffectsSpec], void> = async (brain, spec) => {
   await storeCall({ member: 'insertWithdrawalEffects' }, () => brain.insertWithdrawalEffects({ requestId: spec.requestId, sourceId: spec.sourceId,
     data: withdrawalEffectsData(spec) }));
+};
+
+/**
+ * Re-arms the `links` effects of a finished `put_pages` batch (rust/docs/store/persistence.md, "Batch links re-arm"):
+ * each named request's effect on the source with no recovery and no `batch_reconciled` mark goes back to queued, due
+ * now. Returns how many.
+ */
+export const requeueBatchLinksEffects: StoreMember<[spec: BatchLinksRequeue], number> = async (brain, spec) => {
+  if (!spec.requestIds.length) return 0;
+  const ids = await storeCall({ member: 'requeueBatchLinksEffects' }, () => brain.requeueBatchLinksEffects({
+    sourceId: spec.sourceId, requestIds: [...spec.requestIds], slugs: spec.slugs ? [...spec.slugs] : null })) as unknown[];
+  return ids.length;
 };
 
 /** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */

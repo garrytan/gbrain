@@ -371,7 +371,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: WriteAdmission[], overrides?: Partial<JournalLimits>): Promise<WriteRequest[]> {
   const first = inputs[0];
   if (!first) return [];
-  requireManagedPersistence(tx, 'admitWriteGroupInTransaction', 'a grouped admission checks one worktree, source and counter set for the whole group');
+  if (first.worktreeId) requireManagedPersistence(tx, 'admitWriteGroupInTransaction', 'a grouped admission to a managed worktree checks its refresh fence, owner and binding');
   if (inputs.some(input => input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || input.worktreeId !== first.worktreeId
     || String(input.topologyGeneration) !== String(first.topologyGeneration) || input.principal.kind !== first.principal.kind || input.principal.id !== first.principal.id
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {
@@ -394,8 +394,7 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     () => Promise.all(items.map(({ input }) => authorizeWrite(tx, input.authority, input.operation, input.slug, true))),
     () => lockCounters(tx, ['brain', principalKey(first.principal)]),
     () => first.principal.kind === 'local_cli' ? tx.findTopologyChanges(first.principal.id, ids) : Promise.resolve([]),
-    () => tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
-      [first.principal.kind, first.principal.id, ids]),
+    () => tx.readWriteRequests(first.principal.kind, first.principal.id, ids),
   ]) as [JournalLimits, unknown, unknown, unknown, Array<{ incarnation: string; archived: boolean }>, unknown, Counter[], Array<{ request_id: string }>, WriteRequest[]];
   const [source] = sources;
   if (!source || source.archived || source.incarnation !== first.sourceIncarnation) {
@@ -431,20 +430,11 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
         row.key, `${scope}TerminalBytes`, Number(row.terminal_bytes), limits[`${scope}TerminalBytes`]);
     }
     if (resolveAdmissionOrigin(first.origin) === 'background') await assertBackgroundRoom(tx, counters, limits, fresh.length, terminalBytes);
-    const [rows] = await pipelined(tx, [() => tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
-      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
-       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader)
-      SELECT $1,$2,(e->>'request_id')::uuid,$3,$4,$5::uuid,(e->>'page_id')::integer,e->>'slug',$6::uuid,$7,e->>'digest',e->'intent',$8::text::jsonb,
-        (e->>'intent_bytes')::bigint,(e->>'terminal_reservation')::bigint,'page',1,$9,$10::uuid,e->>'client_request_id',true
-      FROM jsonb_array_elements($11::text::jsonb) WITH ORDINALITY AS t(e,n) ORDER BY n
-      RETURNING *`, [first.principal.kind, first.principal.id, first.operation, first.sourceId, first.sourceIncarnation, first.worktreeId ?? null,
-      first.topologyGeneration ?? null, JSON.stringify(first.authority), stamp.version, stamp.hostId,
-      JSON.stringify(fresh.map(item => ({ request_id: item.requestId, page_id: item.input.pageId ?? null, slug: item.input.slug, digest: item.fingerprint,
-        intent: item.input.intent, intent_bytes: item.bytes, terminal_reservation: item.terminalBytes, client_request_id: item.input.clientRequestId ?? null })))]),
-      () => tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+$4,
-      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+$4,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
-      [counters.map(c => c.key), bytes, terminalBytes, fresh.length])]) as [WriteRequest[]];
+    const rows = await tx.insertWriteRequestGroup({ principalKind: first.principal.kind, principalId: first.principal.id, operation: first.operation,
+      sourceId: first.sourceId, sourceIncarnation: first.sourceIncarnation, worktreeId: first.worktreeId ?? null, topologyGeneration: first.topologyGeneration ?? null,
+      authority: first.authority, admitterVersion: stamp.version, admitterHostId: stamp.hostId, counterKeys: counters.map(c => c.key),
+      items: fresh.map(item => ({ requestId: item.requestId, pageId: item.input.pageId ?? null, slug: item.input.slug, digest: item.fingerprint,
+        intent: item.input.intent, intentBytes: item.bytes, terminalReservation: item.terminalBytes, clientRequestId: item.input.clientRequestId ?? null })) });
     for (const row of rows) priors.set(row.request_id, row);
   }
   return items.map(item => priors.get(item.requestId)!);

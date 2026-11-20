@@ -442,7 +442,82 @@ pub(crate) fn insert_withdrawal_effects_in(
     Ok(missing.into_iter().map(String::from).collect())
 }
 
+/// `requeueBatchLinksEffects(spec)` (`queueLinksReconcile`): the `links` effects of a finished
+/// `put_pages` batch to run once more.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchLinksRequeue {
+    pub source_id: String,
+    /// The journal ids (`persistence_requests.id`) whose `links` effect is re-armed.
+    pub request_ids: Vec<String>,
+    /// When set, only the effects whose `data->>'slug'` is one of these.
+    #[serde(default)]
+    pub slugs: Option<Vec<String>>,
+}
+
+/// The `links` effect of each named request on `source_id` that has no recovery and was not re-armed
+/// before goes back to `queued`, due now, with no claim, error or outcome, and `data` gains
+/// `batch_reconciled: true`, as the `UPDATE ... RETURNING id` does. Returns the re-armed ids. A
+/// request id that is not a uuid refuses before anything changes, as `$2::uuid[]` does. A stored
+/// effect's data is always an object, so an effect whose data is not one is left alone.
+pub(crate) fn requeue_batch_links_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &BatchLinksRequeue,
+) -> Result<Vec<String>> {
+    for request_id in &spec.request_ids {
+        uuid_cast(request_id)?;
+    }
+    let now = env.now_micros();
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::new();
+    for request_id in &spec.request_ids {
+        if !seen.insert(request_id.to_ascii_lowercase()) {
+            continue;
+        }
+        let Some(mut e) = get_json::<EffectRecord>(&*tx, &effect_key(request_id, "links"))? else {
+            continue;
+        };
+        if e.source_id.as_deref() != Some(spec.source_id.as_str()) || e.recovery.is_some() {
+            continue;
+        }
+        let Value::Object(data) = &mut e.data else {
+            continue;
+        };
+        if data.contains_key("batch_reconciled") {
+            continue;
+        }
+        if let Some(slugs) = &spec.slugs {
+            let slug = match data.get("slug") {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Null) | None => continue,
+                Some(other) => other.to_string(),
+            };
+            if !slugs.contains(&slug) {
+                continue;
+            }
+        }
+        data.insert("batch_reconciled".into(), Value::Bool(true));
+        e.state = "queued".into();
+        e.execution_token = None;
+        e.claim_expires_at_us = None;
+        e.claim_owner = None;
+        e.next_attempt_at_us = now;
+        e.error_code = None;
+        e.outcome = None;
+        e.updated_at_us = now;
+        write_effect(tx, &e)?;
+        ids.push(e.id.to_string());
+    }
+    Ok(ids)
+}
+
 impl crate::Store {
+    /// `requeueBatchLinksEffects(spec)`: the ids of the `links` effects re-armed.
+    pub fn requeue_batch_links_effects(&self, spec: &BatchLinksRequeue) -> Result<Vec<String>> {
+        self.write(|tx| requeue_batch_links_effects_in(tx, &*self.env, spec))
+    }
+
     /// `insertPublicationEffects(spec)`: the kinds inserted, in queue order.
     pub fn insert_publication_effects(&self, spec: &PublicationEffectsSpec) -> Result<Vec<String>> {
         self.write(|tx| insert_publication_effects_in(tx, &*self.env, spec))

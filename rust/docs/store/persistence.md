@@ -214,6 +214,14 @@ the reads a write receipt makes). A request id that is not a uuid refuses with t
 The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
 exists, and the write's reservation stays charged until the effect ends.
 
+`brain.requeueBatchLinksEffects({ sourceId, requestIds, slugs })` re-arms the `links` effects of a
+finished `put_pages` batch (`requeueBatchLinksEffects`, the statement `queueLinksReconcile` sent through
+`executeRaw`) and resolves the ids it re-armed. Each named request's `links` effect on `sourceId` with no
+recovery and no `batch_reconciled` mark in its data, and with a `data.slug` in `slugs` when `slugs` is
+not null, goes back to `queued`, due now, with no claim, error code or outcome, and its data gains
+`batch_reconciled: true`. A repeated request id counts once, so each effect is re-armed at most once. A
+request id that is not a uuid refuses with the uuid syntax message before anything changes.
+
 ## Withdrawal effects
 
 `brain.insertWithdrawalEffects({ requestId, sourceId, data })` queues the effects a forget under a write

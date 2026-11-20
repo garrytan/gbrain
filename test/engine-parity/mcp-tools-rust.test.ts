@@ -8,7 +8,8 @@
  *    `query_cache_unavailable` (the store keeps no query_cache table) and never answers zero rows there. schema_stats
  *    counts live pages per source and type (archived sources included, soft-deleted pages not, an empty type as
  *    untyped) and finds the pack prefixes no live page matches, with SQL LIKE meaning for `%`, `_` and `\`.
- *    get_status_snapshot counts, per source, its live pages, their chunks and the chunks with no vector.
+ *    get_status_snapshot counts, per source, its live pages, their chunks and the chunks with no vector. put_pages
+ *    writes a batch and reads it back by its request_id alone, page by page in index order, with its links state.
  *  - Regression: a raw-SQL read on the tool path that a Rust brain refuses, or a fail-open catch that hides the refusal
  *    and answers as if the table were empty.
  *  - Why existing coverage misses it: test/quarantine-cache-ops.test.ts and the jobs op tests run on PGLite only.
@@ -147,5 +148,28 @@ describe('engine parity: MCP tools a Rust brain refused', () => {
       ]);
       const body = answer.body as { cycle: unknown; queue: unknown; workers: unknown };
       return { counts, embedding_column: sync.embedding_column, cycle: body.cycle, queue: body.queue, workers: body.workers };
+    });
+
+  parityTest('put_pages writes a batch, then reads it back by its request_id alone',
+    { methods: ['insertWriteRequestGroup', 'readWriteRequests', 'readLinksEffectStates', 'requeueBatchLinksEffects'] }, async (engine) => {
+      const batchId = '6f1c2a4e-0b7d-4c1e-9a55-3d2f8e7b6a10';
+      const page = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${body}\n`;
+      const pages = [
+        { slug: 'notes/batch-b', content: page('B', 'Second page.') },
+        { slug: 'notes/batch-a', content: page('A', 'First page.') },
+        { slug: 'notes/batch-b', content: page('B', 'Second page.') },
+      ];
+      const view = (body: Record<string, unknown> | null) => {
+        const b = body as { state: string; counts: unknown; links: { state: string }; pages: Array<Record<string, unknown>> };
+        return { state: b.state, counts: b.counts, links: b.links.state,
+          pages: b.pages.map(p => ({ index: p.index, slug: p.slug, state: p.state, repeat_of: p.repeat_of ?? null, status: p.status ?? null })) };
+      };
+      const written = await call(engine, 'put_pages', { request_id: batchId, pages, wait_ms: 20000 });
+      expect(written.error).toBeNull();
+      const read = await call(engine, 'put_pages', { request_id: batchId });
+      expect(read.error).toBeNull();
+      expect(view(read.body).pages.map(p => p.slug)).toEqual(['notes/batch-b', 'notes/batch-a', 'notes/batch-b']);
+      const unknown = await call(engine, 'put_pages', { request_id: '00000000-0000-4000-8000-000000000001' });
+      return { written: view(written.body), read: view(read.body), unknown: unknown.error ?? view(unknown.body) };
     });
 });

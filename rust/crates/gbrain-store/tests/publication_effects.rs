@@ -11,7 +11,8 @@ use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::error::*;
 use gbrain_store::persistence::{
-    EffectClaim, EffectSettle, PublicationEffectsSpec, Settle, WriteCompletion, WriteRequestInsert,
+    BatchLinksRequeue, EffectClaim, EffectSettle, PublicationEffectsSpec, Settle, WriteCompletion,
+    WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -477,4 +478,80 @@ fn a_completion_whose_bytes_overflow_is_refused_not_wrapped_into_a_fit() {
             "{result} {retained} {reservation} {intent}"
         );
     }
+}
+
+fn requeue(ids: &[&str], source: &str, slugs: Option<&[&str]>) -> BatchLinksRequeue {
+    serde_json::from_value(json!({ "sourceId": source, "requestIds": ids, "slugs": slugs }))
+        .unwrap()
+}
+
+fn links_effect(store: &Store, id: &str) -> Value {
+    store
+        .read_request_effects(id)
+        .unwrap()
+        .into_iter()
+        .find(|e| e["kind"] == "links")
+        .unwrap()
+}
+
+#[test]
+fn a_finished_batch_re_arms_each_links_effect_once() {
+    let dir = TempDir::new("effects-batch-links");
+    let store = open(&dir);
+    let first = admit(&store, REQ);
+    let second = admit(&store, "b0000000-0000-4000-8000-0000000000b2");
+    for (id, slug) in [(&first, "notes/a"), (&second, "notes/b")] {
+        let page = json!({ "slug": slug, "page_id": 1 });
+        let effects =
+            json!([{ "kind": "embedding", "data": page }, { "kind": "links", "data": page }]);
+        store
+            .insert_publication_effects(&spec(&store, id, effects))
+            .unwrap();
+    }
+    // A claimed links effect loses its claim when it is re-armed.
+    let claimed = links_effect(&store, &first);
+    let claim = EffectClaim {
+        id: claimed["id"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| claimed["id"].to_string()),
+        token: "f0000000-0000-4000-8000-0000000000f1".into(),
+        owner_json: json!({ "host_id": HOST }).to_string(),
+    };
+    store.stamp_effect_claim(&claim).unwrap().unwrap();
+    assert_eq!(links_effect(&store, &first)["state"], "running");
+
+    // Another source and a slug filter that names neither page re-arm nothing.
+    assert!(
+        store
+            .requeue_batch_links_effects(&requeue(&[&first], "other", None))
+            .unwrap()
+            .is_empty()
+    );
+    let none = requeue(&[&first, &second], "default", Some(&["notes/c"]));
+    assert!(store.requeue_batch_links_effects(&none).unwrap().is_empty());
+
+    let only_b = requeue(&[&first, &second], "default", Some(&["notes/b"]));
+    assert_eq!(store.requeue_batch_links_effects(&only_b).unwrap().len(), 1);
+    let both = requeue(&[&first, &second, &first], "default", None);
+    assert_eq!(store.requeue_batch_links_effects(&both).unwrap().len(), 1);
+    for id in [&first, &second] {
+        let e = links_effect(&store, id);
+        assert_eq!(e["state"], "queued");
+        assert_eq!(e["execution_token"], Value::Null);
+        assert_eq!(e["claim_owner"], Value::Null);
+        assert_eq!(e["data"]["batch_reconciled"], true);
+    }
+    // Each effect is re-armed at most once, and the other kinds are left alone.
+    assert!(store.requeue_batch_links_effects(&both).unwrap().is_empty());
+    let embedding = store.read_request_effects(&first).unwrap();
+    assert!(
+        embedding
+            .iter()
+            .all(|e| e["kind"] == "links" || e["data"].get("batch_reconciled").is_none())
+    );
+
+    let bad = requeue(&["not-a-uuid"], "default", None);
+    let err = store.requeue_batch_links_effects(&bad).unwrap_err();
+    assert!(err.to_string().contains("uuid"), "{err}");
 }

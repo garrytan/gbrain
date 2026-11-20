@@ -294,6 +294,18 @@ impl Brain {
         })
     }
 
+    /// `requeueBatchLinksEffects({ sourceId, requestIds, slugs })`: the ids of the `links` effects re-armed.
+    #[napi]
+    pub fn requeue_batch_links_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.requeue_batch_links_effects(&required(spec, "requeueBatchLinksEffects spec")?)
+        })
+    }
+
     /// `insertWithdrawalEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
     #[napi]
     pub fn insert_withdrawal_effects<'env>(

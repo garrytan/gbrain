@@ -114,8 +114,7 @@ function markerOf(row: WriteRequest): BatchMarker | null {
 async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteRequest[]> {
   const principal = await requestPrincipalForContext(ctx);
   const ids = pageBatchChildRequestIds(batchId, PAGE_BATCH_MAX_PAGES);
-  const rows = await ctx.engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
-    WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])`, [principal.kind, principal.id, ids]);
+  const rows = await ctx.engine.readWriteRequests(principal.kind, principal.id, ids);
   return rows.filter(row => markerOf(row)?.id === batchId).sort((a, b) => markerOf(a)!.index - markerOf(b)!.index);
 }
 
@@ -151,8 +150,7 @@ async function batchLinks(ctx: OperationContext, sourceId: string, results: Page
   const rows = [...new Map(results.flatMap(result => result.row ? [[result.row.id, result.row] as const] : [])).values()];
   const committed = rows.filter(row => row.state === 'committed').map(row => row.id);
   if (committed.length > 1 && rows.every(isTerminal)) await queueLinksReconcile(ctx.engine, { sourceId, requestIds: committed });
-  const effects = committed.length ? await ctx.engine.executeRaw<{ state: string; outcome: Record<string, unknown> | null }>(
-    "SELECT state,outcome FROM persistence_effects WHERE kind='links' AND request_id=ANY($1::uuid[])", [committed]) : [];
+  const effects = committed.length ? await ctx.engine.readLinksEffectStates(committed) : [];
   if (!effects.length && ctx.remote === false) return { state: 'inline', why: 'Trusted local writes build their links during publication.' };
   if (!effects.length) return { state: 'off', why: 'No mention-link pass was queued: links are built only for remote writes while auto_link and mcp.remote_auto_links are on. Add links with add_link if you need them.' };
   const done = effects.filter(effect => effect.state === 'committed');

@@ -82,6 +82,14 @@ export const REQUEST_EFFECTS_SQL = 'SELECT kind,state,error_code,outcome,recover
 /** `readRequestEffects`, the Git effect: $1 request id. The text `gitReceiptState` (persistence/effect-journal.ts) has always sent. */
 export const REQUEST_GIT_EFFECT_SQL = `SELECT state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`;
 
+/** The state and outcome of every `links` effect of the journal requests `requestIds` (uuids), in no set order: a put_pages receipt sums them. */
+export async function readLinksEffectStates(exec: LegacyUnscopedRead, requestIds: readonly string[]): Promise<LinksEffectState[]> {
+  if (requestIds.length === 0) return [];
+  return exec.executeRaw<LinksEffectState>("SELECT state,outcome FROM persistence_effects WHERE kind='links' AND request_id=ANY($1::uuid[])", [[...requestIds]]);
+}
+
+export interface LinksEffectState { state: string; outcome: Record<string, unknown> | null }
+
 /** One effect of a request as its receipt reads it: the stored state, error code and outcome, and whether a recovery is open. */
 export interface RequestEffectState { kind: string; state: string; error_code: string | null; outcome: Record<string, unknown> | null; recovering: boolean }
 

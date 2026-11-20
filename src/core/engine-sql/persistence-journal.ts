@@ -16,6 +16,7 @@ import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { pipelined } from '../page-state/transactions.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
@@ -101,6 +102,17 @@ export interface WriteRequestInsert {
   deferredRefreshId: string | null;
 }
 
+/**
+ * One grouped admission (journal.ts admitWriteGroupInTransaction): page requests of one principal, operation, source,
+ * worktree and authority, queued in `items` order, each with its own request id, digest, intent and receipt reservation.
+ */
+export interface WriteRequestGroupInsert {
+  principalKind: string; principalId: string; operation: string; sourceId: string; sourceIncarnation: string; worktreeId: string | null;
+  topologyGeneration: number | string | null; authority: unknown; admitterVersion: string; admitterHostId: string | null; counterKeys: string[];
+  items: Array<{ requestId: string; pageId: number | null; slug: string | null; digest: string; intent: unknown; intentBytes: number;
+    terminalReservation: number; clientRequestId: string | null }>;
+}
+
 /** The terminal state of one request and the numbers its completion statement needs. */
 export interface WriteCompletion {
   id: string; state: 'committed' | 'conflict' | 'failed' | 'cancelled'; outcome: unknown; errorCode: string | null; errorMessage: string | null;
@@ -163,6 +175,39 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
     [principalKind, principalId, requestId]);
   return row ?? null;
+}
+
+/** The requests a principal admitted under any of `requestIds` (uuids), in no set order: put_pages reads a batch's children. */
+export async function readWriteRequests(exec: LegacyUnscopedRead, principalKind: string, principalId: string, requestIds: readonly string[]): Promise<WriteRequest[]> {
+  if (requestIds.length === 0) return [];
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
+    [principalKind, principalId, [...requestIds]]);
+}
+
+/**
+ * The rows of a grouped admission and their counter reservation (the counters are already locked): the rows go in
+ * `items` order, so their sequences keep it, and every counter in `counterKeys` takes the group's count, bytes and
+ * receipt reservation. On Postgres the two statements are pipelined. Returns the inserted rows.
+ */
+export async function insertWriteRequestGroup(exec: SqlExecutor, group: WriteRequestGroupInsert): Promise<WriteRequest[]> {
+  if (group.items.length === 0) return [];
+  const bytes = group.items.reduce((sum, item) => sum + item.intentBytes, 0);
+  const terminalBytes = group.items.reduce((sum, item) => sum + item.terminalReservation, 0);
+  const [rows] = await pipelined({ kind: exec.dialect }, [() => exec.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
+      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
+       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
+       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader)
+      SELECT $1,$2,(e->>'request_id')::uuid,$3,$4,$5::uuid,(e->>'page_id')::integer,e->>'slug',$6::uuid,$7,e->>'digest',e->'intent',$8::text::jsonb,
+        (e->>'intent_bytes')::bigint,(e->>'terminal_reservation')::bigint,'page',1,$9,$10::uuid,e->>'client_request_id',true
+      FROM jsonb_array_elements($11::text::jsonb) WITH ORDINALITY AS t(e,n) ORDER BY n
+      RETURNING *`, [group.principalKind, group.principalId, group.operation, group.sourceId, group.sourceIncarnation, group.worktreeId,
+      group.topologyGeneration, JSON.stringify(group.authority), group.admitterVersion, group.admitterHostId,
+      JSON.stringify(group.items.map(item => ({ request_id: item.requestId, page_id: item.pageId, slug: item.slug, digest: item.digest,
+        intent: item.intent, intent_bytes: item.intentBytes, terminal_reservation: item.terminalReservation, client_request_id: item.clientRequestId })))]),
+    () => exec.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+$4,
+      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+$4,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
+      [group.counterKeys, bytes, terminalBytes, group.items.length])]) as [WriteRequest[]];
+  return rows;
 }
 
 /**
@@ -432,6 +477,28 @@ export function withdrawalEffectsParams(spec: WithdrawalEffectsSpec): unknown[] 
 /** Queues a withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (see `WITHDRAWAL_EFFECTS_SQL`). */
 export async function insertWithdrawalEffects(exec: SqlExecutor, spec: WithdrawalEffectsSpec): Promise<void> {
   await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
+}
+
+/** `requeueBatchLinksEffects`: the `links` effects of a finished `put_pages` batch to run once more. */
+export interface BatchLinksRequeue {
+  sourceId: string;
+  /** The journal ids (`persistence_requests.id`) whose `links` effect is re-armed. */
+  requestIds: readonly string[];
+  /** When set, only the effects whose `data->>'slug'` is one of these. */
+  slugs?: readonly string[] | null;
+}
+
+/** `requeueBatchLinksEffects`: $1 source id, $2 journal ids, $3 the slugs or null. The text `queueLinksReconcile` has always sent (the protocol predicate written out). */
+export const BATCH_LINKS_REQUEUE_SQL = `UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
+    next_attempt_at=now(),error_code=NULL,outcome=NULL,updated_at=now(),data=data||'{"batch_reconciled":true}'::jsonb
+    WHERE kind='links' AND source_id=$1 AND request_id=ANY($2::uuid[]) AND ($3::text[] IS NULL OR data->>'slug'=ANY($3::text[]))
+    AND NOT (data ? 'batch_reconciled') AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id`;
+
+/** Re-arms the batch's `links` effects that have no recovery and were not re-armed before; returns how many. */
+export async function requeueBatchLinksEffects(exec: SqlExecutor, spec: BatchLinksRequeue): Promise<number> {
+  if (!spec.requestIds.length) return 0;
+  const rows = await exec.executeRaw(BATCH_LINKS_REQUEUE_SQL, [spec.sourceId, [...spec.requestIds], spec.slugs ? [...spec.slugs] : null]);
+  return rows.length;
 }
 
 /** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */

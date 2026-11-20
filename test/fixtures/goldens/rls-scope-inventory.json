@@ -2144,6 +2144,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertWriteRequestGroup#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "invalidateContentDriftEmbeddings#default": {
         "flagOffLanes": [
           "pool",
@@ -4002,6 +4013,17 @@
         ],
         "flagOnScopes": []
       },
+      "readLinksEffectStates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readLiveMember#legacy-token": {
         "flagOffLanes": [
           "pool"
@@ -4426,6 +4448,17 @@
         ],
         "flagOnScopes": []
       },
+      "readWriteRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readWriterVersionCutoff#default": {
         "flagOffLanes": [
           "pool"
@@ -4609,6 +4642,28 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "requeueBatchLinksEffects#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "requeueBatchLinksEffects#slugs": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "requeueEffectRow#default": {
         "flagOffLanes": [
@@ -5989,6 +6044,7 @@
         "insertTrustProposal": "none",
         "insertWithdrawalEffects": "none",
         "insertWriteRequest": "none",
+        "insertWriteRequestGroup": "none",
         "installChunkEmbeddings": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
@@ -6362,6 +6418,7 @@
         "readLinkContextOriginPages": "none",
         "readLinkRelationshipEvidence": "none",
         "readLinkedFactCopies": "none",
+        "readLinksEffectStates": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
         "readLivePageIdBySlug": "none",
@@ -6452,6 +6509,7 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteRequests": "none",
         "readWriteVisibilityProbe": "none",
         "readWriterSlugFence": "none",
         "readWriterVersionCutoff": "none",
@@ -6492,6 +6550,7 @@
         "replaceDerivedLinksBatch": "none",
         "replaceSearchVectorTriggerFunction": "none",
         "replaceWantedLinkRows": "none",
+        "requeueBatchLinksEffects": "none",
         "requeueEffectRow": "none",
         "requireSynchronousCommit": "none",
         "reserveClientSpend": "none",
