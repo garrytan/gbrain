@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 872/872
+# covered: 882/882
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -28,18 +28,18 @@
 # facts: 15/15
 # segmented_body: 16/16
 # versions: 3/3
-# stats_ingest: 5/5
+# stats_ingest: 6/6
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
 # access_grants: 6/6
-# access_members: 11/11
+# access_members: 16/16
 # persistence_journal: 86/86
 # entity_reads: 8/8
 # cycle_locks: 10/10
-# minion_jobs: 8/8
-# minion_queue: 127/127
-# minion_status: 11/11
+# minion_jobs: 9/9
+# minion_queue: 129/129
+# minion_status: 12/12
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
 # facts_doctor: 11/11
@@ -355,6 +355,7 @@ revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	5	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
+pingStore	stats_ingest	yes	1	no	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	20	no	yes	yes	serves
@@ -367,7 +368,7 @@ replaceDerivedAliases	sync_aliases	yes	13	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	21	no	yes	yes	serves
+getConfig	config	yes	23	no	yes	yes	serves
 setConfig	config	yes	29	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -399,7 +400,12 @@ tombstoneAccessMember	access_members	yes	8	no	yes	yes	serves
 addAccessGroupMembers	access_members	yes	2	no	yes	yes	serves
 removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
 deleteAccessGroup	access_members	yes	1	no	yes	yes	serves
+readAccessMemberLink	access_members	yes	1	no	yes	yes	serves
+insertAccessMemberLink	access_members	yes	1	no	yes	yes	serves
+deleteAccessMemberLink	access_members	yes	1	no	yes	yes	serves
+listAccessMemberLinks	access_members	yes	1	no	yes	yes	serves
 readCredentialBindingForUpdate	access_members	yes	3	no	yes	yes	serves
+readCredentialMemberId	access_members	yes	1	no	yes	yes	serves
 writeCredentialBinding	access_members	yes	5	no	yes	yes	serves
 writeCredentialReadsUnscoped	access_members	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	22	no	yes	yes	serves
@@ -506,13 +512,14 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	102	no	yes	yes	serves
+admitJob	minion_jobs	yes	104	no	yes	yes	serves
 getJob	minion_jobs	yes	35	no	yes	yes	serves
+readJobDataByIdempotencyKey	minion_jobs	yes	1	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	74	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	75	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
 completeJob	minion_jobs	yes	43	no	yes	yes	serves
-failJob	minion_jobs	yes	34	no	yes	yes	serves
+failJob	minion_jobs	yes	35	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 listAccessTokens	minion_queue	yes	5	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	2	no	yes	yes	serves
@@ -523,12 +530,14 @@ setOauthClientTokenTtl	minion_queue	yes	4	no	yes	yes	serves
 insertOauthClientGrant	minion_queue	yes	4	no	yes	yes	serves
 readTokenLifetimeClampedClients	minion_queue	yes	1	no	yes	yes	serves
 readScopeSourceConfigs	minion_queue	yes	5	no	yes	yes	serves
-readOauthClientForUpdate	minion_queue	yes	17	no	yes	yes	serves
-readLiveOauthClients	minion_queue	yes	1	no	yes	yes	serves
+readOauthClientForUpdate	minion_queue	yes	18	no	yes	yes	serves
+readLiveOauthClients	minion_queue	yes	2	no	yes	yes	serves
 readLiveAccessTokenRows	minion_queue	yes	1	no	yes	yes	serves
+listAccessTokenRows	minion_queue	yes	1	no	yes	yes	serves
+lockOauthClientName	minion_queue	yes	2	no	yes	yes	serves
 oauthClientHoldsAuthorization	minion_queue	yes	3	no	yes	yes	serves
 readSourceArchivedForShare	minion_queue	yes	1	no	yes	yes	serves
-readSourceAttestState	minion_queue	yes	1	no	yes	yes	serves
+readSourceAttestState	minion_queue	yes	3	no	yes	yes	serves
 replaceSourceConfig	minion_queue	yes	1	no	yes	yes	serves
 persistOauthClientGrant	minion_queue	yes	7	no	yes	yes	serves
 readLatestCatalogProvenanceAudit	minion_queue	yes	1	no	yes	yes	serves
@@ -629,13 +638,13 @@ settleSpendWithLog	minion_queue	yes	6	no	yes	yes	serves
 insertSpendLog	minion_queue	yes	2	no	yes	yes	serves
 sumClientSpendSince	minion_queue	yes	3	no	yes	yes	serves
 readClientBudgetUsd	minion_queue	yes	1	no	yes	yes	serves
-insertOauthClient	minion_queue	yes	50	no	yes	yes	serves
+insertOauthClient	minion_queue	yes	51	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
-readOauthClient	minion_queue	yes	24	no	yes	yes	serves
-listOauthClients	minion_queue	yes	2	no	yes	yes	serves
+readOauthClient	minion_queue	yes	26	no	yes	yes	serves
+listOauthClients	minion_queue	yes	3	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	16	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	17	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -648,7 +657,8 @@ readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
 countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
 readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves
 countRecentCompletedJobs	minion_status	yes	1	no	yes	yes	serves
-listRecentFailedJobErrors	minion_status	yes	1	no	yes	yes	serves
+listRecentFailedJobErrors	minion_status	yes	2	no	yes	yes	serves
+listBudgetOwners	minion_status	yes	1	no	yes	yes	serves
 readQueuedPageChars	minion_status	yes	1	no	yes	yes	serves
 readSourceJobCounts	minion_status	yes	1	no	yes	yes	serves
 readEmbedBackfillBySource	minion_status	yes	1	no	yes	yes	serves

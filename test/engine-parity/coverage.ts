@@ -103,14 +103,14 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
   versions: ['createVersion', 'getVersions', 'revertToVersion'],
-  stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog'],
+  stats_ingest: ['getStats', 'getHealth', 'pingStore', 'countOnboardSignal', 'logIngest', 'getIngestLog'],
   sync_aliases: ['updateSlug', 'rewriteLinks', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveAliases',
     'setPageAliases', 'replaceDerivedAliases', 'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical'],
   config: ['getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'getAllConfig', 'getConfigValues'],
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readCurrentWriteTrust', 'setWriteContext', 'readLedgerSource', 'isFolderRestricted'],
   access_grants: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant', 'readSharedSkillServingEpoch'],
-  access_members: ['insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped'],
+  access_members: ['insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup', 'readCredentialBindingForUpdate', 'readCredentialMemberId', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink', 'listAccessMemberLinks', 'writeCredentialBinding', 'writeCredentialReadsUnscoped'],
   persistence_journal: ['readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'listFenceHoldRows', 'readFenceOriginGone', 'lockGenerationKey', 'clearFenceHoldRows', 'readFenceHoldFiles', 'readLiveGenerationRow', 'activateGenerationRows', 'recordHeldGenerationRow', 'readWriteRequest', 'readWriteRequestsByRequestId', 'readWriteRequestById', 'listWriteRequestRows',
     'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'cancelWriteRow', 'insertPublicationEffects', 'insertWithdrawalEffects', 'readSourceMembership',
     'findTopologyChanges', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
@@ -121,7 +121,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
     'assertCycleLease', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease'],
-  minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs'],
+  minion_jobs: ['admitJob', 'getJob', 'readJobDataByIdempotencyKey', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs'],
   minion_queue: ['deleteTerminalJob', 'pauseJob', 'resumeJob', 'resolveParentJob', 'failParentJob', 'resolveStrandedParents',
     'detachChildJob', 'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
     'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob', 'postInboxMessage',
@@ -156,7 +156,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens',
     'readOauthRefreshTokenForUpdate', 'deleteOauthRefreshToken',
     // grant writes and reads for rescope, first consent and attest sources (engine-sql/client-grants.ts)
-    'readOauthClientForUpdate', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit',
+    'readOauthClientForUpdate', 'lockOauthClientName', 'listAccessTokenRows', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit',
     // revoke deletes of a token and a client, and the client lifecycle writes (engine-sql/oauth-revocation.ts)
     'deleteOauthTokenByHash', 'softDeleteOauthClient', 'deleteOauthClientTokens', 'deleteOauthClientCodes',
     'deleteOauthClientRow', 'setOauthClientRevision', 'insertOauthGrantAudit',
@@ -164,7 +164,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countOauthAccessTokens'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
   minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
-    'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+    'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'listBudgetOwners', 'readQueuedPageChars', 'readSourceJobCounts',
     'readEmbedBackfillBySource'],
   // minion_subagent: lane L5 group B, the subagent transcript and tool ledger (engine-sql/jobs-subagent.ts)
   minion_subagent: ['listSubagentMessages', 'countSubagentMessages', 'insertSubagentMessage', 'listSubagentToolExecutions', 'hasSubagentToolExecution', 'listSubagentWriteOutcomes', 'listSubagentOneshotLedger', 'summarizeSubagentToolExecutions', 'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages', 'listSubagentTimelineAppendCalls', 'recordSubagentToolExecutions', 'startSubagentToolExecution', 'completeSubagentToolExecution', 'failSubagentToolExecution'],

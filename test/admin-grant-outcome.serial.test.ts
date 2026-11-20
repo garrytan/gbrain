@@ -64,6 +64,11 @@ test('native registration distinguishes refused input and preflight failure from
           if (failPreflight) throw new Error('synthetic private database preflight failure');
           return target.executeRaw(...args);
         };
+        // The source check before the transaction is the typed member; it fails the same way.
+        if (key === 'readSourceAttestState') return async (id: string) => {
+          if (failPreflight) throw new Error('synthetic private database preflight failure');
+          return target.readSourceAttestState(id);
+        };
         const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value;
       } });
       const app = express();

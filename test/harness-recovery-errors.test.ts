@@ -40,6 +40,10 @@ test('post-lock credential lookup outages remain retryable instead of suggesting
         get(target, property) {
           if (property === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => target.transaction(tx => fn(new Proxy(tx, {
             get(transaction, key) {
+              // The lock and the secret lookup run through typed members; the raw statements are still counted in case a
+              // path falls back to SQL.
+              if (key === 'readOauthClientForUpdate') return async (id: string) => { lockedReads++; return transaction.readOauthClientForUpdate(id); };
+              if (key === 'readOauthClient') return async () => { failedSecretReads++; throw transient; };
               if (key === 'executeRaw') return async (query: string, params: unknown[]) => {
                 if (/FROM oauth_clients.*FOR UPDATE/s.test(query)) lockedReads++;
                 if (/SELECT\s+client_id,\s*client_secret_hash/.test(query)) {
