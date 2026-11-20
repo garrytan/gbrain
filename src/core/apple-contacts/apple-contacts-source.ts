@@ -86,6 +86,10 @@ const stopsRun = (error: unknown) => runScoped(error) || error instanceof AppleC
   || (error instanceof OperationError && error.code.startsWith('apple_contacts_'));
 
 export async function runAppleContactsSync(engine: BrainEngine, sourceId: string, cfg: AppleContactsSourceConfig, opts: SyncOpts, deps: AppleContactsSyncDeps = {}): Promise<SyncResult> {
+  if ((opts as SyncOpts & { resetCheckpoint?: boolean }).resetCheckpoint) {
+    throw new OperationError('invalid_params', '--reset-checkpoint does not apply to an Apple Contacts source.',
+      `Run gbrain sync --source ${sourceId} --full instead: it reads every contact from GBrain Helper again, under the delete floor.`);
+  }
   return withConnectorSync(engine, sourceId, APPLE_CONTACTS_KIND, cfg, opts,
     async (managed, options) => options.dryRun ? connectorDryRunResult('Apple Contacts', sourceId) : runInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
 }
@@ -181,15 +185,17 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
   };
 
   const applyUpsert = async (contact: AppleContact) => {
-    pending.delete(contact.id);
     const render = appleContactRender(contact);
+    if (!renderAppleContactPage(render, false, cfg.contactsDir)) {
+      // A contact left with no email and no phone has no page: the one it owned waits for the delete floor like a deletion.
+      if (await existingPath(contact.id) !== null) pending.add(contact.id);
+      else { pending.delete(contact.id); delete state.fps[contact.id]; }
+      return;
+    }
+    pending.delete(contact.id);
     let written: string | null = null;
     await applyContactPage(contact.id, false, io(contact.id, render, relPath => { written = relPath; }));
     touched.add(contact.id);
-    if (written === null && !renderAppleContactPage(render, false, cfg.contactsDir)) {
-      // A contact left with no email and no phone has no page: the one it owned goes.
-      await applyContactPage(contact.id, true, io(contact.id, null, () => {}));
-    }
     const slug = written !== null ? slugifyPath(written) : null;
     if (slug) await decideIdentity(contact.id, slug, render.data.emails, render.data.phones, { company: contact.organization, jobTitle: contact.jobTitle, groups: contact.groups });
     else { reviews.delete(contact.id); factTargets.set(contact.id, null); }
@@ -235,9 +241,12 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     }
     const owned = await ownedContacts();
     const upserts = [...items.values()].filter((i): i is Extract<AppleContactChange, { op: 'upsert' }> => i.op === 'upsert');
-    const deletes = new Set([...items.values()].filter(i => i.op === 'delete' && owned.has(i.id)).map(i => i.id));
+    // A contact with no email and no phone renders no page: the page it owned is a deletion, counted against the floor.
+    const blank = new Set(upserts.filter(i => !renderAppleContactPage(appleContactRender(i.contact), false, cfg.contactsDir)).map(i => i.id));
+    const deletes = new Set([...items.values()].filter(i => (i.op === 'delete' || blank.has(i.id)) && owned.has(i.id)).map(i => i.id));
     if (meta.full) for (const id of owned) if (!items.has(id) || items.get(id)!.op === 'delete') deletes.add(id);
-    if (owned.size > 0 && upserts.length === 0) throw deleteFloor(sourceId, `the snapshot is empty while the source owns ${owned.size} contact(s).`);
+    if (owned.size > 0 && upserts.length === blank.size) throw deleteFloor(sourceId, `the snapshot holds no contact with an email or a phone while the source owns ${owned.size} contact(s).`);
+    if (owned.size > 0 && deletes.size >= owned.size) throw deleteFloor(sourceId, `the snapshot would delete every one of the ${owned.size} contacts the source owns.`);
     const { massReconcileAllowed } = await import('../../commands/sync.ts');
     if (owned.size > 0 && deletes.size > owned.size * APPLE_CONTACTS_DELETE_FLOOR && !massReconcileAllowed()) {
       throw deleteFloor(sourceId, `the snapshot would delete ${deletes.size} of the ${owned.size} contacts the source owns (more than ${APPLE_CONTACTS_DELETE_FLOOR * 100}%).`);
@@ -246,6 +255,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     for (const change of upserts) pending.delete(change.id);
     for (const change of upserts) {
       if (signal?.aborted) return meta.full;
+      if (blank.has(change.id)) continue;
       if (!opts.full && owned.has(change.id) && state.fps[change.id] === appleContactFingerprint(change.contact)) continue;
       await handle(change);
     }

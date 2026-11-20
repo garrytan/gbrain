@@ -19,7 +19,7 @@ export interface AddSourceAppleContactsOpts {
  * only the trusted local CLI and the owner's own credentials read its pages. It joins unqualified reads unless
  * --no-federated, so "what is Alice's number?" finds the contact page.
  */
-export function appleContactsSourceConfig(opts: AddSourceAppleContactsOpts, choice: MeetingsRecordChoice, federated: boolean | null | undefined): Record<string, unknown> {
+export function appleContactsSourceConfig(opts: AddSourceAppleContactsOpts, choice: MeetingsRecordChoice, federated: boolean | null | undefined, managed = false): Record<string, unknown> {
   return {
     kind: APPLE_CONTACTS_KIND,
     ac_helper_host: opts.helperHost,
@@ -32,5 +32,7 @@ export function appleContactsSourceConfig(opts: AddSourceAppleContactsOpts, choi
     ...(opts.syncIntervalMin !== undefined ? { sync_interval_min: Math.max(SYNC_INTERVAL_MIN_FLOOR, opts.syncIntervalMin) } : {}),
     owner_only: true,
     federated: federated ?? true,
+    // A managed Git-recorded source is strict, so its private contact pages are never committed.
+    ...(managed && choice.record === 'git' ? { canonical: 'git' } : {}),
   };
 }

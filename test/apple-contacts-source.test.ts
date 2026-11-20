@@ -33,6 +33,7 @@ import { listEntityIdentities } from '../src/core/entity-identity.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { runDedupe } from '../src/commands/dedupe.ts';
 import { addSource } from '../src/core/sources-ops.ts';
+import { managedSourceAddInput } from '../src/core/persistence/managed-sources.ts';
 import { parseSourceLifecycleArgs } from '../src/commands/sources-lifecycle-args.ts';
 import { isOwnerOnlySourceConfig } from '../src/core/access/owner-only.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -224,6 +225,16 @@ describe('config', () => {
     expect(() => parseSourceLifecycleArgs(['add', 'contacts-2', '--kind', 'apple-contacts', '--helper-host', '127.0.0.1', '--token-env', 'X'])).toThrow();
     expect(() => parseSourceLifecycleArgs(['add', 'contacts-3', '--kind', 'apple-contacts', '--helper-host', '127.0.0.1', '--proxy', 'socks5h://u:p@h:1', '--token-file', tokenFile])).toThrow();
   });
+
+  test('a managed brain registers the same apple-contacts source (kind, helper, token file, owner-only), not a plain one', () => {
+    const { params } = parseSourceLifecycleArgs(['add', 'contacts-managed', '--kind', 'apple-contacts', '--helper-host', 'helper.example.invalid', '--token-file', tokenFile]);
+    const input = managedSourceAddInput(params.options as never);
+    expect(input.config).toMatchObject({ kind: 'apple-contacts', ac_helper_host: 'helper.example.invalid', ac_token_file: tokenFile, ac_record: 'database', owner_only: true, federated: true });
+    expect(input.config).not.toHaveProperty('canonical');
+    expect(input.path).toBeUndefined();
+    expect(input.requireGitContent).toBe(false);
+    expect(JSON.stringify(input.config)).not.toContain(STUB_TOKEN);
+  });
 });
 
 describe('token file', () => {
@@ -392,6 +403,45 @@ describe('sync (repo-less brain)', () => {
     });
     expect((await live(id)).length).toBe(5);
     expect((await readSyncStatus(engine, id)).held_deletes).toMatchObject({ contacts: 5, owned: 5 });
+  });
+
+  test('contacts left with no email and no phone are deletions under the floor, on an incremental run and a full read', async () => {
+    const s = freshStub();
+    for (let i = 1; i <= 10; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    for (let i = 1; i <= 10; i++) s.upsert('c' + i, { given_name: `Person${i}`, family_name: 'Sample' });
+    await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    expect((await live(id)).length).toBe(10);
+    await withEnv({ GBRAIN_ALLOW_MASS_RECONCILE: '1' }, async () => {
+      await expect(run(id, cfg, { full: true })).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    });
+    expect((await live(id)).length).toBe(10);
+    for (let i = 1; i <= 10; i++) s.upsert('c' + i, contact(i));
+    s.upsert('c1', { given_name: 'Person1', family_name: 'Sample' });
+    expect((await run(id, cfg)).deleted).toBe(1);
+    expect((await live(id)).map(r => r.id)).not.toContain('c1');
+    expect((await live(id)).length).toBe(9);
+  });
+
+  test('a full read that would delete every owned contact is refused, even with GBRAIN_ALLOW_MASS_RECONCILE=1', async () => {
+    const s = freshStub();
+    for (let i = 1; i <= 3; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    s.contacts.clear();
+    s.upsert('n1', contact(11));
+    s.upsert('n2', contact(12));
+    await withEnv({ GBRAIN_ALLOW_MASS_RECONCILE: '1' }, async () => {
+      await expect(run(id, cfg, { full: true })).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    });
+    expect((await live(id)).map(r => r.id).sort()).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  test('--reset-checkpoint is refused for an Apple Contacts source, which re-reads with --full instead', async () => {
+    const s = freshStub();
+    const { id, cfg } = await contactsSource(s);
+    await expect(run(id, cfg, { resetCheckpoint: true } as never)).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('Apple Contacts') });
   });
 
   test('an incremental run under the floor applies its deletions; a held run applies with GBRAIN_ALLOW_MASS_RECONCILE=1', async () => {

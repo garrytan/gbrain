@@ -44,6 +44,10 @@ gbrain sources add contacts-mac --kind apple-contacts \
 gbrain sync --source contacts-mac
 ```
 
+GBrain Helper answers the Contacts route only on its own Mac (`127.0.0.1`) and on its Tailscale address, for the
+peers it lists. Point `--helper-host` at one of those, directly or through `--proxy`, so the token and the contacts
+travel only inside the Mac or inside Tailscale's encrypted tunnel, never in plain text across a local network.
+
 Options: `--helper-port <port>` (default 8792), `--proxy socks5h://<host>:<port>` (the proxy resolves the helper's
 host name; no credentials in the URL), `--contacts-dir <dir>` (default `contacts/apple`), `--sync-interval-min <n>`
 (default 15), `--no-federated` (keep contact pages out of unqualified reads). `--token-env` is refused for this kind.
