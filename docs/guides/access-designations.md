@@ -248,8 +248,8 @@ stay kept to it.
 
 ### Owner-only sources (`owner_only`)
 
-An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
-by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
+An `imessage` source, and any source whose `sources.config` has `owner_only: true` (an `apple-contacts` source is
+registered with it), is read only by the local CLI and by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
 (private or not), for its facts and timeline rows, and for pages, facts, takes and timeline rows derived from them:
 a synthesized concept with an input page there, and any page, fact, take or timeline row whose recorded derivation
 inputs reach a row there, wherever its page is. A meeting in an owner-only source adds timeline rows only to pages in

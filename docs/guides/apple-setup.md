@@ -43,6 +43,12 @@ Removing the source (`gbrain sources remove`, with or without `--keep-storage`) 
 leaves everything derived from it owner-only: a delete trigger records those rows first
 ([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)). Nothing derived is deleted.
 
+## Contacts
+
+The same helper serves your Mac's address book to the `apple-contacts` source kind: one private contact page per
+contact, an exact email or phone link to the matching person page, and a three-field block (company, job title,
+groups) on that page. Phones and emails stay on the owner-only contact pages. See [Apple Contacts](apple-contacts.md).
+
 ## Errors
 
 ### apple_helper_not_running

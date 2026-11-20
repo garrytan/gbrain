@@ -65,6 +65,7 @@ src/commands/sources.ts	runAudit	field	SEGW
 src/commands/sync/finalize.ts	backstopAffectedPageFacts	field	STREAM	
 src/core/ai/decide/review-lane.ts	pagePairAnchor	field	LEAD	bounded prefix row
 src/core/ai/decide/review-lane.ts	pagePairAnchor	sql	LEAD	boundedBodyPrefixSql (truth_lead for segmented), sliced to PAGE_TEXT_LIMIT
+src/core/apple-contacts/person-block.ts	syncPersonBlock	field	INLINE	GST-3256: a segmented page is skipped (isSegmentedPage) before its body is read; the block is spliced into an inline person page only
 src/core/attendance-repair.ts	prepareOrigin	field	META	
 src/core/attendance-repair.ts	readOrigin	sql	META	
 src/core/belief/backfill.ts	preparePage	field	STREAM	the backfill parses inline version and page bodies; a segmented page or version is skipped (summary reasons large_page_versions_pruned, segmented_version_body)
