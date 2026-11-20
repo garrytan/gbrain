@@ -38,7 +38,7 @@ import { slugifyPath } from '../sync.ts';
 import { nextSlackDay, slackAlignToDay, slackDayKey, slackDayStartMs } from '../slack/render.ts';
 import { IMESSAGE_THREADS_LIMIT, helperNotRunning, imessageHelper, type IMessageHelper } from '../apple/helper-client.ts';
 import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessageDay, shownMessages } from './render.ts';
-import { connectorSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
+import { connectorSpeakerOwnerStamp, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
 import { git } from '../git/git-run.ts';
@@ -111,11 +111,11 @@ function staleHolds(recorded: Record<string, string>, paths: string[], detail: s
 
 export async function runIMessageSync(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts, deps: IMessageSyncDeps = {}): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'imessage', cfg, opts,
-    async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps, await connectorSpeakerOwnerStamp(engine, sourceId)), pendingConnectorResult);
 }
 
 async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts,
-  managed: ManagedConnectorSync | null, deps: IMessageSyncDeps): Promise<SyncResult> {
+  managed: ManagedConnectorSync | null, deps: IMessageSyncDeps, ownerStamp: SpeakerOwnerStamp | null): Promise<SyncResult> {
   const now = deps.now ?? Date.now;
   const runStart = now();
   const runId = randomUUID();
@@ -160,7 +160,6 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   };
   // The database rows are imported after the run's one commit (owned-folder/writer.ts); the import itself is database-mode.
   const ctx: ConnectorPublishCtx = { engine, sourceId, managed, summary, label: 'iMessage', tag: 'imessage', record: 'database', dir: null, gated: true };
-  const ownerStamp = await connectorSpeakerOwnerStamp(engine, sourceId);
   const owned = state.owned?.incarnation === source.incarnation ? state.owned : undefined;
   const destination = managed
     ? { record: 'database' as const, reason: 'managed' as const, detail: 'the brain is managed by its coordinator', root: null }
