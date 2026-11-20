@@ -34,7 +34,7 @@ import type {
   LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
-  FileSpec, FileRow,
+  FileSpec, FileRow, ListFilesOptions,
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, StaleTakeOpts, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
@@ -159,11 +159,14 @@ import * as wantedLinksImpl from './engine-sql/wanted-links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
+import * as largePageImpl from './engine-sql/large-page.ts';
 import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
+import * as withdrawalPages from './engine-sql/withdrawal-pages.ts';
+import * as withdrawalFence from './engine-sql/withdrawal-fence.ts';
 import { noteDirectPoolLease } from './direct-pool-profile.ts';
 import * as filesImpl from './engine-sql/files.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
@@ -172,6 +175,7 @@ import { frontmatterWhereSql } from './search/frontmatter-where.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
 import * as searchReadsImpl from './engine-sql/search-reads.ts';
+import * as fieldUsageImpl from './engine-sql/field-usage.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as ownerOnlyMarksImpl from './engine-sql/owner-only-marks.ts';
@@ -1626,6 +1630,7 @@ export class PostgresEngine implements BrainEngine {
   async countOnboardSignal(signal: healthImpl.OnboardSignal, entityTypes: import('./schema-pack/entity-types.ts').EntityTypeFilter, opts?: { signal?: AbortSignal }) {
     return healthImpl.countOnboardSignal(this.searchRead, signal, entityTypes, opts);
   }
+  readFieldUsageSamples(query: fieldUsageImpl.FieldUsageQuery) { return fieldUsageImpl.readFieldUsageSamples(unscopedExecutor(this.engineSql, 'field usage samples: master engine.executeRaw, unscoped'), query); }
 
   // v0.41.18.0: lazy-cached resolveBulkRetryOpts result. Constructor-time
   // resolution would force env validation at module-load, which breaks tests
@@ -2316,6 +2321,8 @@ export class PostgresEngine implements BrainEngine {
     return filesImpl.listFilesForPage(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), pageId);
   }
 
+  listFiles(opts: ListFilesOptions) { return filesImpl.listFiles(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), opts); }
+
   // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const sql = this.sql;
@@ -2879,6 +2886,8 @@ export class PostgresEngine implements BrainEngine {
   async refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void> {
     return pagesImpl.refreshPageOrigin(this.autocommitSql, slug, opts);
   }
+  readStoredBodyBytes(slug: string, sourceId: string) { return this.preparationRead(exec => largePageImpl.readStoredBodyBytes(unscopedExecutor(exec, 'large page: stored body size read ran unscoped through executeRaw'), slug, sourceId)); }
+  async readPageBodySizes(pageId: number) { return largePageImpl.readPageBodySizes(this, pageId); }
 
   // Config
 
@@ -3228,6 +3237,9 @@ export class PostgresEngine implements BrainEngine {
   async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.engineSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
   async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLock(this.engineSqlOn(c), lockId, opts)); }
   async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLockIfStale(this.engineSqlOn(c), lockId, opts)); }
+  async listSegmentedPages(sourceId: string, slugs: readonly string[]) { return withdrawalPages.listSegmentedPages(this, sourceId, slugs); }
+  async invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]) { return withdrawalPages.invalidateWithdrawnPages(this, sourceId, slugs); }
+  async hasWithdrawnFenceClaim(sourceId: string, claims: readonly withdrawalFence.FenceClaimRow[], subject: string | null) { return withdrawalFence.hasWithdrawnFenceClaim(this, sourceId, claims, subject); }
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)

@@ -1073,7 +1073,6 @@ src/core/schema-missing-tables.ts	execute_raw	1
 src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
-src/core/schema-pack/field-usage.ts	execute_raw	2
 src/core/schema-pack/lint-rules.ts	execute_raw	3
 src/core/schema-pack/page-to-alias.ts	execute_raw	3
 src/core/schema-pack/page-to-link.ts	execute_raw	1

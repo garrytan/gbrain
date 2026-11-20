@@ -143,8 +143,10 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/field-usage.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts

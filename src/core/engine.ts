@@ -18,10 +18,12 @@ import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
+import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -134,6 +136,7 @@ export interface FileRow {
   metadata: Record<string, unknown>;
   created_at: Date;
 }
+export interface ListFilesOptions { pageSlug?: string | null; limit: number }
 
 /**
  * v0.27.1: spec for upsertFile. Identity is (source_id, storage_path).
@@ -1347,6 +1350,8 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
+  readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
 
   // Chunks
   /**
@@ -2122,6 +2127,8 @@ export interface BrainEngine {
   upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }>;
   getFile(sourceId: string, storagePath: string): Promise<FileRow | null>;
   listFilesForPage(pageId: number): Promise<FileRow[]>;
+  /** One page slug's files (any source) by filename, or every file by page slug then filename; at most `limit` (`files list`). */
+  listFiles(opts: ListFilesOptions): Promise<FileRow[]>;
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
@@ -2779,6 +2786,10 @@ export interface BrainEngine {
   getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null>;
   /** Record where a live page's file lives (`source_path`, and `source_uri` when given); a page already holding both writes nothing. */
   refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void>;
+  /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
+  readStoredBodyBytes(slug: string, sourceId: string): Promise<number | null>;
+  /** Page `pageId`'s body and truth sizes (deleted or not), append_page's read after its write, or null (engine-sql/large-page.ts). */
+  readPageBodySizes(pageId: number): Promise<PageBodySizes | null>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -3037,6 +3048,12 @@ export interface BrainEngine {
     acquisitionToken: string;
     maxAgeSeconds: number;
   }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
+  /** The id and slug of the segmented pages among `slugs` in the source (engine-sql/withdrawal-pages.ts). */
+  listSegmentedPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
+  /** A fact withdrawal's page invalidation: a new knowledge revision, no text projection or embedding signature, for the inline pages among `slugs`. */
+  invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string; knowledge_revision: string }>>;
+  /** Whether a withdrawal or purge tombstone covers a claim of a malformed fence, for `subject` or any subject when null (engine-sql/withdrawal-fence.ts). */
+  hasWithdrawnFenceClaim(sourceId: string, claims: ReadonlyArray<{ claim: string; visibility: string | null }>, subject: string | null): Promise<boolean>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
