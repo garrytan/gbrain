@@ -287,6 +287,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'worktreeClaimStore', 'readWriterAdminState', 'writerAdminStore', 'readWorktreeManifest',
   // Writer status (engine-sql/writer-status.ts).
   'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows',
+  // delete_page's derived-origin carry and the label door (engine-sql/label-door.ts).
+  'readPrivacyOrigin', 'listOriginDependents', 'listCheckoutFiles', 'readPageLabelRow', 'writePageLabelGuard',
+  // The head-blocker probe (engine-sql/head-blocker.ts).
+  'readHeadBlockerRows', 'readRecoveringHeadRow',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',

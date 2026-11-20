@@ -90,6 +90,8 @@ import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
+import type { CheckoutFileRow, OriginDependentRow, OriginRefInput, PageLabelRow, PrivacyOriginRow } from './engine-sql/label-door.ts';
+import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1609,6 +1611,20 @@ export interface BrainEngine {
   listBlockingEffectRows(sourceId: string | null, limit: number, recoveringOnly: boolean): Promise<BlockingEffectRow[]>;
   /** The active worktree refreshes (of one source's worktree, or all), oldest first. */
   listActiveWorktreeRefreshRows(sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]>;
+  /**
+   * delete_page's derived-origin carry and the label door (engine-sql/label-door.ts). The page at (sourceId, slug),
+   * soft-deleted or not, when it is a privacy origin (an atom, or hidden by privacyPartSql); else null. The caller reads
+   * the alias setting first (readHonorAliases).
+   */
+  readPrivacyOrigin(sourceId: string, slug: string): Promise<PrivacyOriginRow | null>;
+  /** The pages the removal of `origins` would open (private-labels.ts dependentsSql('remove')), by (id, cleared_id). */
+  listOriginDependents(origins: readonly OriginRefInput[]): Promise<OriginDependentRow[]>;
+  /** Each page among `pageIds` with a recorded file, with its source's checkout path, by id. */
+  listCheckoutFiles(pageIds: readonly number[]): Promise<CheckoutFileRow[]>;
+  /** The page at (sourceId, slug), soft-deleted or not: its id and stored frontmatter. */
+  readPageLabelRow(sourceId: string, slug: string): Promise<PageLabelRow | null>;
+  /** Sets the page's label guard (GST-2521) to `tier`, stamped now; null removes it. */
+  writePageLabelGuard(pageId: number, tier: import('./trust/tier.ts').TrustTier | null): Promise<void>;
   /**
    * The writer-admin store for writer lock and unlock and transfer prepare, accept and cancel (engine-sql/writer-admin.ts).
    * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.
@@ -3892,6 +3908,10 @@ export interface BrainEngine {
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** Head-blocker probe rows (engine-sql/head-blocker.ts): for each queued request in `ids`, whether a consumer on `hostId` may claim it and the facts naming why not. */
+  readHeadBlockerRows(ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts): Promise<HeadBlockerRow[]>;
+  /** A recovering head's recovery record and its worktree's owner host, or null when it has no recovery record or no worktree. */
+  readRecoveringHeadRow(id: string, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RecoveringHeadRow | null>;
   /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
   selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */

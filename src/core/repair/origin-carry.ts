@@ -13,6 +13,11 @@
  * there is left to the purge. An explicit purge labels them first; when that fails it soft-deletes instead and parks the
  * origin, and when the origin lookup itself fails it soft-deletes and keeps any park (purge_held derived_origin_unchecked). Every expiry (carryPrivateBeforePurge, from purgeDeletedPagesCoordinated) labels the dependents of each expired
  * private origin and parks the ones it could not (persistence/derived-origin-hold.ts), so no purge removes them.
+ *
+ * The origin, dependent, checkout and label-guard reads go through typed engine members (engine-sql/label-door.ts), so
+ * the Rust engine runs the soft-delete carry the same way. An engine that refuses one of them with
+ * engine_capability_missing surfaces the refusal; it is never read as "no origin". The explicit purge parks and purges
+ * through raw SQL, so on an engine without it the purge refuses before any write and the page stays live.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -24,8 +29,8 @@ import { maintenancePreflight, publishMaintenancePages } from '../persistence/pr
 import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
 import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
+import { capabilityMissing, rethrowCapabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
 import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write.ts';
-import { dependentsSql } from './private-labels.ts';
 
 const bounded = { timeoutMs: 120_000, jitOff: true, prepare: false };
 const PREVIEW = 'gbrain repair visibility';
@@ -38,15 +43,15 @@ interface Dependent { id: number; origin_id: number; source_id: string; slug: st
 interface Failure { code: string | null; reason: string }
 export interface CarryBlock extends Failure { slug: string | null }
 
+/** A failed origin lookup reads as no origin, except an engine's capability refusal, which refuses the delete. */
+const capabilityOrNull = (error: unknown): null => { rethrowCapabilityMissing(error); return null; };
+
 const failureOf = (error: unknown): Failure => ({ code: typeof (error as { code?: unknown } | null)?.code === 'string' ? (error as { code: string }).code : null,
   reason: error instanceof Error ? error.message : String(error) });
 
 async function dependentsOf(engine: BrainEngine, origins: Origin[]): Promise<Dependent[]> {
-  const rows = await engine.executeRaw<{ id: number; cleared_id: number; source_id: string; slug: string; deleted: boolean }>(
-    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d
-      JOIN LATERAL (SELECT pages.source_id, pages.slug, pages.deleted_at FROM pages WHERE pages.id = d.id OFFSET 0) p ON true ORDER BY d.id`,
-    [origins.map(o => o.id), origins.map(o => o.source_id), origins.map(o => o.slug), origins.map(() => '')], bounded);
-  return rows.map(row => ({ id: Number(row.id), origin_id: Number(row.cleared_id), source_id: row.source_id, slug: row.slug, deleted: row.deleted === true }));
+  const rows = await engine.listOriginDependents(origins.map(o => ({ id: o.id, source_id: o.source_id, slug: o.slug })));
+  return rows.map(row => ({ id: row.id, origin_id: row.cleared_id, source_id: row.source_id, slug: row.slug, deleted: row.deleted }));
 }
 
 /** Labels each page private through the label door; the failures by page id. */
@@ -110,6 +115,7 @@ export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch
       }
       return blocked;
     } catch (error) {
+      rethrowCapabilityMissing(error);
       return new Map<number, CarryBlock>(origins.map(origin => [origin.id, { slug: null, ...failureOf(error) }]));
     }
   });
@@ -118,9 +124,8 @@ export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch
 async function originOf(engine: BrainEngine, sourceId: string, slug: string): Promise<(Origin & { deleted: boolean }) | null> {
   return withoutCallerAccess(async () => {
     await readHonorAliases(engine);
-    const [row] = await engine.executeRaw<{ id: number; deleted: boolean }>(`SELECT p.id, p.deleted_at IS NOT NULL AS deleted FROM pages p
-      WHERE p.source_id = $1 AND p.slug = $2 AND ${originSql('p')}`, [sourceId, slug], bounded);
-    return row ? { id: Number(row.id), source_id: sourceId, slug, deleted: row.deleted === true } : null;
+    const row = await engine.readPrivacyOrigin(sourceId, slug);
+    return row ? { id: row.id, source_id: sourceId, slug, deleted: row.deleted } : null;
   });
 }
 
@@ -145,11 +150,14 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const batch = `derived-origin-carry:${String(p.request_id)}`;
   const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
   if (p.purge !== true) {
-    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(() => null) : null;
+    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(capabilityOrNull) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
-    if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(() => null))?.deleted) await carryPrivate(ctx.engine, [origin], batch).catch(() => undefined);
+    if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(capabilityOrNull))?.deleted) await carryPrivate(ctx.engine, [origin], batch);
     return finishPagePurge(ctx, result);
   }
+  // The purge path (the carry's parks, the owed-purge record, the page purge itself) reads and writes through raw SQL,
+  // so an engine without it refuses here, before the origin lookup and any fallback soft delete write anything.
+  if (!servesRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'delete_page --purge (the purge parks and purges through raw SQL)');
   let origin: (Origin & { deleted: boolean }) | null;
   try { origin = slug ? await originOf(ctx.engine, sourceId, slug) : null; }
   catch {

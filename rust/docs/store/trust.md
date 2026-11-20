@@ -244,3 +244,13 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   only when the version that replaced it is visible and was not pruned, as on PGLite. `gap_at` is the page's
   `version_history_gap_at`.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
+
+## Label guards (`trust::label_guards`)
+
+The `page_label_guards` table (GST-2521): the trust tier an owner label write set on a page. One record per page:
+
+`t 0x0A page_id` (8 bytes, big-endian) -> `{"tier": <tier>, "set_at_us": <i64>}`
+
+`writePageLabelGuard` ([label_door.md](label_door.md)) writes and deletes it. A hard page delete removes it (the
+table's `ON DELETE CASCADE`, through `cascade::remove_page_rows`). The guard's readers (`labelGuardTier` and the
+deletion and graduation inventories) still read the table through `executeRaw`, which the Rust engine refuses.

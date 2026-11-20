@@ -24,6 +24,7 @@ test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	35	0
 test/engine-parity/delegated-grant.test.ts	2	0
+test/engine-parity/delete-page.test.ts	4	1
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/embedding-catalog.test.ts	7	0
 test/engine-parity/embedding-install.test.ts	3	0
@@ -94,7 +95,7 @@ test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	38	2
 test/engine-parity/persistence-declaration.test.ts	7	3
-test/engine-parity/persistence.test.ts	49	0
+test/engine-parity/persistence.test.ts	50	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/reads-privacy.test.ts	51	0

@@ -572,6 +572,19 @@ impl Brain {
         self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
     }
 
+    /// `readHeadBlockerRows({ ids, priority })`: one head-blocker probe row per queued request
+    /// asked about (`src/core/engine-sql/head-blocker.ts`).
+    #[napi]
+    pub fn read_head_blocker_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_head_blocker_rows(&required(spec, "readHeadBlockerRows spec")?)
+        })
+    }
+
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
     /// projection window stands (`{ work, projection_work, projection_last, high_water }`).
     #[napi]

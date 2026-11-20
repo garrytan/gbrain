@@ -64,6 +64,7 @@ mod facts_trust_owner;
 mod facts_trust_reads;
 mod jobs;
 mod keyword;
+mod label_door;
 mod link_queries;
 mod link_temporal;
 mod memory_mutation_reads;

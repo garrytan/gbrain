@@ -177,6 +177,8 @@ import * as worktreeClaimImpl from './engine-sql/worktree-claim.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import * as writerAdminImpl from './engine-sql/writer-admin.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
+import * as labelDoorImpl from './engine-sql/label-door.ts';
+import * as headBlockerImpl from './engine-sql/head-blocker.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
@@ -2021,6 +2023,13 @@ export class PGLiteEngine implements BrainEngine {
   listOnboardingSources(sourceId: string | null) { return writerStatusImpl.listOnboardingSources(this, sourceId); }
   listBlockingEffectRows(sourceId: string | null, limit: number, recoveringOnly: boolean) { return writerStatusImpl.listBlockingEffectRows(this, sourceId, limit, recoveringOnly); }
   listActiveWorktreeRefreshRows(sourceId: string | null) { return writerStatusImpl.listActiveWorktreeRefreshRows(this, sourceId); }
+  readHeadBlockerRows(ids: readonly string[], hostId: string | null, opts?: headBlockerImpl.HeadBlockerReadOpts) { return headBlockerImpl.readHeadBlockerRows(this, ids, hostId, opts); }
+  readRecoveringHeadRow(id: string, opts?: { timeoutMs?: number; signal?: AbortSignal }) { return headBlockerImpl.readRecoveringHeadRow(this, id, opts); }
+  readPrivacyOrigin(sourceId: string, slug: string) { return labelDoorImpl.readPrivacyOrigin(this, sourceId, slug); }
+  listOriginDependents(origins: readonly labelDoorImpl.OriginRefInput[]) { return labelDoorImpl.listOriginDependents(this, origins); }
+  listCheckoutFiles(pageIds: readonly number[]) { return labelDoorImpl.listCheckoutFiles(this, pageIds); }
+  readPageLabelRow(sourceId: string, slug: string) { return labelDoorImpl.readPageLabelRow(this, sourceId, slug); }
+  writePageLabelGuard(pageId: number, tier: import('./trust/tier.ts').TrustTier | null) { return labelDoorImpl.writePageLabelGuard(this, pageId, tier); }
   writerAdminStore(): Promise<WriterAdminStore> { return writerAdminImpl.writerAdminStore(this); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }

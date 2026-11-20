@@ -20,6 +20,8 @@
 //! - `t 0x06 id` -> a trust proposal; `t 0x07 action \0 target_table \0 target_id \0
 //!   related_table \0 related_id` -> the id of the pending one; `t 0x08 table \0 row_id
 //!   proposal_id` -> empty, a proposal that names the row ([`proposals`]).
+//! - `t 0x0A page_id` (8-byte big-endian) -> `{"tier", "set_at_us"}`: a page's label guard
+//!   ([`label_guards`]).
 //!
 //! A page's trust tier and write origin have no key of their own: they are fields of the page
 //! record (`pages::PageRecord`, stamped by `pages::write_page`) and of each version record (copied
@@ -39,6 +41,7 @@ mod stamp;
 mod eligibility;
 pub(crate) mod fingerprint;
 pub mod held_rows;
+pub mod label_guards;
 pub mod proposals;
 mod row_trust;
 pub mod tier_reads;

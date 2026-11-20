@@ -214,6 +214,15 @@ export const RUST_ENGINE_MEMBERS = {
   listOnboardingSources: 'persistence_journal',
   listBlockingEffectRows: 'persistence_journal',
   listActiveWorktreeRefreshRows: 'persistence_journal',
+  // The head-blocker probe (engine-sql/head-blocker.ts).
+  readHeadBlockerRows: 'persistence_journal',
+  readRecoveringHeadRow: 'persistence_journal',
+  // delete_page's derived-origin carry and the label door (engine-sql/label-door.ts).
+  readPrivacyOrigin: 'pages',
+  listOriginDependents: 'pages',
+  listCheckoutFiles: 'pages',
+  readPageLabelRow: 'pages',
+  writePageLabelGuard: 'pages',
   // config
   getConfigValues: 'config',
   getConfig: 'config',

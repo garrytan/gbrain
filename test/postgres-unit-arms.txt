@@ -168,6 +168,7 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
+test/engine-parity/delete-page.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts

@@ -28,8 +28,6 @@ import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, 
 import type { RepairItemOutcome } from './core.ts';
 import { raisePageLabelGuard } from '../trust/page-write.ts';
 
-const bounded = { timeoutMs: 120_000 };
-
 /**
  * GST-2128 item 1: on a brain without managed persistence, the pages with a recorded file (`source_path`) in a source that
  * has a checkout (`local_path`, or `sync.repo_path` for the default source), by page id. A label write there writes only the
@@ -38,8 +36,7 @@ const bounded = { timeoutMs: 120_000 };
  */
 export async function filesInCheckout(engine: BrainEngine, pageIds: number[]): Promise<Map<number, string>> {
   if (!pageIds.length || await managedPersistenceEnabled(engine)) return new Map();
-  const rows = await engine.executeRaw<{ id: number; source_id: string; source_path: string; local_path: string | null }>(`SELECT p.id, p.source_id, p.source_path, s.local_path
-    FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($1::integer[]) AND p.source_path IS NOT NULL`, [pageIds], bounded);
+  const rows = await engine.listCheckoutFiles(pageIds);
   const repoPath = rows.some(row => row.source_id === 'default' && !row.local_path) ? await engine.getConfig('sync.repo_path') : null;
   return new Map(rows.flatMap(row => (row.local_path ?? (row.source_id === 'default' ? repoPath : null)) ? [[Number(row.id), row.source_path] as const] : []));
 }

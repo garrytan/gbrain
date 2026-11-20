@@ -59,6 +59,8 @@ import * as factsTrust from './facts-trust.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
+import * as headBlocker from './head-blocker.ts';
+import * as labelDoor from './label-door.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as withdrawalCommit from './withdrawal-commit.ts';
 import * as withdrawalDiscovery from './withdrawal-discovery.ts';
@@ -129,6 +131,8 @@ export const STORE_MEMBERS = {
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
+  ...headBlocker,
+  ...labelDoor,
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
   ...withdrawalCommit,

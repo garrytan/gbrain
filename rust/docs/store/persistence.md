@@ -363,6 +363,20 @@ a worktree, and a Rust brain has none, so they find no row. `projection_last` is
 (`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
 is not a uuid refuses with the uuid cast message.
 
+## Head-blocker probe
+
+`brain.readHeadBlockerRows({ ids, priority })` answers `readHeadBlockerRows` (`engine-sql/head-blocker.ts`):
+one row per request in `ids` that is `queued`, in no fixed order. `claimable` is the claim rules above
+with no excluded or lane roots. `earlier` lists, by sequence, the pending requests of the same source
+incarnation with a lower sequence that the request may not pass (the queued-sync rule with `priority`),
+each as `{ request_id, state, claim_phase, execution_token, claim_lapsed, publication_started, recovery,
+principal_kind, principal_id }`, or is `null` when there is none. `backoff_until` is the stored
+`next_attempt_at` while it is later than now. The worktree, fence, effect recovery, request recovery,
+mirror and `ahead` fields join a worktree, and a Rust brain has none, so they are `null`. The host id
+decides only worktree ownership, so the store does not take it. An id that is not a uuid refuses with
+the uuid cast message. `readRecoveringHeadRow` needs a worktree too, so the TypeScript member answers
+`null` without a store call.
+
 ## No-op embedding settle
 
 `settleNoopEmbeddingEffects` (`persistence/embedding-noop-settle.ts`) settles, in bulk, queued page

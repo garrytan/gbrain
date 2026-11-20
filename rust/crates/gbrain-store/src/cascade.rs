@@ -39,6 +39,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::page_ops::remove_page_rows(tx, page)?;
     crate::entity_identities::remove_page_rows(tx, page)?;
     crate::embedding_holds::remove_page_rows(tx, page)?;
+    crate::trust::label_guards::remove_page_rows(tx, page)?;
     Ok(())
 }
 
