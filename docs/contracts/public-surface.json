@@ -2073,6 +2073,7 @@
     "google_api_key",
     "health.cache_ttl_ms",
     "hooks.stop_push_debounce_min",
+    "identity.phone_country_code",
     "import.analyze_every_pages",
     "import.require_configured_root",
     "integrations.memorable.enabled",
