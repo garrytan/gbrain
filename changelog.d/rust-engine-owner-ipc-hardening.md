@@ -1,0 +1,13 @@
+**The experimental Rust engine's owner socket now bounds what a second process can make the owner hold, checks who connects, and hands the brain over cleanly when its owner exits; nothing selects the Rust engine yet, so PGLite and Postgres brains are unchanged.**
+
+### Changed
+- The owner of a Rust brain refuses a malformed or oversized frame, and a client that sends one cannot make the owner run a call. It caps its call queue, the bytes of call frames it holds and its open connections, and answers a call over a cap with `owner_busy` (retryable), which runs nothing. A peer that is refused for being over the connection cap and never closes its side is cut off after one second.
+- The owner accepts only connections from its own user, and says so with `owner_ipc_peer_refused` when another user, or a peer whose user it cannot read, connects.
+- A call that carries a far deadline keeps it. A deadline weeks away no longer ends the call at once.
+- A write from a remote caller is refused on the client side and is never sent to the owner, which would have run it with the owner's wider access.
+- When the owner exits, the next call from a client takes the brain over, or reaches the process that did. A call that was cancelled, or past its deadline, while that happens ends as cancelled or as a timeout that never ran, and no longer runs in this process. If the takeover cannot open the store, the call that started it fails with the store's own error.
+- A call made while `disconnect` runs no longer starts a takeover that holds the brain lock after `disconnect` returned.
+- The owner keeps the brain lock until a store open that is still pending settles.
+
+### Added
+- Three error codes, `owner_busy`, `owner_ipc_peer_refused` and `owner_ipc_protocol`, in the error guide and the public surface.
