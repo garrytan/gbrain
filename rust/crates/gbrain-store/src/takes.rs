@@ -490,6 +490,38 @@ pub(crate) fn seed_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<bool>
     Ok(true)
 }
 
+/// The shadow seed (`seed.rs`): stores the evidence row of `synthesis` citing the take
+/// `(take_page_id, take_row_num)`, copied from another engine with its own `created_at`, with its
+/// reverse index. `false` when the row is already stored; a take that is not stored is the foreign
+/// key violation. The caller checked the synthesis page.
+pub(crate) fn seed_evidence(
+    tx: &mut dyn KvWrite,
+    synthesis: &PageRecord,
+    take_page_id: u64,
+    take_row_num: i32,
+    citation_index: i32,
+    created_at_us: i64,
+) -> Result<bool> {
+    if tx.get(&row_key(take_page_id, take_row_num))?.is_none() {
+        return Err(fk_failed(
+            EVIDENCE_TABLE,
+            "synthesis_evidence_take_page_id_take_row_num_fkey",
+        ));
+    }
+    let key = evidence_key(synthesis.id, take_page_id, take_row_num);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    let record = EvidenceRecord {
+        citation_index,
+        created_at_us,
+        synthesis_source_id: synthesis.source_id.clone(),
+    };
+    put_json(tx, &key, &record)?;
+    tx.put(&cited_key(take_page_id, take_row_num, synthesis.id), &[])?;
+    Ok(true)
+}
+
 /// Deletes a take with its evidence rows.
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let mut synths = Vec::new();

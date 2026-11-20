@@ -48,6 +48,17 @@ The caller imports the relations in this order (`seed::RELATIONS`), because a ro
 | `slug_aliases`, `page_aliases` | the alias | a held alias is skipped |
 | `facts` | the fact, its tier and its embedding | an id already held is skipped |
 | `takes` | the take and its row key | `claim_rev` starts at 0. The vector is kept only when it is current (hash equals the md5 of the claim, model and `embedded_at` set) |
+| `page_versions` | the snapshot, its tier and origin, change reason and body reference | the version id and `snapshot_at` are kept; `next_version_id` is raised |
+| `files` | the file, its page index entry | a path held by another id is `constraint_violation` |
+| `raw_data` | the raw data of a page and source | the serial `id` is not kept (`id` is reported as unmapped); `fetched_at` is kept |
+| `code_edges_chunk`, `code_edges_symbol` | the edge, its unique key and every index key | both chunks must exist (checked against the chunk id counter) |
+| `open_loops` | the loop with its status, times and dedup key | a dedup key held by another id is `constraint_violation` |
+| `synthesis_evidence` | the citation and its reverse index | the take must be stored |
+| `trust_proposals` | the proposal with its status and decision, the pending unique key (pending rows) and the row index | the proposer's principal and `write_request_id` are not kept |
+| `wanted_links` | the row with `checked_at` (`-infinity` is no time) and `first_seen_at` | |
+| `page_facts_reconcile` | the watermark | |
+| `fact_relink_attempts` | the attempt and its memo index | no foreign key: the fact need not exist |
+| `derived_generations`, `derived_generation_items` | the generation, with its items inline | the ledger columns `listUnwithdrawnFacts` does not read are reported as unmapped; an item needs its generation |
 
 A row whose source or page is missing is `source_not_found` or `page_not_found`.
 
@@ -61,11 +72,10 @@ carries. It reads no other primary table, so nothing in those tables carries int
   account for that.
 - Body segments: `page_segment_texts`, `page_body_manifest`, `page_segment_derivations` and the `page_body_staging*`
   tables (see `segmented_body` below).
-- History and audit: `page_versions`, `slug_rename_history`, the `*_purges`, `fact_withdrawals` and `belief_*` tables.
+- History and audit: `slug_rename_history`, the `*_purges`, `fact_withdrawals` and `belief_*` tables.
 - The persistence write path: the `persistence_*` tables, `write_gate_*`, `page_write_guards`.
 - Access and credentials: `access_*`, `oauth_*`, `secret_store*`.
-- Queues, caches, telemetry and every other table not named in the relation table above (for example `files`,
-  `raw_data`, `open_loops`, `retrieval_*`, `eval_*`, `decide_*`, `wake_*`, `shared_skill_*`).
+- Queues, caches, telemetry and every other table not named in the relation table above (for example `retrieval_*`, `eval_*`, `decide_*`, `wake_*`, `shared_skill_*`).
 
 ## What the seed does not keep
 
@@ -84,6 +94,8 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | `projection_job_seed_time` | the time of a projection job the page write queued when the primary row gave no job time (no job row, or one with no `updated_at`): the job keeps the seed transaction's time |
 | `vector_without_embedded_at` | the embed time of a vector with none (stored as time 0) |
 | `take_vector_not_current` | a take vector that is not current |
+| `segmented_version_body` | the segments a segmented page version references (its generation and size are kept) |
+| `legacy_version_columns` | a page version with NULL `title`, `type`, `tags`, `knowledge_revision` or `is_deleted`: the store holds an empty value |
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
