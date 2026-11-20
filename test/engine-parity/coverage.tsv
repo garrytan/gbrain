@@ -392,9 +392,9 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	107	yes	yes	yes	serves
-insertFacts	facts	yes	124	no	yes	yes	serves
+insertFacts	facts	yes	125	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	69	no	yes	yes	serves
+expireFact	facts	yes	70	no	yes	yes	serves
 listFactsByEntity	facts	yes	34	yes	yes	yes	serves
 listFactsSince	facts	yes	16	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -845,7 +845,7 @@ listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
 listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 countLabelFacts	facts_repair	yes	2	no	yes	yes	serves
-listExtractorFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+listExtractorFactsForClassification	facts_repair	yes	2	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	3	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	2	no	yes	yes	serves
 listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves

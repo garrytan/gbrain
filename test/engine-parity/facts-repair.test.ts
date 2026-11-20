@@ -351,6 +351,16 @@ describe('engine parity: group 5 facts repair statements', () => {
     return { rows: view(rows), bySlug: view(bySlug), elsewhere };
   });
 
+  parityTest('listExtractorFactsForClassification marks a fact with no page as not on a deleted page', {
+    methods: ['insertFacts', 'expireFact', 'listExtractorFactsForClassification'],
+  }, async (engine) => {
+    const orphan = await fenced(engine, 'orphan fact', { source: EXTRACTOR, visibility: 'private', source_markdown_slug: 'chats/never', row_num: null });
+    expect(await engine.expireFact(orphan)).toBe(true);
+    const rows = await engine.listExtractorFactsForClassification(['default'], null);
+    expect(rows.map(r => ({ id: Number(r.id), page_id: r.page_id, page_deleted: r.page_deleted }))).toEqual([{ id: orphan, page_id: null, page_deleted: false }]);
+    return rows.map(({ id: _id, expired_at: _at, ...r }) => r);
+  });
+
   parityTest('countPurgedPageFacts counts no fact of a page that was never purged', { methods: ['putPage', 'insertFacts', 'countPurgedPageFacts'] }, async (engine) => {
     await engine.putPage('notes/open', note('Open', 'a page'));
     await fenced(engine, 'a fact', { source: 'mcp:put_page', context: 'notes/open', visibility: 'private' });
