@@ -95,7 +95,7 @@ up.
 ### apple_contacts_helper_error
 
 The helper answered with a status gbrain does not expect, or kept returning snapshot pages. Nothing more was written.
-Check that GBrain Helper and gbrain are both current; if it repeats, report it with `gbrain doctor --json`.
+Check that GBrain Helper and the GBrain CLI are both up to date; if it repeats, report it with `gbrain doctor --json`.
 
 ### apple_contacts_delete_floor
 

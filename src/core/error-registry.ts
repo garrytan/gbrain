@@ -79,7 +79,7 @@ export const CODES = {
   apple_contacts_helper_error: { class: 'server', summary: "GBrain Helper answered the Contacts route with a status gbrain does not expect (or kept returning snapshot pages), so the run stopped with its cursor unchanged.",
     why: 'Only 200, 401, 403, 410 and 503 have a defined meaning on the route; anything else may be a helper bug or a version gap, so nothing more is written.',
     docs: 'docs/guides/apple-contacts.md#apple_contacts_helper_error',
-    suggestion: 'Check that GBrain Helper and gbrain are both current, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats.' },
+    suggestion: 'Check that GBrain Helper and the GBrain CLI are both up to date, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats.' },
   apple_contacts_not_allowed: { class: 'caller', actor: 'user', summary: "GBrain Helper cannot read Contacts because the owner has not allowed it on the Mac, so nothing was imported.",
     why: 'macOS lets an app read Contacts only after the user clicks OK on its prompt or switches it on in System Settings; only the user can do that.',
     docs: 'docs/guides/apple-contacts.md#apple_contacts_not_allowed',

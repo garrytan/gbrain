@@ -153,7 +153,7 @@ export function appleContactsHelper(opts: AppleContactsHelperOpts): AppleContact
           `Put a token the helper issued with the read:contacts scope in the source's token file (chmod 600), then run: gbrain sync --source ${sourceId}`);
       }
       throw appleContactsError('apple_contacts_helper_error', `GBrain Helper answered ${res.status}${code ? ` (${code})` : ''} for Apple Contacts source ${sourceId}. The run stopped; the saved cursor is unchanged.`,
-        `Report this with gbrain doctor --json; check that GBrain Helper and gbrain are both current, then run: gbrain sync --source ${sourceId}`);
+        `Report this with gbrain doctor --json; check that GBrain Helper and the GBrain CLI are both up to date, then run: gbrain sync --source ${sourceId}`);
     },
   };
 }

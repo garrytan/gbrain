@@ -370,7 +370,7 @@ More: [docs/guides/apple-contacts.md#apple_contacts_disabled](../../docs/guides/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| GBrain Helper answered the Contacts route with a status gbrain does not expect (or kept returning snapshot pages), so the run stopped with its cursor unchanged. | Only 200, 401, 403, 410 and 503 have a defined meaning on the route; anything else may be a helper bug or a version gap, so nothing more is written. | Check that GBrain Helper and gbrain are both current, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats. | host_admin | `gbrain doctor --json` | 1 | no |
+| GBrain Helper answered the Contacts route with a status gbrain does not expect (or kept returning snapshot pages), so the run stopped with its cursor unchanged. | Only 200, 401, 403, 410 and 503 have a defined meaning on the route; anything else may be a helper bug or a version gap, so nothing more is written. | Check that GBrain Helper and the GBrain CLI are both up to date, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/apple-contacts.md#apple_contacts_helper_error](../../docs/guides/apple-contacts.md#apple_contacts_helper_error)
 

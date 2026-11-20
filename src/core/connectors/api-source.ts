@@ -195,7 +195,10 @@ export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: str
   }
   const rows = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
   if (rows.length) {
-    if (opts.soft) await engine.softDeletePages([slug], { sourceId });
+    if (opts.soft) {
+      const { maintenanceTransaction } = await import('../persistence/attribution.ts');
+      await maintenanceTransaction(engine, tx => tx.softDeletePages([slug], { sourceId }));
+    }
     else await engine.deletePages([slug], { sourceId });
     summary.deleted++;
   }
