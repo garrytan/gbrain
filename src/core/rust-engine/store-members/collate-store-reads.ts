@@ -4,4 +4,5 @@
  *
  * The members are added by the slices that move those callers; this file is the place they live.
  */
-export {};
+/** The row types the members answer with live beside their SQL, so a store member and its SQL engine twin share one shape. */
+export type * from '../../engine-sql/collate-store-reads.ts';

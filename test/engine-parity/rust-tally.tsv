@@ -16,13 +16,14 @@ test/engine-parity/cli-reads-import.test.ts	16	0
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	3	1
-test/engine-parity/collate-command-listings.test.ts	0	5
+test/engine-parity/collate-command-listings.test.ts	2	4
 test/engine-parity/collate-facts-home.test.ts	0	1
 test/engine-parity/collate-ontology-config.test.ts	4	1
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
 test/engine-parity/collate-slug-sources.test.ts	1	5
+test/engine-parity/collate-store-listings.test.ts	3	16
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
