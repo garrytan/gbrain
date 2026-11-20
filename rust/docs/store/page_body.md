@@ -32,7 +32,7 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
 | `brain.retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? }?)` | the number of rows deleted whose occurrence is not live | `retireSegmentDerivations` |
-| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision }`: the page's stored `timeline_lead` (`""` when none) and `knowledge_revision`, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
+| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision, slug, sourceId }`: the page's stored `timeline_lead` (`""` when none), `knowledge_revision` and identity, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
 | `brain.sealSegmentedPage(pageId, timeline, expectedRevision?)` | `null`. See "The seal" | `sealSegmentedPage` |
 | `brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)` | `null`. Sets the body, timeline, hash and `updated_at` of a live inline page; a missing or soft-deleted page is left alone. A new revision only when the body or timeline changed. No re-chunk and no version. A live page's sealed search timeline goes, also when nothing changed, since PGLite's `UPDATE … SET timeline` fires the search vector trigger | `refreshPageBody` |
 
@@ -127,9 +127,11 @@ also deletes the chunks family's segment view of the page (`chunks::forget_segme
 ## The seal
 
 `sealSegmentedPage(pageId, opts?)` makes a flipped segmented page's chunks and search text visible at
-its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead and
-revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given,
-sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
+its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead,
+revision, slug and source (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when
+given, overlays it with the page's ledger rows (`overlayStoreLead` over the page snapshot read with
+`includeDeleted`: purged fence rows drop, withdrawn ones are struck, as PGLite's `overlayCanonicalBodies`
+does), sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
 
 1. Does nothing for a missing page.
 2. Refuses `revision_conflict` when the page's `knowledge_revision` is no longer the one read.
