@@ -372,7 +372,7 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
         `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
            FROM takes t JOIN pages p ON p.id = t.page_id
            WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
-           ORDER BY t.weight DESC, t.since_date DESC
+           ORDER BY t.weight DESC, t.since_date DESC, t.id
            LIMIT 25`,
         [holder],
       );
@@ -459,7 +459,7 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
                AND t.weight >= 0.7
                AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
                    < (now() - INTERVAL '12 months')
-             ORDER BY t.since_date ASC
+             ORDER BY t.since_date ASC, t.id
              LIMIT 5`,
         );
         const now = new Date();
@@ -525,7 +525,7 @@ function mountAdminKeyApi(app: Express, ctx: ServeHttpContext): void {
                 operation, latency_ms, status, params, error_message, created_at
          FROM mcp_request_log
          WHERE 1=1 ${filterSql}
-         ORDER BY created_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+         ORDER BY created_at DESC, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
         [...params, limit, offset],
       );
       const [countResult] = await engine.executeRaw<{ total: number }>(
