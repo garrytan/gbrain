@@ -2200,6 +2200,17 @@
         ],
         "flagOnScopes": []
       },
+      "holdPageEmbedding#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "holdsNotifierLease#default": {
         "flagOffLanes": [
           "pool"
@@ -3340,6 +3351,17 @@
         "flagOnScopes": []
       },
       "listSourceLocalPaths#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourcePathPages#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4728,6 +4750,17 @@
         ],
         "flagOnScopes": []
       },
+      "readLiveIdentityHolders#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readLiveMember#legacy_token": {
         "flagOffLanes": [
           "pool"
@@ -5014,6 +5047,28 @@
         ],
         "flagOnScopes": []
       },
+      "readPageSizeRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageSizeRows#slugs": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -5075,7 +5130,40 @@
         ],
         "flagOnScopes": []
       },
+      "readReasonPurgeTombstones#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readReasonPurgeTombstones#pair": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readReceiptBudget#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRenameIdentityRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6755,6 +6843,17 @@
           "pool"
         ],
         "flagOnScopes": []
+      },
+      "writeReasonPurgeTombstones#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       }
     },
     "static": {
@@ -6816,6 +6915,7 @@
         "addTimelineEntriesBatch": "none",
         "addTimelineEntry": "none",
         "addWakeCron": "none",
+        "adjustGitHoldSummary": "none",
         "admitJob": "none",
         "advanceEffectRow": "none",
         "advanceSourceCommit": "none",
@@ -6883,6 +6983,7 @@
         "countFactFingerprintLeftovers": "none",
         "countFactRelinkOutcomes": "none",
         "countForeignEdges": "none",
+        "countGitHolds": "none",
         "countInboundLinks": "none",
         "countJobsByStatus": "none",
         "countKeywordPages": "direct",
@@ -6950,6 +7051,7 @@
         "deleteExpiredOauthCredentials": "none",
         "deleteFactRelinkMemos": "none",
         "deleteFactsForPage": "none",
+        "deleteGitHoldRow": "none",
         "deleteJobAttachment": "none",
         "deleteOAuthClient": "none",
         "deleteOpCheckpoint": "none",
@@ -7086,6 +7188,7 @@
         "hasUnsealedPages": "none",
         "hasWakeCron": "none",
         "hasWakeTermsAcceptance": "none",
+        "holdPageEmbedding": "none",
         "holdSchemaMigrationLock": "none",
         "holdsNotifierLease": "none",
         "inboundLinkCoverage": "none",
@@ -7248,6 +7351,7 @@
         "listSourceIds": "none",
         "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
+        "listSourcePathPages": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
         "listSourceWantedMarkers": "none",
@@ -7317,6 +7421,7 @@
         "lockEffectGuard": "none",
         "lockEmbeddingSwitch": "none",
         "lockGenerationKey": "none",
+        "lockGitHoldSummary": "none",
         "lockNoopEmbeddingWindow": "none",
         "lockOAuthClient": "none",
         "lockOverdueHold": "none",
@@ -7345,7 +7450,6 @@
         "moveChunkIndexes": "none",
         "moveFactWithdrawalSubject": "none",
         "nextLivePageAfter": "none",
-        "notifierCoverageRecorded": "none",
         "oauthClientLive": "none",
         "onCheckout": "none",
         "openBodyStaging": "none",
@@ -7377,6 +7481,7 @@
         "pruneSatisfiedWantedMarkers": "none",
         "purgeDeletedPages": "none",
         "purgeMemoryProposals": "none",
+        "purgeStaleCheckpoints": "none",
         "putCodeTraversalCache": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",
@@ -7446,6 +7551,7 @@
         "readGitHoldRecords": "none",
         "readGitHoldReportInputs": "none",
         "readGitHoldRetryRequest": "none",
+        "readGitHoldRow": "none",
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGroupSpendTotals": "none",
@@ -7473,11 +7579,13 @@
         "readLinkRelationshipEvidence": "none",
         "readLiveAccessToken": "none",
         "readLiveGenerationRow": "none",
+        "readLiveIdentityHolders": "none",
         "readLiveJobIds": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
         "readLivePageTypes": "none",
         "readLiveSlugs": "none",
+        "readLiveSyncPassRows": "none",
         "readLocalWriterMemberGrant": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
@@ -7514,6 +7622,7 @@
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
         "readPageRevisionAttribution": "none",
+        "readPageSizeRows": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPageSynopses": "none",
@@ -7544,6 +7653,7 @@
         "readReferrerRows": "none",
         "readReferrerTargetCounts": "none",
         "readReferrerTypes": "none",
+        "readRenameIdentityRows": "none",
         "readRequestEffects": "none",
         "readRetirementHop": "none",
         "readRowAttribution": "none",
@@ -7570,6 +7680,7 @@
         "readStoredBodyBytes": "none",
         "readStoredPageTier": "none",
         "readSyncDispatchRow": "none",
+        "readSyncPassRow": "none",
         "readTokenLifetimeClampedClients": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
@@ -7636,6 +7747,7 @@
         "replaceDerivedAliases": "none",
         "replaceDerivedLinks": "none",
         "replaceDerivedLinksBatch": "none",
+        "replaceGitHoldRow": "none",
         "replaceSearchVectorTriggerFunction": "none",
         "replaceWantedLinkRows": "none",
         "requeueEffectRow": "none",
@@ -7778,6 +7890,7 @@
         "writeCredentialBinding": "none",
         "writeCredentialReadsUnscoped": "none",
         "writeDrainLeaseHolder": "none",
+        "writeGitHoldRow": "none",
         "writeLinkRelationshipState": "none",
         "writeManualLinkTransitions": "none",
         "writeMiscRead": "none",
@@ -7785,6 +7898,8 @@
         "writeNotifierCoverage": "none",
         "writeNotifierState": "none",
         "writeOpCheckpointKeys": "none",
+        "writeReasonPurgeTombstones": "none",
+        "writeSyncPassRow": "none",
         "writeTextProjectionSeal": "none"
       }
     }

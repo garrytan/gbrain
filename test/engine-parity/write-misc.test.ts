@@ -3,11 +3,12 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, notifierCoverageRecorded,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers,
  *    listAccessTokens, isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readJobPrincipal, readAccessMembers,
  *    readAccessCredentials, revokeAccessTokensNamed, revokeAccessToken, deleteOAuthClient, listAudienceAccessMembers, readLiveMember,
  *    readAccessGroups, listPagesNamingReader, hasLabelledOnlyMember, readFolderAccess,
  *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
+ *    purgeStaleCheckpoints,
  *    readHealthMemoClock, listSynopsisSourceIds,
  *    expireMemoryProposals,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
@@ -38,7 +39,7 @@ import { appliedAccessSummary, folderAccessFor, folderAccessForAll, memberIdenti
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import { clearHealthMemo, memoizedHealth } from '../../src/core/health-memo.ts';
 import {
-  appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, recordCompleted, resumeFilter,
+  appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, purgeStaleCheckpoints, recordCompleted, resumeFilter,
 } from '../../src/core/op-checkpoint.ts';
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
@@ -228,31 +229,6 @@ describe('engine parity: write misc', () => {
     return { tokens };
   });
 
-  parityTest('notifierCoverageRecorded answers false on a fresh brain', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
-    const covered = await engine.notifierCoverageRecorded();
-    expect(covered).toBe(false);
-    return { covered };
-  });
-
-  // A notifier row is raw SQL here (the resident writes it); on Rust the seed refuses, because no Rust brain keeps
-  // notifier state, and the member answers false, as the fresh-brain case.
-  parityTest('notifierCoverageRecorded answers true once a source has an observed head', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw("INSERT INTO sync_notifier_sources (source_id, state) VALUES ('default', 'idle')");
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.notifierCoverageRecorded()).toBe(false);
-      throw seeded;
-    }
-    const unobserved = await engine.notifierCoverageRecorded();
-    await engine.executeRaw("UPDATE sync_notifier_sources SET observed_head = 'abc', observed_at = now() WHERE source_id = 'default'");
-    const observed = await engine.notifierCoverageRecorded();
-    expect({ unobserved, observed }).toEqual({ unobserved: false, observed: true });
-    return { unobserved, observed };
-  });
-
   // loadOpCheckpoint catches a failed read, logs it and answers [], so its answer alone cannot tell a refused read from an
   // empty checkpoint: the case also asserts the load logged nothing.
   parityTest('loadOpCheckpoint loads an empty checkpoint without a failed read', { methods: ['readOpCheckpointKeys'] }, async (engine) => {
@@ -317,6 +293,30 @@ describe('engine parity: write misc', () => {
       firstRun: ['p/1.md', 'p/2.md', 'p/3.md'], stopped: 'killed', banked: ['p/1.md', 'p/2.md', 'p/3.md'],
       secondRun: ['p/4.md', 'p/5.md'], afterReplace: ['legacy', 'p/1.md', 'p/2.md', 'p/3.md'], finished: [],
       afterClear: { keys: [], corruptParent: false }, thirdRun: all, errors: [],
+    });
+    return value;
+  });
+
+  // The cycle's purge phase (handlers/purge.ts, cycle/bookkeeping-gc.ts) through op-checkpoint.ts's caller, which logs a
+  // failed purge and answers 0: the case asserts it logged nothing. A checkpoint stamped before the TTL goes with its
+  // paths; one stamped after it stays. The TTL is one second, as no arm can move its clock back seven days.
+  parityTest('purgeStaleCheckpoints deletes a stale checkpoint with its paths and keeps a fresh one', { methods: ['purgeStaleCheckpoints', 'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths'] }, async (engine) => {
+    const stale = { op: 'embed', fingerprint: 'parity-stale' };
+    const fresh = { op: 'embed', fingerprint: 'parity-fresh' };
+    const { value, errors } = await quietErrors(async () => {
+      expect(await recordCompleted(engine, stale, ['k'])).toBe(true);
+      expect(await appendCompleted(engine, stale, ['a.md', 'b.md'])).toBe(true);
+      const sevenDays = await purgeStaleCheckpoints(engine);
+      await Bun.sleep(1600);
+      expect(await appendCompleted(engine, fresh, ['c.md'])).toBe(true);
+      const purged = await purgeStaleCheckpoints(engine, 1 / 86_400);
+      const staleKeys = await engine.readOpCheckpointKeys(stale.op, stale.fingerprint);
+      const freshKeys = await engine.readOpCheckpointKeys(fresh.op, fresh.fingerprint);
+      return { sevenDays, purged, staleKeys, freshKeys };
+    });
+    expect({ ...value, errors }).toEqual({
+      sevenDays: 0, purged: 1, staleKeys: { keys: [], corruptParent: false },
+      freshKeys: { keys: ['c.md'], corruptParent: false }, errors: [],
     });
     return value;
   });

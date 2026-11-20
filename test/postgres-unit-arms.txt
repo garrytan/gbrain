@@ -169,6 +169,7 @@ test/engine-parity/facts.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/first-due.test.ts
+test/engine-parity/git-holds.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
 test/engine-parity/import-members.test.ts
@@ -208,6 +209,7 @@ test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/relational-reads.test.ts
 test/engine-parity/remote-policy.test.ts
@@ -228,6 +230,7 @@ test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/sync-requests.test.ts
+test/engine-parity/sync-route.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts

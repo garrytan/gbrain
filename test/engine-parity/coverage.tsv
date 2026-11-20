@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 935/942
+# covered: 951/958
 # lifecycle: 9/9
-# pages: 46/46
+# pages: 54/54
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
@@ -34,7 +34,7 @@
 # import_guards: 12/12
 # access_grants: 6/6
 # access_members: 11/11
-# persistence_journal: 121/122
+# persistence_journal: 129/130
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -106,12 +106,12 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	8	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	7	no	yes	yes	serves
+getSource	pages	yes	8	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	2	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
-readPlainSyncSource	pages	yes	1	no	yes	yes	serves
+readPlainSyncSource	pages	yes	2	no	yes	yes	serves
 readOwnerOnlySourcesPresent	pages	yes	1	no	yes	yes	serves
 readOwnerOnlySourceConfig	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
@@ -123,8 +123,16 @@ readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
+advanceSourceCommit	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	2	no	yes	yes	serves
+readPageSizeRows	pages	yes	2	no	yes	yes	serves
+holdPageEmbedding	pages	yes	1	no	yes	yes	serves
+readReasonPurgeTombstones	pages	yes	4	no	yes	yes	serves
+writeReasonPurgeTombstones	pages	yes	2	no	yes	yes	serves
+listSourcePathPages	pages	yes	1	no	yes	yes	serves
+readRenameIdentityRows	pages	yes	1	no	yes	yes	serves
+readLiveIdentityHolders	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
@@ -439,13 +447,12 @@ listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
 readSourceSyncShape	persistence_journal	yes	3	no	yes	yes	serves
 readNotifierFirstDue	persistence_journal	yes	2	no	yes	yes	serves
 readDrainHolderProgress	persistence_journal	yes	1	no	yes	yes	serves
-advanceSourceCommit	persistence_journal	yes	2	no	yes	yes	serves
 readSourceLastCommit	persistence_journal	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	22	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
-readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
-readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
+readHeldPageRows	persistence_journal	yes	2	no	yes	yes	serves
+readHeldCoverageRows	persistence_journal	yes	2	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	4	no	yes	yes	serves
 readFenceOriginGone	persistence_journal	yes	1	no	yes	yes	serves
 lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
@@ -454,11 +461,20 @@ readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	1	no	yes	yes	serves
 activateGenerationRows	persistence_journal	yes	1	no	yes	yes	serves
 recordHeldGenerationRow	persistence_journal	yes	1	no	yes	yes	serves
-readGitHoldRecords	persistence_journal	yes	1	no	yes	yes	serves
+readGitHoldRecords	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	1	no	yes	yes	serves
-readGitHoldReportInputs	persistence_journal	yes	1	no	yes	yes	serves
-readReasonPurgeTombstones	persistence_journal	yes	2	no	yes	yes	serves
+readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
 readSourcePurgeEpoch	persistence_journal	yes	2	no	yes	yes	serves
+lockGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
+adjustGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
+readGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
+writeGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
+replaceGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
+deleteGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
+countGitHolds	persistence_journal	yes	2	no	yes	yes	serves
+readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
+readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
+writeSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
@@ -852,7 +868,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	6	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	7	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
@@ -876,12 +892,12 @@ getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	6	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
-notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
-writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
-appendOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
+readOpCheckpointKeys	write_misc	yes	4	no	yes	yes	serves
+writeOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
+appendOpCheckpointPaths	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
+purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves

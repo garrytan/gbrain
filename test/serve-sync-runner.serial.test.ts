@@ -161,7 +161,7 @@ describe('serve-sync-runner delegated jobs', () => {
   }, 60_000);
 
   test('#8354: done is published only after the run settles its markers and schedules the deferred embeds', async () => {
-    // The post-run marker re-check is slowed so a status poll lands inside it: done must not be visible yet.
+    // The post-run marker re-check (the typed readDueWantedMarkers member) is slowed so a status poll lands inside it: done must not be visible yet.
     let markerReads = 0;
     const slowSettle = new Proxy(engine, { get(target, key) {
       const value = Reflect.get(target, key, target);
