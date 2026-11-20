@@ -46,8 +46,8 @@ leaves everything derived from it owner-only: a delete trigger records those row
 ## Contacts
 
 The same helper serves your Mac's address book to the `apple-contacts` source kind: one private contact page per
-contact, an exact email or phone link to the matching person page, and a three-field block (company, job title,
-groups) on that page. Phones and emails stay on the owner-only contact pages. See [Apple Contacts](apple-contacts.md).
+contact, an exact email or phone link to the matching person page, and `## Facts` rows on that page for the
+company, job title and Contacts groups. Phones and emails stay on the owner-only contact pages. See [Apple Contacts](apple-contacts.md).
 
 ## Errors
 

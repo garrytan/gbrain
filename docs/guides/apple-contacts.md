@@ -50,11 +50,14 @@ travel only inside the Mac or inside Tailscale's encrypted tunnel, never in plai
 
 Options: `--helper-port <port>` (default 8792), `--proxy socks5h://<host>:<port>` (the proxy resolves the helper's
 host name; no credentials in the URL), `--contacts-dir <dir>` (default `contacts/apple`), `--sync-interval-min <n>`
-(default 15), `--no-federated` (keep contact pages out of unqualified reads). `--token-env` is refused for this kind.
+(default 15), `--no-federated` (keep contact pages out of unqualified reads), `--record auto|git|database` and `--dir
+<checkout>` (where the source's records live; contact pages are private, so they stay in the database either way).
+`--token-env` is refused for this kind.
 
 The first run reads the whole address book; later runs read only what changed since the saved cursor. Phone numbers
 written without a country code are read as `identity.phone_country_code` (default `1`):
-`gbrain config set identity.phone_country_code 44`.
+`gbrain config set identity.phone_country_code 44`. `--reset-checkpoint` is refused for this source; use
+`gbrain sync --source <id> --full` to read every contact again.
 
 ## How changes and deletions are applied
 
@@ -65,11 +68,11 @@ written without a country code are read as `identity.phone_country_code` (defaul
   the same way; a changed company or job title replaces its row.
 - A full re-read (the first run, `gbrain sync --source <id> --full`, or the helper forgetting the cursor) deletes a page
   for a missing contact only when the helper says the snapshot was complete.
-- **Delete floor.** A full re-read that comes back empty, or would delete more than 20% of the source's contacts,
-  writes nothing and stops with `apple_contacts_delete_floor`. An incremental pull applies its changes but keeps the
+- **Delete floor.** A full re-read that holds no contact with an email or phone, would delete every contact, or would
+  delete more than 20% of the source's contacts, writes nothing and stops with `apple_contacts_delete_floor`. An incremental pull applies its changes but keeps the
   deletions it was sent pending until the end of the run; if they are more than 20% of the source's contacts, or all
   of them, none is applied, they stay pending (`gbrain sync status --source <id>` shows them under `held_deletes`) and the
-  run ends with the same error. A contact that comes back cancels its pending deletion. No row on a person page is
+  run ends with the same error. A contact edited down to no email and no phone counts as a deletion. A contact that comes back cancels its pending deletion. No row on a person page is
   retired by a held run, or by a full re-read that did not end complete.
 
 ## Errors
