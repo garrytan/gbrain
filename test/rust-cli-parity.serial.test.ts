@@ -449,7 +449,7 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // extract_atoms_backlog, retrieval_reflex_health and text_projection_readiness are gone from this list: the backlog,
       // projection-queue and reflex reads are served, so those checks report what PGLite reports. dangling_aliases,
       // type_proliferation, markdown_body_completeness, link_resolution_opportunity, hidden_by_search_policy and
-      // image_embedding_coverage run on Rust too; person_title_duplicates still warns with its typed refusal (okWhileRefused).
+      // image_embedding_coverage run on Rust too.
       // sync_failures is gone from this list too: it no longer warns in its own words.
       // backup_coverage is gone from this list: with the brain sync reads served, it no longer warns in its own words.
       // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
@@ -468,7 +468,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       okWhileRefused: [],
       // credential_projection_pending is gone from this list: listCredentialResealHoldRows answers a Rust brain's holds
       // (none: only the credential re-seal migration writes them, through executeRaw).
-      typedRefusals: ['person_title_duplicates'],
+      // person_title_duplicates is gone from this list: the stub, candidate, retirement and link-count reads are typed
+      // members the store answers, so it reports what PGLite reports.
+      typedRefusals: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

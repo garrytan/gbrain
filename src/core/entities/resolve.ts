@@ -22,6 +22,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { PageRetirementRow } from '../engine-sql/entity-reads.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { slugifySegment } from '../sync.ts';
@@ -243,14 +244,15 @@ export async function followRetirement(
   let current: string | null = slug;
   while (current && !seen.has(current) && seen.size <= MAX_RETIREMENT_HOPS) {
     seen.add(current);
-    const [row]: Array<{ slug: string; type: string | null; retired: boolean; target: string | null }> = await engine.executeRaw(
+    // With no privacy predicate the read is the typed member (engine-sql/entity-reads.ts), so every engine answers it.
+    const row: PageRetirementRow | null | undefined = privacy === '' ? await engine.readPageRetirement(source_id, current) : (await engine.executeRaw<PageRetirementRow>(
       `SELECT p.slug, p.type, ${retiredPageSql('p')} AS retired,
               COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
          FROM pages p
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${privacy}
         LIMIT 1`,
       [source_id, current],
-    );
+    ))[0];
     if (!row) return null;
     if (!row.retired) return { slug: row.slug, type: row.type };
     current = row.target ? redirectSlug(row.target) : null;

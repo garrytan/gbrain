@@ -67,7 +67,7 @@ import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, Retire
 import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
+import type { ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, InboundLinkerCountRow, MentionDueQuery, NameVariantCandidateQuery, NameVariantCandidateRow, PageRetirementRow, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -3526,6 +3526,11 @@ export interface BrainEngine {
   readIdentitySiblingCandidates(sourceId: string, q: SiblingCandidateQuery): Promise<SiblingCandidateRow[]>;
   /** The first of `slugs` holding a live page that is (`retired: true`), is not (`false`) or is either (omitted) a retired page (`retiredPageSql`). */
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }): Promise<string | null>;
+  /** Person-duplicate reads (engine-sql/entity-reads.ts): unretired pages by slug pattern, name-variant candidates, a page's retirement, distinct inbound linkers. */
+  listUnretiredPagesBySlugPattern(sourceId: string, patterns: readonly string[], limit: number): Promise<SlugPatternPageRow[]>;
+  listNameVariantCandidates(sourceId: string, q: NameVariantCandidateQuery): Promise<NameVariantCandidateRow[]>;
+  readPageRetirement(sourceId: string, slug: string): Promise<PageRetirementRow | null>;
+  countDistinctInboundLinkers(sourceIds: readonly string[], slugs: readonly string[]): Promise<InboundLinkerCountRow[]>;
   /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
   readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;
   /**

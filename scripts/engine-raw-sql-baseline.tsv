@@ -42,7 +42,6 @@ src/commands/doctor/checks/default-source-path.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	2
 src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
-src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	4
 src/commands/doctor/checks/folder-access.ts	execute_raw	1
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2

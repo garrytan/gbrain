@@ -258,6 +258,17 @@
         ],
         "flagOnScopes": []
       },
+      "countDistinctInboundLinkers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -2469,6 +2480,17 @@
         ],
         "flagOnScopes": []
       },
+      "listNameVariantCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPages#default": {
         "flagOffLanes": [
           "pool"
@@ -2919,6 +2941,17 @@
         ],
         "flagOnScopes": []
       },
+      "listUnretiredPagesBySlugPattern#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "loadContradictionsTrend#default": {
         "flagOffLanes": [
           "pool"
@@ -3350,6 +3383,17 @@
         "flagOnScopes": []
       },
       "readMentionLastPass#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageRetirement#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4629,6 +4673,7 @@
         "countDerivedFactTaint": "none",
         "countDerivedTaintRows": "none",
         "countDerivedVisibility": "none",
+        "countDistinctInboundLinkers": "none",
         "countEmbeddingHeldPages": "none",
         "countEntityPages": "none",
         "countFactEmbeddingCoverage": "none",
@@ -4988,6 +5033,7 @@
         "listManagedSyncOrphanRowsets": "none",
         "listManagedSyncPassStops": "none",
         "listMixedModelDecisions": "none",
+        "listNameVariantCandidates": "none",
         "listOauthClientAuthShapes": "none",
         "listOlderDriftReceiptSlugs": "none",
         "listOntologyFactCandidates": "none",
@@ -5104,6 +5150,7 @@
         "listUnlinkedConversationSlugs": "none",
         "listUnpreviewedTrustFacts": "none",
         "listUnpricedDerivationModels": "none",
+        "listUnretiredPagesBySlugPattern": "none",
         "listUnreviewedJobs": "none",
         "listUntiledSegmentedPageRows": "none",
         "listUnwithdrawnFacts": "none",
@@ -5268,6 +5315,7 @@
         "readPageCompiledTruths": "none",
         "readPageHiddenFromCaller": "none",
         "readPageOrigin": "none",
+        "readPageRetirement": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPageTitle": "none",

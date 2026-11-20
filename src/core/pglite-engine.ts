@@ -1852,6 +1852,10 @@ export class PGLiteEngine implements BrainEngine {
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(this.engineSql, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return entityReadsImpl.findExactSlug(unscopedExecutor(this.engineSql, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts); }
+  listUnretiredPagesBySlugPattern(sourceId: string, patterns: readonly string[], limit: number) { return entityReadsImpl.listUnretiredPagesBySlugPattern(unscopedExecutor(this.engineSql, 'entities: slug pattern pages ran unscoped through executeRaw'), sourceId, patterns, limit); }
+  listNameVariantCandidates(sourceId: string, q: entityReadsImpl.NameVariantCandidateQuery) { return entityReadsImpl.listNameVariantCandidates(unscopedExecutor(this.engineSql, 'entities: name variant candidates ran unscoped through executeRaw'), sourceId, q); }
+  readPageRetirement(sourceId: string, slug: string) { return entityReadsImpl.readPageRetirement(unscopedExecutor(this.engineSql, 'entities: page retirement ran unscoped through executeRaw'), sourceId, slug); }
+  countDistinctInboundLinkers(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.countDistinctInboundLinkers(unscopedExecutor(this.engineSql, 'entities: inbound linkers ran unscoped through executeRaw'), sourceIds, slugs); }
   // PGLite runs in process and has no statement timeout, so the two timed reads drop `timeoutMs`. A getter, not a
   // field: a transaction engine is Object.create(this), and must run on its own executeRaw.
   private get untimedRead(): entityReadsImpl.TimedRawRead { return { executeRaw: (sql, params) => this.executeRaw(sql, params) }; }

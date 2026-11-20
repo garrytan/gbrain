@@ -7,7 +7,7 @@
 use crate::Store;
 use crate::env::parse_iso;
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{PrivacyPolicy, like, page_hidden};
 use crate::pages::{PageRecord, all_pages};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -64,6 +64,53 @@ pub struct LabelPageRow {
     #[serde(rename = "type")]
     pub page_type: String,
     pub frontmatter: Map<String, Value>,
+}
+
+/// One unretired page a slug pattern matched (`listUnretiredPagesBySlugPattern`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SlugPatternPageRow {
+    pub slug: String,
+    pub title: String,
+}
+
+/// `listNameVariantCandidates(sourceId, q)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameVariantCandidateQuery {
+    pub types: Vec<String>,
+    pub slug_patterns: Vec<String>,
+    pub probes: Vec<String>,
+    pub limit: u64,
+}
+
+/// One name-variant candidate: `probe_hits` is the number of probes its title or slug matches.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NameVariantCandidateRow {
+    pub slug: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
+    pub probe_hits: u64,
+}
+
+/// A live page's retirement (`readPageRetirement`): `target` is the trimmed `superseded_by`, else
+/// `merged_into`, value.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageRetirementRow {
+    pub slug: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub retired: bool,
+    pub target: Option<String>,
+}
+
+/// The distinct pages linking to one page (`countDistinctInboundLinkers`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InboundLinkerCountRow {
+    pub source_id: String,
+    pub slug: String,
+    pub n: u64,
 }
 
 impl Store {
@@ -183,6 +230,150 @@ impl Store {
             })
             .collect())
     }
+
+    /// `listUnretiredPagesBySlugPattern(sourceId, patterns, limit)`: the live, unretired pages of the
+    /// source whose slug matches one of `patterns` (LIKE), by slug, at most `limit`.
+    pub fn list_unretired_pages_by_slug_pattern(
+        &self,
+        source_id: &str,
+        patterns: &[String],
+        limit: u64,
+    ) -> Result<Vec<SlugPatternPageRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)? {
+            if p.source_id != source_id || p.deleted_at_us.is_some() || is_retired(&p) {
+                continue;
+            }
+            if any_like(&p.slug, patterns, false)? {
+                rows.push(SlugPatternPageRow {
+                    slug: p.slug,
+                    title: p.title,
+                });
+            }
+        }
+        rows.sort_by(|a, b| a.slug.cmp(&b.slug));
+        rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(rows)
+    }
+
+    /// `listNameVariantCandidates(sourceId, q)`: the live pages of the source whose type is one of
+    /// `types` or whose slug matches one of `slug_patterns` (LIKE), and whose title or slug matches a
+    /// probe (ILIKE). Most probe hits first, then the shortest title, then slug; at most `limit`.
+    pub fn list_name_variant_candidates(
+        &self,
+        source_id: &str,
+        q: &NameVariantCandidateQuery,
+    ) -> Result<Vec<NameVariantCandidateRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)? {
+            if p.source_id != source_id || p.deleted_at_us.is_some() {
+                continue;
+            }
+            if !(q.types.contains(&p.page_type) || any_like(&p.slug, &q.slug_patterns, false)?) {
+                continue;
+            }
+            let mut hits = 0u64;
+            for probe in &q.probes {
+                if like(&p.title, probe, true)? || like(&p.slug, probe, true)? {
+                    hits += 1;
+                }
+            }
+            if hits == 0 {
+                continue;
+            }
+            rows.push(NameVariantCandidateRow {
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+                probe_hits: hits,
+            });
+        }
+        rows.sort_by(|a, b| {
+            b.probe_hits
+                .cmp(&a.probe_hits)
+                .then_with(|| a.title.chars().count().cmp(&b.title.chars().count()))
+                .then_with(|| a.slug.cmp(&b.slug))
+        });
+        rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
+        Ok(rows)
+    }
+
+    /// `readPageRetirement(sourceId, slug)`: whether the live page at `slug` is retired
+    /// (`retiredPageSql`) and its trimmed `superseded_by`, else `merged_into`, value; `None` when no
+    /// live page sits there.
+    pub fn read_page_retirement(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<PageRetirementRow>> {
+        let read = self.read()?;
+        let Some(p) =
+            crate::pages::read_page(&*read, source_id, slug)?.filter(|p| p.deleted_at_us.is_none())
+        else {
+            return Ok(None);
+        };
+        let trimmed = |key: &str| {
+            p.frontmatter
+                .get(key)
+                .and_then(arrow_text)
+                .map(|v| v.trim_matches(' ').to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let target = trimmed("superseded_by").or_else(|| trimmed("merged_into"));
+        Ok(Some(PageRetirementRow {
+            retired: is_retired(&p),
+            target,
+            slug: p.slug,
+            page_type: p.page_type,
+        }))
+    }
+
+    /// `countDistinctInboundLinkers(sourceIds, slugs)`: for each page at (`source_ids[i]`,
+    /// `slugs[i]`), deleted or not, the number of distinct pages linking to it by any link kind.
+    /// Pages with no inbound link, and pairs with no page, are absent.
+    pub fn count_distinct_inbound_linkers(
+        &self,
+        source_ids: &[String],
+        slugs: &[String],
+    ) -> Result<Vec<InboundLinkerCountRow>> {
+        let read = self.read()?;
+        let pairs: BTreeSet<(&str, &str)> = source_ids
+            .iter()
+            .zip(slugs)
+            .map(|(s, slug)| (s.as_str(), slug.as_str()))
+            .collect();
+        let mut rows = Vec::new();
+        for (source_id, slug) in pairs {
+            let Some(p) = crate::pages::read_page(&*read, source_id, slug)? else {
+                continue;
+            };
+            let linkers: BTreeSet<u64> = crate::links::in_links(&*read, p.id)?
+                .iter()
+                .map(|l| l.from_page_id)
+                .collect();
+            if !linkers.is_empty() {
+                rows.push(InboundLinkerCountRow {
+                    source_id: p.source_id,
+                    slug: p.slug,
+                    n: linkers.len() as u64,
+                });
+            }
+        }
+        Ok(rows)
+    }
+}
+
+/// `text LIKE ANY(patterns)` (`ILIKE ANY` when `fold`).
+fn any_like(text: &str, patterns: &[String], fold: bool) -> Result<bool> {
+    for pattern in patterns {
+        if like(text, pattern, fold)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or
