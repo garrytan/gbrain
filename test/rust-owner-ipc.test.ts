@@ -603,7 +603,7 @@ describe('an owner that exits', () => {
       return old;
     }
     /** Counts store opens, so one election for several callers shows as one open. */
-    const countedAddon = (opened: { n: number }) => ({ target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: class extends ConfigBrain { async open() { opened.n++; } } }) as never;
+    const countedAddon = (opened: { n: number }, openMs = 0) => ({ target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: class extends ConfigBrain { async open() { opened.n++; if (openMs) await Bun.sleep(openMs); } } }) as never;
     const settle = (call: Promise<unknown>) => call.then(value => value, (error: { code?: string; reason?: string }) => `${error.code}/${error.reason}`);
 
     // Value: protects=the first ordinary call after owner death starts the rejoin, and calls at once share one election and one open; fails_when=only whole ops rejoin or each call elects; why_new=failover tests began with a whole op; seam=none; no_claim=handoff
@@ -639,7 +639,9 @@ describe('an owner that exits', () => {
         const db = join(dir, 'brain.rust');
         const first = await ownerChild(db);
         const opened = { n: 0 };
-        const rust = openRustEngine({ addon: countedAddon(opened), databasePath: db, ownerWaitMs: 5_000 });
+        // The store open takes 20 ms, so a deadline 1 ms away has always passed when the election ends; an election
+        // that finished inside the same millisecond let the call run and made the deadline case flaky.
+        const rust = openRustEngine({ addon: countedAddon(opened, 20), databasePath: db, ownerWaitMs: 5_000 });
         try {
           await rust.connect({});
           await afterOwnerDeath(first, rust);
