@@ -382,22 +382,29 @@ export async function searchTakesVector(
       : opts.sourceId
         ? sqlFragment`AND p.source_id = ${opts.sourceId}`
         : sqlFragment``;
+    // The inner query orders by distance alone so Postgres can serve it from the HNSW index (a second
+    // sort key makes the planner sort every row instead); the outer query breaks distance ties by take id
+    // inside the limit. Which rows tie at the LIMIT boundary stays approximate, as ANN is.
     const rows = (await exec.run(sqlFragment`
-      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
-             t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source,
-             (1 - (t.embedding <=> ${vec}::vector))::real AS score
-      FROM takes t
-      JOIN pages p ON p.id = t.page_id
-      WHERE t.active
-        AND t.embedding IS NOT NULL
-        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``}
-        AND (
-          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
-          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
-        )
-        ${sourceFilter}${takeEligibility(opts.eligibility)}
-      ORDER BY t.embedding <=> ${vec}::vector, t.id
-      LIMIT ${limit}
+      SELECT * FROM (
+        SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+               t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source,
+               (1 - (t.embedding <=> ${vec}::vector))::real AS score,
+               t.embedding <=> ${vec}::vector AS distance
+        FROM takes t
+        JOIN pages p ON p.id = t.page_id
+        WHERE t.active
+          AND t.embedding IS NOT NULL
+          ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``}
+          AND (
+            ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+            OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+          )
+          ${sourceFilter}${takeEligibility(opts.eligibility)}
+        ORDER BY t.embedding <=> ${vec}::vector
+        LIMIT ${limit}
+      ) q
+      ORDER BY q.distance, q.take_id
     `)).rows;
     // #2450-class: int8 columns arrive as native BigInt from the pg driver;
     // coerce per-row (takeRowToTake precedent) so MCP/CLI JSON.stringify
