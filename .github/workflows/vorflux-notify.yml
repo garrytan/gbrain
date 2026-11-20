@@ -6,7 +6,9 @@ name: Vorflux notify
 # its head branch lives in garrytan/gbrain. It rings for:
 #   - a comment, review or review comment by capy-ai[bot];
 #   - a comment, review or review comment by garrytan whose body lacks the
-#     <!-- vorflux-session --> marker (the marker means Vorflux wrote it);
+#     <!-- vorflux-session --> marker (the marker means Vorflux wrote it); a
+#     garrytan review with an empty body is skipped, because GitHub sends one
+#     for each single inline reply and its review comment event already rang;
 #   - the pull request being merged or closed;
 #   - a push to its head by anyone other than garrytan;
 #   - a full required check (full-suite, e2e-full-suite or macOS 26
@@ -53,7 +55,8 @@ jobs:
        contains(github.event.pull_request.labels.*.name, 'rust-engine') &&
        github.event.pull_request.head.repo.full_name == 'garrytan/gbrain' &&
        (github.event.review.user.login == 'capy-ai[bot]' ||
-        (github.event.review.user.login == 'garrytan' && !contains(github.event.review.body, '<!-- vorflux-session -->')))) ||
+        (github.event.review.user.login == 'garrytan' && github.event.review.body &&
+         !contains(github.event.review.body, '<!-- vorflux-session -->')))) ||
       (github.event_name == 'pull_request_target' &&
        contains(github.event.pull_request.labels.*.name, 'rust-engine') &&
        github.event.pull_request.head.repo.full_name == 'garrytan/gbrain' &&
