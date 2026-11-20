@@ -72,6 +72,30 @@ struct LedgerRecord {
     attempts: i32,
     decided_at: i64,
     updated_at: i64,
+    #[serde(default)]
+    event_slugs: Vec<String>,
+    #[serde(default)]
+    event_hashes: Vec<String>,
+    #[serde(default)]
+    cost_attempts: Vec<i32>,
+    #[serde(default)]
+    judge_input_hash: Option<String>,
+    #[serde(default)]
+    judge_window_chars: Option<i32>,
+    #[serde(default)]
+    judge_window_hash: Option<String>,
+    #[serde(default)]
+    judge_input_failures: i32,
+    #[serde(default)]
+    campaign_id: Option<String>,
+    #[serde(default)]
+    attempt_cap_usd: Option<String>,
+    #[serde(default)]
+    max_attempts: Option<i32>,
+    #[serde(default)]
+    pricing_policy: Option<String>,
+    #[serde(default)]
+    campaign_max_usd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +239,18 @@ impl Store {
                     attempts: 0,
                     decided_at: now,
                     updated_at: now,
+                    event_slugs: Vec::new(),
+                    event_hashes: Vec::new(),
+                    cost_attempts: Vec::new(),
+                    judge_input_hash: None,
+                    judge_window_chars: None,
+                    judge_window_hash: None,
+                    judge_input_failures: 0,
+                    campaign_id: None,
+                    attempt_cap_usd: None,
+                    max_attempts: None,
+                    pricing_policy: None,
+                    campaign_max_usd: None,
                 },
                 Some(mut c) => {
                     let guarded = w.trigger == "auto"
@@ -246,6 +282,11 @@ impl Store {
                     c.next_attempt_at = w.next_attempt_at.clone();
                     c.decided_at = now;
                     c.updated_at = now;
+                    c.campaign_id = None;
+                    c.attempt_cap_usd = None;
+                    c.max_attempts = None;
+                    c.pricing_policy = None;
+                    c.campaign_max_usd = None;
                     c
                 }
             };

@@ -11,10 +11,13 @@
 //! A hard page delete removes the page's rows and a source delete the source's rows (`ON DELETE CASCADE` of
 //! `pages.id` and `sources.id`; `cascade.rs`). Reservations have no page or source reference and stay.
 
+use crate::chronicle_ledger::ChronicleRowInput;
 use crate::env::iso;
-use crate::error::{Result, StoreError};
+use crate::error::{PAGE_NOT_FOUND, Result, SOURCE_NOT_FOUND, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::PageRecord;
+use crate::pages::read_page_by_id;
+use crate::sources::read_source;
 use crate::{Store, get_json, keys};
 use serde::{Deserialize, Serialize};
 
@@ -215,6 +218,46 @@ fn remove_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
 }
 
 impl Store {
+    /// `upsertChronicleRow(w)` as the SQL engines run it: the row's source and page must exist (the foreign keys of
+    /// `chronicle_page_state.source_id` and `.page_id`, checked in that order), else it refuses `source_not_found` or
+    /// `page_not_found` and writes nothing. A soft-deleted page keeps its row in `pages`, so it passes. The check and
+    /// the upsert run under one writer: a bound store's own transaction, else a transaction opened here.
+    pub fn upsert_chronicle_row_checked(&self, w: &ChronicleRowInput) -> Result<bool> {
+        if self.transaction_open() {
+            return self.checked_upsert(w);
+        }
+        let bound = self.begin_transaction(false)?;
+        match bound.checked_upsert(w) {
+            Ok(written) => {
+                bound.commit_transaction()?;
+                Ok(written)
+            }
+            Err(e) => {
+                bound.rollback_transaction()?;
+                Err(e)
+            }
+        }
+    }
+
+    fn checked_upsert(&self, w: &ChronicleRowInput) -> Result<bool> {
+        {
+            let read = self.read()?;
+            if w.source_id.contains('\0') || read_source(&*read, &w.source_id)?.is_none() {
+                return Err(StoreError::new(
+                    SOURCE_NOT_FOUND,
+                    format!("upsertChronicleRow: no source {:?}", w.source_id),
+                ));
+            }
+            if w.page_id < 0 || read_page_by_id(&*read, w.page_id as u64)?.is_none() {
+                return Err(StoreError::new(
+                    PAGE_NOT_FOUND,
+                    format!("upsertChronicleRow: no page with id {}", w.page_id),
+                ));
+            }
+        }
+        self.upsert_chronicle_row(w)
+    }
+
     /// `readChronicleRow(key)`: the row at `(sourceId, pageId, contentHash, extractorVersion)`, or none.
     pub fn read_chronicle_row(&self, k: &ChronicleRowKey) -> Result<Option<ChronicleLedgerRow>> {
         if k.source_id.contains('\0') || k.content_hash.contains('\0') {
@@ -521,5 +564,146 @@ mod tests {
         assert!(store.read_chronicle_row(&key(b, "h")).unwrap().is_some());
         store.write(|tx| remove_source_rows(tx, "default")).unwrap();
         assert_eq!(store.read_chronicle_row(&key(b, "h")).unwrap(), None);
+    }
+
+    /// A stored extracted row carrying the events, the cost attempts, the judge window and a campaign stamp.
+    fn seed_extracted(store: &Store, page: i64, hash: &str, updated_at: i64) {
+        let k = row_key("default", page, hash, 2);
+        let r = json!({
+            "content_hash": hash, "slug": "a", "state": "extracted", "reason": null, "trigger": "backfill",
+            "principal_kind": null, "principal_id": null, "request_id": null, "no_extract": false,
+            "next_attempt_at": null, "cost_usd": 0.25, "unpriced": false, "attempts": 1,
+            "decided_at": updated_at, "updated_at": updated_at,
+            "event_slugs": ["life/events/2026-11-20-abcd1234"], "event_hashes": ["e1"], "cost_attempts": [1],
+            "judge_input_hash": "jih", "judge_window_chars": 4000, "judge_window_hash": "jwh", "judge_input_failures": 2,
+            "campaign_id": "campaign-a", "attempt_cap_usd": "0.5", "max_attempts": 3, "pricing_policy": "priced",
+            "campaign_max_usd": "5",
+        });
+        store.write(|tx| put_json(tx, &k, &r)).unwrap();
+    }
+
+    fn raw(store: &Store, page: i64, hash: &str) -> Option<Vec<u8>> {
+        store
+            .read()
+            .unwrap()
+            .get(&row_key("default", page, hash, 2))
+            .unwrap()
+    }
+
+    #[test]
+    fn an_upsert_that_wins_keeps_the_events_and_judge_columns_and_clears_the_campaign_stamp() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        seed_extracted(&store, id, "h1", 100);
+        // A newer extracted generation of the page lets the decision replace the old one.
+        seed_extracted(&store, id, "h2", 200);
+        assert!(
+            store
+                .upsert_chronicle_row_checked(&input(id, "h1", "pending", "backfill", false))
+                .unwrap()
+        );
+        let row: Value = serde_json::from_slice(&raw(&store, id, "h1").unwrap()).unwrap();
+        let kept = [
+            "event_slugs",
+            "event_hashes",
+            "cost_attempts",
+            "judge_input_hash",
+            "judge_window_chars",
+            "judge_window_hash",
+            "judge_input_failures",
+        ];
+        assert_eq!(
+            kept.iter().map(|f| row[*f].clone()).collect::<Vec<_>>(),
+            vec![
+                json!(["life/events/2026-11-20-abcd1234"]),
+                json!(["e1"]),
+                json!([1]),
+                json!("jih"),
+                json!(4000),
+                json!("jwh"),
+                json!(2),
+            ]
+        );
+        let cleared = [
+            "campaign_id",
+            "attempt_cap_usd",
+            "max_attempts",
+            "pricing_policy",
+            "campaign_max_usd",
+        ];
+        assert!(cleared.iter().all(|f| row[*f].is_null()), "{row}");
+        assert_eq!(row["state"], json!("pending"));
+        let read = store.read_chronicle_row(&key(id, "h1")).unwrap().unwrap();
+        assert_eq!(
+            (
+                read.event_hashes,
+                read.judge_input_failures,
+                read.campaign_id
+            ),
+            (vec!["e1".to_string()], 2, None)
+        );
+    }
+
+    #[test]
+    fn an_upsert_the_guard_blocks_leaves_the_record_byte_same() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        seed_extracted(&store, id, "h1", 100);
+        let before = raw(&store, id, "h1").unwrap();
+        // No newer extracted generation: the extracted row stays.
+        assert!(
+            !store
+                .upsert_chronicle_row_checked(&input(id, "h1", "pending", "auto", false))
+                .unwrap()
+        );
+        assert_eq!(raw(&store, id, "h1").unwrap(), before);
+    }
+
+    #[test]
+    fn a_missing_source_or_page_refuses_by_name_and_writes_nothing() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        let mut other = input(id, "h", "pending", "auto", false);
+        other.source_id = "no-such-source".into();
+        let err = store.upsert_chronicle_row_checked(&other).unwrap_err();
+        assert_eq!(err.code, SOURCE_NOT_FOUND);
+        let err = store
+            .upsert_chronicle_row_checked(&input(id + 1000, "h", "pending", "auto", false))
+            .unwrap_err();
+        assert_eq!(err.code, PAGE_NOT_FOUND);
+        assert_eq!(raw(&store, id + 1000, "h"), None);
+        let mut written = 0;
+        scan_prefix(
+            &*store.read().unwrap(),
+            &row_prefix(),
+            false,
+            &mut |_, _| {
+                written += 1;
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(written, 0);
+        // A soft-deleted page keeps its pages row, so its decision is recorded.
+        store.soft_delete_page("a", None).unwrap();
+        assert!(
+            store
+                .upsert_chronicle_row_checked(&input(id, "h", "pending", "auto", false))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_checked_upsert_inside_a_bound_transaction_runs_as_one_of_its_statements() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        let bound = store.begin_transaction(false).unwrap();
+        assert!(
+            bound
+                .upsert_chronicle_row_checked(&input(id, "h", "pending", "auto", false))
+                .unwrap()
+        );
+        bound.rollback_transaction().unwrap();
+        assert_eq!(store.read_chronicle_row(&key(id, "h")).unwrap(), None);
     }
 }

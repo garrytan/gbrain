@@ -2,6 +2,7 @@
 //! the daily judge count and the segmented truth lead of `engine-sql/chronicle-ledger.ts`
 //! (rust/docs/store/chronicle-ledger.md).
 
+use gbrain_store::chronicle_ledger::ChronicleRowInput;
 use gbrain_store::chronicle_state::ChronicleRowKey;
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -12,6 +13,20 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
+    /// `upsertChronicleRow(w)` with the SQL engines' foreign keys: refuses `source_not_found` / `page_not_found` and
+    /// writes nothing when the row's source or page is missing; otherwise resolves true when the row was written.
+    #[napi]
+    pub fn upsert_chronicle_row_checked<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: ChronicleRowInput = required(row, "upsertChronicleRow row")?;
+            s.upsert_chronicle_row_checked(&row)
+        })
+    }
+
     /// `readChronicleRow(key)`: the row (`SELECT *` columns, `decided_at` and `updated_at` as ISO text) or `null`.
     #[napi]
     pub fn read_chronicle_row<'env>(

@@ -9,8 +9,12 @@ import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
+/**
+ * The checked store call: the SQL engines' foreign keys refuse a row whose source or page is missing
+ * (`source_not_found` / `page_not_found`), and the store refuses the same and writes nothing.
+ */
 export const upsertChronicleRow: Member<'upsertChronicleRow'> = (brain, w) =>
-  storeCall({ member: 'upsertChronicleRow' }, () => brain.upsertChronicleRow(w)) as Promise<Awaited<ReturnType<BrainEngine['upsertChronicleRow']>>>;
+  storeCall({ member: 'upsertChronicleRow' }, () => brain.upsertChronicleRowChecked(w)) as Promise<Awaited<ReturnType<BrainEngine['upsertChronicleRow']>>>;
 
 /** The store answers `decided_at` and `updated_at` as ISO text; the SQL engines answer Dates. */
 export const readChronicleRow: Member<'readChronicleRow'> = async (brain, key) => {

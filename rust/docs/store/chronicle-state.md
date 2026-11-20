@@ -17,6 +17,16 @@ the same members from `chronicle_state.rs`, over the ledger rows (`a 0x0E`) and 
 | `brain.readPageTruthLead(pageId)` | The page's stored `truth_lead` (a segmented page's body prefix), or null for a page with none or no page |
 | `brain.insertConfigIfAbsent(key, value)` | true when the key had no value and `value` was stored; false when a value stays. The TS member answers nothing, as the SQL `ON CONFLICT DO NOTHING` does |
 
-A page delete removes the page's ledger rows and a source delete removes the source's (`cascade.rs`). The judge
-reservations stay: on this engine no writer takes one yet (`reserveChronicleSlot` and `pruneChronicleReservations` stay
-`executeRaw` statements, which a Rust brain refuses), so `countRecentChronicleReservations` answers 0 there.
+The TS member `upsertChronicleRow` calls `brain.upsertChronicleRowChecked(row)`: the store's upsert behind the SQL
+engines' foreign keys. A row whose source is missing refuses `source_not_found` and one whose page is missing refuses
+`page_not_found` (checked in that order, as the `source_id` and `page_id` references are), and nothing is written. A
+soft-deleted page keeps its `pages` row, so its decision is recorded. The check and the upsert run under one writer: the
+bound transaction when the brain is in one, else a transaction the call opens. An update keeps the row's
+`event_slugs`, `event_hashes`, `cost_attempts` and judge-window columns and clears the campaign stamp
+(`campaign_id`, `attempt_cap_usd`, `max_attempts`, `pricing_policy`, `campaign_max_usd`), as the SQL `DO UPDATE` does.
+
+A page delete removes the page's ledger rows and a source delete removes the source's (`cascade.rs`), as the
+`ON DELETE CASCADE` references do. The judge reservations stay after either delete on every engine:
+`chronicle_judge_reservations` has no reference to a page or source. On this engine no writer takes a reservation yet
+(`reserveChronicleSlot` and `pruneChronicleReservations` stay `executeRaw` statements, which a Rust brain refuses), so
+`countRecentChronicleReservations` answers 0 there.

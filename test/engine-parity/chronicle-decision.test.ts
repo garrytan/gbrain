@@ -17,7 +17,10 @@
  *    members themselves: the upsert's conflict path and backfill guard, the pending-automatic read, the activation
  *    insert keeping the first value, the truth-lead read and the 24 h reservation count; (6) a segmented meeting (over
  *    1 MiB, pages.segmented_storage on) records a pending row because the decision reads its stored truth lead (a
- *    truth-lead read that answers null records too_short; on Rust the segmented save stops on its raw-SQL body staging).
+ *    truth-lead read that answers null records too_short; on Rust the segmented save stops on its raw-SQL body staging);
+ *    (7) an upsert that wins keeps the event, cost-attempt and judge columns and clears the campaign stamp, and a guarded
+ *    one leaves the row as it was (SQL arms; the Rust store test pins the same on its records); (8) an upsert for a
+ *    missing source or page refuses (the foreign keys; Rust by name) and writes nothing, and a soft-deleted page records.
  *  - Regression: the decision's activation insert, truth-lead read, add_link pending read, upsert, row read and daily
  *    count were `executeRaw` calls; the Rust engine refuses raw SQL, so every chronicle-shaped save failed on Rust.
  *  - Why existing coverage misses it: test/chronicle-*.test.ts run on PGLite and Postgres only; bench-save-repro case 3
@@ -242,5 +245,67 @@ describe('the write-time chronicle decision', () => {
       await engine.setConfig('pages.segmented_storage', 'off');
       await disposePersistenceConsumer(engine);
     }
+  });
+
+  parityTest('an upsert that wins keeps the events and judge columns and clears the campaign stamp; a guarded one changes nothing', {
+    methods: ['putPage', 'upsertChronicleRow', 'readChronicleRow'], requires: 'raw_sql',
+  }, async (engine) => {
+    // The columns no served Rust writer sets are seeded through SQL, so the Rust arm stops on raw_sql here; the
+    // Rust store test chronicle_state::an_upsert_that_wins_* pins the same rule on the store's records.
+    const page = await engine.putPage('meetings/stamped-example', { type: 'meeting', title: 'Stamped', compiled_truth: 'A body.', timeline: '' });
+    const key = (contentHash: string) => ({ sourceId: 'default', pageId: Number(page.id), contentHash, extractorVersion: CHRONICLE_EXTRACTOR_VERSION });
+    const seed = (hash: string, age: string) => engine.executeRaw(`INSERT INTO chronicle_page_state (source_id, page_id, content_hash,
+        extractor_version, slug, state, trigger, attempts, cost_usd, event_slugs, event_hashes, cost_attempts, judge_input_hash,
+        judge_window_chars, judge_window_hash, judge_input_failures, campaign_id, attempt_cap_usd, max_attempts, pricing_policy,
+        campaign_max_usd, decided_at, updated_at)
+      VALUES ('default', $1, $2, $3, 'meetings/stamped-example', 'extracted', 'backfill', 1, 0.25,
+        ARRAY['life/events/2026-11-20-abcd1234']::text[], ARRAY['e1']::text[], ARRAY[1]::int[], 'jih', 4000, 'jwh', 2, 'campaign-a',
+        0.5, 3, 'priced', 5, now() - $4::interval, now() - $4::interval)`, [Number(page.id), hash, CHRONICLE_EXTRACTOR_VERSION, age]);
+    const decide = (hash: string, trigger: string) => engine.upsertChronicleRow({ ...key(hash), slug: 'meetings/stamped-example', state: 'pending',
+      reason: null, trigger, principalKind: 'local_cli', principalId: null, requestId: null, noExtract: false, nextAttemptAt: null });
+    const kept = (row: ChronicleLedgerRow | null) => row && {
+      state: row.state, event_slugs: row.event_slugs, event_hashes: row.event_hashes,
+      cost_attempts: (row as unknown as { cost_attempts: unknown }).cost_attempts,
+      judge: [row.judge_input_hash, row.judge_window_chars, row.judge_window_hash, row.judge_input_failures],
+      campaign: [row.campaign_id, row.attempt_cap_usd, row.max_attempts, row.pricing_policy, row.campaign_max_usd].map(v => v === null ? null : 'set'),
+    };
+    await seed('h-guarded', '2 hours');
+    const before = await engine.readChronicleRow(key('h-guarded'));
+    const guarded = await decide('h-guarded', 'auto');
+    const after = await engine.readChronicleRow(key('h-guarded'));
+    await seed('h-old', '2 hours');
+    await seed('h-new', '1 hour');
+    const won = await decide('h-old', 'backfill');
+    const out = { guarded, unchanged: JSON.stringify(after) === JSON.stringify(before), won, row: kept(await engine.readChronicleRow(key('h-old'))) };
+    expect(out).toEqual({ guarded: false, unchanged: true, won: true, row: { state: 'pending', event_slugs: ['life/events/2026-11-20-abcd1234'],
+      event_hashes: ['e1'], cost_attempts: [1], judge: ['jih', 4000, 'jwh', 2], campaign: [null, null, null, null, null] } });
+    return out;
+  });
+
+  parityTest('an upsert for a missing source or page refuses and writes nothing; a soft-deleted page still records', {
+    methods: ['putPage', 'softDeletePage', 'upsertChronicleRow', 'readChronicleRow'],
+  }, async (engine, backend) => {
+    const page = await engine.putPage('meetings/fk-example', { type: 'meeting', title: 'Fk', compiled_truth: 'A body.', timeline: '' });
+    const row = (sourceId: string, pageId: number) => ({ sourceId, pageId, contentHash: 'h-fk', extractorVersion: CHRONICLE_EXTRACTOR_VERSION,
+      slug: 'meetings/fk-example', state: 'pending', reason: null, trigger: 'auto', principalKind: 'local_cli', principalId: null, requestId: null,
+      noExtract: false, nextAttemptAt: null });
+    const attempt = async (sourceId: string, pageId: number) => {
+      try { return { written: await engine.upsertChronicleRow(row(sourceId, pageId)) }; } catch (error) {
+        // The SQL engines refuse with the foreign key's violation; the Rust store refuses the same by name.
+        if (backend === 'rust') expect((error as { code?: string }).code).toBe(pageId === Number(page.id) ? 'source_not_found' : 'page_not_found');
+        return { refused: true };
+      }
+    };
+    const read = (sourceId: string, pageId: number) => engine.readChronicleRow({ sourceId, pageId, contentHash: 'h-fk', extractorVersion: CHRONICLE_EXTRACTOR_VERSION });
+    const missingPage = await attempt('default', Number(page.id) + 1_000_000);
+    const missingPageRow = await read('default', Number(page.id) + 1_000_000);
+    const missingSource = await attempt('no-such-source', Number(page.id));
+    const missingSourceRow = await read('no-such-source', Number(page.id));
+    await engine.softDeletePage('meetings/fk-example');
+    const softDeleted = await attempt('default', Number(page.id));
+    const out = { missingPage, missingPageRow, missingSource, missingSourceRow, softDeleted, stored: (await read('default', Number(page.id)))?.state ?? null };
+    expect(out).toEqual({ missingPage: { refused: true }, missingPageRow: null, missingSource: { refused: true }, missingSourceRow: null,
+      softDeleted: { written: true }, stored: 'pending' });
+    return out;
   });
 });
