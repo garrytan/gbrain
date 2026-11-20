@@ -106,6 +106,36 @@ export async function syncPersonFacts(engine: BrainEngine, contactsSourceId: str
   return 'written';
 }
 
+/** Active rows this apple-contacts source wrote on person pages. */
+export async function countPersonFacts(engine: Pick<BrainEngine, 'executeRaw'>, contactsSourceId: string): Promise<number> {
+  const [row] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE source=$1 AND expired_at IS NULL', [personFactSource(contactsSourceId)]);
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Before an apple-contacts source is removed or purged: retire every person-page row it wrote. Those rows live in the
+ * people pages' own sources, so deleting the source alone would leave them behind. Clears the source's holder list.
+ * Throws when a row is still active afterwards, so the caller stops before the source is deleted.
+ */
+export async function retireAllPersonFacts(engine: BrainEngine, contactsSourceId: string): Promise<number> {
+  const tag = personFactSource(contactsSourceId);
+  const pages = await engine.executeRaw<{ source_id: string; slug: string; ids: number[] }>(
+    'SELECT source_id, source_markdown_slug AS slug, array_agg(id ORDER BY id) AS ids FROM facts WHERE source=$1 AND expired_at IS NULL AND source_markdown_slug IS NOT NULL GROUP BY source_id, source_markdown_slug ORDER BY source_id, source_markdown_slug',
+    [tag]);
+  let retired = 0;
+  for (const page of pages) {
+    const ids = page.ids.map(Number);
+    await retireConnectorFacts(engine, page.source_id, page.slug, { factSource: tag, factIds: ids, note: 'Apple Contacts source removed' });
+    retired += ids.length;
+  }
+  const left = await countPersonFacts(engine, contactsSourceId);
+  if (left > 0) {
+    throw new Error('Source "' + contactsSourceId + '" still has ' + left + ' active fact row(s) on person pages that could not be retired, so it was not removed. Run the remove again; if it repeats, report it with gbrain doctor --json.');
+  }
+  await writePersonFactHolders(engine, contactsSourceId, {});
+  return retired;
+}
+
 export type PersonFactHolders = Record<string, string>;
 export const holderKey = (p: { source_id: string; slug: string }) => p.source_id + '\t' + p.slug;
 
