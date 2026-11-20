@@ -164,6 +164,8 @@ async function derivationTextReport(engine: BrainEngine, sourceId: string, pageI
       row = await engine.transaction(async tx => {
         await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${probeLimits.statementMs}ms`]);
         await faultPoint('purge:derivation_probe', { sourceId, round: rows });
+        // The walk's ORDER BY and its cursor test compare pipeline with the same database collation, so no row is
+        // skipped; only counts leave this loop, so the walk order is not output and needs no byte order.
         const [counted] = await tx.executeRaw<typeof row>(`WITH batch AS MATERIALIZED (
             SELECT d.page_id, d.pipeline, d.occurrence_id, ${derivationSweepScopeSql('d', 'p', '$3')} AS swept FROM page_segment_derivations d
             JOIN pages p ON p.id=d.page_id WHERE p.source_id=$1 AND ${derivationAfterSql('d', ['$5', '$6', '$7'])}
@@ -274,7 +276,7 @@ async function probeNamedRows(engine: BrainEngine, entry: InventoryEntry, source
   const counted = await boundedCount(engine, sql, params, deadline);
   if ('unverified' in counted) return { store: entry.table, status: 'unverified', reason: counted.unverified };
   if (!counted.count) return { store: entry.table, status: 'not_present' };
-  const items = (await engine.executeRaw<{ item: string }>(`${sql} ORDER BY 1 LIMIT 20`, params)).map(r => r.item);
+  const items = (await engine.executeRaw<{ item: string }>(`SELECT * FROM (${sql}) q ORDER BY item COLLATE "C" LIMIT 20`, params)).map(r => r.item);
   return { store: entry.table, status: 'out_of_scope', reason: 'probed_reported', remaining: counted.count, items,
     detail: `${counted.count} row(s) still carry the purged text (listed in items, up to 20); purge does not rewrite this store, so edit or remove them.` };
 }
@@ -298,7 +300,7 @@ async function effectPayloadReport(engine: BrainEngine, sourceId: string, needle
   const counted = await boundedCount(engine, sql, params, deadline);
   if ('unverified' in counted) return { store: 'persistence_effects', status: 'unverified', reason: counted.unverified, removed };
   if (!counted.count) return { store: 'persistence_effects', status: removed ? 'deleted' : 'not_present', removed };
-  const items = (await engine.executeRaw<{ item: string }>(`${sql} ORDER BY 1 LIMIT 20`, params)).map(r => r.item);
+  const items = (await engine.executeRaw<{ item: string }>(`SELECT * FROM (${sql}) q ORDER BY item COLLATE "C" LIMIT 20`, params)).map(r => r.item);
   return { store: 'persistence_effects', status: 'incomplete', remaining: counted.count, items, removed,
     detail: 'Queued or recorded effects still carry the purged text in their payload, so running them could write it back.' };
 }
@@ -691,7 +693,7 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
     const all = new Set<string>();
     let unverified: string | null = null;
     for (const [store, sql] of Object.entries(proseIn)) {
-      const slugs = (await engine.executeRaw<{ slug: string }>(`${sql} ORDER BY 1 LIMIT 20`, [src, lowered])).map(r => r.slug);
+      const slugs = (await engine.executeRaw<{ slug: string }>(`SELECT * FROM (${sql}) q ORDER BY slug COLLATE "C" LIMIT 20`, [src, lowered])).map(r => r.slug);
       if (store === 'pages' || store === 'page_versions') {
         const scan = await segmentedProse(engine, src, needles, deadline, store);
         if ('unverified' in scan) unverified = scan.unverified;
@@ -741,7 +743,7 @@ export async function purgeCompletion(engine: BrainEngine, row: Pick<WriteReques
     derivation_sweep?: DerivationSweepState; derivation_sweep_reason?: DerivationStallReason | DerivationPendingReason; next?: string[] }> {
   if (row.state !== 'committed') return { completion: 'incomplete', effects: [], exit_code: 75 };
   const effects = await engine.executeRaw<{ kind: string; state: string; error_code: string | null; parked: boolean }>(`SELECT kind,state,error_code,
-    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`, [row.id]);
+    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"`, [row.id]);
   const purge = (row.outcome as { purge?: { fact_hash?: string; subject?: string } } | null)?.purge;
   let fingerprint: Record<string, number> | undefined;
   if (purge?.fact_hash) {

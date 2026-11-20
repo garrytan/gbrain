@@ -23,7 +23,7 @@ function refuse(code = 'withdrawal_capacity'): never {
 }
 
 async function refuseAffected(engine: BrainEngine, sourceId: string, affected: Set<number>): Promise<never> {
-  const sample = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug LIMIT 20',
+  const sample = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C" LIMIT 20',
     [sourceId, [...affected]]);
   throw new OperationError('withdrawal_capacity',
     `This claim is carried by more than ${WITHDRAWAL_LIMITS.targets} pages (${affected.size} matched before discovery stopped), the bound for one atomic withdrawal. Source size is not the limit. Nothing was committed; earlier durable intent remains retained.`,
@@ -82,8 +82,8 @@ async function* splitFactsFences(engine: BrainEngine, sourceId: string, keyed: r
         (s->>'open_start')::bigint::text AS open_start,sum((s->>'end')::bigint-(s->>'start')::bigint)::text AS bytes
       FROM page_body_manifest m JOIN pages p ON p.id=m.page_id CROSS JOIN LATERAL jsonb_array_elements(m.facts_slots) s
       WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb AND s ? 'open_start'
-        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region,(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
-      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region,(s->>'open_start')::bigint LIMIT $6`,
+        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region COLLATE "C",(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
+      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region COLLATE "C",(s->>'open_start')::bigint LIMIT $6`,
     [sourceId, subjects, after[0], after[1], after[2], WITHDRAWAL_LIMITS.batch]);
     for (const f of fences) {
       if (performance.now() > deadline) refuse();

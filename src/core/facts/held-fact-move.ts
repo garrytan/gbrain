@@ -169,13 +169,13 @@ export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts:
   const rows = await engine.executeRaw<HeldRow>(
     `SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
-       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`, [sourceId]);
+       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug COLLATE "C", f.entity_slug COLLATE "C", f.id`, [sourceId]);
   // A struck row keeps its facts row (expired) at its row number; one an active fact reuses is not struck.
   const struck = await engine.executeRaw<{ from_slug: string; entity_slug: string; row_num: number; fact: string }>(
-    `SELECT DISTINCT ON (f.source_markdown_slug, f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
+    `SELECT DISTINCT ON (f.source_markdown_slug COLLATE "C", f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
       WHERE ${onHolding} AND f.expired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id
         AND a.source_markdown_slug = f.source_markdown_slug AND a.row_num = f.row_num AND a.expired_at IS NULL)
-      ORDER BY f.source_markdown_slug, f.row_num, f.id DESC`, [sourceId]);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.row_num, f.id DESC`, [sourceId]);
   const keys = new Map<string, { from: string; key: string; group: HeldRow[]; struck: HeldDrop[] }>();
   const at = (from: string, key: string) => keys.get(`${from}\0${key}`) ?? keys.set(`${from}\0${key}`, { from, key, group: [], struck: [] }).get(`${from}\0${key}`)!;
   for (const row of rows) at(row.from_slug, row.entity_slug!).group.push(row);
