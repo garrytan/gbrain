@@ -2441,6 +2441,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertVolunteerEvents#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "insertWithdrawalEffects#default": {
         "flagOffLanes": [
           "tx"
@@ -4873,6 +4884,17 @@
         ],
         "flagOnScopes": []
       },
+      "readChronicleLedger#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readCompanyBrainEvidenceRows#default": {
         "flagOffLanes": [
           "pool"
@@ -6010,6 +6032,17 @@
         ],
         "flagOnScopes": []
       },
+      "readVolunteerUsage#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readWantedMarkers#all": {
         "flagOffLanes": [
           "pool"
@@ -6349,6 +6382,17 @@
         "flagOnScopes": []
       },
       "requireSynchronousCommit#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "reserveChronicleJudgeSlot#default": {
         "flagOffLanes": [
           "tx"
         ],
@@ -7358,6 +7402,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertChunks#default": {
         "flagOffLanes": [
           "tx"
@@ -7876,6 +7931,7 @@
         "insertSubagentMessage": "none",
         "insertTopologyChange": "none",
         "insertTrustProposal": "none",
+        "insertVolunteerEvents": "none",
         "insertWithdrawalEffects": "none",
         "insertWriteRequest": "none",
         "installChunkEmbeddings": "none",
@@ -8219,6 +8275,7 @@
         "readChatUsage": "none",
         "readCheckpointManifestRow": "none",
         "readChildCompletions": "none",
+        "readChronicleLedger": "none",
         "readChunkVectorColumn": "none",
         "readClientBudgetUsd": "none",
         "readClientOpUsage": "none",
@@ -8395,6 +8452,7 @@
         "readUnembeddedPageSummary": "none",
         "readUnfinishedAccessMigration": "none",
         "readVersionAttributions": "none",
+        "readVolunteerUsage": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",
         "readWakeDoctor": "none",
@@ -8455,6 +8513,7 @@
         "replaceWantedLinkRows": "none",
         "requeueEffectRow": "none",
         "requireSynchronousCommit": "none",
+        "reserveChronicleJudgeSlot": "none",
         "reserveClientSpend": "none",
         "reserveGroupSpend": "none",
         "reservePageEmbedding": "none",
@@ -8576,6 +8635,7 @@
         "updateTake": "none",
         "updateTakeEmbeddings": "none",
         "updateTimelineDetails": "none",
+        "upsertChronicleRow": "none",
         "upsertChunks": "via:_upsertChunksOnce",
         "upsertDecideState": "none",
         "upsertEventProjection": "none",

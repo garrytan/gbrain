@@ -1057,6 +1057,8 @@ SELECT source_id, type FROM pairs`],
     from: 'src/core/facts/facts-home.ts:136 scanFactsHome, at dded7edc51',
     case: { method: 'readPageFileOrigin', variant: 'default', run: e => e.readPageFileOrigin('default', 'notes/a') },
     texts: [`SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
+  },
+  {
     from: 'src/core/context/volunteer-events.ts:178 insertVolunteerEvents, at dded7edc51: the old text was composed from the row count (VALUES tuples with $n::type casts); this is its one fixed statement over parallel arrays, with the same page-exists probe and columns',
     case: { method: 'insertVolunteerEvents', variant: 'default', run: e => e.insertVolunteerEvents([{ source_id: 'default', slug: 'p', confidence: 0.5, match_arm: 'a', rationale: 'r', channel: 'op', session_id: null, turn: null }]) },
     texts: [`INSERT INTO context_volunteer_events
