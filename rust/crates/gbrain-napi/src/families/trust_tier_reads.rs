@@ -14,7 +14,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+    ActivationRowsQuery, CorePageRowQuery, FactRankQuery, PageIdsQuery, TrustScanQuery,
+    VersionIdsQuery,
 };
 use gbrain_store::trust::valid_time::{
     AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
@@ -98,6 +99,32 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageIdsQuery = required(args, "listPageRefsByIds args")?;
             s.list_page_refs_by_ids(&a)
+        })
+    }
+
+    /// `listFactIdsAtTrustRank({ ids, minRank })`: the listed facts ranked at or above the floor.
+    #[napi]
+    pub fn list_fact_ids_at_trust_rank<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FactRankQuery = required(args, "listFactIdsAtTrustRank args")?;
+            s.list_fact_ids_at_trust_rank(&a)
+        })
+    }
+
+    /// `listActivationVerdictRows({ table, ids })`: the stored tier and activation flag of each listed row.
+    #[napi]
+    pub fn list_activation_verdict_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ActivationRowsQuery = required(args, "listActivationVerdictRows args")?;
+            s.list_activation_verdict_rows(&a)
         })
     }
 

@@ -33,6 +33,7 @@ import { OAuthGrants } from '../src/core/oauth-grants.ts';
 import { OAUTH_TOKEN_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { hashToken } from '../src/core/utils.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../src/core/eligibility/sql.ts';
+import { trustRankSql } from '../src/core/trust/tier.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 
@@ -549,6 +550,46 @@ const PINS: Pin[] = [
     texts: [`SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
        AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
      ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`],
+  },
+  {
+    from: 'src/core/eligibility/activation.ts:57 activationVerdicts (facts), at d2671f1342',
+    case: { method: 'listActivationVerdictRows', variant: 'facts', run: e => e.listActivationVerdictRows('facts', [1, 2]) },
+    texts: () => [`SELECT a.id, a.trust_tier, ${activationSuppressedSql('facts', 'a')} AS flagged FROM facts a WHERE a.id = ANY($1::bigint[])`],
+  },
+  {
+    from: 'src/core/eligibility/activation.ts:57 activationVerdicts (takes), at d2671f1342',
+    case: { method: 'listActivationVerdictRows', variant: 'takes', run: e => e.listActivationVerdictRows('takes', [1]) },
+    texts: () => [`SELECT a.id, a.trust_tier, ${activationSuppressedSql('takes', 'a')} AS flagged FROM takes a WHERE a.id = ANY($1::bigint[])`],
+  },
+  {
+    from: 'src/core/eligibility/activation.ts:57 activationVerdicts (timeline_entries), at d2671f1342',
+    case: { method: 'listActivationVerdictRows', variant: 'timeline_entries', run: e => e.listActivationVerdictRows('timeline_entries', [1]) },
+    texts: () => [`SELECT a.id, a.trust_tier, ${activationSuppressedSql('timeline_entries', 'a')} AS flagged FROM timeline_entries a WHERE a.id = ANY($1::bigint[])`],
+  },
+  {
+    from: 'src/core/eligibility/activation.ts:57 activationVerdicts (pages), at d2671f1342',
+    case: { method: 'listActivationVerdictRows', variant: 'pages', run: e => e.listActivationVerdictRows('pages', [1]) },
+    texts: () => [`SELECT a.id, a.trust_tier, ${activationSuppressedSql('pages', 'a')} AS flagged FROM pages a WHERE a.id = ANY($1::bigint[])`],
+  },
+  {
+    from: 'src/core/belief/writers.ts:29 beliefStreamSlugs (facts), at d2671f1342',
+    case: { method: 'listBeliefStreamSlugs', variant: 'facts', run: e => e.listBeliefStreamSlugs('facts', [1, 2]) },
+    texts: ['SELECT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])'],
+  },
+  {
+    from: 'src/core/belief/writers.ts:29 beliefStreamSlugs (takes), at d2671f1342',
+    case: { method: 'listBeliefStreamSlugs', variant: 'takes', run: e => e.listBeliefStreamSlugs('takes', [1]) },
+    texts: ['SELECT p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($1::bigint[])'],
+  },
+  {
+    from: 'src/core/belief/writers.ts:29 beliefStreamSlugs (pages), at d2671f1342',
+    case: { method: 'listBeliefStreamSlugs', variant: 'pages', run: e => e.listBeliefStreamSlugs('pages', [1]) },
+    texts: ['SELECT slug FROM pages WHERE id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:511 ownerTierFacts, at d2671f1342',
+    case: { method: 'listFactIdsAtTrustRank', variant: 'default', run: e => e.listFactIdsAtTrustRank([1, 2], 5) },
+    texts: () => [`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${trustRankSql('trust_tier')} >= $2`],
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',

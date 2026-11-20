@@ -44,6 +44,7 @@ test/engine-parity/facts.test.ts	36	0
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/held-fence-cells.test.ts	5	0
+test/engine-parity/hot-memory-meta.test.ts	4	2
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0
 test/engine-parity/import-path.test.ts	6	2
@@ -69,7 +70,7 @@ test/engine-parity/mention-coverage.test.ts	7	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier.test.ts	4	0
 test/engine-parity/oauth-clients.test.ts	10	0
-test/engine-parity/ontology-propose.test.ts	4	0
+test/engine-parity/ontology-propose.test.ts	5	0
 test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/open-pages.test.ts	3	1
 test/engine-parity/owner-only-reads.test.ts	3	0

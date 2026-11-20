@@ -2,7 +2,7 @@
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
- * `listPageRefsByIds`; and the
+ * `listPageRefsByIds`; `listActivationVerdictRows` over pages and facts; `listFactIdsAtTrustRank`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
@@ -13,7 +13,8 @@
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is neither the no-caller one nor the
  *    canonical one for its reader identity and private-readable sources (the remote floor: for no readers), such as
  *    a lineage read or a labelled-only, owner or audience caller;
- *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
+ *  - the trust scan and `listActivationVerdictRows` over `takes` and `timeline_entries`, which the store does not
+ *    stamp yet;
  *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
@@ -109,6 +110,25 @@ export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids)
   const rows: Array<{ id: number; source_id: string; slug: string; type: string | null }> =
     await storeCall({ member }, () => brain.listPageRefsByIds({ ids: [...ids] }));
   return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+};
+
+export const listActivationVerdictRows: Member<'listActivationVerdictRows'> = async (brain, table, ids) => {
+  const member = 'listActivationVerdictRows';
+  if (!SCAN_TABLES.has(table)) refuseMember(member, `the ${table} table, whose activation inputs the store does not read yet`);
+  if (ids.length === 0) return [];
+  for (const id of ids) requireInteger(member, 'row id', id);
+  const rows: Array<{ id: number; trust_tier: string | null; flagged: boolean }> =
+    await storeCall({ member }, () => brain.listActivationVerdictRows({ table, ids: [...ids] }));
+  return rows.map(r => ({ id: Number(r.id), trust_tier: r.trust_tier ?? null, flagged: r.flagged === true }));
+};
+
+export const listFactIdsAtTrustRank: Member<'listFactIdsAtTrustRank'> = async (brain, ids, minRank) => {
+  const member = 'listFactIdsAtTrustRank';
+  if (ids.length === 0) return [];
+  for (const id of ids) requireInteger(member, 'fact id', Number(id));
+  requireInteger(member, 'rank', minRank);
+  const got: number[] = await storeCall({ member }, () => brain.listFactIdsAtTrustRank({ ids: ids.map(Number), minRank }));
+  return got.map(Number);
 };
 
 /** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */

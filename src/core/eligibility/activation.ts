@@ -19,10 +19,10 @@ import type { BrainEngine } from '../engine.ts';
 import type { Notice } from '../agent-output.ts';
 import { admitsTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
-import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
+import type { EligibilityTable } from './sql.ts';
 import type { ReadEligibility } from './policy.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'listActivationVerdictRows'>;
 /** pageActivationVerdicts reads page trust through the typed member; guest marks are still read raw. */
 type PageExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>;
 
@@ -43,19 +43,13 @@ export interface ActivationVerdict {
   unconfirmed: boolean;
 }
 
-const TABLE_SQL: Readonly<Record<EligibilityTable, string>> = {
-  facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries', pages: 'pages',
-};
-
 /** Tier and suppression state for each referenced row; rows that no longer exist are absent. */
 export async function activationVerdicts(engine: Exec, refs: readonly ActivationRef[], policy: ReadEligibility): Promise<Map<string, ActivationVerdict>> {
   const out = new Map<string, ActivationVerdict>();
   const byTable = new Map<EligibilityTable, number[]>();
   for (const r of refs) if (Number.isFinite(r.id)) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.id]);
   for (const [table, ids] of byTable) {
-    const rows = await engine.executeRaw<{ id: number | string; trust_tier: string; flagged: boolean }>(
-      `SELECT a.id, a.trust_tier, ${activationSuppressedSql(table, 'a')} AS flagged FROM ${TABLE_SQL[table]} a WHERE a.id = ANY($1::bigint[])`, [[...new Set(ids)]]);
-    for (const row of rows) {
+    for (const row of await engine.listActivationVerdictRows(table, [...new Set(ids)])) {
       const tier = storedTrustTier(row.trust_tier);
       const flagged = row.flagged === true;
       out.set(`${table}:${Number(row.id)}`, {

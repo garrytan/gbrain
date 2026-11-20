@@ -101,6 +101,7 @@ import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSp
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
+  ActivationVerdictRow,
 } from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
@@ -3614,6 +3615,10 @@ export interface BrainEngine {
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
   /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */
   readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null>;
+  /** Of `ids`, the facts whose stored tier ranks at or above `minRank` (a name that is no tier ranks 0), each once, ascending. */
+  listFactIdsAtTrustRank(ids: readonly number[], minRank: number): Promise<number[]>;
+  /** The ledger stream slug of each listed fact, take or page row found (null where it has none), in no promised order. */
+  listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
@@ -4592,6 +4597,8 @@ export interface BrainEngine {
   listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
   /** The source, slug and stored type of each listed page, deleted or not, by id (the GST-687 quoting reads); unknown ids answer nothing. */
   listPageRefsByIds(ids: readonly number[]): Promise<PageIdRef[]>;
+  /** The stored tier and activation flag of each listed row of one table, by id (activation control); unknown ids answer nothing. */
+  listActivationVerdictRows(table: 'facts' | 'takes' | 'timeline_entries' | 'pages', ids: readonly number[]): Promise<ActivationVerdictRow[]>;
   /** The live pages with a slug a valid-time read may follow, by source (at most six). */
   listValidTimeIdentities(spec: ValidTimeIdentitySpec): Promise<ValidTimeIdentityRow[]>;
   /** The valid-time pick over one page and its retained versions; null when the page is gone. */

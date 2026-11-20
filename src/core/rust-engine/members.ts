@@ -563,6 +563,7 @@ export const RUST_ENGINE_MEMBERS = {
   getOntology: 'ontology',
   listOntologyStreamSlugs: 'ontology',
   readOntologyRival: 'ontology',
+  listBeliefStreamSlugs: 'ontology',
   discoverOntologyDimensions: 'ontology',
   findOntologyConflicts: 'ontology',
   // trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
@@ -1033,6 +1034,8 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
   listPageRefsByIds: 'pages',
+  listActivationVerdictRows: 'facts',
+  listFactIdsAtTrustRank: 'facts',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
   listAmendmentsNotApplied: 'links',

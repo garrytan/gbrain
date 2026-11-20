@@ -648,6 +648,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFactProvenance': OOS.callerRawSql,
   'listOntologyStreamSlugs': OOS.callerRawSql,
   'readOntologyRival': OOS.callerRawSql,
+  'listFactIdsAtTrustRank': OOS.callerRawSql,
+  'listBeliefStreamSlugs': OOS.callerRawSql,
+  'listActivationVerdictRows': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
   'readDeltaSessionRow': OOS.callerRawSql,
   'readCheckpointManifestRow': OOS.callerRawSql,
@@ -1546,6 +1549,18 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] })]]),
   ...variants('listOntologyStreamSlugs', [['default', (e) => e.listOntologyStreamSlugs('default', 'people/a', 'role')]]),
   ...variants('readOntologyRival', [['default', (e) => e.readOntologyRival('default', 'people/a', 'role', 1)]]),
+  ...variants('listFactIdsAtTrustRank', [['default', (e) => e.listFactIdsAtTrustRank([1, 2], 5)]]),
+  ...variants('listBeliefStreamSlugs', [
+    ['facts', (e) => e.listBeliefStreamSlugs('facts', [1, 2])],
+    ['takes', (e) => e.listBeliefStreamSlugs('takes', [1])],
+    ['pages', (e) => e.listBeliefStreamSlugs('pages', [1])],
+  ]),
+  ...variants('listActivationVerdictRows', [
+    ['facts', (e) => e.listActivationVerdictRows('facts', [1, 2])],
+    ['takes', (e) => e.listActivationVerdictRows('takes', [1])],
+    ['timeline_entries', (e) => e.listActivationVerdictRows('timeline_entries', [1])],
+    ['pages', (e) => e.listActivationVerdictRows('pages', [1])],
+  ]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

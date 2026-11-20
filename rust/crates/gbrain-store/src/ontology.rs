@@ -288,7 +288,11 @@ impl Store {
         const OP: &str = "listOntologyStreamSlugs";
         no_nul(
             OP,
-            &[("sourceId", source_id), ("entitySlug", entity_slug), ("dimension", dimension)],
+            &[
+                ("sourceId", source_id),
+                ("entitySlug", entity_slug),
+                ("dimension", dimension),
+            ],
         )?;
         let read = self.read()?;
         Ok(entity_rows(&*read, source_id, entity_slug)?
@@ -305,6 +309,43 @@ impl Store {
             .collect())
     }
 
+    /// `listBeliefStreamSlugs(table, ids)`: the ledger stream slug of each listed row found, by
+    /// id, once each: a fact's `source_markdown_slug` else its `entity_slug`, a take's page slug, a
+    /// page's own slug (deleted pages included); null where a fact has neither. `table` is
+    /// `facts`, `takes` or `pages`; the caller filters, removes repeats and sorts.
+    pub fn list_belief_stream_slugs(&self, table: &str, ids: &[i64]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            let slug = match table {
+                "facts" => match crate::facts::read_fact(&*read, id)? {
+                    Some(fact) => Some(fact.source_markdown_slug.or(fact.entity_slug)),
+                    None => None,
+                },
+                "takes" => match crate::takes::read_take(&*read, id)? {
+                    Some(take) => {
+                        crate::pages::read_page_by_id(&*read, take.page_id)?.map(|p| Some(p.slug))
+                    }
+                    None => None,
+                },
+                "pages" => crate::pages::read_page_by_id(&*read, id)?.map(|p| Some(p.slug)),
+                other => {
+                    return Err(StoreError::invalid(format!(
+                        "listBeliefStreamSlugs: the stream slugs of facts, takes and pages, not \"{other}\""
+                    )));
+                }
+            };
+            if let Some(slug) = slug {
+                out.push(json!(slug));
+            }
+        }
+        Ok(out)
+    }
+
     /// `readOntologyRival(sourceId, entitySlug, dimension, excludeId)`: `{ id, trust_tier }` of
     /// the newest open, active, non-conversation row of the entity's dimension other than
     /// `excludeId` (the stint mergeOntologyFact left open), or null. `dimension` is already
@@ -319,7 +360,11 @@ impl Store {
         const OP: &str = "readOntologyRival";
         no_nul(
             OP,
-            &[("sourceId", source_id), ("entitySlug", entity_slug), ("dimension", dimension)],
+            &[
+                ("sourceId", source_id),
+                ("entitySlug", entity_slug),
+                ("dimension", dimension),
+            ],
         )?;
         let read = self.read()?;
         let rival = entity_rows(&*read, source_id, entity_slug)?

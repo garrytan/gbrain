@@ -9,6 +9,10 @@
 //!   tier of a version, and the type and tier of the write that replaced it.
 //! - [`Store::list_page_refs_by_ids`]: the source, slug and type of each listed page, for the
 //!   reads that quote a third-party page's rows.
+//! - [`Store::list_fact_ids_at_trust_rank`]: the listed facts whose stored tier ranks at or above
+//!   a floor, for quoting lower-tier facts to an untrusted reader.
+//! - [`Store::list_activation_verdict_rows`]: the stored tier and activation flag of each listed
+//!   page or fact, for activation control on the proactive surfaces.
 //!
 //! They read the tier and write origin fields of the page, fact and version records
 //! (`trust::stamp`); no read needs a key range of its own, so the family adds no key prefix.
@@ -89,6 +93,22 @@ pub struct VersionIdsQuery {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageIdsQuery {
+    pub ids: Vec<i64>,
+}
+
+/// `listFactIdsAtTrustRank(ids, minRank)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactRankQuery {
+    pub ids: Vec<i64>,
+    pub min_rank: i64,
+}
+
+/// `listActivationVerdictRows(table, ids)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivationRowsQuery {
+    pub table: String,
     pub ids: Vec<i64>,
 }
 
@@ -373,6 +393,56 @@ impl Store {
                 None => (page.page_type.clone(), page_tier(&page)),
             };
             out.push(json!({ "id": v.id, "type": kind, "tier": tier.as_str() }));
+        }
+        Ok(out)
+    }
+
+    /// `listFactIdsAtTrustRank`: of the listed ids, each fact whose stored tier ranks at or above
+    /// `min_rank` (`trustRankSql`: a stored name that is no tier ranks 0), once each, ascending. An
+    /// id no fact has answers nothing.
+    pub fn list_fact_ids_at_trust_rank(&self, q: &FactRankQuery) -> Result<Vec<u64>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = q
+            .ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            if let Some(fact) = crate::facts::read_fact(&*read, id)? {
+                let rank =
+                    TrustTier::parse(&fact.trust_tier).map_or(0, |tier| i64::from(tier.rank()));
+                if rank >= q.min_rank {
+                    out.push(id);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// `listActivationVerdictRows`: the stored tier of each listed page record (deleted or not)
+    /// or fact, by id, once each, and whether `activationSuppressedSql` marks it (a tier at or
+    /// below `agent_written` with an instruction-family flag receipt). An id no row has answers
+    /// nothing.
+    pub fn list_activation_verdict_rows(&self, q: &ActivationRowsQuery) -> Result<Vec<Value>> {
+        const OP: &str = "listActivationVerdictRows";
+        let table = scan_table(OP, &q.table)?;
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = q
+            .ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            let tier = match table {
+                ScanTable::Pages => read_page_by_id(&*read, id)?.map(|page| page_tier(&page)),
+                ScanTable::Facts => crate::facts::read_fact(&*read, id)?.map(|fact| fact.tier()),
+            };
+            if let Some(tier) = tier {
+                let flagged = activation_suppressed(&*read, &q.table, id, tier)?;
+                out.push(json!({ "id": id, "trust_tier": tier.as_str(), "flagged": flagged }));
+            }
         }
         Ok(out)
     }

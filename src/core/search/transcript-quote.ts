@@ -505,12 +505,9 @@ export function relabelGuestQuote(text: string, slug: string, guest: string): st
 }
 
 /** Of `ids`, the facts whose stored tier is at or above the owner's (OWNER_TIER_FLOOR); an id with no row is not among them. */
-async function ownerTierFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
+async function ownerTierFacts(engine: Pick<BrainEngine, 'listFactIdsAtTrustRank'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
   if (!ids.length) return new Set();
-  const rows = await engine.executeRaw<{ id: number | string }>(
-    `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${trustRankSql('trust_tier')} >= $2`,
-    [[...new Set(ids.map(Number))], TRUST_TIER_RANK[OWNER_TIER_FLOOR]]);
-  return new Set(rows.map(r => Number(r.id)));
+  return new Set(await engine.listFactIdsAtTrustRank(ids, TRUST_TIER_RANK[OWNER_TIER_FLOOR]));
 }
 
 /**
@@ -520,7 +517,7 @@ async function ownerTierFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: read
  * live-ingested fact, read from the database, not from the caller's row); any other comes back as it is.
  */
 export async function quoteFacts<T extends { id: number; fact: string; source?: string | null; collapsed_ids?: number[] }>(
-  engine: Pick<BrainEngine, 'executeRaw'>, facts: T[], untrusted = false): Promise<Array<T & { quoted?: 'transcript' }>> {
+  engine: Pick<BrainEngine, 'executeRaw' | 'listFactIdsAtTrustRank'>, facts: T[], untrusted = false): Promise<Array<T & { quoted?: 'transcript' }>> {
   const [fromPages, owners] = await Promise.all([factsFromQuotedPages(engine, facts.flatMap(f => f.collapsed_ids ?? [f.id])),
     untrusted ? ownerTierFacts(engine, facts.map(f => f.id)) : null]);
   return facts.map(f => isQuotedFactSource(f.source) || (f.collapsed_ids ?? [f.id]).some(id => fromPages.has(Number(id))) || (owners !== null && !owners.has(Number(f.id)))

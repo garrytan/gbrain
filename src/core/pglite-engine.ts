@@ -1617,6 +1617,8 @@ export class PGLiteEngine implements BrainEngine {
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.rawRead, opts); }
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.rawRead, sourceId, entitySlug, dimension); }
   readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.rawRead, sourceId, entitySlug, dimension, excludeId); }
+  listFactIdsAtTrustRank(ids: readonly number[], minRank: number) { return factsTrustImpl.listFactIdsAtTrustRank(this.rawRead, ids, minRank); }
+  listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]) { return factsTrustImpl.listBeliefStreamSlugs(this.rawRead, table, ids); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }
@@ -3960,6 +3962,7 @@ export class PGLiteEngine implements BrainEngine {
   async listVersionTrustTiers(ids: readonly number[]) { return trustTierReads.listVersionTrustTiers(this, ids); }
   async listVersionReasonWriters(ids: readonly number[]) { return trustTierReads.listVersionReasonWriters(this, ids); }
   async listPageRefsByIds(ids: readonly number[]) { return trustTierReads.listPageRefsByIds(this, ids); }
+  async listActivationVerdictRows(table: 'facts' | 'takes' | 'timeline_entries' | 'pages', ids: readonly number[]) { return trustTierReads.listActivationVerdictRows(this, table, ids); }
   async listValidTimeIdentities(spec: trustTierReads.ValidTimeIdentitySpec) { return trustTierReads.listValidTimeIdentities(this, spec); }
   async pickValidTimeEdition(spec: trustTierReads.ValidTimePickSpec) { return trustTierReads.pickValidTimeEdition(this, spec); }
   async listAmendmentsNotApplied(spec: trustTierReads.AmendmentsNotAppliedSpec) { return trustTierReads.listAmendmentsNotApplied(this, spec); }

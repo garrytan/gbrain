@@ -21,13 +21,9 @@ const validSlug = (slug: string | null | undefined): slug is string => {
 };
 
 /** The ledger stream slug of each row: a fact's fence page else its entity, a take's page, a page's own slug. */
-export async function beliefStreamSlugs(tx: Pick<BrainEngine, 'executeRaw'>, table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<string[]> {
+export async function beliefStreamSlugs(tx: Pick<BrainEngine, 'listBeliefStreamSlugs'>, table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<string[]> {
   if (!ids.length) return [];
-  const sql = table === 'facts' ? 'SELECT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])'
-    : table === 'takes' ? 'SELECT p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($1::bigint[])'
-      : 'SELECT slug FROM pages WHERE id = ANY($1::int[])';
-  const rows = await tx.executeRaw<{ slug: string | null }>(sql, [[...ids]]);
-  return [...new Set(rows.map(r => r.slug).filter(validSlug))].sort();
+  return [...new Set((await tx.listBeliefStreamSlugs(table, ids)).filter(validSlug))].sort();
 }
 
 /**

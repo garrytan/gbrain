@@ -27,6 +27,7 @@ microsecond ISO text.
 | `findOntologyConflicts` | Open, active slot rows grouped by entity and dimension, kept when they hold two or more distinct values from two or more distinct sources. Values come out in id order. A null entity sorts last. |
 | `listOntologyStreamSlugs` | For `belief/writers.ts` `ontologyStreamSlugs`: the distinct non-null `source_markdown_slug` of every open (unexpired, unclosed), non-conversation row of one entity's dimension in one source, in byte order. The dimension comes in normalised. |
 | `readOntologyRival` | For `trust/supersede-handlers.ts` `contestOntologySupersession`: `{ id, trust_tier }` of the newest open, active, non-conversation row of one entity's dimension in one source other than `excludeId` (the same order as `mergeOntologyFact`), or null. A non-integer `excludeId` is refused before the store is read. |
+| `listBeliefStreamSlugs` | For `belief/writers.ts` `beliefStreamSlugs`: the ledger stream slug of each listed row found, by id, once each: a fact's `source_markdown_slug` else its `entity_slug` (null when it has neither), a take's page slug, a page's own slug (deleted pages included). An unknown or negative id answers nothing; the caller drops invalid slugs, removes repeats and sorts. |
 
 `sourceIds` scopes every read to a list of sources; with neither `sourceIds` nor `sourceId`
 every source is read. An empty `visibility` list matches no rows.

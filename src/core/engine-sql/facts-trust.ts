@@ -369,3 +369,28 @@ export async function readOntologyRival(raw: EngineRawRead, sourceId: string, en
      ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`, [sourceId, entitySlug, dimension, excludeId]);
   return row ? { id: Number(row.id), trust_tier: row.trust_tier } : null;
 }
+
+/**
+ * Of `ids`, the facts whose stored tier ranks at or above `minRank` (search/transcript-quote.ts `ownerTierFacts`); a
+ * stored name that is no tier ranks 0, and an id with no row is not among them. Each id once, in ascending order.
+ */
+export async function listFactIdsAtTrustRank(raw: EngineRawRead, ids: readonly number[], minRank: number): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${[...new Set(ids.map(Number))]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${minRank}`);
+  const rows = await raw<{ id: number | string }>(text, params);
+  return rows.map(r => Number(r.id)).sort((a, b) => a - b);
+}
+
+/**
+ * The ledger stream slug of each listed row (belief/writers.ts `beliefStreamSlugs`): a fact's fence page else its
+ * entity, a take's page, a page's own slug; deleted pages included. One entry per row found, null where the row has
+ * none, in no promised order: the caller drops the invalid ones, removes repeats and sorts.
+ */
+export async function listBeliefStreamSlugs(raw: EngineRawRead, table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>> {
+  if (ids.length === 0) return [];
+  const sql = table === 'facts' ? 'SELECT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])'
+    : table === 'takes' ? 'SELECT p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($1::bigint[])'
+      : 'SELECT slug FROM pages WHERE id = ANY($1::int[])';
+  const rows = await raw<{ slug: string | null }>(sql, [[...ids]]);
+  return rows.map(r => r.slug ?? null);
+}

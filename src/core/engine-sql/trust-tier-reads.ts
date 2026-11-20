@@ -17,13 +17,15 @@
  * - `pageAwaitsRederive`: whether a purge hid the page until it is derived again (`needs_rederive`).
  * - `listPageRefsByIds`: the source, slug and type of each listed page, deleted or not, for the reads that quote a
  *   third-party page's rows (search/transcript-quote.ts `pageTypesById`, the get_chunks owner lookup).
+ * - `listActivationVerdictRows`: the stored tier and activation flag of each listed row, for activation control on the
+ *   proactive surfaces (eligibility/activation.ts).
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
  * `COLLATE "C"`.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
-import { activationSuppressedSql, pageEligibleSql, rederiveHiddenSql } from '../eligibility/sql.ts';
+import { activationSuppressedSql, pageEligibleSql, rederiveHiddenSql, type EligibilityTable } from '../eligibility/sql.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import {
   callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment,
@@ -268,6 +270,34 @@ export async function listPageRefsByIds(tx: Raw, ids: readonly number[]): Promis
   const got = await rows<{ id: number | string; source_id: string; slug: string; type: string | null }>(tx,
     sqlFragment`SELECT id, source_id, slug, type FROM pages WHERE id = ANY(${[...new Set(ids.map(Number))]}::bigint[]) ORDER BY id`);
   return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Activation
+
+/** One row's activation inputs: its stored tier and whether activationSuppressedSql marks it (a low tier with a flag). */
+export interface ActivationVerdictRow { id: number; trust_tier: string | null; flagged: boolean }
+
+function activationFrom(table: EligibilityTable): SqlFragment {
+  switch (table) {
+    case 'facts': return sqlFragment`SELECT a.id, a.trust_tier, ${trustedSql(activationSuppressedSql('facts', 'a'))} AS flagged FROM facts a`;
+    case 'takes': return sqlFragment`SELECT a.id, a.trust_tier, ${trustedSql(activationSuppressedSql('takes', 'a'))} AS flagged FROM takes a`;
+    case 'timeline_entries':
+      return sqlFragment`SELECT a.id, a.trust_tier, ${trustedSql(activationSuppressedSql('timeline_entries', 'a'))} AS flagged FROM timeline_entries a`;
+    case 'pages': return sqlFragment`SELECT a.id, a.trust_tier, ${trustedSql(activationSuppressedSql('pages', 'a'))} AS flagged FROM pages a`;
+  }
+}
+
+/**
+ * The stored tier and activation flag of each listed row of one table, by id (eligibility/activation.ts
+ * `activationVerdicts`); an id no row has answers nothing. No scope or policy filter: the proactive surfaces pass ids
+ * of rows they already read under the caller's scope.
+ */
+export async function listActivationVerdictRows(tx: Raw, table: EligibilityTable, ids: readonly number[]): Promise<ActivationVerdictRow[]> {
+  if (ids.length === 0) return [];
+  const got = await rows<{ id: number | string; trust_tier: string | null; flagged: boolean }>(tx,
+    sqlFragment`${activationFrom(table)} WHERE a.id = ANY(${[...new Set(ids.map(Number))]}::bigint[])`);
+  return got.map(r => ({ id: Number(r.id), trust_tier: r.trust_tier ?? null, flagged: r.flagged === true })).sort((a, b) => a.id - b.id);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -2508,6 +2508,50 @@
         ],
         "flagOnScopes": []
       },
+      "listActivationVerdictRows#facts": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listActivationVerdictRows#pages": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listActivationVerdictRows#takes": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listActivationVerdictRows#timeline_entries": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listActiveTakesForPages#allowList": {
         "flagOffLanes": [
           "pool"
@@ -2564,6 +2608,39 @@
         "flagOnScopes": []
       },
       "listAudienceAccessMembers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listBeliefStreamSlugs#facts": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listBeliefStreamSlugs#pages": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listBeliefStreamSlugs#takes": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2743,6 +2820,17 @@
         "flagOnScopes": []
       },
       "listEntityIdentityRows#seed+grant+private": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFactIdsAtTrustRank#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7092,6 +7180,7 @@
         "listAccessPrefixSlugs": "none",
         "listAccessRules": "none",
         "listAccessTokens": "none",
+        "listActivationVerdictRows": "none",
         "listActiveAccessMembers": "none",
         "listActiveFactsForEntity": "none",
         "listActiveTakesForPages": "none",
@@ -7101,6 +7190,7 @@
         "listAppliedPolicyRevisions": "none",
         "listAudienceAccessMembers": "none",
         "listAwaitingMemoryProposals": "none",
+        "listBeliefStreamSlugs": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
         "listChunklessPagesWithContent": "direct",
@@ -7124,6 +7214,7 @@
         "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
+        "listFactIdsAtTrustRank": "none",
         "listFactProvenance": "none",
         "listFactRelinkOutcomes": "none",
         "listFactWithdrawalDates": "none",
