@@ -26,6 +26,8 @@ mod page_visibility;
 mod pages;
 mod search;
 mod session_state;
+mod shared_skill_members;
+mod shared_skill_publication;
 mod sources;
 mod tags;
 mod timeline;

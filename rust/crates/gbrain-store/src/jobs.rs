@@ -1648,6 +1648,12 @@ fn held_by(read: &dyn KvRead, key: &[u8], opts: &LockHolder) -> Result<Option<Lo
     }))
 }
 
+/// The ids of every `gbrain_cycle_locks` row, in key order (shared-skill activation's legacy
+/// writer check).
+pub(crate) fn cycle_lock_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    Ok(all_locks(read)?.into_iter().map(|(id, _)| id).collect())
+}
+
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
     let mut out = Vec::new();
     let mut bad = None;

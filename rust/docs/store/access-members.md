@@ -25,6 +25,7 @@ there is no reverse index.
 | `setAccessMemberDisabled(id, disabled)` | null | `UPDATE access_members SET disabled_at = COALESCE(disabled_at, now())` (or `NULL`), `updated_at = now()` |
 | `setAccessMemberEmail(id, email)` | true when a member that is not removed changed | `UPDATE ... SET email = $2 ... WHERE id = $1 AND tombstoned_at IS NULL RETURNING id` |
 | `setAccessMemberKind(id, kind)` | null | `UPDATE ... SET kind = $2 ... WHERE id = $1 AND tombstoned_at IS NULL` |
+| `setAccessMemberLabelledOnly(id, labelledOnly)` | null | `UPDATE ... SET labelled_only = $2 ... WHERE id = $1 AND tombstoned_at IS NULL`; no serves key moves |
 | `tombstoneAccessMember(id)` | null | the `removeMember` transaction: the tombstone `UPDATE` (email cleared, an earlier disable time kept) and `DELETE FROM access_group_members WHERE member_id = $1` |
 | `addAccessGroupMembers(groupId, memberIds)` | true when the group was created | the `addGroup` transaction |
 | `removeAccessGroupMembers(groupId, memberIds)` | null | `DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2` per member |

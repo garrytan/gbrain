@@ -2,7 +2,7 @@
 //! tables of the PGLite engine (schema migrations v282, v301, v305 and v308).
 //!
 //! Members: insertAccessMember, setAccessMemberDisabled, setAccessMemberEmail,
-//! setAccessMemberKind, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
+//! setAccessMemberKind, setAccessMemberLabelledOnly, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
 //! deleteAccessGroup, readAccessMembers, readAccessGroupIds, readAccessGroups, listActiveAccessMembers.
 //!
 //! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`):
@@ -399,6 +399,21 @@ impl Store {
                 return Ok(());
             };
             m.kind = kind.to_string();
+            m.updated_at_us = now(self);
+            put_json(tx, &member_key(id), &m)
+        })
+    }
+
+    /// `setAccessMemberLabelledOnly(id, labelled_only)`: sets or clears the labelled-only grant of
+    /// a member that is not removed. No serves key moves: the Postgres serves trigger fires only on
+    /// `disabled_at` and `tombstoned_at`.
+    pub fn set_access_member_labelled_only(&self, id: &str, labelled_only: bool) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut m) = read_member(&*tx, id)?.filter(|m| m.tombstoned_at_us.is_none())
+            else {
+                return Ok(());
+            };
+            m.labelled_only = labelled_only;
             m.updated_at_us = now(self);
             put_json(tx, &member_key(id), &m)
         })
