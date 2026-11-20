@@ -280,7 +280,15 @@ describe('exact widening', () => {
       // The terms match the vector of the pages above but not as a phrase: no literal match, no hit.
       expect((await runExactScan(engine, scanOpts({ remote, phrase: 'plan short', ftsTerms: ['short', 'plan'] }))).matches).toEqual([]);
     }
+    const [chunk] = await engine.executeRaw<{ id: number }>(`SELECT cc.id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.source_id = $1 AND p.slug = 'notes/long-plan' AND cc.chunk_text LIKE $2`, [widenSource, `%${PHRASE}%`]);
+    const narrowed = await runExactScan(engine, scanOpts({ ftsTerms: ['zephyr', 'quartz', 'lantern'] }));
+    expect(narrowed.matches[0]!.snippets[0]!.chunk_id).toBe(Number(chunk!.id));
+    // The batch scan and search_exact keep their output shape: no chunk id on a snippet.
+    const out = await operations.find(o => o.name === 'search_exact')!.handler(ctxOf({}), { phrase: PHRASE, limit: 10 }) as { matches: Array<{ slug: string; snippets: Array<Record<string, unknown>> }> };
+    expect(out.matches.map(m => m.slug)).toEqual(['notes/long-plan']);
+    expect(Object.keys(out.matches[0]!.snippets[0]!).sort()).toEqual(['chunk_index', 'chunk_source', 'text']);
     const plain = await runExactScan(engine, scanOpts({ batchPages: 50 }));
+    expect(plain.matches[0]!.snippets[0]!.chunk_id).toBeUndefined();
     expect(plain.matches.map(m => m.slug)).toEqual(['notes/long-plan']);
   });
 

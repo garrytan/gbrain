@@ -49,8 +49,8 @@ async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, ma
   });
   const rescan = matches.filter(m => m.matching_chunks !== m.snippets.length || m.snippets.some(s => touched.has(s)));
   if (!rescan.length) return matches;
-  const rows = await engine.executeRaw<{ page_id: number; chunk_index: number; chunk_source: string; chunk_text: string }>(
-    `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+  const rows = await engine.executeRaw<{ page_id: number; chunk_index: number; chunk_source: string; chunk_id: number; chunk_text: string }>(
+    `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.id AS chunk_id, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE cc.page_id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')} AND ${safeChunksFilter('p')} ORDER BY cc.page_id, cc.chunk_index`,
     [rescan.map(m => m.page_id)]);
   const owner = new Map(rescan.map(m => [m.page_id, m] as const));
@@ -61,7 +61,7 @@ async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, ma
     const at = find(text);
     if (!at) return;
     const id = Number(r.page_id);
-    hits.set(id, [...(hits.get(id) ?? []), { chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source,
+    hits.set(id, [...(hits.get(id) ?? []), { chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source, chunk_id: Number(r.chunk_id),
       text: text.slice(Math.max(0, at[0] - EXACT_SNIPPET_CONTEXT), at[1] + EXACT_SNIPPET_CONTEXT).split('\u0000').join('') }]);
   });
   return matches.flatMap(m => {
@@ -197,7 +197,7 @@ const search_exact: Operation = {
       limit: params.limit, ...(params.after !== undefined ? { afterPageId: params.after } : {}), deadlineMs: startedAt + params.seconds * 1000,
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
-    const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
+    const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, snippets: m.snippets.map(({ chunk_id: _id, ...s }) => s), chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
     // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).
     const { quotePageText, quotesStored } = await import('../search/transcript-quote.ts');
     const quoted = <M extends Omit<(typeof matches)[number], 'chunk_text'>>(m: M) => ctx.remote !== false && quotesStored(m.type, (m as { trust_tier?: unknown }).trust_tier)

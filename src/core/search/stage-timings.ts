@@ -60,6 +60,8 @@ export class SearchTimings implements StageTimer {
   private readonly overlapped = new Map<string, number>();
   private readonly parts = new Map<SearchStage, Map<string, number>>();
   private currentPart: { stage: SearchStage; part: string; since: number } | null = null;
+  /** Set when the exact widening ran for this call (ops/search-widen.ts); the response meta reads it back as `exact_widened`. */
+  exactWidened = false;
 
   constructor(private readonly now: () => number = () => performance.now()) {
     this.startedAt = this.since = now();

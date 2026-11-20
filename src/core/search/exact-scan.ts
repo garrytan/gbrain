@@ -90,7 +90,8 @@ export interface ExactMatch {
   title: string;
   type: string;
   matching_chunks: number;
-  snippets: Array<{ chunk_index: number; chunk_source: string; text: string }>;
+  /** `chunk_id` is set by the index-narrowed scan and the held-line rescan (internal: search_exact's output leaves it out). */
+  snippets: Array<{ chunk_index: number; chunk_source: string; text: string; chunk_id?: number }>;
 }
 
 export interface ExactScanResult {
@@ -209,7 +210,7 @@ export function buildExactPrefilteredStatement(opts: ExactScanOpts): { sql: stri
   const op = opts.caseSensitive ? '~' : '~*';
   const likeOp = opts.caseSensitive ? 'LIKE' : 'ILIKE';
   const { pageFilters, hardExclude, safe } = scopeFilters(opts, add);
-  const branch = (predicate: string) => `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, (regexp_match(cc.chunk_text, ${snippetRe}, ${flags}))[1] AS snippet
+  const branch = (predicate: string) => `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.id AS chunk_id, (regexp_match(cc.chunk_text, ${snippetRe}, ${flags}))[1] AS snippet
       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id
      WHERE ${predicate}
        AND cc.chunk_text ${likeOp} ${like} ESCAPE '\\' AND cc.chunk_text ${op} ${re}
@@ -223,7 +224,7 @@ export function buildExactPrefilteredStatement(opts: ExactScanOpts): { sql: stri
   ) u
 ), per_page AS (
   SELECT h.page_id, count(*)::int AS matching_chunks,
-         json_agg(json_build_object('chunk_index', h.chunk_index, 'chunk_source', h.chunk_source, 'text', h.snippet) ORDER BY h.chunk_index)
+         json_agg(json_build_object('chunk_index', h.chunk_index, 'chunk_source', h.chunk_source, 'chunk_id', h.chunk_id, 'text', h.snippet) ORDER BY h.chunk_index)
            FILTER (WHERE h.rn <= ${EXACT_SNIPPETS_PER_PAGE}) AS snippets
     FROM hits h GROUP BY h.page_id
 )
@@ -235,8 +236,12 @@ SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type, pp.matching_chunks
 const asMatch = (row: BatchRow): ExactMatch => {
   const snippets = (typeof row.snippets === 'string' ? JSON.parse(row.snippets) : row.snippets) as ExactMatch['snippets'] | null;
   return { page_id: Number(row.page_id), slug: row.slug!, source_id: row.source_id!, title: row.title ?? row.slug!, type: row.type ?? '',
-    matching_chunks: Number(row.matching_chunks), snippets: (snippets ?? []).map(sn => ({ chunk_index: Number(sn.chunk_index), chunk_source: sn.chunk_source, text: sn.text })) };
+    matching_chunks: Number(row.matching_chunks), snippets: (snippets ?? []).map(sn => ({ chunk_index: Number(sn.chunk_index), chunk_source: sn.chunk_source, text: sn.text, ...(sn.chunk_id !== undefined ? { chunk_id: Number(sn.chunk_id) } : {}) })) };
 };
+
+/** Runs one scan statement under the deadline, JIT off (the private-visibility subplans cost past `jit_above_cost`). Both scan shapes go through it. */
+const execScan = (engine: Pick<BrainEngine, 'executeRaw'>, stmt: { sql: string; params: unknown[] }, remainingMs: number): Promise<BatchRow[]> =>
+  engine.executeRaw<BatchRow>(stmt.sql, stmt.params, { timeoutMs: Math.max(1000, remainingMs), jitOff: true });
 
 /** The `ftsTerms` scan: one statement, the matches in page-id order; unreadable pages are not accounted for and nothing resumes. */
 async function runPrefilteredScan(engine: Pick<BrainEngine, 'executeRaw'>, opts: ExactScanOpts): Promise<ExactScanResult> {
@@ -248,7 +253,7 @@ async function runPrefilteredScan(engine: Pick<BrainEngine, 'executeRaw'>, opts:
   if (remaining <= 0) return empty(['deadline']);
   let rows: BatchRow[];
   try {
-    rows = await engine.executeRaw<BatchRow>(stmt.sql, stmt.params, { timeoutMs: Math.max(1000, remaining), jitOff: true });
+    rows = await execScan(engine, stmt, remaining);
   } catch (e) {
     if (!isStatementTimeoutError(e)) throw e;
     return empty(['deadline']);
@@ -274,7 +279,7 @@ export async function runExactScan(engine: Pick<BrainEngine, 'executeRaw'>, opts
     if (!stmt) { done = true; break; }
     let rows: BatchRow[];
     try {
-      rows = await engine.executeRaw<BatchRow>(stmt.sql, stmt.params, { timeoutMs: Math.max(1000, remaining), jitOff: true });
+      rows = await execScan(engine, stmt, remaining);
     } catch (e) {
       if (!isStatementTimeoutError(e)) throw e;
       if (Date.now() >= opts.deadlineMs) { reason = 'deadline'; break; }

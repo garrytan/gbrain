@@ -90,7 +90,3 @@ export function mergeExactHits(rows: SearchResult[], hits: SearchResult[], cap: 
   return { rows: [...kept, ...marked], added: marked };
 }
 
-const widened = new WeakSet<object>();
-/** Record that widening ran for the call whose timings object this is (meta reads it back). */
-export const markExactWidened = (callKey: object): void => { widened.add(callKey); };
-export const exactWidenRan = (callKey: object): boolean => widened.has(callKey);

@@ -15,7 +15,7 @@ import { readHolders } from './context.ts';
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
 import { anchorOpResults } from '../search/entity-anchor.ts';
 import { applyQueryArms } from '../search/query-arms.ts';
-import { exactWiden, exactWidenRan, searchFactsArm } from './search-widen.ts';
+import { exactWiden, searchFactsArm } from './search-widen.ts';
 import { FIELDS_PARAM, RETURN_UNIT_PARAM, RETURN_WINDOW_PARAM } from './search-params.ts';
 import { factRowOutput } from '../search/facts-arm.ts';
 import { resolveSearchDateBounds } from '../search/date-bounds.ts';
@@ -504,7 +504,7 @@ async function buildRetrievalResponseMeta(
       ...(m.collapse ? { collapse: m.collapse } : {}),
     } : {}),
     ...((m?.degraded !== undefined || degraded.length > 0) ? { degraded } : {}),
-    ...(opts.timings && exactWidenRan(opts.timings) ? { exact_widened: true } : {}),
+    ...(opts.timings?.exactWidened ? { exact_widened: true } : {}),
     projection_readiness: readiness,
     ...(opts.typeFilterNotice ? { type_filter_notice: opts.typeFilterNotice } : {}),
     ...(savedFacts.length ? { saved_facts: savedFacts } : {}),
@@ -783,7 +783,7 @@ const search: Operation = {
       const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts, ...bounds })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword' && !names);
       // The facts arm and exact widening, as on the hybrid path (an enumerating `match: "keyword"` page keeps its rows as they are).
-      const widened = page ? null : await exactWiden(ctx, p, queryText, await searchFactsArm(ctx, p, queryText, results, { scope, excludePrivate, filtered: !!types || !!where, queryEmbedding: null, limit, timings }), { scope, limit, callKey: timings, filtered: !!types || !!where, degraded: keywordBound && [keywordBound] });
+      const widened = page ? null : await exactWiden(ctx, p, queryText, await searchFactsArm(ctx, p, queryText, results, { scope, excludePrivate, filtered: !!types || !!where, queryEmbedding: null, limit, timings }), { scope, limit, timings, filtered: !!types || !!where, degraded: keywordBound && [keywordBound] });
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, widened?.results ?? results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
         async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
@@ -837,7 +837,7 @@ const search: Operation = {
     };
     const page = await chooseFill(found, await opStages(withoutFill(found), true), limit, hits => opStages(hits, false),
       t => [t.results, t.fanned.fanout, t.fanned.entity, t.capped.meta], rows => withEvidence(ctx, p, rows, plan, { ...scope, excludePrivate }, capturedMeta));
-    const { capped, declarations, fanned } = page, widened = await exactWiden(ctx, p, queryText, page.results, { scope, limit, callKey: timings, filtered: !!types || !!where, degraded: (capturedMeta as HybridSearchMeta | null)?.degraded }), results = widened.results;
+    const { capped, declarations, fanned } = page, widened = await exactWiden(ctx, p, queryText, page.results, { scope, limit, timings, filtered: !!types || !!where, degraded: (capturedMeta as HybridSearchMeta | null)?.degraded }), results = widened.results;
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
@@ -1230,7 +1230,7 @@ const query: Operation = {
     const queryScope = { ...querySourceScope, excludePrivate, detail };
     const page = await queryFillPage(ctx.engine, where, found, reference, results, crag.escalated, () => resolveEffectiveLimit(ctx, p), hits => opStages(hits, false),
       t => [t.results, t.fanned.fanout, t.fanned.entity, t.pageCapMeta, t.grade], rows => withEvidence(ctx, p, rows, plan, queryScope, capturedMeta));
-    const widened = await exactWiden(ctx, p, queryText, page.results, { scope: querySourceScope, limit: await resolveEffectiveLimit(ctx, p), callKey: timings, filtered: !!types || !!where, degraded: (capturedMeta as HybridSearchMeta | null)?.degraded }); results = widened.results;
+    const widened = await exactWiden(ctx, p, queryText, page.results, { scope: querySourceScope, limit: await resolveEffectiveLimit(ctx, p), timings, filtered: !!types || !!where, degraded: (capturedMeta as HybridSearchMeta | null)?.degraded }); results = widened.results;
     const { declarations, fanned } = page;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
