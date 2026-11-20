@@ -22,6 +22,7 @@ import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
+import type { GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from './engine-sql/sync-hold-store.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -3566,6 +3567,27 @@ export interface BrainEngine {
   readGitHoldReportInputs(sourceId: string, fingerprint: string): Promise<GitHoldReportInputs>;
   /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
   readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
+  // The git sync hold store (SQL in engine-sql/sync-hold-store.ts); sync-holds.ts keeps the hold semantics.
+  /** Creates the source incarnation's hold summary row when missing, else touches it (Postgres: locks it); returns its count. */
+  lockGitHoldSummary(sourceId: string, incarnation: string): Promise<number>;
+  /** Adds `delta` to the hold summary's count and each weight to its counter, none below zero; no summary row, no write. */
+  adjustGitHoldSummary(sourceId: string, incarnation: string, delta: number, weights: GitHoldSummaryWeights): Promise<void>;
+  /** The hold record at `path` of the source incarnation as stored, or null. */
+  readGitHoldRow<R = Record<string, unknown>>(sourceId: string, incarnation: string, path: string): Promise<R | null>;
+  /** Stores `record` as the hold at `path`, replacing any. */
+  writeGitHoldRow(sourceId: string, incarnation: string, path: string, record: object): Promise<void>;
+  /** Replaces the hold at `path` with `next` only while it is still `expected` (JSON equality); true when it landed. */
+  replaceGitHoldRow(sourceId: string, incarnation: string, path: string, expected: object, next: object): Promise<boolean>;
+  /** Deletes the hold at `path`; no hold, no change. */
+  deleteGitHoldRow(sourceId: string, incarnation: string, path: string): Promise<void>;
+  /** The source incarnation's outstanding holds (its summary's count), 0 without a summary. */
+  countGitHolds(sourceId: string, incarnation: string): Promise<number>;
+  /** The managed sync pass row of one source incarnation, or null (SQL in engine-sql/sync-hold-store.ts). */
+  readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string): Promise<SyncPassRowRead<V> | null>;
+  /** The managed sync pass rows of the sources' live incarnations (null: every source), in no set order. */
+  readLiveSyncPassRows<V = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<SyncPassRowRead<V> & { source_id: string }>>;
+  /** Writes the managed sync pass row under its lease fence; false when it did not land (persistence/sync-pass-row.ts writePassRow). */
+  writeSyncPassRow(sourceId: string, incarnation: string, value: { lease_token?: unknown }, opts?: SyncPassRowWrite): Promise<boolean>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */

@@ -49,7 +49,7 @@ interface Details { brain_total: number; by_source: Record<string, number>; samp
 
 /** The source's checkout, found the way the purge's trailer scan finds it; null for a repo-less source. */
 async function checkoutRoot(engine: BrainEngine, sourceId: string): Promise<string | null> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   const root = source?.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   return root && isAbsolute(root) ? root : null;
 }
