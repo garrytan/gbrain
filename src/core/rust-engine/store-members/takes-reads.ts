@@ -11,8 +11,8 @@
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
 import type {
-  HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow,
-  TakePreimage, TakesLeavingFence,
+  HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter,
+  TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence,
 } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -128,10 +128,11 @@ export const readTakeGrade: StoreMember<[key: TakeGradeKey], TakeGrade | null> =
   return row ? { verdict: row.verdict, confidence: Number(row.confidence), applied: row.applied } : null;
 };
 
-export const insertTakeGrade: StoreMember<[row: TakeGradeKey & TakeGrade & { gradedAt?: string }], void> = async (brain, row) => {
+export const insertTakeGrade: StoreMember<[row: TakeGradeKey & TakeGrade & { gradedAt?: string; waveVersion?: string }], void> = async (brain, row) => {
   const input = {
     ...gradeKey('insertTakeGrade', row), verdict: row.verdict, confidence: row.confidence, applied: row.applied,
     ...(row.gradedAt === undefined ? {} : { gradedAt: row.gradedAt }),
+    ...(row.waveVersion === undefined ? {} : { waveVersion: row.waveVersion }),
   };
   await storeCall({ member: 'insertTakeGrade' }, () => brain.insertTakeGrade(input));
 };
@@ -149,4 +150,79 @@ export const listLatestTakeGrades: StoreMember<[filter: TakeGradeFilter], TakeGr
     holder: r.holder, since_date: r.since_date, verdict: r.verdict, confidence: Number(r.confidence), applied: r.applied,
     judge_model_id: r.judge_model_id, prompt_version: r.prompt_version, graded_at: new Date(r.graded_at).toISOString(),
   }));
+};
+
+// grade_takes' managed resolve: a page, row or take id that is not an integer is refused, as the SQL's casts refuse it.
+export const readLiveTakePage: StoreMember<[at: { pageId: number; rowNum: number; claim: string }], { slug: string; source_id: string } | null> =
+  async (brain, at) => {
+    ints('readLiveTakePage', [at.pageId, at.rowNum]);
+    const page = await storeCall({ member: 'readLiveTakePage' }, () =>
+      brain.readLiveTakePage({ pageId: at.pageId, rowNum: at.rowNum, claim: at.claim })) as { slug: string; source_id: string } | null;
+    return page ? { slug: page.slug, source_id: page.source_id } : null;
+  };
+
+// take_horizons (store A 0x06, takes/horizons.rs): `gbrain takes horizon` and the forecast journal.
+export const readTakeClaim: StoreMember<[takeId: number], string | null> = async (brain, takeId) => {
+  ints('readTakeClaim', [takeId]);
+  const claim = await storeCall({ member: 'readTakeClaim' }, () => brain.readTakeClaim(takeId)) as string | null;
+  return claim ?? null;
+};
+
+export const upsertTakeHorizon: StoreMember<[h: { takeId: number; claimSha256: string; horizonDate: string; basis: HorizonBasis }], void> =
+  async (brain, h) => {
+    ints('upsertTakeHorizon', [h.takeId]);
+    await storeCall({ member: 'upsertTakeHorizon' }, () =>
+      brain.upsertTakeHorizon({ takeId: h.takeId, claimSha256: h.claimSha256, horizonDate: h.horizonDate, basis: h.basis }));
+  };
+
+export const deleteTakeHorizon: StoreMember<[takeId: number], boolean> = async (brain, takeId) => {
+  ints('deleteTakeHorizon', [takeId]);
+  return (await storeCall({ member: 'deleteTakeHorizon' }, () => brain.deleteTakeHorizon(takeId))) === true;
+};
+
+export const listTakeHorizons: StoreMember<[takeIds: readonly number[] | null], TakeHorizonRow[]> = async (brain, takeIds) => {
+  const ids = takeIds === null ? null : ints('listTakeHorizons', takeIds);
+  const rows = await storeCall({ member: 'listTakeHorizons' }, () => brain.listTakeHorizons(ids)) as TakeHorizonRow[];
+  return rows.map(r => ({
+    take_id: Number(r.take_id), horizon_date: r.horizon_date, basis: r.basis, set_at: new Date(r.set_at).toISOString(),
+    claim_sha256: r.claim_sha256, claim: r.claim,
+  }));
+};
+
+export const listHorizonScanRows: StoreMember<[sourceId: string | null], HorizonScanRow[]> = async (brain, sourceId) => {
+  const rows = await storeCall({ member: 'listHorizonScanRows' }, () => brain.listHorizonScanRows(sourceId)) as HorizonScanRow[];
+  return rows.map(r => ({
+    id: Number(r.id), claim: r.claim, since_date: r.since_date ?? null, basis: r.basis ?? null,
+    claim_sha256: r.claim_sha256 ?? null, horizon_date: r.horizon_date ?? null,
+  }));
+};
+
+// `gbrain calibration --undo-wave`: a wave's verdicts (A 0x05), resolutions (A 0x01) and nudges (A 0x07, takes/nudges.rs).
+export const listWaveAppliedTakeIds: StoreMember<[waveVersion: string], number[]> = async (brain, waveVersion) => {
+  const ids = await storeCall({ member: 'listWaveAppliedTakeIds' }, () => brain.listWaveAppliedTakeIds(waveVersion)) as number[];
+  return ids.map(Number);
+};
+
+export const revertWaveTakeResolutions: StoreMember<[spec: { takeIds: readonly number[]; resolvedBy: string; dryRun: boolean }], number> =
+  async (brain, spec) => {
+    const takeIds = ints('revertWaveTakeResolutions', spec.takeIds);
+    return Number(await storeCall({ member: 'revertWaveTakeResolutions' }, () =>
+      brain.revertWaveTakeResolutions({ takeIds, resolvedBy: spec.resolvedBy, dryRun: spec.dryRun })));
+  };
+
+export const unapplyWaveTakeGrades: StoreMember<[spec: { waveVersion: string; dryRun: boolean }], number> = async (brain, spec) =>
+  Number(await storeCall({ member: 'unapplyWaveTakeGrades' }, () =>
+    brain.unapplyWaveTakeGrades({ waveVersion: spec.waveVersion, dryRun: spec.dryRun })));
+
+export const purgeTakeNudgesByWave: StoreMember<[spec: { waveVersion: string; dryRun: boolean }], number> = async (brain, spec) =>
+  Number(await storeCall({ member: 'purgeTakeNudgesByWave' }, () =>
+    brain.purgeTakeNudgesByWave({ waveVersion: spec.waveVersion, dryRun: spec.dryRun })));
+
+export const insertTakeNudge: StoreMember<[n: TakeNudgeInput], number> = async (brain, n) => {
+  ints('insertTakeNudge', [n.takeId, n.proposalId].filter((v): v is number => v !== null && v !== undefined));
+  const input: Record<string, unknown> = { sourceId: n.sourceId, takeId: n.takeId ?? null, proposalId: n.proposalId ?? null, nudgePattern: n.nudgePattern };
+  if (n.channel !== undefined) input.channel = n.channel;
+  if (n.waveVersion !== undefined) input.waveVersion = n.waveVersion;
+  if (n.firedAt !== undefined) input.firedAt = n.firedAt;
+  return Number(await storeCall({ member: 'insertTakeNudge' }, () => brain.insertTakeNudge(input)));
 };

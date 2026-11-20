@@ -2,8 +2,9 @@
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
 //! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
-//! `takes/reads.rs`, the reads and the delete of `takes/extract.rs`, and the grade_takes verdict
-//! cache of `takes/grades.rs`.
+//! `takes/reads.rs`, the reads and the delete of `takes/extract.rs`, the grade_takes verdict
+//! cache of `takes/grades.rs`, the take horizons of `takes/horizons.rs` and the nudge log of
+//! `takes/nudges.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -13,6 +14,8 @@
 //! - `A 0x04 <take page id> <take row_num> <synthesis page id>` -> empty: the reverse index.
 //! - `A 0x05 <take id> <prompt> 0x00 <judge> 0x00 <signature>` -> a `take_grade_cache` row
 //!   (`takes/grades.rs`).
+//! - `A 0x06 <take id>` -> a `take_horizons` row (`takes/horizons.rs`), deleted with its take.
+//! - `A 0x07 <nudge id>` -> a `take_nudge_log` row (`takes/nudges.rs`); counter `M next_take_nudge_id`.
 //! - Id counter: `M next_take_id`. Every row an `addTakesBatch` call reads takes an id, as the
 //!   Postgres sequence default does, inserted or not.
 //!
@@ -41,11 +44,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
 mod grades;
+mod horizons;
+pub(crate) mod nudges;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};
-pub use reads::{McpResolvedInput, PurgeTakesInput};
+pub use horizons::TakeHorizonInput;
+pub use nudges::{TakeNudgeInput, WaveSpec};
+pub use reads::{LiveTakeAt, McpResolvedInput, PurgeTakesInput, RevertResolutionsSpec};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -596,7 +603,7 @@ fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
-/// Deletes a take with its evidence rows.
+/// Deletes a take with its evidence rows and its horizon.
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let mut synths = Vec::new();
     scan_prefix(
@@ -615,6 +622,8 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
         tx.delete(&key)?;
     }
     tx.delete(&row_key(take.page_id, take.row_num))?;
+    // take_horizons_take_id_fkey ... ON DELETE CASCADE.
+    tx.delete(&horizons::horizon_key(take.id))?;
     crate::embeddings::remove_take_vector(tx, take.id)?;
     tx.delete(&take_key(take.id))
 }

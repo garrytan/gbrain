@@ -1,7 +1,8 @@
 //! The grade_takes verdict cache: the `take_grade_cache` table of the PGLite engine, and the
 //! `gbrain takes grades` read over it (`src/core/engine-sql/takes-reads.ts`).
 //!
-//! Members: readTakeGrade, insertTakeGrade, deleteTakeGrade, listLatestTakeGrades.
+//! Members: readTakeGrade, insertTakeGrade, deleteTakeGrade, listLatestTakeGrades, and the two
+//! wave reads of `gbrain calibration --undo-wave`: listWaveAppliedTakeIds, unapplyWaveTakeGrades.
 //!
 //! Key: `A 0x05 <take id BE8> <prompt_version> 0x00 <judge_model_id> 0x00 <evidence_signature>`
 //! -> `GradeRecord` (JSON). The key is the table's primary key, so a NUL byte in any of the three
@@ -12,6 +13,7 @@
 //! `confidence` is a `REAL`: kept as `f32` and read back as the shortest decimal that names it, as
 //! both SQL engines print it. `graded_at` is kept in microseconds and crosses as ISO 8601.
 
+use super::nudges::WaveSpec;
 use super::*;
 use crate::error::INVALID_ARGUMENT;
 use crate::telemetry::parse_timestamp;
@@ -43,6 +45,9 @@ pub struct TakeGradeInput {
     pub applied: bool,
     #[serde(default)]
     pub graded_at: Option<String>,
+    /// The calibration wave that graded it; the column default when absent.
+    #[serde(default)]
+    pub wave_version: Option<String>,
 }
 
 /// `listLatestTakeGrades` filters: a null filter matches every row.
@@ -125,6 +130,23 @@ fn to_real(op: &str, x: f64) -> Result<f32> {
     Ok(r)
 }
 
+/// The wave's applied verdicts, with their keys.
+fn wave_grades(read: &dyn KvRead, wave_version: &str) -> Result<Vec<(Vec<u8>, GradeRecord)>> {
+    let mut raw = Vec::new();
+    scan_prefix(read, &[keys::TAKE, GRADE], false, &mut |k, v| {
+        raw.push((k.to_vec(), v.to_vec()));
+        true
+    })?;
+    let mut out = Vec::new();
+    for (k, v) in raw {
+        let r: GradeRecord = serde_json::from_slice(&v)?;
+        if r.applied && r.wave_version == wave_version {
+            out.push((k, r));
+        }
+    }
+    Ok(out)
+}
+
 impl Store {
     /// `readTakeGrade(key)`: `{ verdict, confidence, applied }` of the row at the key, or `None`.
     pub fn read_take_grade(&self, key: &TakeGradeKey) -> Result<Option<Value>> {
@@ -151,6 +173,9 @@ impl Store {
             &row.evidence_signature,
         )?;
         no_nul(OP, &[("verdict", &row.verdict)])?;
+        if let Some(w) = &row.wave_version {
+            no_nul(OP, &[("wave_version", w)])?;
+        }
         if !QUALITIES.contains(&row.verdict.as_str()) {
             return Err(check_failed(TABLE, "take_grade_cache_verdict_check"));
         }
@@ -169,7 +194,10 @@ impl Store {
                 prompt_version: row.prompt_version.clone(),
                 judge_model_id: row.judge_model_id.clone(),
                 evidence_signature: row.evidence_signature.clone(),
-                wave_version: DEFAULT_WAVE.to_string(),
+                wave_version: row
+                    .wave_version
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_WAVE.to_string()),
                 graded_at_us: graded_at.unwrap_or_else(|| self.env.now_micros()),
                 verdict: row.verdict.clone(),
                 confidence,
@@ -193,6 +221,37 @@ impl Store {
                 tx.delete(&k)?;
             }
             Ok(())
+        })
+    }
+
+    /// `listWaveAppliedTakeIds(wave)`: the distinct take ids of the wave's applied verdicts,
+    /// ascending. A verdict names its take by id only, so a deleted take's id still counts.
+    pub fn list_wave_applied_take_ids(&self, wave_version: &str) -> Result<Vec<i64>> {
+        no_nul("listWaveAppliedTakeIds", &[("wave_version", wave_version)])?;
+        let ids: BTreeSet<i64> = wave_grades(&*self.read()?, wave_version)?
+            .into_iter()
+            .map(|(_, r)| r.take_id)
+            .collect();
+        Ok(ids.into_iter().collect())
+    }
+
+    /// `unapplyWaveTakeGrades(spec)`: the number of the wave's applied verdicts; marks them
+    /// unapplied unless a dry run (the rows stay as the audit trail).
+    pub fn unapply_wave_take_grades(&self, spec: &WaveSpec) -> Result<u64> {
+        no_nul(
+            "unapplyWaveTakeGrades",
+            &[("wave_version", &spec.wave_version)],
+        )?;
+        if spec.dry_run {
+            return Ok(wave_grades(&*self.read()?, &spec.wave_version)?.len() as u64);
+        }
+        self.write(|tx| {
+            let rows = wave_grades(&*tx, &spec.wave_version)?;
+            for (key, mut record) in rows.iter().cloned() {
+                record.applied = false;
+                put_json(tx, &key, &record)?;
+            }
+            Ok(rows.len() as u64)
         })
     }
 
@@ -303,6 +362,7 @@ mod tests {
             confidence,
             applied: false,
             graded_at: Some("2026-01-01T00:00:00Z".into()),
+            wave_version: None,
         }
     }
 
@@ -330,5 +390,38 @@ mod tests {
             .insert_take_grade(&input(7, "s\0x", "correct", 0.5))
             .unwrap_err();
         assert_eq!(nul.code, INVALID_ARGUMENT);
+    }
+    #[test]
+    fn a_wave_lists_and_unapplies_only_its_applied_verdicts() {
+        let store = open_store();
+        let row = |take_id, sig: &str, applied, wave: Option<&str>| {
+            let mut r = input(take_id, sig, "correct", 0.9);
+            r.applied = applied;
+            r.wave_version = wave.map(str::to_owned);
+            store.insert_take_grade(&r).unwrap();
+        };
+        row(9, "a", true, Some("w1"));
+        row(3, "a", true, Some("w1"));
+        row(3, "b", true, Some("w1"));
+        row(4, "a", false, Some("w1"));
+        row(5, "a", true, None);
+        assert_eq!(store.list_wave_applied_take_ids("w1").unwrap(), vec![3, 9]);
+        assert_eq!(
+            store.list_wave_applied_take_ids(DEFAULT_WAVE).unwrap(),
+            vec![5]
+        );
+        let spec = |dry_run| WaveSpec {
+            wave_version: "w1".into(),
+            dry_run,
+        };
+        assert_eq!(store.unapply_wave_take_grades(&spec(true)).unwrap(), 3);
+        assert_eq!(store.list_wave_applied_take_ids("w1").unwrap(), vec![3, 9]);
+        assert_eq!(store.unapply_wave_take_grades(&spec(false)).unwrap(), 3);
+        assert!(store.list_wave_applied_take_ids("w1").unwrap().is_empty());
+        assert_eq!(
+            store.read_take_grade(&key(9, "a")).unwrap(),
+            Some(json!({ "verdict": "correct", "confidence": 0.9, "applied": false }))
+        );
+        assert_eq!(store.unapply_wave_take_grades(&spec(false)).unwrap(), 0);
     }
 }

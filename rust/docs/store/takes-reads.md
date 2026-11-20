@@ -72,5 +72,40 @@ the key, `wave_version`, `graded_at`, the verdict, `confidence` as a `real` and 
 | `brain.listLatestTakeGrades({ verdict, minConfidence, applied, limit })` | the newest row of each take on a live page, then the filters (`minConfidence` compares as a `real`), newest first (`graded_at`, then take id), at most `limit` rows, with the page's `source_id` and slug and the take's row, claim, holder and `since_date` | `gbrain takes grades` |
 
 Two rows of one take with the same `graded_at` are a tie that Postgres breaks arbitrarily; the store keeps the first
-in key order. undo-wave still deletes a wave's rows with raw SQL (calibration-profiles.md), so it stops on the typed
-`raw_sql` refusal. Pinned by the unit test in `takes/grades.rs` and `test/engine-parity/caller-typed-reads.test.ts`.
+in key order. `insertTakeGrade` also takes an optional `waveVersion` (default `v0.36.1.0`). Pinned by the unit test in
+`takes/grades.rs` and `test/engine-parity/caller-typed-reads.test.ts`.
+
+`readLiveTakePage({ pageId, rowNum, claim })` is grade_takes' managed resolve: `{ slug, source_id }` of the page when it
+is not soft-deleted and its take at that row still holds the claim, else null (`takes/reads.rs`).
+
+## Take horizons
+
+`gbrain takes horizon` and the forecast journal read and write `take_horizons` through five members. The store keeps
+each row at `A 0x06 <take id>` (a JSON record: `claim_sha256`, `horizon_date` as `YYYY-MM-DD`, `basis`, `set_at`), in
+`takes/horizons.rs`. Deleting a take deletes its horizon (`take_horizons_take_id_fkey ... ON DELETE CASCADE`).
+
+| Call | Result | Caller |
+| --- | --- | --- |
+| `brain.readTakeClaim(takeId)` | the take's claim, or null | horizon set |
+| `brain.upsertTakeHorizon({ takeId, claimSha256, horizonDate, basis })` | sets or replaces the horizon, stamped now; a date that is not `YYYY-MM-DD` fails the date cast, a basis outside `stated`, `stated_relative`, `owner` fails `take_horizons_basis_check`, a missing take fails `take_horizons_take_id_fkey` | horizon set and scan --apply |
+| `brain.deleteTakeHorizon(takeId)` | true when the take had a horizon | horizon clear |
+| `brain.listTakeHorizons(takeIds \| null)` | the horizons whose take exists, by take id, with the take's claim now | forecast journal |
+| `brain.listHorizonScanRows(sourceId \| null)` | every take on a live page of the source, by take id, with its horizon fields or nulls | horizon scan |
+
+## A calibration wave's writes
+
+`gbrain calibration --undo-wave` runs on four members besides `purgeCalibrationProfilesByWave`
+(calibration-profiles.md). Each returns a count; a dry run only counts.
+
+| Call | Result |
+| --- | --- |
+| `brain.listWaveAppliedTakeIds(waveVersion)` | the distinct take ids of the wave's applied `A 0x05` rows, ascending |
+| `brain.revertWaveTakeResolutions({ takeIds, resolvedBy, dryRun })` | the takes `resolvedBy` resolved; clears their seven resolution fields, `updated_at` unchanged (runs in the maintenance transaction) |
+| `brain.unapplyWaveTakeGrades({ waveVersion, dryRun })` | the wave's applied rows; marks them unapplied (the rows stay) |
+| `brain.purgeTakeNudgesByWave({ waveVersion, dryRun })` | the wave's `take_nudge_log` rows; deletes them |
+
+The nudge log lives at `A 0x07 <nudge id>` (counter `M next_take_nudge_id`), in `takes/nudges.rs`.
+`brain.insertTakeNudge({ sourceId, takeId?, proposalId?, nudgePattern, channel?, waveVersion?, firedAt? })` logs a row
+and returns its id; it checks `take_nudge_log_target_xor`, then `take_nudge_log_source_id_fkey`. The store keeps no
+`take_proposals`, so a nudge at a proposal always fails `take_nudge_log_proposal_id_fkey`. A source delete deletes the
+source's nudges. No src writer inserts nudges yet; tests and fixtures use `insertTakeNudge`.
