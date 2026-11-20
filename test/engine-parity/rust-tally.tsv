@@ -19,15 +19,15 @@ test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	6	0
 test/engine-parity/collate-belief-cycle-walks.test.ts	2	4	enableBeliefLedger baseline, scanBeliefDrift: owner belief lane (rust-belief-batch c75951f858 lane 8, rust-belief-ledger, rust-belief-purge lane 3), flips when the belief lane reaches rust-engine/main; 2 more stop on test_seeds on the default addon (rust-tally-seeds.tsv)
-test/engine-parity/collate-command-listings.test.ts	6	2	git-gap census: owner lane 14; proposeVisibility: owner lane 10
-test/engine-parity/collate-core-page-lists.test.ts	16	2	pendingCoreNotices: owner lane 14; readForecastJournal: owner lane 5, named refusal until Rust has take_horizons and take_grade_cache
+test/engine-parity/collate-command-listings.test.ts	6	2	git-gap census: owner lane 14 doctor-checks 0c4a1a0ae7, named engine_capability_missing refusal (raw_sql stop here; flips through main); proposeVisibility: owner lane 10
+test/engine-parity/collate-core-page-lists.test.ts	16	2	pendingCoreNotices: owner lane 14 doctor-checks 0c4a1a0ae7, named engine_capability_missing refusal (raw_sql stop here; flips through main); readForecastJournal: owner lane 5, named refusal until Rust has take_horizons and take_grade_cache
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	5	1	keyed config fallback: raw_sql by design, the case tests the readKeyedConfig fallback for a handle without getConfigValues
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	4	0
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
 test/engine-parity/collate-slug-sources.test.ts	8	0
-test/engine-parity/collate-store-listings.test.ts	17	5	readBudgetLimited x4: owner lane 14, flips at main join (legacy-id case stays raw_sql); readMissingTables: raw_sql by design, the case tests the SQL catalog path
+test/engine-parity/collate-store-listings.test.ts	17	5	readBudgetLimited x4: owner lane 14 doctor-checks 0c4a1a0ae7, listBudgetLimitedRows/readBudgetHoldAge refuse by name (raw_sql stop here; flips through main; legacy-id case stays raw_sql); readMissingTables: raw_sql by design, the case tests the SQL catalog path
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
