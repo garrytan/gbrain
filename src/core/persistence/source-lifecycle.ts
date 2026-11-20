@@ -181,6 +181,9 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   if(input.expectedIncarnation&&input.expectedIncarnation!==before?.incarnation) throw opError('source_changed','The source was replaced.',
     `Source '${input.sourceId}' was removed and re-added after expected_incarnation was read, so nothing was changed. Read its current incarnation with the command in fix and confirm the ${input.operation} still applies before running it again.`,
     {fix:ownerStatusFix(input.sourceId)});
+  if(!input.dryRun&&input.confirmDestructive&&(input.operation==='remove'||input.operation==='purge'&&(input.expiredOnly||before?.archived))
+    &&parseSourceConfig(before?.config).kind==='apple-contacts')
+    await (await import('../apple-contacts/person-facts.ts')).retireAllPersonFacts(engine,input.sourceId);
   // #5200 (W14 P1.4): only an operation that compares or records checkout bytes hashes the manifest (add at an existing
   // root, claim, rebind, restore; reclone hashes in topology-clone.ts). Retiring a source (archive, remove, purge) compares
   // nothing, so when every binding already carries a verified digest it skips the walk and refreshes the stored manifest's

@@ -1,0 +1,163 @@
+name: Vorflux notify
+
+# Wakes the agent that works on the Rust engine (Vorflux) only when something
+# on one of its pull requests needs it, instead of on every comment in the
+# repository. A pull request is its when it carries the rust-engine label and
+# its head branch lives in garrytan/gbrain. It rings for:
+#   - a comment, review or review comment by capy-ai[bot];
+#   - a comment, review or review comment by garrytan whose body lacks the
+#     <!-- vorflux-session --> marker (the marker means Vorflux wrote it); a
+#     garrytan review with an empty body is skipped, because GitHub sends one
+#     for each single inline reply and its review comment event already rang;
+#   - the pull request being merged or closed;
+#   - a push to its head by anyone other than garrytan;
+#   - a full required check (full-suite, e2e-full-suite or macOS 26
+#     validation) ending red or timing out on its current head.
+#
+# Safety: every filter sits in the job-level if, so other events start no
+# runner. Nothing is checked out and no pull-request code runs; the job reads
+# event fields through env and the REST API, and posts a small JSON body built
+# with jq from ids, logins and SHAs (never comment text). pull_request_target
+# and workflow_run run this file from the default branch. The hook URL comes
+# only from the VORFLUX_HOOK_URL secret, handed to curl on stdin so it never
+# appears on a command line; when the secret is empty the job fails. The body's
+# delivery_id is built from stable ids so a rerun sends the same id.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_target:
+    branches: [master]
+    types: [closed, synchronize]
+  workflow_run:
+    workflows: [Test, E2E Tests, macOS 26 validation]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains(github.event.issue.labels.*.name, 'rust-engine') &&
+       (github.event.comment.user.login == 'capy-ai[bot]' ||
+        (github.event.comment.user.login == 'garrytan' && !contains(github.event.comment.body, '<!-- vorflux-session -->')))) ||
+      (github.event_name == 'pull_request_review_comment' &&
+       contains(github.event.pull_request.labels.*.name, 'rust-engine') &&
+       github.event.pull_request.head.repo.full_name == 'garrytan/gbrain' &&
+       (github.event.comment.user.login == 'capy-ai[bot]' ||
+        (github.event.comment.user.login == 'garrytan' && !contains(github.event.comment.body, '<!-- vorflux-session -->')))) ||
+      (github.event_name == 'pull_request_review' &&
+       contains(github.event.pull_request.labels.*.name, 'rust-engine') &&
+       github.event.pull_request.head.repo.full_name == 'garrytan/gbrain' &&
+       (github.event.review.user.login == 'capy-ai[bot]' ||
+        (github.event.review.user.login == 'garrytan' && github.event.review.body &&
+         !contains(github.event.review.body, '<!-- vorflux-session -->')))) ||
+      (github.event_name == 'pull_request_target' &&
+       contains(github.event.pull_request.labels.*.name, 'rust-engine') &&
+       github.event.pull_request.head.repo.full_name == 'garrytan/gbrain' &&
+       (github.event.action == 'closed' ||
+        (github.event.action == 'synchronize' && github.event.sender.login != 'garrytan'))) ||
+      (github.event_name == 'workflow_run' &&
+       (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out') &&
+       github.event.workflow_run.head_repository.full_name == 'garrytan/gbrain')
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      pull-requests: read
+    steps:
+      - name: Notify Vorflux
+        env:
+          VORFLUX_HOOK_URL: ${{ secrets.VORFLUX_HOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          REVIEW_ID: ${{ github.event.review.id }}
+          AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.event.workflow_run.actor.login || github.event.sender.login }}
+          HTML_URL: ${{ github.event.comment.html_url || github.event.review.html_url || github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_SUITE: ${{ github.event.workflow_run.check_suite_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VORFLUX_HOOK_URL" ]; then
+            echo "::error::The VORFLUX_HOOK_URL secret is empty, so there is nowhere to send this event. Add it under Settings, Secrets and variables, Actions."
+            exit 1
+          fi
+          case "$VORFLUX_HOOK_URL" in *$'\n'*|*$'\r'*) echo "::error::The VORFLUX_HOOK_URL secret holds a line break; store the URL on one line."; exit 1 ;; esac
+          skip() { echo "::notice::Nothing sent: $1"; exit 0; }
+          api() {
+            printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" |
+              curl --fail-with-body -sS --connect-timeout 10 --max-time 30 --config - \
+                -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/repos/$REPO/$1"
+          }
+          comment_id=""; review_id=""; merge_sha=""
+          case "$EVENT_NAME" in
+            issue_comment)
+              [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || skip "no pull request number"
+              pr=$(api "pulls/$PR_NUMBER")
+              [ "$(jq -r '.head.repo.full_name // ""' <<<"$pr")" = "garrytan/gbrain" ] || skip "the head branch is not in garrytan/gbrain"
+              HEAD_SHA=$(jq -r '.head.sha' <<<"$pr")
+              event=comment; comment_id=$COMMENT_ID; delivery="issue_comment:$COMMENT_ID" ;;
+            pull_request_review_comment)
+              event=comment; comment_id=$COMMENT_ID; delivery="review_comment:$COMMENT_ID" ;;
+            pull_request_review)
+              event=review; review_id=$REVIEW_ID; delivery="review:$REVIEW_ID" ;;
+            pull_request_target)
+              if [ "$ACTION" = synchronize ]; then
+                event=push; delivery="push:$PR_NUMBER:$HEAD_SHA"
+              elif [ "$MERGED" = true ]; then
+                event=merged; merge_sha=$MERGE_SHA; delivery="merged:$PR_NUMBER:$MERGE_SHA"
+              else
+                event=closed; delivery="closed:$PR_NUMBER:$HEAD_SHA"
+              fi ;;
+            workflow_run)
+              case "$RUN_NAME" in
+                Test) check=full-suite ;;
+                "E2E Tests") check=e2e-full-suite ;;
+                "macOS 26 validation") check="macOS 26 validation" ;;
+                *) skip "workflow $RUN_NAME is not watched" ;;
+              esac
+              [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || skip "no head SHA"
+              pr=$(api "commits/$HEAD_SHA/pulls" | jq -c --arg sha "$HEAD_SHA" --arg ref "$RUN_BRANCH" \
+                '[.[] | select(.state == "open" and .head.sha == $sha and .head.ref == $ref and .head.repo.full_name == "garrytan/gbrain" and any(.labels[]; .name == "rust-engine"))][0] // empty')
+              [ -n "$pr" ] || skip "no open rust-engine pull request has $HEAD_SHA as its head"
+              PR_NUMBER=$(jq -r '.number' <<<"$pr")
+              run=$(api "commits/$HEAD_SHA/check-runs?filter=latest&check_name=$(jq -rn --arg c "$check" '$c | @uri')" | jq -c --argjson suite "$RUN_SUITE" \
+                '[.check_runs[] | select(.check_suite.id == $suite)] | sort_by(.completed_at) | last // empty')
+              [ -n "$run" ] || skip "this run has no current $check check on $HEAD_SHA"
+              case "$(jq -r '.conclusion' <<<"$run")" in failure|timed_out) ;; *) skip "$check did not fail in this run" ;; esac
+              HTML_URL=$(jq -r '.html_url' <<<"$run")
+              event=check_failed; delivery="check_failed:$HEAD_SHA:$check" ;;
+            *) skip "event $EVENT_NAME is not watched" ;;
+          esac
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || skip "no pull request number"
+          body=$(jq -nc --arg repo "$REPO" --argjson pr "$PR_NUMBER" --arg event "$event" \
+            --arg comment_id "$comment_id" --arg review_id "$review_id" --arg author "$AUTHOR" \
+            --arg head_sha "$HEAD_SHA" --arg html_url "$HTML_URL" --arg delivery_id "$delivery" \
+            --arg merge_commit_sha "$merge_sha" \
+            '{repo: $repo, pr: $pr, event: $event,
+              comment_id: ($comment_id | if . == "" then null else tonumber end),
+              review_id: ($review_id | if . == "" then null else tonumber end),
+              author: $author, head_sha: $head_sha, html_url: $html_url, delivery_id: $delivery_id,
+              merge_commit_sha: $merge_commit_sha}
+             | with_entries(select(.value != null and .value != ""))')
+          echo "Sending $body"
+          url=${VORFLUX_HOOK_URL//\\/\\\\}; url=${url//\"/\\\"}
+          printf 'url = "%s"\n' "$url" |
+            curl --fail-with-body -sS --connect-timeout 10 --max-time 20 --config - \
+              -H 'Content-Type: application/json' --data-binary "$body" -o "$RUNNER_TEMP/vorflux-response" ||
+            { status=$?; echo "::error::The POST to Vorflux failed (curl exit $status)."; head -c 2000 "$RUNNER_TEMP/vorflux-response" 2>/dev/null || true; exit "$status"; }
+          echo "Vorflux accepted $delivery"

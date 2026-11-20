@@ -6,6 +6,8 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile } from '../core/company-brain/profile.ts';
 import { readGuestSource } from '../core/guests/sources.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { assertNotOwnedRoot } from '../core/owned-folder/paths.ts';
 
 /** The abort reason for a source this import may not write, after printing why; null when it may. */
 export async function importSourceRefusal(engine: BrainEngine, sourceId: string | undefined): Promise<string | null> {
@@ -19,4 +21,13 @@ export async function importSourceRefusal(engine: BrainEngine, sourceId: string 
     return 'company-brain sources require approved committed ingestion';
   }
   return null;
+}
+
+/** GST-3022: an import target inside a reserved `.gbrain-owned/` folder (its source writes it), after printing why; null otherwise. */
+export function ownedFolderImportRefusal(dir: string): OperationError | null {
+  try { assertNotOwnedRoot(dir, 'gbrain import refuses'); return null; } catch (e) {
+    if (!(e instanceof OperationError)) throw e;
+    console.error(`Error [${e.code}]: ${e.message}\nFix: ${e.suggestion}`);
+    return e;
+  }
 }

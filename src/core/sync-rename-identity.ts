@@ -76,6 +76,8 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
   let data: unknown;
   try { data = yamlLoad(block[1]!, { schema: JSON_SCHEMA }); } catch { return { ...NO_IDENTITY, title, digest }; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { ...NO_IDENTITY, title, digest };
+  const rawTitle = (data as Record<string, unknown>).title;
+  if (typeof rawTitle === 'string' && rawTitle.includes('\0')) title = null;
   const field = (key: string, numeric = false): string | null => {
     const value = (data as Record<string, unknown>)[key];
     const text = typeof value === 'string' ? value.trim() : numeric && typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
