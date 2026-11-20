@@ -2,14 +2,17 @@
  * Source-resolution members (BrainEngine listLocalPathSources, listSourceRoutingRows, countDefaultSourceSplit): the
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
  * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
- * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
- * (store side: the same cli_reads/sources.rs).
+ * read the store's source records here. countSourcePages counts one source's pages, readSourcesNotReadable is the
+ * `sources_not_readable` test of an unscoped remote read, and insertSource creates a source (store side: the same
+ * cli_reads/sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow, SourcesNotReadableOpts } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
+import { remoteReadFloorSql } from '../../search/private-visibility.ts';
+import { storePageTextPolicy } from './private-provenance.ts';
 
 /** Any owner-only source, archived ones included: the store's source rows tested with the rule access/owner-only.ts states. */
 export const readOwnerOnlySourcesPresent: StoreMember<[], boolean> = async (brain) => {
@@ -62,6 +65,16 @@ export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | nul
 
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>
   Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, opts?.includeDeleted === true)));
+
+/**
+ * The `sources_not_readable` test of an unscoped remote read (sources-not-readable.ts). `excludePrivate` sends the
+ * remote read floor as the store page policy (storePageTextPolicy); a caller whose floor the store cannot apply refuses.
+ */
+export const readSourcesNotReadable: StoreMember<[readable: readonly string[], opts: SourcesNotReadableOpts], boolean> = async (brain, readable, opts) => {
+  const member = 'readSourcesNotReadable';
+  const policy = opts.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true }) : null;
+  return (await storeCall({ member }, () => brain.readSourcesNotReadable([...readable], opts.facts, policy))) === true;
+};
 
 /**
  * A taken id or name refuses `constraint_violation`, as the SQL unique keys do; the store also refuses an id outside

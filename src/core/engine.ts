@@ -70,7 +70,7 @@ import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-s
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow, SourcesNotReadableOpts } from './engine-sql/sources.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
@@ -1441,6 +1441,8 @@ export interface BrainEngine {
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
+  /** An unscoped remote read's `sources_not_readable` test: nothing visible in `readable`, pages elsewhere (engine-sql/sources.ts). */
+  readSourcesNotReadable(readable: readonly string[], opts: SourcesNotReadableOpts): Promise<boolean>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
   insertSource(row: SourceInsert): Promise<void>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */

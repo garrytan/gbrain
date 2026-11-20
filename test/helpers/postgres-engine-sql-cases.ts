@@ -663,7 +663,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
-  'countSourcePages': 'sources', 'insertSource': 'sources',
+  'countSourcePages': 'sources', 'readSourcesNotReadable': 'sources', 'insertSource': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
@@ -1198,6 +1198,10 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('isSourceClaimed', [['default', (e) => e.isSourceClaimed(SRC)]]),
   ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),
   ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
+  ...variants('readSourcesNotReadable', [
+    ['default', (e) => e.readSourcesNotReadable([SRC], { facts: false, excludePrivate: false })],
+    ['factsFloor', (e) => e.readSourcesNotReadable([SRC, 'other'], { facts: true, excludePrivate: true })],
+  ]),
   ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
 
   // ── files ──

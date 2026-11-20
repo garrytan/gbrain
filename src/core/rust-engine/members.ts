@@ -151,6 +151,7 @@ export const RUST_ENGINE_MEMBERS = {
   readSourceRow: 'sources',
   lockSourceRow: 'sources',
   countSourcePages: 'sources',
+  readSourcesNotReadable: 'sources',
   insertSource: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',

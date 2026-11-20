@@ -24,8 +24,7 @@ import type { OperationContext } from './ops/contract.ts';
 import { opError } from './ops/contract.ts';
 import { federatedSearchScope } from './ops/context.ts';
 import { hostFix } from './ops/op-fix.ts';
-import { remoteReadFloorSql, resolveExcludePrivatePages } from './search/private-visibility.ts';
-import { quarantineFilterFragment } from './quarantine.ts';
+import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 
 const UNSCOPED_READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'list_pages']);
 
@@ -43,20 +42,10 @@ export async function assertUnscopedReadReachesPages(op: string, params: Record<
     const scope = federatedSearchScope(ctx);
     const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
     if (!readable) return;
-    const readableFacts = op === 'recall' || op === 'query'
-      ? ` OR EXISTS (SELECT 1 FROM facts WHERE source_id = ANY($1::text[]) AND visibility = 'world'
-                       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))`
-      : '';
-    const visible = ` AND ${quarantineFilterFragment('p')}`
-      + (await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? ` AND ${remoteReadFloorSql('p')}` : '');
-    const [row] = await ctx.engine.executeRaw<{ refuse: boolean }>(
-      `SELECT CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL${visible})${readableFacts} THEN false
-                   ELSE EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
-                                 WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND NOT (p.source_id = ANY($1::text[]))${visible})
-              END AS refuse`,
-      [readable],
-    );
-    refuse = row?.refuse === true;
+    refuse = await ctx.engine.readSourcesNotReadable(readable, {
+      facts: op === 'recall' || op === 'query',
+      excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+    });
   } catch {
     return;
   }

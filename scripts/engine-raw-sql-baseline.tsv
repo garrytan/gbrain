@@ -551,7 +551,6 @@ src/core/op-checkpoint.ts	execute_raw	1
 src/core/ops/admin.ts	execute_raw	2
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
-src/core/ops/context.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
@@ -982,7 +981,6 @@ src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	1
 src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	5
-src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4

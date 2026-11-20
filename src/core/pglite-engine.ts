@@ -1811,6 +1811,7 @@ export class PGLiteEngine implements BrainEngine {
   readSourceChunkerVersion(sourceId: string) { return sourcesImpl.readSourceChunkerVersion(unscopedExecutor(this.engineSql, 'sources: sync preflight read it unscoped through executeRaw'), sourceId); }
   setSourceChunkerVersion(sourceId: string, version: string) { return sourcesImpl.setSourceChunkerVersion(this.engineSql, sourceId, version); }
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }) { return sourcesImpl.countSourcePages(unscopedExecutor(this.engineSql, 'sources: source commands counted pages unscoped through executeRaw'), sourceId, opts); }
+  readSourcesNotReadable(readable: readonly string[], opts: sourcesImpl.SourcesNotReadableOpts) { return sourcesImpl.readSourcesNotReadable(unscopedExecutor(this.engineSql, 'sources: unscoped remote reads checked other sources through executeRaw'), readable, opts); }
   insertSource(row: sourcesImpl.SourceInsert) { return sourcesImpl.insertSource(this.engineSql, row); }
   async listSourceLocalPaths(): Promise<string[]> {
     return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
