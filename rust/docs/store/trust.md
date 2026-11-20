@@ -124,23 +124,29 @@ Rust guesses and gaps (1x parity):
 ## Derivation trust (`trust::derivation`)
 
 The derived-row trust writes and counts. They read and write the page, take, timeline and fact records and keep no
-key of their own. The `derivation_inputs` edges are not kept on this store line: `recordDerivationInputs` and
-`derivedRowsFrom` (src/core/facts/derivation-inputs.ts) still send raw SQL.
+key of their own. The `derivation_inputs` edges and the `needs_rederive` marks are the generations store's
+(`generations::derivation_inputs`, `generations::needs_rederive`). The propagation members live in
+`trust::propagation`; the projection queue writer is `persistence::projection_queue` `queue_page_projection_job`.
 
 | Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
 | --- | --- | --- |
 | `lowerTrustTier` | `lower_trust_tier`: facts, takes, timeline rows or pages; lowers each listed row whose stored rank is above the tier (a page soft-deleted or not, keeping its revision; a timeline row found by a scan of `E`); the stamp runs as for an UPDATE naming both columns with no content change; returns the ids lowered by id | `UPDATE <table> SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
 | `countDerivedRowTaint` | `count_derived_row_taint`: pages, takes or timeline entries whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` | `SELECT count(*) FILTER (…) … FROM <table>` |
 | `countDerivedFactTaint` | `count_derived_fact_taint`: the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
+| `lowerDerivedDependents` | `lower_derived_dependents`: for one derived table, the listed ids whose least trusted input (over the input edges, a vanished input ignored) ranks below their own tier; lowers each to that tier and merges `input_lowered: {from, at}` into its origin (`at` is the transaction time as Postgres prints it); returns them by id. `managed=true` refuses with `invalid_argument` (a Rust brain is never managed) | `WITH low AS (SELECT … min(rank) … FROM derivation_inputs di LEFT JOIN …) SELECT … FOR UPDATE OF x`, then `UPDATE <table> … FROM jsonb_to_recordset($1::text::jsonb)`, then the deferred `INSERT INTO needs_rederive … ON CONFLICT …` (managed only) |
+| `readTierProjectionPage` | `read_tier_projection_page`: the source and slug of the page a fact (its `source_markdown_slug`), take (its page) or page projects to; none for a fact with no markdown slug or an absent row | `SELECT source_id, slug FROM …` (three statements) |
+| `queuePageProjection` | `queue_page_projection_job`: queues the live page's revision with the given reason, replacing a queued job; an absent or deleted page queues nothing | `INSERT INTO page_projection_jobs … ON CONFLICT(source_incarnation,slug) DO UPDATE …` |
+| `locateRetierSubjects` | `locate_retier_subjects`: the source and slug of each listed fact (`COALESCE(source_markdown_slug, entity_slug)`), take and page, facts then takes then pages | `SELECT 'facts' AS t, … UNION ALL …` |
+| `latestRetierEventKey` | none: the Rust store keeps no belief ledger, so the member answers `null` | `SELECT encode(k.event_key, 'hex') … FROM belief_events … UNION ALL … belief_retier_manifest …` |
 | `stampPageFrontmatter` | `stamp_page_frontmatter`: merges `retired_by`/`retired_at` into soft-deleted pages, or `source_hash` into live `atom` pages; a page the merge leaves unchanged is not written | `UPDATE pages SET frontmatter=frontmatter\|\|jsonb_build_object(…) WHERE …` |
 
 Rust guesses and gaps (1x parity):
 
 - A frontmatter stamp that changes a page moves its revision, as the `gbrain_advance_page_revision` trigger does; a
   stamp that changes nothing keeps it (Postgres runs the `UPDATE` and the trigger sees no content change either).
-- `propagateTierLowering` (src/core/trust/propagation.ts) walks the rows derived from a lowered row through
-  `derivedRowsFrom`, lowers them and queues `needs_rederive` through `executeRaw`, so on a Rust brain every
-  `lowerToDerivedTier` that lowers a row then stops with `raw_sql`.
+- `lowerDerivedDependents` refuses a managed lowering: the deferred rows of another source need the
+  `gbrain.write_sources` setting, which this store does not keep. Rust brains are unmanaged.
+- A timeline row is found by a scan of `E`, as `lower_trust_tier` does.
 
 ## The write gate (`trust::write_gate`)
 

@@ -1,4 +1,6 @@
-//! The derivation trust members: `lowerTrustTier`, `countDerivedRowTaint`, `countDerivedFactTaint` and `stampPageFrontmatter`.
+//! The derivation trust members: `lowerTrustTier`, `countDerivedRowTaint`, `countDerivedFactTaint`,
+//! `stampPageFrontmatter`, and the propagation members `lowerDerivedDependents`,
+//! `readTierProjectionPage`, `queuePageProjection` and `locateRetierSubjects`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::trust::derivation` call on
 //! the pool through `Brain::run` and resolves plain JSON. The TypeScript members
@@ -11,7 +13,11 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::persistence::QueueProjectionSpec;
 use gbrain_store::trust::derivation::{FrontmatterStampSpec, LowerTierSpec, TaintCountQuery};
+use gbrain_store::trust::propagation::{
+    LowerDependentsSpec, RetierSubjectsQuery, TierProjectionQuery,
+};
 
 #[napi]
 impl Brain {
@@ -57,6 +63,61 @@ impl Brain {
         self.run(env, move |s| {
             let a: FrontmatterStampSpec = required(spec, "stampPageFrontmatter spec")?;
             s.stamp_page_frontmatter(&a)
+        })
+    }
+}
+
+#[napi]
+impl Brain {
+    /// `lowerDerivedDependents(spec)`: one hop of the derived-tier propagation; resolves the rows lowered.
+    #[napi]
+    pub fn lower_derived_dependents<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LowerDependentsSpec = required(spec, "lowerDerivedDependents spec")?;
+            s.lower_derived_dependents(&a)
+        })
+    }
+
+    /// `readTierProjectionPage(spec)`: resolves `{ source_id, slug }` or null.
+    #[napi]
+    pub fn read_tier_projection_page<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: TierProjectionQuery = required(spec, "readTierProjectionPage spec")?;
+            s.read_tier_projection_page(&a)
+        })
+    }
+
+    /// `queuePageProjection(spec)`: queues the live page's revision with a reason.
+    #[napi]
+    pub fn queue_page_projection<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: QueueProjectionSpec = required(spec, "queuePageProjection spec")?;
+            s.queue_page_projection_job(&a)
+        })
+    }
+
+    /// `locateRetierSubjects(spec)`: resolves `{ t, id, source_id, slug }` per listed row.
+    #[napi]
+    pub fn locate_retier_subjects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: RetierSubjectsQuery = required(spec, "locateRetierSubjects spec")?;
+            s.locate_retier_subjects(&a)
         })
     }
 }

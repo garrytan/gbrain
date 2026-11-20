@@ -1635,6 +1635,11 @@ export class PGLiteEngine implements BrainEngine {
   lowerTrustTier(table: TaintTable, ids: readonly number[], tier: TrustTier, origin: WriteOrigin | null) { return derivationTrustImpl.lowerTrustTier(this.rawRead, table, ids, tier, origin); }
   countDerivedRowTaint(table: derivationTrustImpl.DerivedTaintTable) { return derivationTrustImpl.countDerivedRowTaint(this.rawRead, table); }
   stampPageFrontmatter(stamp: derivationTrustImpl.PageFrontmatterStamp) { return derivationTrustImpl.stampPageFrontmatter(this.rawRead, stamp); }
+  lowerDerivedDependents(table: TaintTable, ids: readonly string[], managed: boolean) { return derivationTrustImpl.lowerDerivedDependents(this.rawRead, table, ids, managed); }
+  readTierProjectionPage(table: 'facts' | 'takes' | 'pages', id: number) { return derivationTrustImpl.readTierProjectionPage(this.rawRead, table, id); }
+  queuePageProjection(sourceId: string, slug: string, reason: string) { return derivationTrustImpl.queuePageProjection(this.rawRead, sourceId, slug, reason); }
+  locateRetierSubjects(ids: { facts: readonly number[]; takes: readonly number[]; pages: readonly number[] }) { return derivationTrustImpl.locateRetierSubjects(this.rawRead, ids); }
+  latestRetierEventKey(sourceId: string, subjectKey: string) { return derivationTrustImpl.latestRetierEventKey(this.rawRead, sourceId, subjectKey); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }

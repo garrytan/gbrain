@@ -40,10 +40,7 @@ async function resolveSubjects(tx: BrainEngine, rows: readonly RetierRow[]): Pro
   const subjects = rows.filter(r => KIND[r.table]);
   if (!subjects.length) return [];
   const ids = (table: string) => subjects.filter(r => r.table === table).map(r => r.id);
-  const located = await tx.executeRaw<{ t: string; id: number; source_id: string; slug: string | null }>(`
-    SELECT 'facts' AS t, id, source_id, COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])
-    UNION ALL SELECT 'takes', t.id, p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($2::bigint[])
-    UNION ALL SELECT 'pages', id, source_id, slug FROM pages WHERE id = ANY($3::bigint[])`, [ids('facts'), ids('takes'), ids('pages')]);
+  const located = await tx.locateRetierSubjects({ facts: ids('facts'), takes: ids('takes'), pages: ids('pages') });
   const where = new Map(located.filter(r => r.slug).map(r => [`${r.t}:${Number(r.id)}`, { sourceId: r.source_id, slug: r.slug! }]));
   const out: Resolved[] = [];
   for (const sourceId of new Set([...where.values()].map(w => w.sourceId))) {
@@ -152,11 +149,7 @@ export async function retierInputCauses(tx: BrainEngine, inputs: readonly { tabl
       out.push({ subject_key: r.key, event_key: eventKeyHex(batch.publicationId, r.key, 'trust.retiered') });
       continue;
     }
-    const [row] = await tx.executeRaw<{ key: string }>(`SELECT encode(k.event_key, 'hex') AS key FROM (
-        SELECT e.id, e.event_key FROM belief_events e WHERE e.source_id = $1 AND e.subject_key = $2 AND e.event_type = 'trust.retiered'
-        UNION ALL SELECT e.id, e.event_key FROM belief_retier_manifest m JOIN belief_events e ON e.id = m.summary_event
-          WHERE m.source_id = $1 AND m.subject_key = $2) k ORDER BY k.id DESC LIMIT 1`, [r.sourceId, r.key]);
-    out.push({ subject_key: r.key, event_key: row?.key ?? null });
+    out.push({ subject_key: r.key, event_key: await tx.latestRetierEventKey(r.sourceId, r.key) });
   }
   return out;
 }

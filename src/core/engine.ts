@@ -3486,6 +3486,16 @@ export interface BrainEngine {
   countDerivedRowTaint(table: DerivationTrustSql.DerivedTaintTable): Promise<{ derived: number; external: number }>;
   /** One fixed frontmatter stamp: the retirement stamp on soft-deleted pages, or an atom generation's `source_hash` on its live atoms. */
   stampPageFrontmatter(stamp: DerivationTrustSql.PageFrontmatterStamp): Promise<void>;
+  /** One hop of the derived-tier propagation: lowers each `table` row of `ids` below its least trusted recorded input, or marks it `needs_rederive` on a managed brain when the write does not hold its source (trust/propagation.ts). */
+  lowerDerivedDependents(table: import('./trust/tier.ts').TaintTable, ids: readonly string[], managed: boolean): Promise<DerivationTrustSql.LoweredDependent[]>;
+  /** The source and slug of the page whose chunks render the fact, take or page `id`, or null (trust/page-write.ts queueTierProjection). */
+  readTierProjectionPage(table: 'facts' | 'takes' | 'pages', id: number): Promise<{ source_id: string; slug: string } | null>;
+  /** Queues the live page's latest revision for a projection rebuild with `reason` (page-state/projections.ts). */
+  queuePageProjection(sourceId: string, slug: string, reason: string): Promise<void>;
+  /** The source and stream slug of each listed fact, take and page a tier change names (belief/retier.ts). */
+  locateRetierSubjects(ids: { facts: readonly number[]; takes: readonly number[]; pages: readonly number[] }): Promise<DerivationTrustSql.RetierSubjectRow[]>;
+  /** The hex key of the newest `trust.retiered` event or bulk summary naming `subjectKey` in the source, or null (belief/retier.ts). */
+  latestRetierEventKey(sourceId: string, subjectKey: string): Promise<string | null>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

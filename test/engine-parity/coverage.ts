@@ -196,7 +196,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // memory_mutation_reads: the reads remember and forget make before admission
   memory_mutation_reads: ['readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier'],
   // derivation_trust: the derived-row trust writes (engine-sql/derivation-trust.ts)
-  derivation_trust: ['lowerTrustTier', 'countDerivedRowTaint', 'stampPageFrontmatter'],
+  derivation_trust: ['lowerTrustTier', 'countDerivedRowTaint', 'stampPageFrontmatter', 'lowerDerivedDependents', 'readTierProjectionPage',
+    'queuePageProjection', 'locateRetierSubjects', 'latestRetierEventKey'],
 
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',

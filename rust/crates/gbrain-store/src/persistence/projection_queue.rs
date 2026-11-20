@@ -10,10 +10,11 @@
 //! collation).
 //!
 //! `queue_page_projection` keeps the queue in step with every page write as PGLite's
-//! `gbrain_queue_page_projection` trigger does. It is the only writer here: the other writers of a
-//! job's `reason` (`segmented_projecting`, `rebuild_failed`, `chunk_replacement_continuing`) are
-//! raw SQL the Rust engine refuses, so every job here has reason `canonical_change`. The reads
-//! still apply the full reason filters. A source delete removes each page first
+//! `gbrain_queue_page_projection` trigger does, with reason `canonical_change`.
+//! `Store::queue_page_projection_job` is the `queuePageProjection` member (a tier change queues
+//! `trust_tier_changed`). The other writers of a job's `reason` (`segmented_projecting`,
+//! `rebuild_failed`, `chunk_replacement_continuing`) are raw SQL the Rust engine refuses. The reads
+//! apply the full reason filters. A source delete removes each page first
 //! (`cascade.rs`), and the hook removes the page's job, so no job outlives its source.
 
 use super::{QUEUE, uuid_param};
@@ -573,6 +574,41 @@ impl Store {
     }
 }
 
+/// `queuePageProjection(sourceId, slug, reason)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QueueProjectionSpec {
+    pub source_id: String,
+    pub slug: String,
+    pub reason: String,
+}
+
+impl Store {
+    /// `queuePageProjection(sourceId, slug, reason)`: queues the live page's knowledge revision
+    /// with `reason`, replacing any queued job of the page; nothing when the page is absent or
+    /// deleted.
+    pub fn queue_page_projection_job(&self, spec: &QueueProjectionSpec) -> Result<()> {
+        self.write(|tx| {
+            let Some(page) = read_page(&*tx, &spec.source_id, &spec.slug)? else {
+                return Ok(());
+            };
+            if page.deleted_at_us.is_some() {
+                return Ok(());
+            }
+            let now = transaction_clock::transaction_now().ok_or_else(|| {
+                StoreError::invalid("queuePageProjection ran outside a store write transaction")
+            })?;
+            let key = job_key(&incarnation_of(&*tx, &page.source_id)?, &page.slug);
+            let job = JobRecord {
+                revision: page.knowledge_revision.clone(),
+                reason: spec.reason.clone(),
+                updated_at_us: now,
+            };
+            put_job(tx, &key, &job)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,6 +640,54 @@ mod tests {
                 crate::pages::write_page(tx, &page)
             })
             .unwrap();
+    }
+
+    #[test]
+    fn a_queued_projection_keeps_its_reason_until_the_next_revision() {
+        let store = crate::test_support::store();
+        put(&store, "kept");
+        let queue = |slug: &str, reason: &str| {
+            let spec = QueueProjectionSpec {
+                source_id: "default".into(),
+                slug: slug.into(),
+                reason: reason.into(),
+            };
+            store.queue_page_projection_job(&spec).unwrap();
+        };
+        let job = |slug: &str| {
+            let read = store.read().unwrap();
+            let key = job_key(&incarnation_of(&*read, "default").unwrap(), slug);
+            read.get(&key).unwrap().map(|v| decode_job(&v).unwrap())
+        };
+        let revision = read_page(&*store.read().unwrap(), "default", "kept")
+            .unwrap()
+            .unwrap()
+            .knowledge_revision;
+        queue("kept", "trust_tier_changed");
+        let queued = job("kept").unwrap();
+        assert_eq!(
+            (queued.revision.as_str(), queued.reason.as_str()),
+            (revision.as_str(), "trust_tier_changed")
+        );
+        // An absent page queues nothing.
+        queue("absent", "trust_tier_changed");
+        assert_eq!(job("absent"), None);
+        // The same content is no new revision, so the job keeps its reason.
+        put(&store, "kept");
+        assert_eq!(job("kept").unwrap().reason, "trust_tier_changed");
+        // A new revision of the page puts the trigger's job over it.
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "kept".into(),
+            compiled_truth: "a new body".into(),
+            ..PageInput::default()
+        };
+        let options = PutPageOptions {
+            index: Some(false),
+            ..PutPageOptions::default()
+        };
+        store.put_page("kept", &input, &options).unwrap();
+        assert_eq!(job("kept").unwrap().reason, CANONICAL_CHANGE);
     }
 
     #[test]

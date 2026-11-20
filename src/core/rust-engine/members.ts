@@ -558,6 +558,11 @@ export const RUST_ENGINE_MEMBERS = {
   lowerTrustTier: 'pages',
   countDerivedRowTaint: 'pages',
   stampPageFrontmatter: 'pages',
+  lowerDerivedDependents: 'pages',
+  readTierProjectionPage: 'pages',
+  queuePageProjection: 'pages',
+  locateRetierSubjects: 'pages',
+  latestRetierEventKey: 'pages',
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',

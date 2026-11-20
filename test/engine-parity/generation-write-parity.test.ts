@@ -2,7 +2,8 @@
  * BrainEngine parity — the trust writes of a derived page generation answer PGLite's output on Postgres and on a Rust
  * brain: a single-page derivation publish (the dream summary of cycle/synthesize.ts), a derived retirement, an atom
  * generation publish with its completion stamp and the retirement of an atom the extraction no longer produced, and the
- * derived-tier lowering (lowerTrustTier) of facts, takes and timeline rows.
+ * derived-tier lowering (lowerTrustTier) of facts, takes and timeline rows, and the propagation of a lowered input
+ * to every row derived from it (trust/propagation.ts propagateTierLowering).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each case gives the same answer on PGLite, Postgres and the Rust engine: the derivation's tier, origin
@@ -11,11 +12,17 @@
  *    (facts/derivation-inputs.ts), the explicit lowering of a page whose content did not change (lowerDerivedPage), the
  *    derived share doctor reads, the retirement stamp (`retired_by`, `retired_at`) on soft-deleted pages only with
  *    their tier and origin kept, the atom completion stamp (`source_hash`), and which facts, takes and timeline rows
- *    lowerTrustTier lowers and the tier and origin each keeps (a row at or below the tier is never raised).
+ *    lowerTrustTier lowers and the tier and origin each keeps (a row at or below the tier is never raised), and which
+ *    rows propagateTierLowering lowers at each depth (pages, facts, takes and timeline rows derived from a lowered page
+ *    or fact), to which tier (the least trusted input) and the `input_lowered` origin each keeps; a second lowering
+ *    lowers nothing. The projection reason it queues (`trust_tier_changed`) is pinned by the Rust unit test
+ *    projection_queue.rs a_queued_projection_keeps_its_reason_until_the_next_revision.
  *  - Regression: these flows sent raw SQL (taint.ts, derived-retirement-hold.ts and the atom adapter's
  *    completeItems), so a Rust brain stopped on `raw_sql` at the first derived write: no dream summary, no retirement
  *    and no atom generation published there. The Rust lowerTrustTier served pages only and refused a fact, take or
- *    timeline row with `engine_capability_missing`, so a derived fact or take was never lowered there.
+ *    timeline row with `engine_capability_missing`, so a derived fact or take was never lowered there. Propagation
+ *    (propagation.ts, page-write.ts queueTierProjection, belief/retier.ts) sent raw SQL, so every lowering that
+ *    lowered a row stopped with `raw_sql` on a Rust brain.
  *  - Why existing coverage misses it: generation-output-parity.test.ts publishes a single page with no derivation and
  *    reads atom inputs, but publishes no derivation, retires nothing and publishes no atom; the derivation publish case
  *    here lowers pages only.
@@ -35,7 +42,8 @@ import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, readAtomInput } from '.
 import { markdownItem } from '../../src/core/generations/adapters/page.ts';
 import { publishGeneration } from '../../src/core/generations/publish.ts';
 import { derivedRowsFrom } from '../../src/core/facts/derivation-inputs.ts';
-import { deriveTrust, derivedWriteTrust, lowerDerivedPage, readDerivedTaintShare } from '../../src/core/trust/taint.ts';
+import { deriveTrust, derivedWriteTrust, lowerDerivedPage, readDerivedTaintShare, recordTaintEdges } from '../../src/core/trust/taint.ts';
+import { propagateTierLowering } from '../../src/core/trust/propagation.ts';
 import type { TaintInput, TrustTier, WriteTrust } from '../../src/core/trust/tier.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
 
@@ -222,6 +230,70 @@ describe('engine parity: derived generation trust writes', () => {
     });
     expect(answers.takes).toEqual(answers.facts);
     expect(answers.timeline_entries).toEqual(answers.facts);
+    return answers;
+  });
+  parityTest('a lowered input lowers each row derived from it, at any depth, to its least trusted input, and never raises', {
+    methods: ['putPage', 'transaction', 'insertFact', 'addTakesBatch', 'listTakes', 'addTimelineEntry', 'getTimeline', 'readRowTrustRows',
+      'readPageTrustRows', 'recordDerivationInputs', 'listDerivedRows', 'lowerTrustTier', 'lowerDerivedDependents', 'readTierProjectionPage',
+      'queuePageProjection', 'locateRetierSubjects', 'latestRetierEventKey'],
+  }, async (engine) => {
+    const slugs = ['notes/prop-input', 'notes/prop-other', 'notes/prop-derived', 'notes/prop-low', 'notes/prop-raw'];
+    await putAt(engine, 'notes/prop-input', 'operator_curated', 'input');
+    await putAt(engine, 'notes/prop-other', 'tool_observed', 'other');
+    await putAt(engine, 'notes/prop-derived', 'operator_curated', 'derived from input and other');
+    await putAt(engine, 'notes/prop-low', 'external_untrusted', 'already below');
+    await putAt(engine, 'notes/prop-raw', 'operator_curated', 'derived from other only');
+    const l = await labeler(engine, slugs);
+    const page = (slug: string) => ({ table: 'pages' as const, id: l.id(slug) });
+    const derivedId = l.id('notes/prop-derived');
+    let factId = 0;
+    await maintenanceTransaction(engine, async tx => {
+      factId = (await tx.insertFact({ fact: 'derived fact', entity_slug: 'notes/prop-derived', visibility: 'world', source: 'test', embedding: null },
+        { source_id: 'default' })).id;
+      await tx.addTakesBatch([{ page_id: derivedId, row_num: 1, claim: 'derived take', kind: 'take', holder: 'h', weight: 0.5 }]);
+      await tx.addTimelineEntry('notes/prop-derived', { date: '2026-08-01', summary: 'derived entry' });
+    }, trustAt('operator_curated'));
+    const takeId = Number((await engine.listTakes({ page_id: derivedId }))[0]!.id);
+    const entryId = Number((await engine.getTimeline('notes/prop-derived'))[0]!.id);
+    await recordTaintEdges(engine, { ...page('notes/prop-derived'), sourceId: 'default' }, [page('notes/prop-input'), page('notes/prop-other')]);
+    await recordTaintEdges(engine, { ...page('notes/prop-low'), sourceId: 'default' }, [page('notes/prop-input')]);
+    await recordTaintEdges(engine, { ...page('notes/prop-raw'), sourceId: 'default' }, [page('notes/prop-other')]);
+    await recordTaintEdges(engine, { table: 'facts', id: factId, sourceId: 'default' }, [page('notes/prop-derived')]);
+    await recordTaintEdges(engine, { table: 'takes', id: takeId, sourceId: 'default' }, [page('notes/prop-derived')]);
+    await recordTaintEdges(engine, { table: 'timeline_entries', id: entryId, sourceId: 'default' }, [{ table: 'facts', id: factId }]);
+    const names = new Map<string, string>([[`facts:${factId}`, 'fact'], [`takes:${takeId}`, 'take'], [`timeline_entries:${entryId}`, 'entry']]);
+    const name = (table: string, id: number | string) => names.get(`${table}:${id}`) ?? l.label(table, id);
+    // input_lowered.at is the transaction time: each engine has its own clock, so the answer keeps only that it is a timestamp.
+    const scrub = (value: unknown) => JSON.parse(JSON.stringify(l.scrub(value)), (key, v) =>
+      key === 'at' && typeof v === 'string' ? (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}(:\d{2})?$/.test(v) ? '<now>' : v) : v);
+    const trust = async () => {
+      const rows = (await Promise.all((['facts', 'takes', 'timeline_entries'] as const).map(table =>
+        engine.readRowTrustRows({ table, ids: [{ facts: factId, takes: takeId, timeline_entries: entryId }[table]] })
+          .then(rs => rs.map(r => [name(table, r.id), { tier: r.trust_tier, origin: scrub(r.write_origin) }] as const))))).flat();
+      return { ...await trustOf(engine, slugs, scrub), ...Object.fromEntries(rows) };
+    };
+    const lower = (slug: string, tier: TrustTier) => maintenanceTransaction(engine, async tx => {
+      const lowered = await tx.lowerTrustTier('pages', [l.id(slug)], tier, { channel: 'derive:test' });
+      return (await propagateTierLowering(tx, lowered.map(id => ({ table: 'pages' as const, id }))))
+        .map(r => `${name(r.table, r.id)} ${r.from}>${r.to}`);
+    }, trustAt('operator_curated'));
+    const answers = {
+      lowered: await lower('notes/prop-input', 'external_untrusted'),
+      after: await trust(),
+      // A second lowering of an input already below every dependent lowers nothing more.
+      again: await lower('notes/prop-input', 'external_untrusted'),
+      // Lowering the other input to agent_written lowers notes/prop-raw only: notes/prop-derived is already below it.
+      other: await lower('notes/prop-other', 'agent_written'),
+      final: await trust(),
+      // No belief ledger covers this source, so no retier event key names a lowered page.
+      eventKey: await engine.latestRetierEventKey('default', 'page:notes/prop-derived'),
+    };
+    expect(answers.eventKey).toBeNull();
+    expect(answers.lowered).toEqual(['pages:notes/prop-derived operator_curated>external_untrusted', 'fact operator_curated>external_untrusted',
+      'take operator_curated>external_untrusted', 'entry operator_curated>external_untrusted']);
+    expect(answers.again).toEqual([]);
+    expect(answers.other).toEqual(['pages:notes/prop-raw operator_curated>agent_written']);
+    expect(answers.final['notes/prop-low']?.tier).toBe('external_untrusted');
     return answers;
   });
 });

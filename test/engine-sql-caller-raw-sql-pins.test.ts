@@ -16,7 +16,13 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { KEEP_HIDDEN_AT, MARK_REDERIVE_SQL } from '../src/core/engine-sql/facts-purge.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
-import { trustRankSql } from '../src/core/trust/tier.ts';
+import { trustRankSql, trustTierFromRankSql } from '../src/core/trust/tier.ts';
+
+// The fragments propagation.ts interpolated into its lowerable statement (copied at 2c56417a4c).
+const numericId = (column: string) => `(CASE WHEN ${column} ~ '^[0-9]+$' THEN ${column}::bigint END)`;
+const PAGE_SOURCE = '(SELECT p.source_id FROM pages p WHERE p.id = x.page_id)';
+const WRITABLE = (source: string) => `(NOT $3::boolean OR COALESCE(NULLIF(current_setting('gbrain.write_sources', true), ''), '[]')::jsonb ? ${source})`;
+const INPUT_TIER = 'COALESCE(f.trust_tier, k.trust_tier, p.trust_tier, t.trust_tier)';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
@@ -256,6 +262,83 @@ const PINS: Pin[] = [
       LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
      WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
      ORDER BY k.row_num`],
+  },
+  {
+    // The three statements of one hop (the deferred mark ran once after every hop before the move; its text is unchanged).
+    from: 'src/core/trust/propagation.ts:33 lowerable, :64 lowering UPDATE, :73 deferred mark (at 2c56417a4c)',
+    case: {
+      method: 'lowerDerivedDependents', variant: 'takes-managed',
+      run: e => e.lowerDerivedDependents('takes', ['3', '4'], true),
+      rows: [[/^WITH low AS/, [
+        { id: 3, source_id: 'default', from_tier: 'operator_curated', to_tier: 'external_untrusted', writable: true },
+        { id: 4, source_id: 'src-b', from_tier: 'operator_curated', to_tier: 'agent_written', writable: false },
+      ]]],
+    },
+    texts: [`WITH low AS (
+      SELECT di.derived_id, min(${trustRankSql(INPUT_TIER)}) AS r FROM derivation_inputs di
+        LEFT JOIN facts f ON di.input_table = 'facts' AND f.id = ${numericId('di.input_id')}
+        LEFT JOIN takes k ON di.input_table = 'takes' AND k.id = ${numericId('di.input_id')}
+        LEFT JOIN pages p ON di.input_table = 'pages' AND p.id = ${numericId('di.input_id')}
+        LEFT JOIN timeline_entries t ON di.input_table = 'timeline_entries' AND t.id = ${numericId('di.input_id')}
+      WHERE di.derived_table = $1 AND di.derived_id = ANY($2::text[]) AND ${INPUT_TIER} IS NOT NULL
+      GROUP BY di.derived_id)
+    SELECT x.id, ${PAGE_SOURCE} AS source_id, x.trust_tier AS from_tier, ${trustTierFromRankSql('low.r')} AS to_tier, ${WRITABLE(PAGE_SOURCE)} AS writable
+      FROM low JOIN takes x ON x.id = ${numericId('low.derived_id')} WHERE low.r < ${trustRankSql('x.trust_tier')}
+      ORDER BY x.id FOR UPDATE OF x`,
+    `UPDATE takes x SET trust_tier = c.to_tier,
+          write_origin = COALESCE(x.write_origin, '{}'::jsonb) || jsonb_build_object('input_lowered', jsonb_build_object('from', c.from_tier, 'at', now()::text))
+        FROM jsonb_to_recordset($1::text::jsonb) AS c(id bigint, from_tier text, to_tier text) WHERE x.id = c.id`,
+    `INSERT INTO needs_rederive(derived_table, derived_id, source_id, reason)
+      SELECT d.derived_table, d.derived_id, d.source_id, 'input_lowered' FROM jsonb_to_recordset($1::text::jsonb) AS d(derived_table text, derived_id text, source_id text)
+      ON CONFLICT (derived_table, derived_id) DO UPDATE SET reason = EXCLUDED.reason, marked_at = ${KEEP_HIDDEN_AT}`],
+  },
+  {
+    from: 'src/core/trust/propagation.ts:33 lowerable (at 2c56417a4c), a fact table hop',
+    case: { method: 'lowerDerivedDependents', variant: 'facts', run: e => e.lowerDerivedDependents('facts', ['7'], false) },
+    texts: [`WITH low AS (
+      SELECT di.derived_id, min(${trustRankSql(INPUT_TIER)}) AS r FROM derivation_inputs di
+        LEFT JOIN facts f ON di.input_table = 'facts' AND f.id = ${numericId('di.input_id')}
+        LEFT JOIN takes k ON di.input_table = 'takes' AND k.id = ${numericId('di.input_id')}
+        LEFT JOIN pages p ON di.input_table = 'pages' AND p.id = ${numericId('di.input_id')}
+        LEFT JOIN timeline_entries t ON di.input_table = 'timeline_entries' AND t.id = ${numericId('di.input_id')}
+      WHERE di.derived_table = $1 AND di.derived_id = ANY($2::text[]) AND ${INPUT_TIER} IS NOT NULL
+      GROUP BY di.derived_id)
+    SELECT x.id, x.source_id AS source_id, x.trust_tier AS from_tier, ${trustTierFromRankSql('low.r')} AS to_tier, ${WRITABLE('x.source_id')} AS writable
+      FROM low JOIN facts x ON x.id = ${numericId('low.derived_id')} WHERE low.r < ${trustRankSql('x.trust_tier')}
+      ORDER BY x.id FOR UPDATE OF x`],
+  },
+  ...([
+    ['facts', 'SELECT source_id, source_markdown_slug AS slug FROM facts WHERE id = $1 AND source_markdown_slug IS NOT NULL'],
+    ['takes', 'SELECT p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1'],
+    ['pages', 'SELECT source_id, slug FROM pages WHERE id = $1'],
+  ] as const).map(([table, text]) => ({
+    from: 'src/core/trust/page-write.ts:322 queueTierProjection (at 2c56417a4c)',
+    case: { method: 'readTierProjectionPage', variant: table, run: (e: any) => e.readTierProjectionPage(table, 3) },
+    texts: [text],
+  })),
+  {
+    from: 'src/core/page-state/projections.ts:457 queuePageProjection (at 2c56417a4c)',
+    case: { method: 'queuePageProjection', variant: 'default', run: e => e.queuePageProjection('default', 'notes/a', 'trust_tier_changed') },
+    texts: [`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
+    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
+    WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
+    ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`],
+  },
+  {
+    from: 'src/core/belief/retier.ts:43 resolveSubjects (at 2c56417a4c)',
+    case: { method: 'locateRetierSubjects', variant: 'default', run: e => e.locateRetierSubjects({ facts: [1], takes: [2], pages: [3] }) },
+    texts: [`
+    SELECT 'facts' AS t, id, source_id, COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])
+    UNION ALL SELECT 'takes', t.id, p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($2::bigint[])
+    UNION ALL SELECT 'pages', id, source_id, slug FROM pages WHERE id = ANY($3::bigint[])`],
+  },
+  {
+    from: 'src/core/belief/retier.ts:155 retierInputCauses (at 2c56417a4c)',
+    case: { method: 'latestRetierEventKey', variant: 'default', run: e => e.latestRetierEventKey('default', 'page:notes/a') },
+    texts: [`SELECT encode(k.event_key, 'hex') AS key FROM (
+        SELECT e.id, e.event_key FROM belief_events e WHERE e.source_id = $1 AND e.subject_key = $2 AND e.event_type = 'trust.retiered'
+        UNION ALL SELECT e.id, e.event_key FROM belief_retier_manifest m JOIN belief_events e ON e.id = m.summary_event
+          WHERE m.source_id = $1 AND m.subject_key = $2) k ORDER BY k.id DESC LIMIT 1`],
   },
 ];
 

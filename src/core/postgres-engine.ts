@@ -1286,6 +1286,11 @@ export class PostgresEngine implements BrainEngine {
   lowerTrustTier(table: TaintTable, ids: readonly number[], tier: TrustTier, origin: WriteOrigin | null) { return derivationTrustImpl.lowerTrustTier(this.executeRaw.bind(this), table, ids, tier, origin); }
   countDerivedRowTaint(table: derivationTrustImpl.DerivedTaintTable) { return derivationTrustImpl.countDerivedRowTaint(this.executeRaw.bind(this), table); }
   stampPageFrontmatter(stamp: derivationTrustImpl.PageFrontmatterStamp) { return derivationTrustImpl.stampPageFrontmatter(this.executeRaw.bind(this), stamp); }
+  lowerDerivedDependents(table: TaintTable, ids: readonly string[], managed: boolean) { return derivationTrustImpl.lowerDerivedDependents(this.executeRaw.bind(this), table, ids, managed); }
+  readTierProjectionPage(table: 'facts' | 'takes' | 'pages', id: number) { return derivationTrustImpl.readTierProjectionPage(this.executeRaw.bind(this), table, id); }
+  queuePageProjection(sourceId: string, slug: string, reason: string) { return derivationTrustImpl.queuePageProjection(this.executeRaw.bind(this), sourceId, slug, reason); }
+  locateRetierSubjects(ids: { facts: readonly number[]; takes: readonly number[]; pages: readonly number[] }) { return derivationTrustImpl.locateRetierSubjects(this.executeRaw.bind(this), ids); }
+  latestRetierEventKey(sourceId: string, subjectKey: string) { return derivationTrustImpl.latestRetierEventKey(this.executeRaw.bind(this), sourceId, subjectKey); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }

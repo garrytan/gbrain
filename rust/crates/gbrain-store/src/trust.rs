@@ -41,6 +41,7 @@ pub mod derivation;
 mod eligibility;
 mod fingerprint;
 pub mod held_rows;
+pub mod propagation;
 pub mod proposals;
 mod row_trust;
 pub mod tier_reads;

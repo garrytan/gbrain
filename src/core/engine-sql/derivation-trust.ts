@@ -8,12 +8,20 @@
  *   external_untrusted (the facts count is `countDerivedFactTaint`).
  * - `stampPageFrontmatter`: one of two fixed frontmatter stamps: the retirement stamp on soft-deleted pages, and the
  *   atom generation's `source_hash` on its live atoms.
+ * - `lowerDerivedDependents`: one hop of the derived-tier propagation (trust/propagation.ts): lowers each listed derived
+ *   row whose recorded inputs (`derivation_inputs`) are now less trusted than it, and on a managed brain marks a row of a
+ *   source the write does not hold `needs_rederive` instead.
+ * - `readTierProjectionPage`, `queuePageProjection`: the page whose projection a tier change rebuilds, and the queued
+ *   rebuild (page_projection_jobs) every projection writer shares (page-state/projections.ts).
+ * - `locateRetierSubjects`, `latestRetierEventKey`: where a retiered row lives, and the newest event that recorded a
+ *   ledger subject's tier change (belief/retier.ts).
  *
  * The Rust engine serves them from its page, take, timeline and fact records
  * (rust/crates/gbrain-store/src/trust/derivation.rs). The derivation edges (`derivation_inputs`) are not here.
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
-import { trustRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
+import { KEEP_HIDDEN_AT } from './facts-purge.ts';
+import { trustRankSql, trustTierFromRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
 
 const TAINT_TABLES: readonly TaintTable[] = ['facts', 'takes', 'pages', 'timeline_entries'];
 const TAINT_SHARE_TABLES = ['takes', 'timeline_entries', 'pages'] as const;
@@ -27,6 +35,12 @@ export type PageFrontmatterStamp =
   | { match: 'retired'; sourceId: string; slugs: readonly string[]; retiredBy: string; retiredAt: string }
   /** `source_hash` on the live atom pages of `slugs`. */
   | { match: 'atom_source_hash'; sourceId: string; slugs: readonly string[]; sourceHash: string };
+
+/** A derived row `lowerDerivedDependents` lowered: its stored tier before and the tier it has now. */
+export interface LoweredDependent { id: number; from_tier: string; to_tier: string }
+
+/** Where a fact, take or page lives (`t` is its table); `slug` is null for a fact with no page or entity. */
+export interface RetierSubjectRow { t: 'facts' | 'takes' | 'pages'; id: number; source_id: string; slug: string | null }
 
 function taintTable(member: string, table: string): TaintTable {
   if (!(TAINT_TABLES as readonly string[]).includes(table)) throw new Error(`${member}: unknown table ${JSON.stringify(table)}`);
@@ -65,4 +79,82 @@ export async function stampPageFrontmatter(raw: EngineRawRead, stamp: PageFrontm
   } else {
     throw new Error(`stampPageFrontmatter: unknown match ${JSON.stringify((stamp as { match: unknown }).match)}`);
   }
+}
+
+const numericId = (column: string) => `(CASE WHEN ${column} ~ '^[0-9]+$' THEN ${column}::bigint END)`;
+const sourceOf = (table: TaintTable) => table === 'facts' || table === 'pages' ? 'x.source_id' : '(SELECT p.source_id FROM pages p WHERE p.id = x.page_id)';
+const WRITABLE = (source: string) => `(NOT $3::boolean OR COALESCE(NULLIF(current_setting('gbrain.write_sources', true), ''), '[]')::jsonb ? ${source})`;
+const INPUT_TIER = 'COALESCE(f.trust_tier, k.trust_tier, p.trust_tier, t.trust_tier)';
+
+/**
+ * One hop of the derived-tier propagation: of the `table` rows among `ids` (derived row ids, as `derivation_inputs`
+ * records them), each whose least trusted recorded input ranks below it is lowered to that input's tier, with
+ * `write_origin.input_lowered` naming the tier it had. On a managed brain a row of a source the enclosing coordinated
+ * write does not hold is marked `needs_rederive` (reason `input_lowered`) instead. Resolves the rows lowered, by id.
+ */
+export async function lowerDerivedDependents(raw: EngineRawRead, table: TaintTable, ids: readonly string[], managed: boolean): Promise<LoweredDependent[]> {
+  const name = taintTable('lowerDerivedDependents', table);
+  if (!ids.length) return [];
+  const candidates = await raw<{ id: number; source_id: string | null; from_tier: string; to_tier: string; writable: boolean }>(`WITH low AS (
+      SELECT di.derived_id, min(${trustRankSql(INPUT_TIER)}) AS r FROM derivation_inputs di
+        LEFT JOIN facts f ON di.input_table = 'facts' AND f.id = ${numericId('di.input_id')}
+        LEFT JOIN takes k ON di.input_table = 'takes' AND k.id = ${numericId('di.input_id')}
+        LEFT JOIN pages p ON di.input_table = 'pages' AND p.id = ${numericId('di.input_id')}
+        LEFT JOIN timeline_entries t ON di.input_table = 'timeline_entries' AND t.id = ${numericId('di.input_id')}
+      WHERE di.derived_table = $1 AND di.derived_id = ANY($2::text[]) AND ${INPUT_TIER} IS NOT NULL
+      GROUP BY di.derived_id)
+    SELECT x.id, ${sourceOf(name)} AS source_id, x.trust_tier AS from_tier, ${trustTierFromRankSql('low.r')} AS to_tier, ${WRITABLE(sourceOf(name))} AS writable
+      FROM low JOIN ${name} x ON x.id = ${numericId('low.derived_id')} WHERE low.r < ${trustRankSql('x.trust_tier')}
+      ORDER BY x.id FOR UPDATE OF x`, [name, [...ids], managed]);
+  const writable = candidates.filter(c => c.writable);
+  const deferred = candidates.filter(c => !c.writable);
+  if (writable.length) {
+    await raw(`UPDATE ${name} x SET trust_tier = c.to_tier,
+          write_origin = COALESCE(x.write_origin, '{}'::jsonb) || jsonb_build_object('input_lowered', jsonb_build_object('from', c.from_tier, 'at', now()::text))
+        FROM jsonb_to_recordset($1::text::jsonb) AS c(id bigint, from_tier text, to_tier text) WHERE x.id = c.id`,
+    [JSON.stringify(writable.map(c => ({ id: Number(c.id), from_tier: c.from_tier, to_tier: c.to_tier })))]);
+  }
+  if (deferred.length) {
+    await raw(`INSERT INTO needs_rederive(derived_table, derived_id, source_id, reason)
+      SELECT d.derived_table, d.derived_id, d.source_id, 'input_lowered' FROM jsonb_to_recordset($1::text::jsonb) AS d(derived_table text, derived_id text, source_id text)
+      ON CONFLICT (derived_table, derived_id) DO UPDATE SET reason = EXCLUDED.reason, marked_at = ${KEEP_HIDDEN_AT}`,
+    [JSON.stringify(deferred.map(d => ({ derived_table: name, derived_id: String(d.id), source_id: d.source_id })))]);
+  }
+  return writable.map(c => ({ id: Number(c.id), from_tier: c.from_tier, to_tier: c.to_tier }));
+}
+
+/** The page whose chunks render the fact, take or page `id`: a fact's provenance page, a take's page, or the page itself; null when none. */
+export async function readTierProjectionPage(raw: EngineRawRead, table: 'facts' | 'takes' | 'pages', id: number): Promise<{ source_id: string; slug: string } | null> {
+  const sql = table === 'facts' ? 'SELECT source_id, source_markdown_slug AS slug FROM facts WHERE id = $1 AND source_markdown_slug IS NOT NULL'
+    : table === 'takes' ? 'SELECT p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1'
+      : table === 'pages' ? 'SELECT source_id, slug FROM pages WHERE id = $1' : null;
+  if (!sql) throw new Error(`readTierProjectionPage: unknown table ${JSON.stringify(table)}`);
+  const [page] = await raw<{ source_id: string; slug: string }>(sql, [id]);
+  return page ? { source_id: page.source_id, slug: page.slug } : null;
+}
+
+/** Queues the live page's latest revision for a projection rebuild with `reason`; nothing when the page is gone. */
+export async function queuePageProjection(raw: EngineRawRead, sourceId: string, slug: string, reason: string): Promise<void> {
+  await raw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
+    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
+    WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
+    ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
+}
+
+/** Where each listed fact, take and page lives: a fact's stream is its provenance page, else its entity. */
+export async function locateRetierSubjects(raw: EngineRawRead, ids: { facts: readonly number[]; takes: readonly number[]; pages: readonly number[] }): Promise<RetierSubjectRow[]> {
+  const rows = await raw<{ t: RetierSubjectRow['t']; id: number | string; source_id: string; slug: string | null }>(`
+    SELECT 'facts' AS t, id, source_id, COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])
+    UNION ALL SELECT 'takes', t.id, p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($2::bigint[])
+    UNION ALL SELECT 'pages', id, source_id, slug FROM pages WHERE id = ANY($3::bigint[])`, [[...ids.facts], [...ids.takes], [...ids.pages]]);
+  return rows.map(r => ({ t: r.t, id: Number(r.id), source_id: r.source_id, slug: r.slug }));
+}
+
+/** The hex key of the newest `trust.retiered` event or bulk summary naming `subjectKey` in the source, or null. */
+export async function latestRetierEventKey(raw: EngineRawRead, sourceId: string, subjectKey: string): Promise<string | null> {
+  const [row] = await raw<{ key: string }>(`SELECT encode(k.event_key, 'hex') AS key FROM (
+        SELECT e.id, e.event_key FROM belief_events e WHERE e.source_id = $1 AND e.subject_key = $2 AND e.event_type = 'trust.retiered'
+        UNION ALL SELECT e.id, e.event_key FROM belief_retier_manifest m JOIN belief_events e ON e.id = m.summary_event
+          WHERE m.source_id = $1 AND m.subject_key = $2) k ORDER BY k.id DESC LIMIT 1`, [sourceId, subjectKey]);
+  return row?.key ?? null;
 }
