@@ -140,7 +140,7 @@ function parseMessage(raw: Record<string, unknown>): IMessageMessage {
     textStatus: status, from: str(raw.from), hasAttachments: raw.has_attachments === true, editedAt: str(raw.edited_at), retracted: raw.retracted === true };
 }
 
-async function readBounded(res: Response, path: string): Promise<string> {
+export async function readBounded(res: Response, path: string): Promise<string> {
   if (!res.body) return res.text();
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];

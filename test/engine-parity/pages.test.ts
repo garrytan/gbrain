@@ -908,7 +908,9 @@ describe('engine parity: pages', () => {
       const rest = await engine.listEntityKeyRows({ ...args, after: { source_id: first[0]!.source_id, slug: first[0]!.slug }, limit: 10 });
       expect([...first, ...rest].map((r) => r.slug)).toEqual(['companies/acme-example', 'people/alice-example']);
       expect(rest[0]!.keys).toEqual({ email: 'alice@example.com', emails: ['a@example.com'] });
-      return { first, rest };
+      expect([...first, ...rest].every(r => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(r.created_at))).toBe(true);
+      const untimed = (rows: typeof first) => rows.map(({ created_at: _at, page_id: _id, generation: _gen, ...r }) => r);
+      return { first: untimed(first), rest: untimed(rest) };
     },
   );
   parityTest(

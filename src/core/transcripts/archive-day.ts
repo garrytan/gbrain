@@ -19,7 +19,8 @@ import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
 import type { TranscriptFormat, TranscriptMessage } from './types.ts';
 import { transcriptFullId, transcriptSlugId } from './types.ts';
-import { renderPartContent, renderSessionParts, type RedactedSession, type RenderedPart } from './render.ts';
+import { renderPartContent, renderSessionParts, type RedactedSession, type RenderedPart, type SpeakerOwnerStamp } from './render.ts';
+import { SPEAKER_OWNER_KEY } from '../identity/speaker-owner.ts';
 
 export type ArchiveChatType = 'direct' | 'group' | 'room';
 
@@ -119,6 +120,8 @@ export interface ArchiveDayInput {
   readableBy?: string[];
   /** The embedding hold the page carries from its first write (archive_backfill, archive_open_day), so no embed runs before the hold row exists. */
   embeddingHold?: string;
+  /** GST-3216: stamp the day's speaker_owner marker (render.ts) when the session shows whose the user turns are. */
+  owner?: SpeakerOwnerStamp;
 }
 
 export interface ArchiveDayRender { baseSlug: string; parts: RenderedPart[]; messages: number }
@@ -132,7 +135,7 @@ export function renderArchiveDay(input: ArchiveDayInput): ArchiveDayRender {
     imperativesFlagged: flags ? slice.indexes.filter(i => flags[i]).length : 0,
     ...(flags ? { imperativeFlags: slice.indexes.map(i => flags[i] === true) } : {}),
   };
-  const rendered = renderSessionParts(sub, { sourcePath: '', layout: 'single', partTargetBytes: input.partTargetBytes });
+  const rendered = renderSessionParts(sub, { sourcePath: '', layout: 'single', partTargetBytes: input.partTargetBytes, ...(input.owner ? { owner: input.owner } : {}) });
   const label = conversationLabel(harness, input.scopeKey ?? conversationKey, input.channel);
   const baseSlug = archiveDayBaseSlug(harness, day, label, conversationKey);
   const timestamps = slice.messages.map(m => m.timestamp).filter(Boolean);
@@ -163,6 +166,7 @@ export function renderArchiveDay(input: ArchiveDayInput): ArchiveDayRender {
       ...(input.readableBy ? { readable_by: input.readableBy } : {}),
       transcript_import: { ...imported, layout: 'day', day },
       transcript_archive: archive,
+      ...(part.frontmatter[SPEAKER_OWNER_KEY] ? { [SPEAKER_OWNER_KEY]: part.frontmatter[SPEAKER_OWNER_KEY] } : {}),
     };
     return { ...part, slug, frontmatterId, frontmatter, content: renderPartContent(frontmatter, part.body) };
   });

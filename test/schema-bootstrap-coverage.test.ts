@@ -1313,6 +1313,9 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'persistence_consumers.capabilities',
   // GST-1582 (v291): migration-only like the PR B columns above, for the same reason.
   'persistence_requests.deferred_import_from',
+  // GST-3127 (v330): entity_identity_reviews is a migration-only table (v325; no CREATE TABLE in the schema blob)
+  // and no blob index, view or trigger reads evidence, so there is no forward reference; the chain adds it.
+  'entity_identity_reviews.evidence',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

@@ -47,6 +47,13 @@ const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_wr
  * v5 leave them out and every later version lists them; an attested call is refused them either way.
  */
 const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note']);
+/** Tool text v3 to v5 published before it changed, frozen: GST-3256 added phone numbers to whois. */
+export const V5_TOOL_TEXT: Record<string, { description: string; params: Record<string, string> }> = {
+  whois: {
+    description: 'Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.',
+    params: { query: "Email address or name, e.g. 'alice@acme-example.com'." },
+  },
+};
 /** Catalogue summaries v1 published before they changed, frozen. */
 const V1_SUMMARIES: Record<string, string> = {
   actor_not_attested: "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
@@ -171,9 +178,13 @@ function toolEntry(name: string, version: QmContractVersion) {
   if (!op) throw new Error(name + ' is not in the operation registry');
   const frozen = version === 1 ? V1_PARAMS[name] : version === 2 ? V2_PARAMS[name] : undefined;
   const params = Object.entries(op.params).filter(([k]) => !frozen || frozen.includes(k));
+  const text = version <= 5 ? V5_TOOL_TEXT[name] : undefined;
   return {
-    name, description: op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,
-    input_schema: { type: 'object', properties: Object.fromEntries(params.map(([k, v]) => [k, paramDefToSchema(v)])),
+    name, description: text?.description ?? op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,
+    input_schema: { type: 'object', properties: Object.fromEntries(params.map(([k, v]) => {
+      const schema = paramDefToSchema(v);
+      return [k, text?.params[k] ? { ...schema, description: text.params[k] } : schema];
+    })),
       required: params.filter(([, v]) => v.required).map(([k]) => k) },
   };
 }

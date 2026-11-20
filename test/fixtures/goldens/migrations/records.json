@@ -1,12 +1,11 @@
 {
   "golden": {
-    "count": 325,
+    "count": 326,
     "gaps": [
       17,
       18,
       19,
-      100,
-      330
+      100
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -5386,6 +5385,19 @@
         "version": 329
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "entity_identity_reviews_evidence",
+        "sql": {
+          "length": 76,
+          "sha256": "cfd412d76b130532bedb41fc3e13f315be7f0b853c7306cc73a339a4c1059524"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 330
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5740,6 +5752,7 @@
       327,
       328,
       329,
+      330,
       331
     ]
   },
