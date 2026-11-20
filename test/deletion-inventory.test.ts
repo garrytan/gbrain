@@ -81,6 +81,8 @@ describe('deletion inventory', () => {
       if (e.none) expect(['probed_reported', 'text_free_ledger', 'secret_material', 'no_memory_text']).toContain(e.none.reason);
     }
     // The stores purge sweeps on SQL keep a Rust keyspace each.
+    // M also keeps each page's sanitized search timeline text (pages.rs, page_search_timeline), so it shares the pages class.
+    expect(RUST_STORE_INVENTORY.find(e => e.tag === 'M')?.tables).toContain('pages');
     const kept = new Set(RUST_STORE_INVENTORY.flatMap(e => e.tables));
     for (const table of ['facts', 'takes', 'pages', 'content_chunks', 'page_versions', 'persistence_requests']) expect(kept.has(table)).toBe(true);
   });

@@ -48,8 +48,12 @@ describe('engine parity: graduation catalog', () => {
   });
 
   parityTest('the foreign keys read from the catalog; a store that keeps no list of them refuses by name', {
-    methods: ['listCatalogForeignKeys'] }, async (engine) => {
-    const fks = await foreignKeys(engine);
+    methods: ['listCatalogForeignKeys'], requires: 'raw_sql' }, async (engine) => {
+    const fks = await foreignKeys(engine).catch((e: unknown) => {
+      // A refusal must name raw_sql: the Rust engine serves 'schema', so a 'schema' refusal would contradict its capabilities.
+      expect(isCapabilityRefusal(e, 'raw_sql')).toBe(true);
+      throw e;
+    });
     expect(await engine.listCatalogForeignKeys()).toEqual([...fks]);
     const pageSource = fks.find(f => f.child === 'pages' && f.parent === 'sources');
     // Absolute, not only arm-vs-arm: two SQL arms that both answer nothing would otherwise agree.

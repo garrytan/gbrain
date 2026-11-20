@@ -293,7 +293,7 @@ const RUST_ROWS: readonly RustRow[] = [
   ['J', null, 'core', 'persistence_requests'],
   ['K', null, 'core', 'content_chunks'],
   ['L', null, 'core', 'links'],
-  ['M', null, 'core', 'owner_only_marks'],
+  ['M', null, 'core', 'owner_only_marks pages'],
   ['N', null, 'ontology', '', undefined, ['no_memory_text', 'no record is written under N: ontology dimension rows are facts rows under F']],
   ['O', null, 'core', 'links', 'index'],
   ['P', null, 'core', 'pages'],

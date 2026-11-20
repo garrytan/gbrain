@@ -971,7 +971,7 @@ export const RUST_ENGINE_MEMBERS = {
   // the engine graduation inventory's catalog reads (engine-sql/graduation-catalog.ts)
   listCatalogRelations: 'schema',
   readCatalogSchemaVersion: 'schema',
-  listCatalogForeignKeys: 'schema',
+  listCatalogForeignKeys: 'raw_sql',
   countMcpResolvedTakes: 'takes',
   listTakeSupersessionCandidates: 'takes',
   countZeroWeightWithTakes: 'salience',
