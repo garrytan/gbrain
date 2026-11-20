@@ -57,8 +57,10 @@ for (const kind of ['google', 'github']) for (const caller of ['explicit', 'job'
         // The connector's source read is the typed getSource member; the sync anchor checks before it read the same row, so
         // only the read from runConnectorSync is the boundary.
         else engine.getSource = async function(this: BrainEngine, id: string) {
+          // Read the stack before the await: after it, the Postgres engine's promise chain no longer names the caller.
+          const fromConnector = id === sourceId && Boolean(new Error().stack?.includes('runConnectorSync'));
           const row = await getSource.call(this, id);
-          if (id === sourceId && new Error().stack?.includes('runConnectorSync')) {
+          if (fromConnector) {
             reached = true; controller.abort(reason);
           }
           return row;
