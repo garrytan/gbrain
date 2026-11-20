@@ -453,7 +453,10 @@ export const cases: Case[] = [
         assert.equal(version.compiled_truth, 'Wrote the first program.');
         assert.equal((await brain.getVersions('people/ada')).length, 1);
         assert.deepEqual(await brain.resolveSlugs('people/ada'), ['people/ada']);
-        assert.deepEqual(await brain.resolveSlugs('ada'), [], 'resolveSlugs is exact only');
+        // A partial name resolves the way pg_trgm does on PGLite and Postgres: an exact slug first, else a similar
+        // title or a slug that contains the name (engine-sql/pages.ts resolveSlugs).
+        assert.deepEqual(await brain.resolveSlugs('ada'), ['people/ada'], 'resolveSlugs matches a partial slug, as PGLite does');
+        assert.deepEqual(await brain.resolveSlugs('zzz'), [], 'resolveSlugs finds nothing for a name no page has');
         assert.deepEqual(await brain.softDeletePage('people/ada'), { slug: 'people/ada' });
         assert.equal(await brain.readPageSnapshot('people/ada'), null);
         assert.equal(await brain.countPages(), 0);
