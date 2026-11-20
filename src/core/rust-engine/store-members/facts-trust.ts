@@ -3,7 +3,7 @@
  * (rust/crates/gbrain-store/src/facts/trust.rs and facts/saved_match.rs). A member not exported here refuses with
  * `engine_capability_missing`.
  *
- * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts` and `matchSavedFacts`. The pool's trust floor and
+ * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts`, `matchSavedFacts` and `countDerivedFactTaint`. The pool's trust floor and
  * flagged-fact suppression go to the store, which reads each fact's stamped `trust_tier` and its write-gate receipts. The
  * store answers the rest of the pool's read policy exactly when the world-only rule is the plain `world` one or a
  * widening the store models (fact-visibility.ts), the privacy policy is one the store models (private-provenance.ts),
@@ -14,7 +14,7 @@
  * `worldOnly` visibility (a private-facts grant) refuses.
  *
  * Refused (not exported): `readFactForOwnerAction`, `listStandingPreferences`,
- * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns
+ * `listLexicalContestCandidates` and `listRestatedPrivateCopies`. The store keeps the columns
  * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
  * `entity_ended` arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
@@ -100,3 +100,7 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
   }));
   return rows.map(row => withDates(row, ['at', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['matchSavedFacts']>>[number]);
 };
+
+/** How many facts carry `taint_inputs` in their write origin, and how many of those are external_untrusted. */
+export const countDerivedFactTaint: Member<'countDerivedFactTaint'> = async brain =>
+  storeCall({ member: 'countDerivedFactTaint' }, () => brain.countDerivedFactTaint());

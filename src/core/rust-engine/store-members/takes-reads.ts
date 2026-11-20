@@ -7,7 +7,7 @@
  * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
  * whose member pages, grants or lineage widen the policy.
  */
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead } from '../../engine-sql/takes-reads.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -30,6 +30,15 @@ export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num:
  * `fence_absent`, and the answer is none, as PGLite gives for a page whose fence generation is not held.
  */
 export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldFenceTakeRow[]> = async () => [];
+
+/** The store reads the page's takes by row number and joins the incoming rows as the SQL does; the arguments are checked first. */
+export const readTakePreimages: StoreMember<[read: TakePreimageRead], Array<{ preimage: TakePreimage; gone: boolean }>> = async (brain, read) => {
+  checkTakePreimageRead(read);
+  if (!read.gone.length && !read.incoming.length) return [];
+  return storeCall({ member: 'readTakePreimages' }, () => brain.readTakePreimages({
+    pageId: read.pageId, by: read.by, gone: [...read.gone], incoming: read.incoming.map(take => ({ ...take })),
+  }));
+};
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });
