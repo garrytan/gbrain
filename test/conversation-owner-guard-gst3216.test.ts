@@ -68,7 +68,7 @@ test('the owner line rides the window\'s user message; the system prompt is unch
 });
 
 describe('guardOwnerFact', () => {
-  const owner: ConversationOwner = { entity: OWNER, label: 'User' };
+  const owner: ConversationOwner = { entity: OWNER, also: ['network/owner-example'], label: 'User' };
   const seg = (speaker: string) => ({ messages: [{ speaker, timestamp: '2026-01-02T10:00:00Z', text: 'hello' }] });
   const fact = (attributed_to: 'user' | 'assistant' | 'other' | null) => ({ fact: 'x', entity_slug: OWNER as string | null, attributed_to, context: 'from page' });
   test('the owner\'s own claim needs a turn by the owner\'s label in the window', () => {
@@ -80,6 +80,14 @@ describe('guardOwnerFact', () => {
     expect(guardOwnerFact(fact('other'), owner, seg('Assistant'), false).entity_slug).toBe(OWNER);
     expect(guardOwnerFact(fact('assistant'), { ...owner, label: null }, seg('User'), false).entity_slug).toBeNull();
   });
+  test('a page that also counts as the owner (a directory entry) is guarded the same, and a kept fact moves to the owner entity', () => {
+    const listed = (attributed_to: 'user' | 'other') => ({ ...fact(attributed_to), entity_slug: 'network/owner-example' as string | null });
+    expect(guardOwnerFact(listed('user'), owner, seg('User'), false).entity_slug).toBe(OWNER);
+    expect(guardOwnerFact(listed('other'), owner, seg('Assistant'), false).entity_slug).toBe(OWNER);
+    expect(guardOwnerFact(listed('user'), owner, seg('Assistant'), false).entity_slug).toBeNull();
+    expect(guardOwnerFact(listed('other'), { ...owner, label: null }, seg('User'), false).entity_slug).toBeNull();
+  });
+
   test('a subject inferred from a name in the text never makes the owner, and other subjects pass', () => {
     expect(guardOwnerFact(fact('user'), owner, seg('User'), true).entity_slug).toBeNull();
     expect(guardOwnerFact({ ...fact('user'), entity_slug: 'people/bob-example' }, { ...owner, label: null }, seg('User'), true).entity_slug).toBe('people/bob-example');
@@ -136,6 +144,23 @@ for (const backend of testBackends()) describe(`[${backend}] conversation facts 
       { fact: 'The owner moved to Lisbon, again', entity_slug: OWNER, attributed_to: 'user' }]);
     expect(inputs.map(i => i.owner)).toEqual([{ label: 'User', entity: 'memory/members/alice-example' }]);
     expect(subjects(rows)).toEqual([['memory/members/alice-example', false], [OWNER, false]]);
+  });
+
+  test('the owner\'s email on directory pages and a contact card: no one picks a page, and none of them takes an unproven fact', async () => {
+    await addMember(engine, 'alice-example', { email: 'alice@example.com' });
+    await setOwner(engine, 'alice-example');
+    const listed = ['network/alice-example', 'cohorts/2026/alice-example', 'contacts/alice-example'];
+    for (const slug of listed) await importFromContent(engine, slug, ['---', 'type: person', 'title: Alice Example', 'email: alice@example.com', '---', '', 'A directory entry.', ''].join('\n'), { noEmbed: true, sourceId: 'default' });
+    const before = await engine.executeRaw<{ slug: string; content_hash: string }>('SELECT slug, content_hash FROM pages WHERE slug = ANY($1::text[]) ORDER BY slug', [listed]);
+    await transcript(session(true, 'alice-example'));
+    const marked = await extract(SESSION, [{ fact: 'The owner moved to Lisbon', entity_slug: 'network/alice-example', attributed_to: 'user' },
+      { fact: 'The owner is training for a marathon', entity_slug: 'cohorts/2026/alice-example', attributed_to: 'assistant' }]);
+    expect(inputs.map(i => i.owner)).toEqual([{ label: 'User', entity: 'memory/members/alice-example' }]);
+    expect(subjects(marked)).toEqual([['memory/members/alice-example', false], ['memory/members/alice-example', false]]);
+    await importFromContent(engine, MEETING, meeting, { noEmbed: true, sourceId: 'default' });
+    const unmarked = await extract(MEETING, [{ fact: 'The owner\'s car is a hatchback', entity_slug: 'contacts/alice-example', attributed_to: 'other' }]);
+    expect(subjects(unmarked)).toEqual([[null, true]]);
+    expect(await engine.executeRaw('SELECT slug, content_hash FROM pages WHERE slug = ANY($1::text[]) ORDER BY slug', [listed])).toEqual(before);
   });
 
   test('the same transcript with no marker, or a marker a remote caller wrote: speaker unknown', async () => {

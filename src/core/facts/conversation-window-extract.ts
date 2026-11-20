@@ -16,7 +16,7 @@ import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVers
 import { CONVERSATION_ENTITY_HINTS_CAP } from './conversation-entity-hints.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './conversation-publication.ts';
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
-import { conversationOwner, guardOwnerFact } from './conversation-owner-guard.ts';
+import { conversationOwner, guardOwnerFact, isOwnerSubject } from './conversation-owner-guard.ts';
 import { isNullLikeEntity } from './write-single.ts';
 import type { ConversationSegment } from './conversation-types.ts';
 import { renderSegmentForExtraction, segmentOf } from './conversation-windows.ts';
@@ -98,7 +98,7 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
       + `entity resolution failed for ${JSON.stringify(raw)}: ${message}; preserving fact without an entity target\n`);
   }, unbacked);
   // GST-3216: the owner entity is the one the owner line names, whether or not its page exists yet; the guard below decides.
-  for (const [i, raw] of raws.entries()) if (raw === owner.entity) extracted[i] = { ...extracted[i]!, entity_slug: owner.entity };
+  for (const [i, raw] of raws.entries()) if (isOwnerSubject(owner, raw)) extracted[i] = { ...extracted[i]!, entity_slug: raw };
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
   const inferred = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764

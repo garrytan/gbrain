@@ -62,7 +62,7 @@ for (const kind of testBackends()) {
     test('no identifiers at all: the reserved page, with nothing to conflict', async () => {
       await person(engine, 'people/alice-example', 'Alice Example', { email: OWNER_MAIL });
       const id = await ownerIdentity(engine);
-      expect(id).toEqual({ member: null, identifiers: [], entity: { slug: RESERVED_OWNER_SLUG, source_id: null, basis: 'reserved_page' }, conflicts: [], skipped_sources: [] });
+      expect(id).toEqual({ member: null, identifiers: [], entity: { slug: RESERVED_OWNER_SLUG, source_id: null, basis: 'reserved_page' }, pages: [], conflicts: [], skipped_sources: [] });
     });
 
     test('an owner member falls back to its own member page and carries its email and links', async () => {
@@ -108,13 +108,24 @@ for (const kind of testBackends()) {
       }
     });
 
-    test('several pages carrying an owner email are a conflict and fall back', async () => {
+    test('several pages carrying an owner email all count as the owner, and the entity falls back with no conflict', async () => {
       await googleSource(engine, 'mail-a', OWNER_MAIL);
       await person(engine, 'people/alice-example', 'Alice Example', { email: OWNER_MAIL });
       await person(engine, 'people/alice-old', 'Alice Old', { emails: ['old@example.com', OWNER_MAIL] });
       const id = await ownerIdentity(engine);
       expect(id.entity.basis).toBe('reserved_page');
-      expect(id.conflicts).toEqual([{ kind: 'several_pages', pages: [{ slug: 'people/alice-example', source_id: 'default' }, { slug: 'people/alice-old', source_id: 'default' }] }]);
+      expect(id.pages).toEqual([{ slug: 'people/alice-example', source_id: 'default' }, { slug: 'people/alice-old', source_id: 'default' }]);
+      expect(id.conflicts).toEqual([]);
+    });
+
+    test('an owner member whose email sits on directory pages and a contact card: the member page, no one picks', async () => {
+      await addMember(engine, 'owner-example', { email: OWNER_MAIL });
+      await setOwner(engine, 'owner-example');
+      for (const slug of ['network/alice-example', 'cohorts/2026/alice-example', 'contacts/alice-example']) await person(engine, slug, 'Alice Example', { email: OWNER_MAIL });
+      const id = await ownerIdentity(engine);
+      expect(id.entity).toEqual({ slug: 'memory/members/owner-example', source_id: null, basis: 'member_page' });
+      expect(id.pages.map(p => p.slug)).toEqual(['cohorts/2026/alice-example', 'contacts/alice-example', 'network/alice-example']);
+      expect(id.conflicts).toEqual([]);
     });
 
     test('the owner picture follows edits at once (no cache)', async () => {
@@ -146,7 +157,7 @@ for (const kind of testBackends()) {
       await person(engine, 'people/alice-example', 'Alice Example', { email: OWNER_MAIL });
       await person(engine, 'people/alice-work', 'Alice Work', { email: OWNER_MAIL });
       const id = await ownerIdentity(engine);
-      expect(id.conflicts).toEqual([{ kind: 'several_pages', pages: [{ slug: 'people/alice-example', source_id: 'default' }, { slug: 'people/alice-work', source_id: 'default' }] }]);
+      expect(id.pages).toEqual([{ slug: 'people/alice-example', source_id: 'default' }, { slug: 'people/alice-work', source_id: 'default' }]);
     }, 60_000);
 
     test('an unloadable schema pack is reported, not answered silently', async () => {

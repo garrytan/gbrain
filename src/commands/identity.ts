@@ -30,11 +30,8 @@ export function renderIdentity(id: OwnerIdentity): string {
   for (const i of id.identifiers) {
     lines.push(`  ${i.kind === 'member_link' ? `${i.system} id` : 'email'} ${i.value}  (${i.kind === 'member_email' ? 'member email' : i.kind === 'google_account' ? `Google source ${i.source_id}` : 'linked id'})`);
   }
-  for (const c of id.conflicts) {
-    lines.push(c.kind === 'identifier_shared'
-      ? `Conflict: ${c.value} is claimed by ${c.members.join(' and ')}, so it counts for neither.`
-      : `Conflict: ${c.pages.length} person pages carry an owner email (${c.pages.map(p => p.slug).join(', ')}), so none is used; keep the email on one page.`);
-  }
+  for (const c of id.conflicts) lines.push(`Conflict: ${c.value} is claimed by ${c.members.join(' and ')}, so it counts for neither.`);
+  if (id.pages.length > 1) lines.push(`Also the owner: ${id.pages.map(p => p.slug).join(', ')} carry an owner email. Each counts as the owner, facts about the owner are filed on ${id.entity.slug}, and none of these pages is changed.`);
   for (const s of id.skipped_sources) {
     lines.push(`Not counted: Google source ${s.source_id} (${s.reason === 'bound_to_other_member' ? 'it belongs to another member' : 'it is bound to no member on a brain with several people; bind it with gbrain access member source add <member> <source>'}).`);
   }

@@ -10,7 +10,8 @@
  *
  * The owner's entity is the one live person page whose frontmatter email or emails names an owner identifier, matched
  * exactly (never by name); otherwise the member's own page (memory/members/<member>), or memory/owner on a brain with no
- * owner member. Several matching pages are a conflict and fall back the same way.
+ * owner member. With several matching pages (a network or cohort directory entry beside a contact card) the entity falls
+ * back the same way and every one of them is listed in `pages` as the owner too, so no one has to pick a page.
  *
  * Trusted local callers only: identifiers are personal data and no MCP operation reads this.
  */
@@ -27,15 +28,19 @@ export type OwnerIdentifierKind = 'member_email' | 'google_account' | 'member_li
 export interface OwnerIdentifier { kind: OwnerIdentifierKind; value: string; source_id?: string; system?: string }
 export type OwnerEntityBasis = 'identifier_page' | 'member_page' | 'reserved_page';
 export interface OwnerEntity { slug: string; source_id: string | null; basis: OwnerEntityBasis }
-export type OwnerIdentityConflict =
-  | { kind: 'identifier_shared'; value: string; members: string[] }
-  | { kind: 'several_pages'; pages: Array<{ slug: string; source_id: string }> };
+export type OwnerIdentityConflict = { kind: 'identifier_shared'; value: string; members: string[] };
 export interface SkippedSource { source_id: string; reason: 'bound_to_other_member' | 'unbound_on_shared_brain' }
 export interface OwnerIdentity {
   /** The member this identity is for: the requested member, else access.owner_member, else null (the local owner). */
   member: string | null;
   identifiers: OwnerIdentifier[];
   entity: OwnerEntity;
+  /**
+   * Every live person page that carries an owner identifier (a network or cohort directory entry, a contact card).
+   * Each counts as the owner. With exactly one it is the owner page; with several, the owner page is the fallback
+   * (the member page, else memory/owner), so nobody has to pick one, and none of them is merged or edited.
+   */
+  pages: Array<{ slug: string; source_id: string }>;
   conflicts: OwnerIdentityConflict[];
   skipped_sources: SkippedSource[];
   /** Set when the schema pack's person types could not be loaded, so no person page was searched and the entity is the fallback. */
@@ -118,6 +123,7 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
     : { slug: RESERVED_OWNER_SLUG, source_id: null, basis: 'reserved_page' };
   const emails = [...new Set(identifiers.filter(i => i.kind !== 'member_link').map(i => i.value))].sort();
   let entity = fallback;
+  let pages: Array<{ slug: string; source_id: string }> = [];
   let degraded: OwnerIdentity['degraded'];
   if (emails.length) {
     const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
@@ -128,11 +134,10 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
       sourceIds, types: resolved.filter, emailsOnly: true, limit: CANDIDATE_CAP,
     });
     const wanted = new Set(emails);
-    const pages = (await engine.executeRaw<ExactIdentityRow>(text, params))
+    pages = (await engine.executeRaw<ExactIdentityRow>(text, params))
       .filter(r => frontmatterEmails(r).some(e => wanted.has(e)))
       .map(r => ({ slug: r.slug, source_id: r.source_id }));
     if (pages.length === 1) entity = { ...pages[0]!, basis: 'identifier_page' };
-    else if (pages.length > 1) conflicts.push({ kind: 'several_pages', pages });
   }
-  return { member, identifiers, entity, conflicts, skipped_sources: skipped, ...(degraded ? { degraded } : {}) };
+  return { member, identifiers, entity, pages, conflicts, skipped_sources: skipped, ...(degraded ? { degraded } : {}) };
 }
