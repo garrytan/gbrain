@@ -13,6 +13,13 @@ use gbrain_store::seed::SeedRow;
 
 #[napi]
 impl Brain {
+    /// `seedPlan()`: the relations `importRelation` takes, in import order, each with the primary
+    /// key columns the caller reads the table by: `[{ relation, key }]`.
+    #[napi]
+    pub fn seed_plan<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |_| Ok(gbrain_store::seed::plan()))
+    }
+
     /// `importRelation(seedId, relation, rows)`: resolves `{ imported, skipped, dropped,
     /// unmapped_columns, losses }` for the batch.
     #[napi]

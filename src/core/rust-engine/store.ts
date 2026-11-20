@@ -31,11 +31,19 @@ export interface RustStore {
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
    */
   importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult>;
+  /** The relations `importRelation` takes, in import order, with the key columns to read each by. */
+  seedPlan(): Promise<SeedRelationPlan[]>;
   close(): Promise<void>;
 }
 
 /** One primary row: column name to its `::text` value, or null. */
 export type SeedRow = Record<string, string | null>;
+
+/** One relation of the seed plan: the primary table and its primary key columns. */
+export interface SeedRelationPlan {
+  relation: string;
+  key: string[];
+}
 
 /** What one `importRelation` batch did. `losses` counts values the store could not keep, by kind. */
 export interface SeedImportResult {
@@ -64,6 +72,13 @@ export async function openRustStore(addon: object, databasePath: string): Promis
         return await brain.importRelation(seedId, relation, rows) as SeedImportResult;
       } catch (error) {
         throw mapStoreError(error, { member: 'importRelation' });
+      }
+    },
+    async seedPlan() {
+      try {
+        return await brain.seedPlan() as SeedRelationPlan[];
+      } catch (error) {
+        throw mapStoreError(error, { member: 'seedPlan' });
       }
     },
     async close() {

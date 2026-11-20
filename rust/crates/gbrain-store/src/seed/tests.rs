@@ -6,10 +6,13 @@ use super::*;
 use crate::chunks::ChunkRecord;
 use crate::embeddings::{InvalidateOptions, StaleChunkOptions};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, PAGE_NOT_FOUND};
+use crate::facts::{md5_hex, read_fact};
+use crate::links::LinkRecord;
 use crate::links::LinkScope;
 use crate::pages::ReadScope;
 use crate::test_support::store;
 use crate::timeline::TimelineOptions;
+use serde_json::json;
 
 const SEED: &str = "seed-1";
 const REV: &str = "11111111-1111-4111-8111-111111111111";
@@ -730,4 +733,17 @@ fn a_projection_job_without_a_primary_time_keeps_the_seed_time_and_is_a_loss() {
     // A projected page has no job, so nothing is lost.
     let r = import(&s, "pages", vec![page_row("8", "notes/c")]);
     assert!(r.losses.is_empty(), "{:?}", r.losses);
+}
+
+#[test]
+fn the_plan_lists_every_relation_once_in_import_order() {
+    let plan = plan();
+    let names: Vec<_> = plan.iter().map(|p| p.relation).collect();
+    assert_eq!(&names[..3], ["sources", "config", "pages"]);
+    let unique: BTreeSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), names.len());
+    assert!(plan.iter().all(|p| !p.key.is_empty()));
+    for name in names {
+        assert!(relation_spec(name).is_ok());
+    }
 }
