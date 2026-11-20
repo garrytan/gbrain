@@ -28,7 +28,10 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { OpenLoopUpsert } from '../src/core/loops/loops-store.ts';
+import { MUTE_RECHECK, MUTED, type OpenLoopUpsert } from '../src/core/loops/loops-store.ts';
+import { ADMISSION_SOURCE_SQL as MASTER_ADMISSION_SQL } from '../src/core/persistence/preadmit-cache.ts';
+import { ADMISSION_SOURCE_SQL as MEMBER_ADMISSION_SQL } from '../src/core/engine-sql/write-misc.ts';
+import { GUEST_SOURCES_HIDDEN_SQL } from '../src/core/guests/note.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -63,6 +66,49 @@ const MASTER_SAMPLE_LIMIT = 10;
 const MASTER_MARKUP_COUNT = `SELECT count(*)::int AS n FROM timeline_entries t JOIN pages p ON p.id=t.page_id
       WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND t.event_page_id IS NULL
         AND (t.summary LIKE '%<!--%' OR t.summary LIKE '%-->%' OR t.source LIKE '%<!--%' OR t.source LIKE '%-->%')`;
+/** src/core/timeline-extract.ts:553 (pruneTimelineOrphans), with and without the source filter; master numbered `$3` for the source and `$2` for the limit. */
+const MASTER_ORPHANS = (withSource: boolean) => `SELECT p.id, p.slug, p.source_id, p.compiled_truth, p.timeline, p.body_storage, p.knowledge_revision::text AS revision FROM pages p
+        WHERE p.id > $1 AND p.deleted_at IS NULL${withSource ? ' AND p.source_id = $3' : ''}
+          AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id AND t.event_page_id IS NULL)
+        ORDER BY p.id LIMIT $2`;
+/** The source-state read master's callers sent (admission.ts:153, connector-sync.ts:304). */
+const MASTER_SOURCE_STATE = 'SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1';
+/** src/core/loops/loops-store.ts:127 (upsertOpenLoop), with `${MUTE_RECHECK}` and `${MUTED}` interpolated as master did. */
+const MASTER_UPSERT_LOOP = `INSERT INTO open_loops (
+       source_id, dedup_key, loop_type, counterparty_slug, counterparty_email,
+       summary, evidence, thread_id, page_slug, due_at, detector, confidence,
+       fact_id, last_activity_at, opened_at, counterparty_source_id
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9, $10::timestamptz, $11, $12,
+       $13, COALESCE($14::timestamptz, now()), COALESCE($15::timestamptz, now()), $16
+     )
+     ON CONFLICT (source_id, dedup_key) DO UPDATE SET
+       opened_at = CASE WHEN open_loops.status = 'open'
+                        THEN LEAST(open_loops.opened_at, EXCLUDED.opened_at)
+                        ELSE EXCLUDED.opened_at END,
+       status = 'open',
+       loop_type = EXCLUDED.loop_type,
+       counterparty_slug = COALESCE(EXCLUDED.counterparty_slug, open_loops.counterparty_slug),
+       counterparty_source_id = CASE WHEN EXCLUDED.counterparty_slug IS NULL
+                                     THEN open_loops.counterparty_source_id
+                                     ELSE EXCLUDED.counterparty_source_id END,
+       counterparty_email = COALESCE(EXCLUDED.counterparty_email, open_loops.counterparty_email),
+       summary = EXCLUDED.summary,
+       evidence = EXCLUDED.evidence,
+       page_slug = COALESCE(EXCLUDED.page_slug, open_loops.page_slug),
+       due_at = COALESCE(EXCLUDED.due_at, open_loops.due_at),
+       confidence = EXCLUDED.confidence,
+       fact_id = COALESCE(EXCLUDED.fact_id, open_loops.fact_id),
+       last_activity_at = GREATEST(open_loops.last_activity_at, EXCLUDED.last_activity_at),
+       closed_at = NULL,
+       closed_by = NULL,
+       updated_at = now()
+     WHERE (open_loops.status = 'open'
+            OR EXCLUDED.last_activity_at > open_loops.last_activity_at
+            OR open_loops.closed_by = '${MUTE_RECHECK}')
+       AND (open_loops.closed_by IS DISTINCT FROM '${MUTED}'
+            OR open_loops.counterparty_email IS DISTINCT FROM EXCLUDED.counterparty_email)
+     RETURNING id, (xmax = 0) AS created`;
 /** src/core/loops/loops-store.ts:263 (listOpenLoops); `LIMIT ${limit}` with the clamped limit spliced in, and no `$7`. */
 function masterListLoopsSql(limit: number): string {
   return `SELECT * FROM open_loops
@@ -181,6 +227,38 @@ describe('the Postgres members send master\'s statement text (no database)', () 
       { text: MASTER_HAS_EXTRACTED, params: ['src-a', 7] },
       { text: MASTER_MAX_ENTRY, params: [] },
       { text: MASTER_NOTIFIER_COVERED, params: [] },
+    ]);
+  });
+
+  test('the open-loop members send master\'s text: the upsert and its guard exactly, the list with its limit bound, the card read with the tie-break and a spliced limit', async () => {
+    const { engine, sent } = recording();
+    await engine.upsertOpenLoop(loop({ counterpartySlug: 'people/alice-example', counterpartySourceId: 'work', pageSlug: 'emails/a', factId: 7, dueAt: T3, confidence: 0.5 }));
+    await engine.listOpenLoops({ sourceIds: ['a', 'b'], status: 'open', limit: 5000 });
+    await engine.readEntityOpenLoops('people/alice-example', 'work', 10);
+    const [upsert, followUp, list, card] = sent();
+    // The fake answers no rows, so the upsert's guard-held path sends the follow-up id read, as master did.
+    expect(upsert!.text).toBe(MASTER_UPSERT_LOOP);
+    expect(upsert!.params).toEqual(['default', 'thread:a', 'unanswered_inbound', 'people/alice-example', null, 'first', JSON.stringify([{ message_id: 'm1', quote: 'hi' }]), 't-a', 'emails/a', T3, 'deterministic_thread', 0.5, 7, T1, T1, 'work']);
+    expect(followUp).toEqual({ text: 'SELECT id FROM open_loops WHERE source_id = $1 AND dedup_key = $2', params: ['default', 'thread:a'] });
+    // Differences from master, by design: the limit binds as $7 instead of being spliced in.
+    expect(list!.text).toBe(masterListLoopsSql(1000).replace('LIMIT 1000', 'LIMIT $7'));
+    expect(list!.params).toEqual([...masterListBinds({ sourceIds: ['a', 'b'], status: 'open' }), 1000]);
+    // and the card read adds `id DESC` after the activity order; its limit is the spliced literal as before.
+    expect(card!.text).toBe(masterEntityLoopsSql(10).replace('ORDER BY last_activity_at DESC\n', 'ORDER BY last_activity_at DESC, id DESC\n'));
+    expect(card!.params).toEqual(['people/alice-example', 'work']);
+  });
+
+  test('the admission read sends master\'s text byte for byte, privacy probe included, and the source-state read the callers\' text', async () => {
+    expect(MEMBER_ADMISSION_SQL).toBe(MASTER_ADMISSION_SQL);
+    expect(MASTER_ADMISSION_SQL).toContain(GUEST_SOURCES_HIDDEN_SQL);
+    const { engine, sent } = recording();
+    await engine.readAdmissionSource('src-a');
+    await engine.readSourceState('src-a');
+    await engine.readSourceState('src-a', { lock: 'share' });
+    expect(sent()).toEqual([
+      { text: MASTER_ADMISSION_SQL, params: ['src-a'] },
+      { text: MASTER_SOURCE_STATE, params: ['src-a'] },
+      { text: `${MASTER_SOURCE_STATE} FOR SHARE`, params: ['src-a'] },
     ]);
   });
 
@@ -381,6 +459,53 @@ for (const kind of testBackends()) {
       }
       expect(await engine.countTimelineCommentMarkupRows(['default'])).toBe(3); // seg-one's summary, plain's source and plain's summary; the soft-deleted and event rows left out
       expect(await engine.countTimelineCommentMarkupRows(['work'])).toBe(1);
+    });
+
+    test('readAdmissionSource answers what the admission statement answered: unknown, plain, pathed, archived and guest sources', async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config, local_path) VALUES ('pathed', 'pathed', '{"kind":"repo","role":"writer"}'::jsonb, '/work/p')`);
+      await engine.executeRaw(`INSERT INTO sources (id, name, config, archived) VALUES ('old', 'old', '{}'::jsonb, true)`);
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('guests', 'guests', '{"kind":"guest"}'::jsonb)`);
+      await engine.executeRaw(`INSERT INTO guest_sources (source_id, writers) VALUES ('guests', ARRAY['member:m1']::text[])`);
+      const seen: unknown[] = [];
+      for (const id of ['default', 'pathed', 'old', 'guests', 'nowhere']) {
+        const [old] = await engine.executeRaw<Record<string, unknown>>(MASTER_ADMISSION_SQL, [id]);
+        const now = await engine.readAdmissionSource(id);
+        expect(now, id).toEqual((old ?? null) as never);
+        seen.push(now && { archived: now.archived, writers: now.guest_writers });
+      }
+      expect(seen).toEqual([{ archived: false, writers: null }, { archived: false, writers: null }, { archived: true, writers: null }, { archived: false, writers: ['member:m1'] }, null]);
+    });
+
+    test('readSourceState answers what the callers\' statement answered: unknown, plain, pathed, archived', async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config, local_path) VALUES ('pathed', 'pathed', '{"kind":"repo"}'::jsonb, '/work/p')`);
+      await engine.executeRaw(`INSERT INTO sources (id, name, config, archived) VALUES ('old', 'old', '{"a":1}'::jsonb, true)`);
+      for (const id of ['default', 'pathed', 'old', 'nowhere']) {
+        const [old] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; config: unknown }>(MASTER_SOURCE_STATE, [id]);
+        const config = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
+        const now = await engine.readSourceState(id);
+        expect(now, id).toEqual((old ? { ...old, config: config(old.config) } : null) as never);
+        expect(await engine.readSourceState(id, { lock: 'share' }), id).toEqual(now as never);
+      }
+    });
+
+    test('listTimelineOrphanPages answers what timeline-extract.ts asked: live pages after the id with own rows, by id, within the limit and source', async () => {
+      const ids = await seedTimeline();
+      const cases: Array<{ afterId: number; limit: number; sourceId?: string }> = [
+        { afterId: 0, limit: 10 }, { afterId: 0, limit: 2 }, { afterId: ids.seg1, limit: 10 }, { afterId: 0, limit: 10, sourceId: 'work' },
+        { afterId: 0, limit: 10, sourceId: 'default' }, { afterId: 0, limit: 10, sourceId: 'nowhere' },
+      ];
+      const answers: number[] = [];
+      for (const opts of cases) {
+        const params: unknown[] = [opts.afterId, opts.limit];
+        if (opts.sourceId) params.push(opts.sourceId);
+        const old = await engine.executeRaw<Record<string, unknown>>(MASTER_ORPHANS(Boolean(opts.sourceId)), params);
+        const now = await engine.listTimelineOrphanPages(opts);
+        const shape = (rows: ReadonlyArray<Record<string, unknown>>) => rows.map(r => ({ ...r, id: Number(r.id) }));
+        expect(shape(now as never)).toEqual(shape(old));
+        answers.push(now.length);
+      }
+      // plain, seg-one, seg-two and the soft-deleted page's row: live pages only (the event-only page's row is an event row).
+      expect(answers).toEqual([3, 2, 1, 1, 2, 0]);
     });
 
     test('listOpenLoops answers what loops-store.ts asked, for every filter and limit', async () => {
