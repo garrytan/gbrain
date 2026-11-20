@@ -99,7 +99,7 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     : `pages p WHERE p.slug=$1${and}`;
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
     SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${candidates}
-    ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
+    ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id COLLATE "C" ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,

@@ -166,7 +166,7 @@ export interface WhoCanReadEntry {
 /** Who may read `slug` remotely: its normalized readers, privacy and the enabled members those readers admit. */
 export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: string): Promise<WhoCanReadEntry[]> {
   const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null }>(
-    `SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
+    `SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id COLLATE "C"`,
     sourceId ? [slug, sourceId] : [slug]);
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');

@@ -210,7 +210,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
   let sourceId = sourceIdFlag;
   if (!sourceId) {
     const rows = await engine.executeRaw<{ source_id: string }>(
-      `SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id`,
+      `SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"`,
       [slug],
     );
     if (rows.length > 1) {

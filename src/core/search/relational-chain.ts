@@ -326,7 +326,7 @@ export async function resolveChainAnchors(
   const params: unknown[] = [slug];
   const filter = pageReadFilter('p', policy, params, true);
   const rows = await engine.executeRaw<{ id: number; source_id: string }>(
-    `SELECT p.id, p.source_id FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id`, params);
+    `SELECT p.id, p.source_id FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id COLLATE "C"`, params);
   return rows.map(r => ({ page_id: Number(r.id), slug, source_id: r.source_id }));
 }
 
