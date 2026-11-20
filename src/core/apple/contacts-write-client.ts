@@ -65,7 +65,7 @@ function safeFile(path: string, what: string, refuse: (why: string) => Error): s
 /** The owner signing key from its 0600 file. Never puts the seed in an error. */
 export function readOwnerKey(path: string): { keyName: string; privateKey: KeyObject } {
   const refuse = (why: string) => appleContactsError('apple_contacts_owner_key_file', 'Apple Contacts owner writes: ' + why + ' Nothing was changed.',
-    'Put {"key_name":"<name the Mac knows>","seed":"<32-byte Ed25519 seed, base64url>"} in a chmod 600 file, run gbrain config set apple_contacts.owner_key_file <path>, and on the Mac: gbrain-apple-helper contacts-write key add --name <name> --public-key-file <its public key>');
+    'On the Mac, register the public half: gbrain-apple-helper contacts-write key add --name <name> --public-key-file <its public key>. Then put {"key_name":"<that name>","seed":"<32-byte Ed25519 seed, base64url>"} in a chmod 600 file and run gbrain config set apple_contacts.owner_key_file <path>');
   let parsed: { key_name?: unknown; seed?: unknown } = {};
   try { parsed = JSON.parse(safeFile(path, 'owner key file', refuse)); } catch (error) { if ((error as { code?: string }).code) throw error; throw refuse('the owner key file is not JSON.'); }
   const seed = typeof parsed.seed === 'string' ? Buffer.from(parsed.seed, 'base64url') : Buffer.alloc(0);
