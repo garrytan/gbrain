@@ -78,9 +78,8 @@ and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps wri
 source binding, worktree refresh and derived generation rows, but nothing on this engine yet writes the ones these reads
 join. The engine holds `managed_persistence` back (`store-capabilities.ts` `HELD_FOR_CALLERS`), so a write to a
 bound worktree refuses at admission and no refresh, request-recovery or derived-generation writer runs
-(`gbrain sources refresh` refuses `raw_sql`). A remote write that would queue a mention-links effect refuses
-`raw_sql` at admission too (`requireRawSqlPublication`): the links effect and a finished batch's re-arm still read
-through raw SQL. Each part of a
+(`gbrain sources refresh` refuses `raw_sql`). A remote write that queues a mention-links effect is admitted: the
+links effect and a finished batch's re-arm are store members ([remote-links.md](remote-links.md)). Each part of a
 read that joins those rows still gives its empty answer below; a read that must see a worktree-bound request is an
 open item of the capability flip, not served yet:
 

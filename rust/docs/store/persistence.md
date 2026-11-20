@@ -368,6 +368,10 @@ A `null` token matches no row.
 | `requeueEffectRow` | `queued` after `delayMs` with the new data and reason | `requeueEffectRow` |
 | `parkEffectRow`, `failEffectRow` | `failed` with the new data (`targets_parked`) or the reason | `parkEffectRow`, `failEffectRow` |
 
+`brain.rearmLinksEffects({ sourceId, requestIds, slugs })` queues again, once each, the `links` effects
+of requests published together, so a finished batch links pages written in the same batch; see
+[remote-links.md](remote-links.md).
+
 `brain.readMirrorGateRows(requestIds)` resolves `{ request_id, state, data }` for each withdrawal mirror
 of the requests that is not committed or that has published. `brain.hasRearmableTargets(requestIds, code)`
 resolves whether a Git or embedding effect of the requests, `queued` or `failed`, unclaimed, not

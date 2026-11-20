@@ -18,8 +18,8 @@
  *    A put_pages batch with no worktree writes every page on every arm. A worktree-bound put_page writes the page and
  *    its file where managed_persistence is reported, and refuses by name at admission (`engine_capability_missing`,
  *    managed_persistence), with no counter charge, no page and no file, where it is not (the Rust arm).
- *    A remote put_page admission, alone or grouped, is admitted where raw SQL runs and refuses `raw_sql` by name with no
- *    row and no charge where it does not: its publication queues a mention-links effect that still reads through raw SQL.
+ *    A remote put_page admission, alone or grouped, is admitted on every arm: its publication queues a mention-links
+ *    effect, and that effect reads and writes through typed engine members (engine-sql/remote-links.ts).
  *  - Regression: each site sent SQL through executeRaw. On the Rust engine that refused raw_sql, so the store held both
  *    capabilities back (HELD_FOR_CALLERS) and a Rust brain had no write journal. Fail-first: on the parent head
  *    524768a179 every case fails on the Rust arm, at the capability check or at a member the engine did not have, and
@@ -28,8 +28,8 @@
  *    raw SQL in preparation and ends `failed` with a request row (engine_capability_missing raw_sql). Before the group
  *    insert was one store write, the later-item case kept the first item's row on Rust; before the replay read folded
  *    case, the mixed-case read returned one row twice; before the window start was checked, a day count of -1e100
- *    overflowed and refused as internal_error. Without the remote admission gate (rust-engine/errors.ts `requireRawSqlPublication`),
- *    the Rust arm admitted both remote cases (`rawSql: false`), whose links effect would then meet raw SQL in publication.
+ *    overflowed and refused as internal_error. While the links effect read through raw SQL, the Rust arm refused both
+ *    remote admissions (`engine_capability_missing`, raw_sql) with no row and no charge.
  *  - Why existing coverage misses it: the owner and admission parity cases admit one write at a time with no managed
  *    worktree; nothing admitted a group, read the owner binding, listed a recovery row, or read the gate evidence.
  *  - Seam: none. Real engines and the real sites; each case runs under its own GBRAIN_HOME. Generated ids and paths are
@@ -283,9 +283,8 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
     }
   }));
   for (const grouped of [false, true]) {
-    parityTest(`a remote ${grouped ? 'grouped ' : ''}put_page admission is admitted where raw SQL runs, and refuses by name with no row where it does not`, {
+    parityTest(`a remote ${grouped ? 'grouped ' : ''}put_page admission is admitted on every arm`, {
       methods: ['readWriteRequestsByRequestIds', 'readCounterRows'],
-      requires: 'raw_sql',
       timeout: 60_000,
     }, async (engine) => withHome(async () => {
       await registerLocalWriter(engine, 'cli');
@@ -299,21 +298,12 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
         authority: { ...page.admission.authority, principal: remote, remote: true, autoLinkTrusted: false } }));
       const principal = admissions[0]!.principal;
       const charged = await counterText(engine);
-      try {
-        const rows = grouped ? await admitBatch(pages[0]!.ctx, 'parity-remote-batch', admissions) : [await admitWrite(engine, admissions[0]!)];
-        const stored = await engine.readWriteRequestsByRequestIds(principal.kind, principal.id, ids);
-        // Admitted only where the links effect can run: its publication reads through raw SQL (effect-links.ts).
-        const answers = { rawSql: engine.capabilities.has('raw_sql'), states: rows.map(row => row.state), remote: rows.map(row => row.authority?.remote), stored: stored.length };
-        expect(answers).toEqual({ rawSql: true, states: ids.map(() => 'queued'), remote: ids.map(() => true), stored: ids.length });
-        return answers;
-      } catch (e) {
-        // The refusing arm: admission refused before it read or wrote, so no row and no charge exist.
-        const err = e as { code?: string; message?: string };
-        expect({ code: err.code, names: /raw_sql/.test(String(err.message)) && /mention-links/.test(String(err.message)),
-          rows: (await engine.readWriteRequestsByRequestIds(principal.kind, principal.id, ids)).length, chargeKept: await counterText(engine) === charged })
-          .toEqual({ code: 'engine_capability_missing', names: true, rows: 0, chargeKept: true });
-        throw e;
-      }
+      const rows = grouped ? await admitBatch(pages[0]!.ctx, 'parity-remote-batch', admissions) : [await admitWrite(engine, admissions[0]!)];
+      const stored = await engine.readWriteRequestsByRequestIds(principal.kind, principal.id, ids);
+      const answers = { states: rows.map(row => row.state), remote: rows.map(row => row.authority?.remote), stored: stored.length,
+        charged: await counterText(engine) !== charged };
+      expect(answers).toEqual({ states: ids.map(() => 'queued'), remote: ids.map(() => true), stored: ids.length, charged: true });
+      return answers;
     }));
   }
 });

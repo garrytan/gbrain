@@ -624,9 +624,7 @@ src/core/persistence/detached-pages.ts	execute_raw	4
 src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
-src/core/persistence/effect-facts.ts	execute_raw	7
-src/core/persistence/effect-journal.ts	execute_raw	8
-src/core/persistence/effect-links.ts	execute_raw	8
+src/core/persistence/effect-journal.ts	execute_raw	6
 src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7

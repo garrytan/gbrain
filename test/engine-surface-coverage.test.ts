@@ -190,6 +190,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'readInlinePageRegions', 'readStoredPageTier',
   // Page visibility guards of a remote page write (engine-sql/page-visibility.ts).
   'readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence',
+  // The remote links effect and a finished batch's re-arm (engine-sql/remote-links.ts).
+  'setEffectTransactionLimits', 'readOwnedLinks', 'deleteOwnedLinks', 'readLinkTargetPages', 'rearmLinksEffects',
+  // The facts backstop effect's extraction reads (engine-sql/facts-backstop.ts).
+  'hasPendingFactsExtraction', 'hasCompletedFactsExtraction',
   // The large-page write guard's stored body size read (engine-sql/large-page.ts).
   'readStoredBodyBytes',
   'readPageBodySizes',

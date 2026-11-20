@@ -267,6 +267,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readPageIndexingState', 'readInlinePageRegions', 'readStoredPageTier', 'hasSegmentStorage'],
   // page_visibility: the remote page-write visibility guards (engine-sql/page-visibility.ts)
   page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence'],
+  // remote_links: the remote mention-links effect and a finished batch's links re-arm (engine-sql/remote-links.ts)
+  remote_links: ['setEffectTransactionLimits', 'readOwnedLinks', 'deleteOwnedLinks', 'readLinkTargetPages', 'rearmLinksEffects'],
+  // facts_backstop: the facts backstop effect's pending and completed extraction reads (engine-sql/facts-backstop.ts)
+  facts_backstop: ['hasPendingFactsExtraction', 'hasCompletedFactsExtraction'],
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
   large_page: ['readStoredBodyBytes', 'readPageBodySizes'],
   // relational_reads: the relational recall arm's page reads (engine-sql/relational-reads.ts)

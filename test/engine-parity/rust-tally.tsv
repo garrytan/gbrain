@@ -69,7 +69,7 @@ test/engine-parity/jobs-status.test.ts	11	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	15	0
 test/engine-parity/jobs.test.ts	14	1
-test/engine-parity/journal-typed-sites.test.ts	4	3
+test/engine-parity/journal-typed-sites.test.ts	6	1
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/large-page.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
@@ -102,6 +102,7 @@ test/engine-parity/reason-tombstones.test.ts	2	0
 test/engine-parity/relational-reads.test.ts	4	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
+test/engine-parity/remote-links.test.ts	2	4
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resolve-reads.test.ts	7	0
