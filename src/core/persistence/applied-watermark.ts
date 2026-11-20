@@ -97,6 +97,19 @@ export async function readCheckoutRoot(engine: Pick<BrainEngine, 'readSourceChec
   return (await engine.readSourceCheckoutRoot(sourceId, (await import('./identity.ts')).existingHostIdFor(engine as BrainEngine))) ?? undefined;
 }
 
+/**
+ * The watermark's held files. A failed count reads as 0 on PGLite and Postgres; a Rust brain rethrows, so a
+ * missing or failing hold store member there never reports "nothing held".
+ */
+export async function heldFileCount(engine: Pick<BrainEngine, 'kind' | 'executeRaw' | 'countGitHolds'>, sourceId: string, incarnation: string): Promise<number> {
+  try {
+    return await countGitHolds(engine, sourceId, incarnation);
+  } catch (error) {
+    if (engine.kind === 'rust') throw error;
+    return 0;
+  }
+}
+
 /** The full watermark of one source for `gbrain sources status --json` and MCP `sources_status`. */
 export async function readAppliedWatermark(engine: BrainEngine, sourceId: string,
   opts: { remote?: boolean; now?: number; behind?: BehindReader; filesBehind?: FilesBehindReader } = {}): Promise<AppliedWatermark> {
@@ -107,7 +120,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
   const root = !opts.remote && source?.root && commit ? source.root : null;
   const lag = root ? await (opts.behind ?? readGitBehind)(root, commit!).catch(() => null) : null;
   const filesBehind = root && lag?.commits ? await (opts.filesBehind ?? readGitFilesBehind)(root, commit!).catch(() => null) : lag ? 0 : null;
-  const heldFiles = source?.incarnation ? await countGitHolds(engine, sourceId, source.incarnation).catch(() => 0) : 0;
+  const heldFiles = source?.incarnation ? await heldFileCount(engine, sourceId, source.incarnation) : 0;
   const { readPassReadings } = await import('./sync-pass-readers.ts');
   const [pass] = await readPassReadings(engine, { sourceIds: [sourceId], head: false }).catch(() => []);
   const deletesWithheld = pass?.row.value.obligations.deletes_withheld ? Number(pass.row.value.telemetry.classes?.deletes_withheld?.count ?? 0) : 0;

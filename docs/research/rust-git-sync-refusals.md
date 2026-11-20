@@ -87,6 +87,39 @@ Step 2 now reads past the reason scan. The three failed files of step 2:
 Hidden refusals that step 1 still makes (caught by the caller): `sync-holds.ts:573` (from
 `applied-watermark.ts:110`) and `sync-pass-row.ts:185` (from `applied-watermark.ts:112`).
 
+## Update after the hold store (step 2b)
+
+The next commit types the hold store and the managed sync pass row, plus three page and source reads. PGLite and Postgres run the same SQL; `test/engine-parity/git-holds.test.ts` passes on PGLite, Postgres and
+Rust. The Rust engine keeps hold, summary and pass rows as whole checkpoint rows (`rust/docs/store/persistence.md`).
+
+| Site | Now calls |
+|---|---|
+| `sync-holds.ts` `lockSummary`, `adjustSummary`, `readRow`, `writeRow`, `replaceRow`, `deleteRow` | `lockGitHoldSummary`, `adjustGitHoldSummary`, `readGitHoldRow`, `writeGitHoldRow`, `replaceGitHoldRow`, `deleteGitHoldRow` (new) |
+| `sync-holds.ts:573` `countGitHolds` | `countGitHolds` (new) |
+| `sync-pass-row.ts:185` and the other pass-row reads and writes | `readSyncPassRow`, `readLiveSyncPassRows`, `writeSyncPassRow` (new) |
+| `sync/rename-reconcile.ts:46` | `readRenameIdentityRows` |
+| `sync/holds.ts:203` `recordLegacyHold` page read | `readRenameIdentityRows` and `getPage` |
+| `repair/purged-change-reasons.ts:52` `checkoutRoot` | `getSource` |
+| `persistence/applied-watermark.ts:110` held files | `heldFileCount`: a failed count reads as 0 on PGLite and Postgres; a Rust brain rethrows it |
+
+The Rust engine also answers `readHeldPageRows`, `readHeldCoverageRows`, `readGitHoldRecords`,
+`readGitHoldRetryRequest` and `readGitHoldReportInputs` from the stored rows now, not empty.
+
+Trace with these changes:
+
+| Step | Rust exit | First stop |
+|---|---:|---|
+| 1. first `sync` | 0 | none; `sync-holds.ts:573` and `sync-pass-row.ts:185` no longer refuse; `sync-upstream.ts:72` (caught) is lane 11's `writeSourceUpstreamObservation` |
+| 2. incremental `sync` | 1 | 0 `executeRaw` refusals; two changed files fail on `createVersion` with a change reason (capability `page_versions`) |
+| 3. `sync status` | 1 | `sync-status.ts:361` |
+| 4. `sources status` | 1 | `source-health.ts:384` |
+
+In step 2 the broken file is held on Rust now (`Held held-bad.md: invalid_frontmatter`, one hold outstanding). The
+rename read no longer refuses, but the two files that fail on `createVersion` are the renamed file and the changed
+file. Because they fail before their later steps, some step 2 paths (for
+example the later hold reads in `sync/holds.ts`) did not run in this trace. Trace again after `createVersion` keeps
+a change reason on Rust.
+
 ## Counts
 
 | Class | Sites | Meaning |

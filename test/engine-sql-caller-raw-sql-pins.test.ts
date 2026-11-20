@@ -768,6 +768,79 @@ const PINS: Pin[] = [
     FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`, "SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1"],
   },
   {
+    from: 'src/core/persistence/sync-holds.ts:334 lockSummary (at 8b80bd80ab)',
+    case: { method: 'lockGitHoldSummary', variant: 'default', run: e => e.lockGitHoldSummary('default', '1') },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0,'stale',0)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now()
+    RETURNING COALESCE((completed_keys->0->>'count')::int,0) AS count`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:351-352 adjustSummary (SUMMARY_COUNTERS rendered) (at 8b80bd80ab)',
+    case: { method: 'adjustGitHoldSummary', variant: 'default', run: e => e.adjustGitHoldSummary('default', '1', 1, { stale: 0, images: 0, fences: 0, concurrent: 0, stalled: 0, dirty: 0, drift: 0 }) },
+    texts: () => {
+      const pairs = ['stale', 'images', 'fences', 'concurrent', 'stalled', 'dirty', 'drift']
+        .map((name, i) => `'${name}',GREATEST(0,COALESCE((completed_keys->0->>'${name}')::int,0)+$${i + 4}::int)`).join(',');
+      return [`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
+      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),${pairs})),updated_at=now() WHERE op=$1 AND fingerprint=$2`];
+    },
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:368 readRow (at 8b80bd80ab)',
+    case: { method: 'readGitHoldRow', variant: 'default', run: e => e.readGitHoldRow('default', '1', 'a.md') },
+    texts: ['SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:395 writeGitHold (at 8b80bd80ab)',
+    case: { method: 'writeGitHoldRow', variant: 'default', run: e => e.writeGitHoldRow('default', '1', 'a.md', { path: 'a.md' }) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:456 rewriteHoldMeta (at 8b80bd80ab)',
+    case: { method: 'replaceGitHoldRow', variant: 'default', run: e => e.replaceGitHoldRow('default', '1', 'a.md', { path: 'a.md' }, { path: 'a.md', meta: {} }) },
+    texts: [`UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$4::text::jsonb RETURNING 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:482 clearGitHold (at 8b80bd80ab)',
+    case: { method: 'deleteGitHoldRow', variant: 'default', run: e => e.deleteGitHoldRow('default', '1', 'a.md') },
+    texts: ['DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:573 countGitHolds (at 8b80bd80ab)',
+    case: { method: 'countGitHolds', variant: 'default', run: e => e.countGitHolds('default', '1') },
+    texts: ["SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count FROM op_checkpoints WHERE op=$1 AND fingerprint=$2"],
+  },
+  {
+    from: 'src/core/persistence/sync-pass-row.ts:178 readPassRow (at 8b80bd80ab)',
+    case: { method: 'readSyncPassRow', variant: 'default', run: e => e.readSyncPassRow('default', '1') },
+    texts: ['SELECT completed_keys->0 AS value, updated_at, now() AS read_at FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-pass-row.ts:185 readLivePassRows (at 8b80bd80ab)',
+    case: { method: 'readLiveSyncPassRows', variant: 'default', run: e => e.readLiveSyncPassRows(null) },
+    texts: [`SELECT s.id AS source_id, c.completed_keys->0 AS value, c.updated_at, now() AS read_at FROM sources s
+       JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text
+      WHERE ($2::text[] IS NULL OR s.id=ANY($2::text[]))`],
+  },
+  ...([
+    ['default', {}, '$3::text::jsonb'],
+    ['clock', { clock: true }, `jsonb_set($3::text::jsonb,'{telemetry,started_at}',to_jsonb(to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))`],
+  ] as const).map(([variant, opts, json]): Pin => ({
+    from: 'src/core/persistence/sync-pass-row.ts:206 writePassRow (at 8b80bd80ab)',
+    case: { method: 'writeSyncPassRow', variant, run: e => e.writeSyncPassRow('default', '1', { lease_token: 't' }, opts) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array(${json}),now())
+      ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
+        WHERE ($4::boolean OR op_checkpoints.completed_keys->0->>'lease_token'=$5) RETURNING 1`],
+  })),
+  {
+    from: 'src/core/persistence/sync-pass-row.ts:204 writePassRow (onlyOpen) (at 8b80bd80ab)',
+    case: { method: 'writeSyncPassRow', variant: 'only-open', run: e => e.writeSyncPassRow('default', '1', { lease_token: 't' }, { onlyOpen: true }) },
+    texts: [`UPDATE op_checkpoints SET completed_keys=jsonb_build_array($3::text::jsonb), updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND ($4::boolean OR completed_keys->0->>'lease_token'=$5) AND completed_keys->0->'telemetry'->>'outcome'='open' RETURNING 1`],
+  },
+  {
     from: 'src/core/persistence/applied-watermark.ts:88,92 readWriteWatermark',
     case: { method: 'readWriteWatermarkRow', variant: 'default', run: e => e.readWriteWatermarkRow('default') },
     texts: [`SELECT s.last_commit, s.last_sync_at, p.pending_min, p.pending_count, p.pending_since

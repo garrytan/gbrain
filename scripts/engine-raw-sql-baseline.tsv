@@ -211,11 +211,10 @@ src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
-src/commands/sync/holds.ts	execute_raw	4
+src/commands/sync/holds.ts	execute_raw	3
 src/commands/sync/plain-directory.ts	execute_raw	1
 src/commands/sync/preflight.ts	execute_raw	3
 src/commands/sync/rename-collision.ts	execute_raw	2
-src/commands/sync/rename-reconcile.ts	execute_raw	1
 src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
@@ -775,7 +774,7 @@ src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
 src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	27
+src/core/persistence/sync-holds.ts	execute_raw	19
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-lease.ts	execute_raw	5
@@ -790,7 +789,6 @@ src/core/persistence/sync-pass-confirm.ts	execute_raw	8
 src/core/persistence/sync-pass-episode.ts	execute_raw	2
 src/core/persistence/sync-pass-fold.ts	execute_raw	3
 src/core/persistence/sync-pass-readers.ts	execute_raw	1
-src/core/persistence/sync-pass-row.ts	execute_raw	4
 src/core/persistence/sync-pass-run.ts	execute_raw	14
 src/core/persistence/sync-pass-status.ts	execute_raw	3
 src/core/persistence/sync-pass.ts	execute_raw	14
@@ -878,7 +876,7 @@ src/core/repair/orphan-children.ts	execute_raw	6
 src/core/repair/overwritten-edits.ts	execute_raw	3
 src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	3
-src/core/repair/purged-change-reasons.ts	execute_raw	6
+src/core/repair/purged-change-reasons.ts	execute_raw	5
 src/core/repair/purged-page-facts.ts	execute_raw	5
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/receipt-compaction.ts	execute_raw	3
