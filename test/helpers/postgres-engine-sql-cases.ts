@@ -163,9 +163,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listArchivedSourceRows': OOS.sourceArchive,
   'listExpiredArchivedSources': OOS.sourceArchive,
   'listUnverifiedArchivedSourceIds': OOS.sourceArchive,
-  'readSourceImpactCounts': OOS.sourceArchive,
   'listSourceOAuthClients': OOS.sourceArchive,
-  'deleteSourceRecord': OOS.sourceArchive,
   'hasCoveringFactWithdrawal': OOS.trustWithdrawals,
   'hasFactWithdrawalForSubject': OOS.trustWithdrawals,
   'insertFactWithdrawal': OOS.trustWithdrawals,
@@ -723,7 +721,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
-  'countSourcePages': 'sources', 'insertSource': 'sources',
+  'countSourcePages': 'sources', 'insertSource': 'sources', 'readSourceDeleteImpact': 'sources', 'deleteSourceRecord': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
@@ -1260,6 +1258,8 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),
   ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
   ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
+  ...variants('readSourceDeleteImpact', [['default', (e) => e.readSourceDeleteImpact(SRC)]]),
+  ...variants('deleteSourceRecord', [['default', (e) => e.deleteSourceRecord(SRC)], ['expiredArchiveOnly', (e) => e.deleteSourceRecord(SRC, { expiredArchiveOnly: true })]]),
 
   // ── files ──
   ...variants('upsertFile', [

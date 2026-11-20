@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { gbrainPath } from '../src/core/config.ts';
-import { deleteSourceRecord, listSourceOAuthClients } from '../src/core/engine-sql/source-archive.ts';
+import { listSourceOAuthClients } from '../src/core/engine-sql/source-archive.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -482,7 +482,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     // rows' stamps degrade to the refusal set — the DELETE itself must refuse.
     const orig = engine.deleteSourceRecord.bind(engine);
     let flipped = false;
-    engine.deleteSourceRecord = (async (sourceId: string, expiredArchiveOnly: boolean) => {
+    engine.deleteSourceRecord = (async (id: string, opts?: { expiredArchiveOnly?: boolean }) => {
       if (!flipped) {
         flipped = true;
         await engine.executeRaw(
@@ -491,7 +491,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
         );
         await engine.executeRaw(`UPDATE sources SET archived_at = NULL WHERE id = $1`, [flipArchId]);
       }
-      return orig(sourceId, expiredArchiveOnly);
+      return orig(id, opts);
     }) as typeof engine.deleteSourceRecord;
     let purged: string[] = [];
     try {
@@ -567,10 +567,10 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       if (sql.trimStart().startsWith('SELECT')) return [{ id: 'boom' }];
       throw Object.assign(new Error(message), { code }); // NOT the FK class
     },
+    deleteSourceRecord: async () => { throw Object.assign(new Error(message), { code }); }, // NOT the FK class
     readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
     listExpiredArchivedSources: async () => [{ id: 'boom', incarnation: 'i', config: {}, local_path: null }],
-    deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return deleteSourceRecord(this as never, sourceId, expiredArchiveOnly); },
   }) as never;
 
   test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
@@ -588,12 +588,12 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
         if (sql.includes('archive_expires_at IS NULL')) return []; // #5452 unverified-archive listing: none here
         if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never]; // #6482: one well-formed unmanaged row
         if (sql.trimStart().startsWith('SELECT')) return [{ id: 'restored-mid-sweep' }];
-        return []; // per-id DELETE re-checks the expiry predicate → 0 rows
+        return [];
       },
+      deleteSourceRecord: async () => ({ deleted: false, stranded: 0 }), // the per-id DELETE re-checks the expiry predicate
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
       listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
       listExpiredArchivedSources: async () => [{ id: 'restored-mid-sweep', incarnation: 'i', config: {}, local_path: null }],
-      deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return deleteSourceRecord(this as never, sourceId, expiredArchiveOnly); },
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
     expect(purged).toEqual([]);
@@ -905,12 +905,12 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
         if (sql.trimStart().startsWith('SELECT')) {
           return [{ id, config: { kind: 'github', gh_managed: true }, local_path: localPath }];
         }
-        return [{ id }];
+        return [];
       },
+      deleteSourceRecord: async () => ({ deleted: true, stranded: 0 }),
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
       listUnverifiedArchivedSourceIds: async () => [],
       listExpiredArchivedSources: async () => [{ id, incarnation: 'i', config: { kind: 'github', gh_managed: true }, local_path: localPath }],
-      deleteSourceRecord(sourceId: string, expiredArchiveOnly: boolean) { return deleteSourceRecord(this as never, sourceId, expiredArchiveOnly); },
     } as never;
   }
 
