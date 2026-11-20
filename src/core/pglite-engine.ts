@@ -1719,7 +1719,7 @@ export class PGLiteEngine implements BrainEngine {
   expireCapturedFacts(sourceId: string, ids: number[], context: string) { return factsRepairImpl.expireCapturedFacts(this.rawRead, sourceId, ids, context); }
   listExpiredFactIds(sourceId: string, ids: number[]) { return factsRepairImpl.listExpiredFactIds(this.rawRead, sourceId, ids); }
   listPagelessEntityFacts(sourceIds: string[]) { return factsRepairImpl.listPagelessEntityFacts(this.rawRead, sourceIds); }
-  listSourceIncarnations(sourceIds: string[]) { return factsRepairImpl.listSourceIncarnations(this.rawRead, sourceIds); }
+  listSourceIncarnations(sourceIds: readonly string[]) { return factsRepairImpl.listSourceIncarnations(this.rawRead, sourceIds); }
   readEntityRehomeState(sourceId: string, fromSlug: string, toSlug: string) { return factsRepairImpl.readEntityRehomeState(this.rawRead, sourceId, fromSlug, toSlug); }
   rehomeEntityFacts(sourceId: string, fromSlug: string, toSlug: string) { return factsRepairImpl.rehomeEntityFacts(this.rawRead, sourceId, fromSlug, toSlug); }
 

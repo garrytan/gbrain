@@ -2,6 +2,10 @@
  * Group 5 facts members, repair classifiers and loop retirement (src/core/engine-sql/facts-repair.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/repair.rs). A member not exported here refuses with `engine_capability_missing`.
  *
+ * Served from facts/captured.rs: listActiveSourceIds, readRepairBrainId (the persistence brain id), listFenceRewriteRows,
+ * expireCapturedFacts, listExpiredFactIds, listPagelessEntityFacts, listSourceIncarnations, readEntityRehomeState and
+ * rehomeEntityFacts. The two writers (expireCapturedFacts, rehomeEntityFacts) write through the store's fact writer, and
+ * rehomeEntityFacts also applies the withdrawal guard (facts/withdrawal_guard.rs) the SQL gets from its trigger.
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
  * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, countLabelFacts, whose label line this member
  * reads into literal labels (label-line.ts), and countPurgedPageFacts, which reads the store's `page_purges` ledger. No
@@ -18,12 +22,58 @@ import type { BrainEngine } from '../../engine.ts';
 import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { labelsOf } from './label-line.ts';
+import { readPersistenceBrainId } from './persistence-identity.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
 function wholeIds(member: string, ids: readonly number[] | null): void {
   for (const id of ids ?? []) if (!Number.isSafeInteger(id)) refuseMember(member, 'a fact id that is not an integer');
 }
+
+/** The statements that write or name facts of one source by id: the store reads the ids as whole numbers, as `bigint[]` binds. */
+function named(member: string, sourceId: string, ids: readonly number[]): { sourceId: string; ids: readonly number[] } {
+  wholeIds(member, ids);
+  return { sourceId, ids };
+}
+
+/** `listActiveSourceIds`: the unarchived sources by id. */
+export const listActiveSourceIds: Member<'listActiveSourceIds'> = (brain) =>
+  storeCall({ member: 'listActiveSourceIds' }, () => brain.listActiveSourceIds());
+
+/** `readRepairBrainId`: the same brain id `readPersistenceBrainId` answers, null when the brain has none. */
+export const readRepairBrainId: Member<'readRepairBrainId'> = (brain) => readPersistenceBrainId(brain);
+
+/** `listFenceRewriteRows`: the named unexpired facts of the source, by id, with their fence row number or null. */
+export const listFenceRewriteRows: Member<'listFenceRewriteRows'> = (brain, sourceId, ids) =>
+  storeCall({ member: 'listFenceRewriteRows' }, () => brain.listFenceRewriteRows(named('listFenceRewriteRows', sourceId, ids)));
+
+/** `expireCapturedFacts`: expires the named unexpired database-only facts and answers the ids it expired. */
+export const expireCapturedFacts: Member<'expireCapturedFacts'> = (brain, sourceId, ids, context) =>
+  storeCall({ member: 'expireCapturedFacts' }, () => brain.expireCapturedFacts({ ...named('expireCapturedFacts', sourceId, ids), context }));
+
+/** `listExpiredFactIds`: the named facts of the source that are expired, by id. */
+export const listExpiredFactIds: Member<'listExpiredFactIds'> = (brain, sourceId, ids) =>
+  storeCall({ member: 'listExpiredFactIds' }, () => brain.listExpiredFactIds(named('listExpiredFactIds', sourceId, ids)));
+
+/** `listPagelessEntityFacts`: per page-less entity of the sources, its database-only fact ids and its fenced count. */
+export const listPagelessEntityFacts: Member<'listPagelessEntityFacts'> = (brain, sourceIds) =>
+  storeCall({ member: 'listPagelessEntityFacts' }, () => brain.listPagelessEntityFacts({ sourceIds }));
+
+/** `listSourceIncarnations`: the id and incarnation of each named source that exists, archived ones too, by id. */
+export const listSourceIncarnations: Member<'listSourceIncarnations'> = (brain, sourceIds) =>
+  storeCall({ member: 'listSourceIncarnations' }, () => brain.listSourceIncarnations({ sourceIds: [...sourceIds] }));
+
+/** `readEntityRehomeState`: whether each page is live and the database-only fact ids keyed under `from`. */
+export const readEntityRehomeState: Member<'readEntityRehomeState'> = (brain, sourceId, from, to) =>
+  storeCall({ member: 'readEntityRehomeState' }, () => brain.readEntityRehomeState({ sourceId, from, to }));
+
+/**
+ * `rehomeEntityFacts`: moves the database-only facts keyed under `from` to `to`. A fact a withdrawal reaches on the new
+ * entity is expired, as the SQL's withdrawal trigger does; a stint key the move would duplicate rejects the whole write.
+ */
+export const rehomeEntityFacts: Member<'rehomeEntityFacts'> = async (brain, sourceId, from, to) => {
+  await storeCall({ member: 'rehomeEntityFacts' }, () => brain.rehomeEntityFacts({ sourceId, from, to }));
+};
 
 /**
  * `listExtractorFactsForClassification`: the expired fenceless extractor facts with their page, withdrawal, duplicate,

@@ -121,6 +121,34 @@ pub(crate) fn withdrawal_time(
     at(read, &[source_id, visibility, subject, fact_hash])
 }
 
+/// Every withdrawal of `source_id` at `visibility` as `(subject, fact_hash, withdrawn_at_us)`, in key
+/// order: the rows the facts insert and update guard `gbrain_preserve_fact_withdrawal` scans
+/// (`facts/withdrawal_guard.rs`).
+pub(crate) fn withdrawals_at(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+) -> Result<Vec<(String, String, i64)>> {
+    let prefix = source_prefix(source_id);
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        if let Some((seen, subject, hash)) = split(k, prefix.len())
+            && seen == visibility
+        {
+            match serde_json::from_slice::<WithdrawalRecord>(v) {
+                Ok(r) => out.push((subject, hash, r.withdrawn_at_us)),
+                Err(e) => failure = Some(StoreError::from(e)),
+            }
+        }
+        failure.is_none()
+    })?;
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(out),
+    }
+}
+
 /// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
 /// $visibility AND w.fact_hash IN (gbrain_fact_fingerprint(claim), gbrain_fact_fingerprint_v1(claim))
 /// AND (w.subject = '*' OR w.subject = entity))`: a NULL entity matches only `*`.

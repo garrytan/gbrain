@@ -162,7 +162,7 @@ context only while the row is still as planned: on the given page with the given
 user or unattributed, written by a conversation extractor, and the target page is live. Both
 return false and write nothing when the row does not match. The purge guard of the Postgres
 `UPDATE` runs, as on every fact write ("The fact purge ledger"); the withdrawal trigger is not
-modeled.
+modeled there.
 
 `listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
@@ -358,23 +358,48 @@ Twenty-eight members that were raw `executeRaw` statements in nine callers (`src
 `captured-facts.ts`, `facts-rehome.ts`, `src/commands/doctor/checks/fence-integrity.ts`, `facts-pages.ts`,
 `unlinked-facts.ts`, `src/core/facts/write-single.ts`, `capture-dedup.ts` and `claim-conflicts.ts`). Each runs the
 statement its caller ran, with the same text and parameters, in `src/core/engine-sql/facts-repair.ts` (15),
-`facts-doctor.ts` (3) and `facts-trust.ts` (10). None is implemented on Rust yet: each is named `facts` in
+`facts-doctor.ts` (3) and `facts-trust.ts` (10). The nine rows marked served below are implemented by
+`facts/captured.rs` ("Captured-facts and rehome repair"); the others are not implemented on Rust yet: each is named `facts` in
 `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store serves it, so the repair,
 doctor and write-path callers stop on that refusal instead of the `raw_sql` refusal they stopped on before.
 
 | Member | Reads or writes | What the store would need |
 | --- | --- | --- |
-| `listActiveSourceIds`, `listUnarchivedSourceIds` | `sources` | The source ids in byte order; `archived` is false or unset. |
-| `readRepairBrainId` | `persistence_brain` | The brain id row, or null (callers fall back to `host`). |
+| `listActiveSourceIds` (served), `listUnarchivedSourceIds` | `sources` | The source ids in byte order; `archived` is false or unset. |
+| `readRepairBrainId` (served) | `persistence_brain` | The brain id row, or null (callers fall back to `host`). The TypeScript member answers what `readPersistenceBrainId` answers. |
 | `listAgentSessionTakeCandidates`, `retireSessionTakes`, `listInactiveTakeIds` | `takes`, `facts` | The `consolidated_into` and `consolidated_at` columns of facts and the take columns `kind`, `holder`, `active`, `resolved_at`, `created_at`. |
 | `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |
-| `listFenceRewriteRows`, `expireCapturedFacts`, `listExpiredFactIds` | `facts` | `row_num`, `expired_at`, `context`; the expiry puts its context before the fact's own. |
-| `listPagelessEntityFacts`, `readEntityRehomeState`, `rehomeEntityFacts`, `listSourceIncarnations` | `facts`, `pages`, `sources` | Live-page lookups by (source, slug), database-only facts keyed by entity, and the source `incarnation` as text. |
+| `listFenceRewriteRows`, `expireCapturedFacts`, `listExpiredFactIds` (served) | `facts` | `row_num`, `expired_at`, `context`; the expiry puts its context before the fact's own. |
+| `listPagelessEntityFacts`, `readEntityRehomeState`, `rehomeEntityFacts`, `listSourceIncarnations` (served) | `facts`, `pages`, `sources` | Live-page lookups by (source, slug), database-only facts keyed by entity, and the source `incarnation` as text. |
 | `countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog` | `pages`, catalog | `body_storage`, `source_path`, the bounded body prefix, and `to_regclass` of `facts` and `fact_relink_attempts`. |
 | `readFactEntitySlugById`, `readSupersessionReplacement`, `linkSupersededFact` | `facts` | Two-fact join for the fence row, same-page test and validity bounds; `superseded_by` link. |
 | `listLivePageTitles`, `listPageAliasNames` | `pages`, `page_aliases` | Live titles and normalized aliases; the alias read throws on a brain with no aliases table. |
 | `listCaptureDuplicateCandidates`, `computeFactFingerprints` | `facts` | `gbrain_fact_fingerprint`, the member-owned-page exclusion and a numeric scan limit. |
 | `listClaimConflictPairs`, `countClaimConflictPairs` | `facts`, `decide_proposals`, `trust_proposals` | Typed claim columns, the as-of bucket, and the proposal tables that exclude a pair already proposed. |
+
+### Captured-facts and rehome repair (`facts/captured.rs`, `facts/withdrawal_guard.rs`)
+
+Eight store methods serve nine members of `engine-sql/facts-repair.ts` (`readRepairBrainId` is the journal's brain id,
+`readPersistenceBrainId`). Every method takes one JSON object in `camelCase` and refuses an unknown key.
+
+| Method | Member | Result |
+| --- | --- | --- |
+| `listActiveSourceIds` | `listActiveSourceIds` | `[{ id }]` of the sources not archived, in byte order. |
+| `listSourceIncarnations` `{ sourceIds }` | `listSourceIncarnations` | `[{ id, incarnation }]` of the named sources that exist, archived ones too, by id. The TypeScript member takes `readonly string[]` and binds `[[...sourceIds]]` on SQL. |
+| `listFenceRewriteRows` `{ sourceId, ids }` | `listFenceRewriteRows` | `[{ id, fact, row_num }]` of the named unexpired facts of the source, by id; a duplicate or foreign id answers once or never. |
+| `expireCapturedFacts` `{ sourceId, ids, context }` | `expireCapturedFacts` | Expires the named unexpired database-only facts (`row_num` null) of the source and answers `[{ id }]`, by id. The context becomes `"{context} \| {existing}"`, or just `context` when the fact has none (an empty existing context counts as none; an empty new context still joins). Written through the fact writer, so the trust stamp and purge guard run. |
+| `listExpiredFactIds` `{ sourceId, ids }` | `listExpiredFactIds` | `[{ id }]` of the named facts of the source that are expired, by id. |
+| `listPagelessEntityFacts` `{ sourceIds }` | `listPagelessEntityFacts` | Per (source, `entity_slug`) with no live page (a soft-deleted page counts as none): `{ source_id, slug, ids, fenced }`. `ids` are the database-only fact ids in id order, `null` when every fact is fence-held; `fenced` is the count of fence-held facts. By (source, slug) in byte order. |
+| `readEntityRehomeState` `{ sourceId, from, to }` | `readEntityRehomeState` | Always one object `{ from_live, to_live, ids }`, `ids` the database-only fact ids keyed under `from`, `null` when none. |
+| `rehomeEntityFacts` `{ sourceId, from, to }` | `rehomeEntityFacts` | Moves the database-only facts keyed under `from` to `to` in one write. A stint key a fact already holds on `to` refuses with `constraint_violation` (`idx_facts_ontology_stint_dedup`) and no fact moves. Answers null. |
+
+`withdrawal_guard.rs` is `gbrain_preserve_fact_withdrawal` for the rows these two writes (and the ontology repair
+writes) change. A row that is already expired is left alone. Otherwise the earliest withdrawal of the same source and
+visibility whose claim fingerprint (current or v1) and subject reach the row expires it and clamps `valid_until` to
+the withdrawal time when that is earlier. A row on a `memory/members/` page matches only a withdrawal of its own page
+slug; any other row matches subject `*`, its entity, or (when it is unbacked and not an owned memory subject) any
+subject. The guard is applied only by these repair writes: `insertFact`, `insertFacts` and the other fact writers still
+do not run the withdrawal trigger (see "Not modeled").
 
 ## Group 5: the rest of the facts write and recall sites (not yet in Rust)
 
@@ -944,5 +969,5 @@ by running without error. `insertHoldingPagePurges` is compared by the claim che
 
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
+The withdrawal ledger and the insert/update guards that read it (the guard runs only inside `facts/captured.rs`, "Captured-facts and rehome repair"), and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

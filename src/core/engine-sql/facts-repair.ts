@@ -416,8 +416,8 @@ export async function listPagelessEntityFacts(raw: EngineRawRead, sourceIds: str
 }
 
 /** The id and incarnation (as text) of each named source, in id order: what a rehome preview hash binds. */
-export async function listSourceIncarnations(raw: EngineRawRead, sourceIds: string[]): Promise<Array<{ id: string; incarnation: string }>> {
-  return raw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [sourceIds]);
+export async function listSourceIncarnations(raw: EngineRawRead, sourceIds: readonly string[]): Promise<Array<{ id: string; incarnation: string }>> {
+  return raw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [[...sourceIds]]);
 }
 
 export interface EntityRehomeState { from_live: boolean; to_live: boolean; ids: Array<number | string> | null }

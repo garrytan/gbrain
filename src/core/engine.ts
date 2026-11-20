@@ -3836,7 +3836,7 @@ export interface BrainEngine {
   /** Per page-less `entity_slug` of these sources: the database-only fact ids and the count of fence-held facts, in (source, slug) order. */
   listPagelessEntityFacts(sourceIds: string[]): Promise<FactsRepairSql.PagelessEntityFactRow[]>;
   /** The id and incarnation (as text) of each named source, in id order. */
-  listSourceIncarnations(sourceIds: string[]): Promise<Array<{ id: string; incarnation: string }>>;
+  listSourceIncarnations(sourceIds: readonly string[]): Promise<Array<{ id: string; incarnation: string }>>;
   /** Whether the `from` and `to` pages are live in the source and the database-only fact ids keyed under `from`. Run it on the transaction. */
   readEntityRehomeState(sourceId: string, fromSlug: string, toSlug: string): Promise<FactsRepairSql.EntityRehomeState | null>;
   /** Re-keys the database-only facts of the source from `fromSlug` to `toSlug`. Run it on the transaction. */

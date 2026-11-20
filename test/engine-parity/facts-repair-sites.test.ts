@@ -3,7 +3,7 @@
  * `executeRaw` (engine-sql/facts-repair.ts, facts-doctor.ts, facts-trust.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listActiveSourceIds, listUnarchivedSourceIds, readRepairBrainId, listAgentSessionTakeCandidates,
+ *  - Contract: listActiveSourceIds, listUnarchivedSourceIds, readRepairBrainId (equal to readPersistenceBrainId), listAgentSessionTakeCandidates,
  *    listSettledSessionFacts, reattributeSessionFacts, retireSessionTakes, listInactiveTakeIds, listFenceRewriteRows,
  *    listOtherAttributedFactIds, expireCapturedFacts, listExpiredFactIds, listPagelessEntityFacts, listSourceIncarnations,
  *    readEntityRehomeState, rehomeEntityFacts, countSegmentedCensusPages, listFactsPageBodies, readFactTableCatalog,
@@ -66,22 +66,35 @@ const namer = (names: Record<string, number>) => {
 };
 
 describe('engine parity: facts repair, doctor and trust statements that left executeRaw', () => {
-  parityTest('listActiveSourceIds and listUnarchivedSourceIds list the sources that are not archived, by id', {
-    methods: ['listActiveSourceIds', 'listUnarchivedSourceIds'],
+  parityTest('listActiveSourceIds lists the sources that are not archived, by id', {
+    methods: ['listActiveSourceIds'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'zeta');
     await createSource(engine, backend, 'alpha');
     await createSource(engine, backend, 'retired');
     await archiveSource(engine, backend, 'retired');
     const active = await engine.listActiveSourceIds();
-    const unarchived = await engine.listUnarchivedSourceIds();
     expect(active.map(r => r.id)).toEqual(['alpha', 'default', 'zeta']);
-    expect(unarchived.map(r => r.id)).toEqual(['alpha', 'default', 'zeta']);
-    return { active, unarchived };
+    return { active };
   });
 
-  parityTest('readRepairBrainId reads the brain id the repair preview hashes, or null', { methods: ['readRepairBrainId'] }, async (engine) => {
+  parityTest('listUnarchivedSourceIds lists the sources that are not archived, by id', {
+    methods: ['listUnarchivedSourceIds'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'zeta');
+    await createSource(engine, backend, 'alpha');
+    await createSource(engine, backend, 'retired');
+    await archiveSource(engine, backend, 'retired');
+    const unarchived = await engine.listUnarchivedSourceIds();
+    expect(unarchived.map(r => r.id)).toEqual(['alpha', 'default', 'zeta']);
+    return { unarchived };
+  });
+
+  parityTest('readRepairBrainId reads the brain id the repair preview hashes, the one readPersistenceBrainId reads, or null', {
+    methods: ['readRepairBrainId', 'readPersistenceBrainId'],
+  }, async (engine) => {
     const id = await engine.readRepairBrainId();
+    expect(id).toBe(await engine.readPersistenceBrainId());
     const shape = { string: typeof id === 'string', length: typeof id === 'string' ? id.length : null };
     expect(shape.string || id === null).toBe(true);
     return shape;
@@ -163,8 +176,8 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     return { changed, none, read, empty };
   });
 
-  parityTest('listFenceRewriteRows, listOtherAttributedFactIds, expireCapturedFacts and listExpiredFactIds answer for the named facts of one source', {
-    methods: ['insertFact', 'insertFacts', 'expireFact', 'listFactsByEntity', 'listFenceRewriteRows', 'listOtherAttributedFactIds', 'expireCapturedFacts', 'listExpiredFactIds'],
+  parityTest('listFenceRewriteRows, expireCapturedFacts and listExpiredFactIds answer for the named facts of one source', {
+    methods: ['insertFact', 'insertFacts', 'expireFact', 'listFactsByEntity', 'listFenceRewriteRows', 'expireCapturedFacts', 'listExpiredFactIds'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const f1 = await fenced(engine, 'fence one', { source_markdown_slug: 'notes/a', entity_slug: 'people/x', attributed_to: 'other' });
@@ -184,8 +197,6 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
       { id: 'f1', fact: 'fence one', row_num: 1 }, { id: 'f2', fact: 'fence two', row_num: 1 },
       { id: 'g1', fact: 'db one', row_num: null }, { id: 'g2', fact: 'db two', row_num: null }, { id: 'g3', fact: 'db three', row_num: null },
     ]);
-    const other = (await engine.listOtherAttributedFactIds('default', all)).map(r => name(r.id)).sort();
-    expect(other).toEqual(['f1', 'g3']);
     const expired = (await engine.expireCapturedFacts('default', [g1, g2, f2, away, g3], 'expired by repair')).map(r => name(r.id)).sort();
     expect(expired).toEqual(['g1', 'g2', 'g3']);
     const again = await engine.expireCapturedFacts('default', [g1, g2], 'expired by repair');
@@ -197,7 +208,22 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     expect(listed).toEqual(['f4', 'g1', 'g2', 'g3']);
     const none = await engine.listExpiredFactIds('default', []);
     expect(none).toEqual([]);
-    return { rewrite, other, expired, again, contexts, listed, none };
+    return { rewrite, expired, again, contexts, listed, none };
+  });
+
+  parityTest('listOtherAttributedFactIds names the named facts of one source that another speaker holds', {
+    methods: ['insertFact', 'insertFacts', 'listOtherAttributedFactIds'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const f1 = await fenced(engine, 'fence one', { source_markdown_slug: 'notes/a', entity_slug: 'people/x', attributed_to: 'other' });
+    const f2 = await fenced(engine, 'fence two', { source_markdown_slug: 'notes/a', entity_slug: 'people/x' });
+    const g1 = await fact(engine, 'db one', { entity_slug: 'people/x', context: 'was' });
+    const g3 = await fact(engine, 'db three', { entity_slug: 'people/x', attributed_to: 'other' });
+    const away = await fact(engine, 'db away', { entity_slug: 'people/x', attributed_to: 'other' }, 'other');
+    const name = namer({ f1, f2, g1, g3, away });
+    const other = (await engine.listOtherAttributedFactIds('default', [f1, f2, g1, g3, away])).map(r => name(r.id)).sort();
+    expect(other).toEqual(['f1', 'g3']);
+    return { other };
   });
 
   parityTest('listPagelessEntityFacts, listSourceIncarnations, readEntityRehomeState and rehomeEntityFacts move the database-only facts of a page-less entity', {
@@ -249,6 +275,49 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
       { source_id: 'other', slug: 'people/ghost', ids: ['o1'], fenced: 0 },
     ]);
     return { pageless, scoped, noSources, incarnations, before, live, removedTarget, moved, left };
+  });
+
+  parityTest('rehomeEntityFacts refuses a move that would give two facts one ontology key, and moves none of them', {
+    methods: ['putPage', 'insertFact', 'mergeOntologyFact', 'listFactsByEntity', 'rehomeEntityFacts'],
+  }, async (engine) => {
+    await engine.putPage('people/new', note('New'));
+    const observe = async (entity: string) => Number((await engine.mergeOntologyFact({
+      entitySlug: entity, dimension: 'location', value: 'Lisbon', source: 'meetings/a', validFrom: '2026-01-01T00:00:00.000Z',
+    } as never)).factId);
+    const held = await observe('people/new');
+    const free = await fact(engine, 'free', { entity_slug: 'people/old' });
+    const colliding = await observe('people/old');
+    const name = namer({ held, free, colliding });
+    let rejected: string | null = null;
+    try { await engine.rehomeEntityFacts('default', 'people/old', 'people/new'); } catch (error) { rejected = String((error as Error).message); }
+    expect(rejected).toContain('idx_facts_ontology_stint_dedup');
+    const at = async (slug: string) => (await engine.listFactsByEntity('default', slug, { activeOnly: false })).map(r => name(r.id)).sort();
+    const stayed = { old: await at('people/old'), new: await at('people/new') };
+    expect(stayed).toEqual({ old: ['colliding', 'free'], new: ['held'] });
+    return { rejected: rejected !== null, stayed };
+  });
+
+  parityTest('rehomeEntityFacts expires a moved fact a withdrawal reaches on the new entity, and moves the others open', {
+    methods: ['putPage', 'insertFact', 'insertFactWithdrawal', 'listFactsByEntity', 'rehomeEntityFacts'],
+  }, async (engine) => {
+    await engine.putPage('people/real', note('Real'));
+    const reached = await fact(engine, 'Ghost likes tea', { entity_slug: 'people/ghost' });
+    const otherClaim = await fact(engine, 'Ghost likes jam', { entity_slug: 'people/ghost' });
+    const otherTier = await fact(engine, 'Ghost likes tea', { entity_slug: 'people/ghost', visibility: 'world' });
+    const when = '2026-03-01T12:34:56.000Z';
+    expect(await engine.insertFactWithdrawal('default', 'private', 'Ghost likes tea', 'people/real', when)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'Ghost likes jam', 'people/elsewhere', when)).toBe(true);
+    await engine.rehomeEntityFacts('default', 'people/ghost', 'people/real');
+    const name = namer({ reached, otherClaim, otherTier });
+    const moved = (await engine.listFactsByEntity('default', 'people/real', { activeOnly: false }))
+      .map(r => ({ fact: name(r.id), expired: r.expired_at !== null, until: r.valid_until ? new Date(r.valid_until).toISOString() : null }))
+      .sort((a, b) => a.fact.localeCompare(b.fact));
+    expect(moved).toEqual([
+      { fact: 'otherClaim', expired: false, until: null },
+      { fact: 'otherTier', expired: false, until: null },
+      { fact: 'reached', expired: true, until: when },
+    ]);
+    return { moved };
   });
 
   parityTest('countSegmentedCensusPages counts none on a brain that stores no page in segments', { methods: ['putPage', 'countSegmentedCensusPages'] }, async (engine) => {

@@ -47,6 +47,7 @@ mod embeddings;
 mod eval_capture;
 mod extraction;
 mod facts;
+mod facts_captured;
 mod facts_cycle;
 mod facts_doctor;
 mod facts_forget;

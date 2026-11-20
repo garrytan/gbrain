@@ -112,7 +112,7 @@ Not built (they still run through `executeRaw`, which the Rust engine refuses): 
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
 the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
 request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
-`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line).
+`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line; `facts/withdrawal_guard.rs` runs it for the captured-facts and rehome repair writes only).
 
 Rust guesses and gaps (1x parity):
 

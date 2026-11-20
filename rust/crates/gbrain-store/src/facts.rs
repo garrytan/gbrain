@@ -41,6 +41,7 @@
 //! Text: `ILIKE` and `gbrain_fact_normalize` lower-case with `pg_lower` (Postgres `lower()` on a
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
+pub mod captured;
 mod collapse;
 pub mod cycle;
 pub mod doctor;
@@ -69,6 +70,7 @@ pub mod trust_owner;
 pub mod trust_reads;
 pub mod withdrawal_discovery;
 pub mod withdrawal_fence;
+mod withdrawal_guard;
 pub mod withdrawal_pages;
 
 pub use crate::owner_only::OwnerOnlyForm;

@@ -1370,7 +1370,7 @@ export class PostgresEngine implements BrainEngine {
   expireCapturedFacts(sourceId: string, ids: number[], context: string) { return factsRepairImpl.expireCapturedFacts(this.executeRaw.bind(this), sourceId, ids, context); }
   listExpiredFactIds(sourceId: string, ids: number[]) { return factsRepairImpl.listExpiredFactIds(this.executeRaw.bind(this), sourceId, ids); }
   listPagelessEntityFacts(sourceIds: string[]) { return factsRepairImpl.listPagelessEntityFacts(this.executeRaw.bind(this), sourceIds); }
-  listSourceIncarnations(sourceIds: string[]) { return factsRepairImpl.listSourceIncarnations(this.executeRaw.bind(this), sourceIds); }
+  listSourceIncarnations(sourceIds: readonly string[]) { return factsRepairImpl.listSourceIncarnations(this.executeRaw.bind(this), sourceIds); }
   readEntityRehomeState(sourceId: string, fromSlug: string, toSlug: string) { return factsRepairImpl.readEntityRehomeState(this.executeRaw.bind(this), sourceId, fromSlug, toSlug); }
   rehomeEntityFacts(sourceId: string, fromSlug: string, toSlug: string) { return factsRepairImpl.rehomeEntityFacts(this.executeRaw.bind(this), sourceId, fromSlug, toSlug); }
 
