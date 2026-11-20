@@ -855,6 +855,26 @@ impl Store {
             .collect())
     }
 
+    /// `readUnembeddedPageSummary(sourceId, column)`: `{ pages, oldest, held }` over the live,
+    /// non-embed_skip pages of the source with a visible chunk that has no vector. This store keeps
+    /// no embedding budget rows, so `held` is 0.
+    pub fn read_unembedded_page_summary(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = 0u64;
+        let mut oldest: Option<i64> = None;
+        for ctx in page_contexts(&*read)? {
+            if !ctx.live() || ctx.embed_skip() || ctx.page.source_id != source_id {
+                continue;
+            }
+            if ctx.visible().any(|c| !c.embed.has_vector()) {
+                pages += 1;
+                let at = ctx.page.updated_at_us;
+                oldest = Some(oldest.map_or(at, |o| o.min(at)));
+            }
+        }
+        Ok(json!({ "pages": pages, "oldest": oldest.map(crate::env::iso), "held": 0 }))
+    }
+
     /// `setPageEmbeddingSignature(slug, { signature, sourceId? })`: stamps the page (slug as
     /// written, in `sourceId` or `default`). A missing page is a no-op.
     pub fn set_page_embedding_signature(

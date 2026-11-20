@@ -13,6 +13,9 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { observePreparationMembers, TYPED_PREPARATION_READS } from '../../src/core/persistence/bounded-reads.ts';
 import { registerPostgresTests } from '../helpers/test-backends.ts';
+import { defineAmendsLinkPostgresCases } from '../helpers/amends-link-postgres-cases.ts';
+import { defineSegmentedSyncReplacePostgresArm } from '../helpers/segmented-sync-replace-postgres-arm.ts';
+import { defineWantedLinksPostgresCases } from '../helpers/wanted-links-postgres-cases.ts';
 
 /** Engine methods a bounded view may hand out unwrapped, each with the reason. Keep it short: prefer a typed read. */
 const STAGING_WRITE = 'a segmented body staging write the managed sync makes before its claim, not a preparation read';
@@ -37,10 +40,11 @@ if (RUN) {
     () => import('../managed-maintenance.test.ts'),
     () => import('../pathological/s-managed-sync-job-pull.test.ts'),
     () => import('../managed-facts-backstop.test.ts'),
-    () => import('./amends-link-postgres.test.ts'),
-    () => import('./segmented-sync-replace-8729-postgres.test.ts'),
-    () => import('./wanted-links-postgres.test.ts'),
   );
+  // The Postgres-only flows come from their shared helpers: an e2e file may not import another e2e test file.
+  defineAmendsLinkPostgresCases();
+  defineSegmentedSyncReplacePostgresArm();
+  defineWantedLinksPostgresCases();
 }
 
 (RUN ? describe : describe.skip)('typed preparation reads guard (Postgres)', () => {

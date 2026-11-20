@@ -409,7 +409,7 @@ export async function purgeDeletedPages(
         await scrubPurgedSlugHolds(tx, sourceId, purged);
       }
       const slugs = rows.map((r) => r.slug);
-      return { slugs, count: slugs.length };
+      return { slugs, count: slugs.length, pages: rows.map(r => ({ slug: r.slug, source_id: r.source_id, deleted_at: new Date(r.deleted_at) })) };
     });
   }
 

@@ -52,7 +52,7 @@ const cursor = (sourceId: string, incarnation: string, runId: string, index: num
 describe('engine parity: repair busy set', () => {
   parityTest('the busy set names open writes and unfinished sync entries alike on every engine', {
     methods: ['declarePersistence', 'transaction', 'readSourceIncarnation', 'insertWriteRequest', 'insertSource',
-      'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'swapGitHold', 'readRepairBusyRows'],
+      'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'writeGitHoldRow', 'readRepairBusyRows'],
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');

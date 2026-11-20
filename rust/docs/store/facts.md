@@ -11,7 +11,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `insertFacts` | One write: the optional page delete, then each row in order. A row whose fence key (`source, source_markdown_slug, row_num`) is taken is skipped, but its id is still used up. Then each `superseded by #N` reference is linked, with PGLite's four warnings (references itself, absent from the fence, struck without being superseded, cycle). |
 | `deleteFactsForPage` | Deletes a page's rows, except rows whose `source` starts with an excluded prefix and, with `preserveExpiredLegacy`, expired rows with no fence key. |
 | `expireFact` | Expires an unexpired row; `supersededBy` must name an existing row (`facts_superseded_by_fkey`); `successorFrom` closes validity. |
-| `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`. A `visibility` list without `private` is widened for a member or a private-facts grant (see [Visibility widening](#visibility-widening-factswidenrs)). `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. A read eligibility applies as on `listSupersessions` (also on `listFactsKeyset`). |
+| `listFactsByEntity`, `listFactsSince`, `listFactsBySession` | Filtered lists, newest first, with `limit` and `offset`; `listFactsByEntity` ranks a fact dated in the future by its `created_at`. A `visibility` list without `private` is widened for a member or a private-facts grant (see [Visibility widening](#visibility-widening-factswidenrs)). `grep` is a pre-built ILIKE pattern, folded with Postgres `lower()` one code point at a time. A read eligibility applies as on `listSupersessions` (also on `listFactsKeyset`). |
 | `listFactsKeyset` | Oldest first by `(created_at, id)` after a microsecond ISO cursor. |
 | (the four list reads) | With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) each applies `projectionEligibleSql('facts')`, as `listSupersessions` does: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row. A policy with no floor and no suppression still hides the quarantined page's rows. |
 | `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). The store keeps no `needs_rederive` queue, so that clause hides nothing. |
@@ -80,9 +80,10 @@ judges the caller's own member page (`memory/members/<member>`, the actor's memb
 `hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
 second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
 lineage, labelled-only members) is refused with
-`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). The store
-has no keyed-slug entity rule (an `entity_slug` with no `/`, judged at a name-key page directory by
-`privateEntityFilterForCaller`). An anonymous caller on a brain that never named readers (`restricted` false in its
+`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
+(an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
+`facts/privacy.rs`, as `privateEntityFilterForCaller` does.
+An anonymous caller on a brain that never named readers (`restricted` false in its
 record, the MCP stdio caller) renders the short member-access form; the member judges a fact read for it under the
 restricted rendering, the full form above, which hides the same rows on such a brain. A caller with a member identity
 there is judged the same way (`judgeWidenedCaller`): the identity reaches the policy only through a page's
@@ -196,8 +197,8 @@ context only while the row is still as planned: on the given page with the given
 (not expired, `valid_until` unset or later), with no entity or on the unbacked name key `from`,
 user or unattributed, written by a conversation extractor, and the target page is live. Both
 return false and write nothing when the row does not match. The purge guard of the Postgres
-`UPDATE` runs, as on every fact write ("The fact purge ledger"); the withdrawal trigger is not
-modeled.
+`UPDATE` runs, as on every fact write ("The fact purge ledger"). The withdrawal ledger is modeled: `write_fact` keeps a
+fact expired when its claim is withdrawn, as the Postgres insert trigger does.
 
 `listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
@@ -220,8 +221,8 @@ then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
 - `remove_source_rows` (`cascade::remove_source_rows`): deletes every fact of a deleted
   source, as `facts_source_id_fkey ... ON DELETE CASCADE` does.
 - `rename_slug_rows` (`cascade::rename_slug_rows`): the facts half of PGLite's
-  `moveSlugBindings`, in its order. The fact-withdrawal move has nothing to move: only
-  `executeRaw` writes `fact_withdrawals`, and the Rust engine refuses it. Then the ontology
+  `moveSlugBindings`, in its order. It first moves the `fact_withdrawals` of the old subject to the new one
+  (`trust::withdrawals::move_subject_in`; a withdrawal the new slug already has keeps its time). Then the ontology
   duplicates of the entity move are dropped, `entity_slug` moves, the rows at the new page
   whose `row_num` the old page holds are deleted, the ontology duplicates of the page move are
   dropped, and `source_markdown_slug` moves.
@@ -250,8 +251,9 @@ reads refuse their `hasAttempts: true` form.
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,
   and only the `relink` fix targets rows.
-- `countFactEmbeddingCoverage` treats `fact_withdrawals` as empty (the same stance as
-  "Lookups and hooks"): the Rust engine refuses `executeRaw`, the only writer of a withdrawal.
+- `countFactEmbeddingCoverage` leaves out a fact a withdrawal covers, as `eligibleFactEmbedding` does (the row's
+  source and visibility, either fingerprint, subject `*` or the row's entity, or only the page's own slug on a member
+  page). Unlike the write-time guard it gives an unbacked name key no extra subjects.
   A fact is `partial` when its text is over 8000 UTF-16 units and the row is not stale.
 - The window reads sort by `created_at DESC` then `id DESC`; PGLite leaves a tie in
   `created_at` unordered. Rows come sorted by source id (and origin or slug) where PGLite's
@@ -325,10 +327,10 @@ that are not `invalid` at their current revision, never-attempted first, then ol
 page delete removes the page's row (`cascade::remove_page_rows` calls `facts::reconcile::remove_page_rows`, the
 `ON DELETE CASCADE`); a soft delete keeps it. `lockReconcileRevision` answers whether the live page `(sourceId, slug)`
 is at `revision` (`facts/reconcile.rs`); a soft-deleted or missing page, or a null revision, answers false. Postgres
-locks the row `FOR SHARE` for the rest of the transaction. On Rust the read runs inside the caller's store transaction
-and sees its writes; that transaction holds the store's single writer from begin to commit, so no other writer changes
-the page before the settle commits. Outside a transaction it reads the last commit. The extract_facts commit step
-(lock, then the `complete` settle, in one transaction) runs whole on Rust.
+locks the row `FOR SHARE` for the rest of the transaction. Once a store transaction is served on Rust (a later landing; `engine.transaction` is a typed refusal in this landing), the
+read runs inside the caller's store transaction and sees its writes; that transaction holds the store's single writer from
+begin to commit, so no other writer changes the page before the settle commits. Outside a transaction it reads the last
+commit.
 `listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
@@ -576,7 +578,8 @@ raises).
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
 opened ids (`gbrain.write_open_facts`). Both napi members take it from the store's write trust context
-(`Store::fence_context`, [write_trust.md](write_trust.md)), which the engine's transaction sets.
+(`Store::fence_context`, [write_trust.md](write_trust.md)), which the direct `applyWriteTrust` call sets. Once the transactions
+family lands (a later landing), the engine's transaction will set it; in this landing the engine serves no transaction.
 `above` compares the row's stored tier with the writer's. A row is held when it is not `world`, a
 cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
 names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
@@ -667,5 +670,5 @@ trigger's exception does. Deleting a source removes its tombstones.
 
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
+The purge-ledger guards and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

@@ -182,7 +182,14 @@ fn whole(value: &Value, what: &str, min: i64, max: i64) -> Result<i64> {
 /// A `real` parameter as `f32`; a number beyond the `f32` range is the Postgres error.
 fn real_arg(value: f64, what: &str) -> Result<f32> {
     let narrowed = value as f32;
-    if value.is_finite() && narrowed.is_infinite() {
+    // A NaN or infinity (a native caller only; JSON cannot carry one) would be stored as null in a required field.
+    if !value.is_finite() {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{what}: \"{value}\" is not a finite number"),
+        ));
+    }
+    if narrowed.is_infinite() {
         return Err(StoreError::new(
             INVALID_ARGUMENT,
             format!("{what}: \"{value}\" is out of range for type real"),

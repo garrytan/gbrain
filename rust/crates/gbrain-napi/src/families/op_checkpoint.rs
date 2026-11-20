@@ -7,7 +7,6 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::persistence::GitHoldSummaryDelta;
 
 #[napi]
 impl Brain {
@@ -118,48 +117,6 @@ impl Brain {
         })
     }
 
-    /// `swapGitHold(input)`: the hold at `path` replaced by `next` (null deletes it) when it still
-    /// holds `prior` (null: no hold), with the summary counters `summary` moves; resolves whether it
-    /// swapped.
-    #[napi]
-    #[allow(clippy::too_many_arguments)]
-    pub fn swap_git_hold<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        incarnation: String,
-        path: String,
-        prior: Value,
-        next: Value,
-        summary: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let summary: Option<GitHoldSummaryDelta> = required(summary, "swapGitHold summary")?;
-            s.swap_git_hold(
-                &source_id,
-                &incarnation,
-                &path,
-                (!prior.is_null()).then_some(&prior),
-                (!next.is_null()).then_some(&next),
-                summary.as_ref(),
-            )
-        })
-    }
-
-    /// `readGitHoldRecord(sourceId, incarnation, path)`: `{ record, mirror_read_only }` or null.
-    #[napi]
-    pub fn read_git_hold_record<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        incarnation: String,
-        path: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_git_hold_record(&source_id, &incarnation, &path)
-        })
-    }
-
     /// `requestGitHoldRetry(sourceId, incarnation, paths, requestedAt)`.
     #[napi]
     pub fn request_git_hold_retry<'env>(
@@ -185,6 +142,69 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_repair_busy_rows(&source_id, &incarnation)
+        })
+    }
+
+    /// `purgeStaleCheckpoints(ttlDays)`: how many stale checkpoints it deleted.
+    #[napi]
+    pub fn purge_stale_checkpoints<'env>(
+        &self,
+        env: &'env Env,
+        ttl_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.purge_stale_checkpoints(ttl_days))
+    }
+
+    /// `readOpCheckpointRow(op, fingerprint)`: `{ fingerprint, completed_keys, updated_at }` or null.
+    #[napi]
+    pub fn read_op_checkpoint_row<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_op_checkpoint_row(&op, &fingerprint))
+    }
+
+    /// `putOpCheckpointRow(op, fingerprint, completedKeys)`: the row created or replaced.
+    #[napi]
+    pub fn put_op_checkpoint_row<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.put_op_checkpoint_row(&op, &fingerprint, completed_keys)
+        })
+    }
+
+    /// `replaceOpCheckpointRow(op, fingerprint, expected, completedKeys)`: whether it landed.
+    #[napi]
+    pub fn replace_op_checkpoint_row<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        expected: Value,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.replace_op_checkpoint_row(&op, &fingerprint, &expected, completed_keys)
+        })
+    }
+
+    /// `listOpCheckpointRows(op, fingerprintPrefix)`: the rows in fingerprint byte order.
+    #[napi]
+    pub fn list_op_checkpoint_rows<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint_prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_op_checkpoint_rows(&op, &fingerprint_prefix)
         })
     }
 }

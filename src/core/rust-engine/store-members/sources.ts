@@ -1,4 +1,4 @@
-/** Source members (BrainEngine listAllSources, updateSourceConfig, setSourceContextualRetrievalMode, getSource, listSourceLocalPaths, getSourceStrictness). */
+/** Source members (BrainEngine listAllSources, updateSourceConfig, setSourceContextualRetrievalMode, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
 import { toSource, withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -20,6 +20,9 @@ export const getSource: StoreMember<[sourceId: string], SourceDetailRow | null> 
   const row = await storeCall({ member: 'getSource', sourceId }, () => brain.getSource(sourceId));
   return row ? withDates(row as SourceDetailRow, ['last_sync_at', 'created_at']) : null;
 };
+
+export const countRepoBoundSources: StoreMember<[], number> = async (brain) =>
+  Number(await storeCall({ member: 'countRepoBoundSources' }, () => brain.countRepoBoundSources()));
 
 export const listSourceLocalPaths: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listSourceLocalPaths' }, () => brain.listSourceLocalPaths());

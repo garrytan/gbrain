@@ -494,7 +494,7 @@ function loadFsPageTypes(files: ReadonlyArray<{ path: string; relPath: string }>
 async function loadSlugAliasTargets(engine: BrainEngine, sourceId: string, allSlugs: Set<string>): Promise<Map<string, string>> {
   let rows: Array<{ alias_slug: string; canonical_slug: string }> = [];
   try {
-    rows = await engine.executeRaw('SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1', [sourceId]);
+    rows = await engine.listSlugAliases(sourceId);
   } catch (error) {
     if (!isMissingSchemaObject(error, 'table', 'slug_aliases')) throw error;
   }

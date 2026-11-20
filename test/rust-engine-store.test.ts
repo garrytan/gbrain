@@ -8,6 +8,7 @@
  * no addon.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,8 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { readSourceFreshness } from '../src/core/notifier/status.ts';
+import { startResidentNotifier } from '../src/core/notifier/resident.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
 import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
@@ -164,20 +167,24 @@ describe('Rust engine on the store', () => {
     expect(await tag(true)).toBeUndefined();
   });
 
-  withAddon('excludePrivate refuses for a caller whose folder-rule grants change the page policy PGLite renders', async () => {
+  withAddon('excludePrivate serves a caller whose record holds a reader identity and the folder rules it satisfies, and refuses lineage', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // A reader identity alone is served (the callerReaders opt-in); a satisfied folder rule still refuses.
+    // A reader identity and a satisfied folder rule are served (the callerReaders opt-in); lineage still refuses.
     const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
     expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
-    const asMember = <T>(fn: () => Promise<T>) =>
-      withCallerAccess({ identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] }, fn);
+    const member = { identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] };
+    const asMember = <T>(fn: () => Promise<T>) => withCallerAccess(member, fn);
     const refs = [{ slug: 'notes/a', source_id: 'default' }];
-    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
+    expect((await asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true }))).map(r => r.slug)).toEqual(['notes/a']);
+    expect([...(await asMember(() => engine.getSalienceScores(refs, { excludePrivate: true }))).keys()]).toEqual(['default::notes/a']);
+    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBeUndefined();
+    const asLineage = <T>(fn: () => Promise<T>) => withCallerAccess({ ...member, lineage: true }, fn);
+    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asLineage(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asLineage(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
     // Without excludePrivate the caller's record does not matter: the read applies no page policy.
-    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
+    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
   withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
@@ -307,6 +314,61 @@ describe('Rust engine on the store', () => {
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
     const { engine } = await open();
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+  });
+
+  withAddon('search on a Rust brain carries the freshness notice once the brain opts in, and none before', async () => {
+    const { engine } = await open();
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    const unwatched = { source_id: 'default', state: 'not_monitored' as const, observed_head: null, observed_at: null, mode: null, held_count: 0 };
+    try {
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
+      await engine.setConfig('sync.on_commit', 'true');
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([unwatched]);
+      expect(await readSourceFreshness(engine, {})).toEqual([unwatched]);
+    } finally { console.error = original; }
+    expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
+  });
+
+  withAddon('a resident on a Rust brain starts the commit notifier, owns the host lease and lists its sources', async () => {
+    const { engine } = await open();
+    const repo = mkdtempSync(join(tmpdir(), 'rust-notifier-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      await engine.openStore('test').brain.upsertSource({ id: 'watched', name: 'watched', config: {}, local_path: repo });
+      const host = '00000000-0000-4000-8000-00000000b001';
+      const lines: string[] = [];
+      const notifier = startResidentNotifier(engine, {
+        resident: 'serve', log: line => lines.push(line), hostId: host, env: { GBRAIN_NOTIFIER_CLASSIC_SOURCES: 'watched' },
+        // The test drives the pass itself; no background tick, poll or watcher.
+        setTimeout: () => 'timer', clearTimeout: () => {}, setInterval: () => 'interval', clearInterval: () => {}, watch: () => null,
+      });
+      expect(notifier).not.toBeNull();
+      try {
+        await notifier!.tick();
+        expect(notifier!.owner).toBe(true);
+        expect(notifier!.snapshot().sources.map(s => s.source_id)).toEqual(['watched']);
+        // A second resident on the host sees this one's live lease.
+        const other = await engine.claimNotifierLease({ hostId: host, ownerId: 'another-resident', kind: 'jobs-worker', pid: 2, leaseMs: 60_000 });
+        expect(other).toMatchObject({ owner: false, holder: { fence: 1, resident_kind: 'serve', pid: process.pid, live: true } });
+      } finally { await notifier!.stop(); }
+      expect(lines.filter(line => line.includes(' off ('))).toEqual([]);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  withAddon('a withdrawal on a Rust brain moves the hot-memory withdrawal watermark of its source only', async () => {
+    const { engine } = await open();
+    await engine.openStore('test').brain.upsertSource({ id: 'work', name: 'work', config: {} });
+    const before = await engine.readFactCacheWatermark('default');
+    const otherBefore = await engine.readFactCacheWatermark('work');
+    await engine.insertFactWithdrawal('default', 'private', 'claim one', 'people/x', '2026-03-09T10:00:00.000Z');
+    const after = await engine.readFactCacheWatermark('default');
+    // facts/meta-hook.ts keys the hot-memory cache on these fields; a watermark that stays put serves a forgotten fact.
+    expect(after).not.toEqual(before);
+    expect(after.withdrawals).toBe(before.withdrawals + 1);
+    expect(after.latest_withdrawn_at).toBe('2026-03-09T10:00:00.000000Z');
+    expect(await engine.readFactCacheWatermark('work')).toEqual(otherBefore);
   });
 });
 

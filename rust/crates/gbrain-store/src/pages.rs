@@ -1863,6 +1863,7 @@ impl Store {
                 source_id: source_id.map(str::to_owned),
                 reason: reason.map(str::to_owned),
                 history_gap: None,
+                reason_source: None,
             },
         )
     }
@@ -1871,18 +1872,35 @@ impl Store {
     /// `historyGap` the page first records `version_history_gap_at`, as PGLite's
     /// `createPageVersion` does before it inserts.
     pub fn create_version_opts(&self, slug: &str, options: &CreateVersionOptions) -> Result<Value> {
-        let source_id = options.source_id.as_deref();
-        let reason = options.reason.as_deref();
-        if let Some(reason) = reason {
-            crate::links::no_nul("createVersion", &[("reason", reason)])?;
-        }
+        // Postgres refuses a NUL byte in text, so neither the tombstone read nor the insert takes one.
+        let from = options.reason_source.as_ref();
+        crate::links::no_nul(
+            "createVersion",
+            &[
+                ("reason", options.reason.as_deref().unwrap_or("")),
+                (
+                    "reasonSource.commit",
+                    from.map_or("", |f| f.commit.as_str()),
+                ),
+                ("reasonSource.path", from.map_or("", |f| f.path.as_str())),
+            ],
+        )?;
         self.write(|tx| {
-            let source = source_id.unwrap_or(DEFAULT_SOURCE);
+            let source = options.source_id.as_deref().unwrap_or(DEFAULT_SOURCE);
             let Some(page) = read_page(&*tx, source, &slug.to_lowercase())? else {
                 return Err(StoreError::new(
                     PAGE_NOT_FOUND,
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
+            };
+            // `stampableReason`: a non-empty reason whose (commit, path) a purge tombstoned is
+            // dropped. The tombstone is read in this write, so a purge commits wholly before or after.
+            let reason = match (options.reason.as_deref(), from) {
+                (Some(reason), Some(from)) if !reason.is_empty() => {
+                    (!crate::reason_tombstones::tombstoned(&*tx, source, &from.commit, &from.path)?)
+                        .then_some(reason)
+                }
+                (reason, _) => reason,
             };
             if options.history_gap == Some(true) {
                 crate::version_prune::record_history_gap(tx, &*self.env, page.id)?;
@@ -2049,12 +2067,23 @@ pub struct PageTrustRestore {
     pub write_origin: Option<String>,
 }
 
-/// `createVersion`'s options: the page's source, the snapshot's change reason and the history gap.
+/// The (commit, path) a version's reason came from (`VersionHistory.reasonSource`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasonSource {
+    pub commit: String,
+    pub path: String,
+}
+
+/// `createVersion`'s options: the page's source, the snapshot's change reason, the (commit, path)
+/// that reason came from and the history gap.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateVersionOptions {
     pub source_id: Option<String>,
     pub reason: Option<String>,
+    /// Drop `reason` when a purge tombstoned this (commit, path) for the source (`stampableReason`).
+    pub reason_source: Option<ReasonSource>,
     /// Record that the page lost history (`version_history_gap_at`) before the snapshot.
     pub history_gap: Option<bool>,
 }

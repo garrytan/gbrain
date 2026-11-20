@@ -35,7 +35,15 @@ export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdmi
  */
 export async function assertWriterAdminUnlocked(tx: SqlEngine): Promise<void> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
-  const lock = await readWriterAdminLock(tx);
+  refuseWriterAdminLocked(await readWriterAdminLock(tx));
+}
+
+/** The same refusal from the stored config value of `WRITER_ADMIN_LOCK_KEY` (null when unset), for a typed config read. */
+export function assertWriterAdminLockValue(value: string | null | undefined): void {
+  refuseWriterAdminLocked(parseLock(value));
+}
+
+function refuseWriterAdminLocked(lock: WriterAdminLock): void {
   if (!lock.locked) return;
   throw new OperationError('writer_admin_locked',
     `Writer administration is locked on this brain (${WRITER_ADMIN_LOCK_KEY}${lock.set_at ? `, set ${lock.set_at}` : ''}${lock.host_id ? ` by host ${lock.host_id}` : ''}); `

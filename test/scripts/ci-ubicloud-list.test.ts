@@ -6,7 +6,8 @@
  * Fails when: --list stops printing exactly the files the gate's lanes run
  * (the same dry-run discovery), prints anything else on stdout, needs a key or
  * an owner, exits 0 with nothing to list, or the keyed-only E2E files the gate
- * leaves out drift from the files e2e.yml's keyed Tier 2 job runs; or a gate file
+ * leaves out drift from the files e2e.yml's keyed Tier 2 job runs; or a file only
+ * e2e.yml's full-corpus jobs run stays in the inventory; or a gate file
  * that GitHub runs outside the receipt lanes (the reconciliation crash suites)
  * loses its receipt, so no full-ci run could cover it.
  */
@@ -15,7 +16,8 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
-import { KEYED_E2E } from '../../scripts/ci-ubicloud.ts';
+import { KEYED_E2E, OPENCLAW_CLI_E2E } from '../../scripts/ci-ubicloud.ts';
+import { E2E_EXCLUSIONS } from '../../scripts/e2e-matrix.ts';
 import { readArmsList } from '../../scripts/postgres-unit-arms.ts';
 
 const root = join(import.meta.dir, '../..');
@@ -33,7 +35,7 @@ describe('ci-ubicloud.ts --list', () => {
     const expected = new Set([
       ...dry('run-unit-shard.sh'), ...dry('run-serial-tests.sh'), ...dry('run-serial-tests.sh', '--dry-run-list-exclusive'),
       ...dry('run-slow-tests.sh'), ...dry('run-slow-tests.sh', '--dry-run-list-exclusive'),
-      ...readArmsList(root).files, ...dry('run-e2e.sh').filter(f => !KEYED_E2E.includes(f)),
+      ...readArmsList(root).files, ...dry('run-e2e.sh').filter(f => !KEYED_E2E.includes(f) && !OPENCLAW_CLI_E2E.includes(f)),
     ]);
     expect(r.stdout).toBe([...expected].sort().join('\n') + '\n');
     expect(r.stdout).not.toContain('UBICLOUD:');
@@ -55,6 +57,19 @@ describe('ci-ubicloud.ts --list', () => {
       expect(dry('run-e2e.sh')).toContain(file);
       expect(e2e.stdout.split('\n')).not.toContain(file);
     }
+  });
+
+  test('the gate leaves out every E2E file that only full-corpus jobs run, since a labelled head\'s E2E run never lists it', () => {
+    const fullCorpusOnly = (c: string) => /inputs\.full_corpus/.test(c) && !/pull_request|inputs\.full_corpus\s*!=|!\s*inputs\.full_corpus/.test(c);
+    const jobs = Object.values(workflow('e2e.yml').jobs) as Array<Job & { if?: string }>;
+    const named = jobs.filter(j => !fullCorpusOnly(String(j.if ?? ''))).flatMap(testFiles);
+    const only = [...new Set(jobs.filter(j => fullCorpusOnly(String(j.if ?? ''))).flatMap(testFiles))]
+      .filter(f => f.startsWith('test/e2e/') && E2E_EXCLUSIONS.has(f) && !named.includes(f));
+    expect(only).toContain('test/e2e/openclaw-skill-resolver-real.test.ts');
+    const e2e = list('--lanes', 'e2e');
+    expect(e2e.status, e2e.stderr).toBe(0);
+    expect(only.filter(f => e2e.stdout.split('\n').includes(f))).toEqual([]);
+    expect([...KEYED_E2E, ...OPENCLAW_CLI_E2E].sort()).toEqual(only.sort());
   });
 
   test('the reconciliation crash suites run with receipts, so the Test run manifest lists them', () => {

@@ -62,6 +62,128 @@ impl Brain {
         self.run(env, move |s| s.find_exact_slug(&source_id, &slugs, retired))
     }
 
+    /// `readLiveSlugs(sourceId, slugs, limit)`: the live pages among `slugs`, each once; a `null`
+    /// `limit` reads them all.
+    #[napi]
+    pub fn read_live_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        limit: Option<u32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_slugs(&source_id, &slugs, limit.map(|n| n as usize))
+        })
+    }
+
+    /// `readLivePageTypes(sourceId, slugs, policy)`: the live pages among `slugs` with their types
+    /// that the policy admits, each once; a `null` policy reads every page.
+    #[napi]
+    pub fn read_live_page_types<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(v, "readLivePageTypes policy")
+                })
+                .transpose()?;
+            s.read_live_page_types(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
+    /// `readTrigramCandidates(sourceId, arm, titleLc, slugFragment, policy)`: one resolver arm's
+    /// title-similarity candidates, best first; a `null` policy reads every page.
+    #[napi]
+    pub fn read_trigram_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        arm: String,
+        title_lc: String,
+        slug_fragment: String,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "readTrigramCandidates policy",
+                    )
+                })
+                .transpose()?;
+            s.read_trigram_candidates(&source_id, &arm, &title_lc, &slug_fragment, policy.as_ref())
+        })
+    }
+
+    /// `readPrefixCandidates(sourceId, patterns, limit)`: the prefix candidates with their
+    /// connection counts, most connected first.
+    #[napi]
+    pub fn read_prefix_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_prefix_candidates(&source_id, &patterns, limit as usize)
+        })
+    }
+
+    /// `readPrefixDirs(sourceId, patterns)`: the distinct entity directories of the prefix pages,
+    /// at most two.
+    #[napi]
+    pub fn read_prefix_dirs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_prefix_dirs(&source_id, &patterns))
+    }
+
+    /// `readNamedEntitySlugs(sourceId, slugs, policy)`: the named live, non-retired pages the
+    /// policy admits, by slug, at most five; a `null` policy reads every page.
+    #[napi]
+    pub fn read_named_entity_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(v, "readNamedEntitySlugs policy")
+                })
+                .transpose()?;
+            s.read_named_entity_slugs(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
+    /// `readPrefixTitleMatches(sourceId, patterns, title)`: the prefix pages titled `title`,
+    /// ignoring case, at most three.
+    #[napi]
+    pub fn read_prefix_title_matches<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+        title: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_prefix_title_matches(&source_id, &patterns, &title)
+        })
+    }
+
     /// `findFuzzyEntityCandidates(sourceId, title, fragment)`: up to five `{ slug, title, type,
     /// score }` rows, best pg_trgm score first.
     #[napi]

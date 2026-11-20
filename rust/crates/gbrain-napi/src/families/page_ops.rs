@@ -246,6 +246,54 @@ impl Brain {
         })
     }
 
+    /// `readAdmittedPageRefs(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ source_id, slug }]`.
+    #[napi]
+    pub fn read_admitted_page_refs<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_admitted_page_refs(
+                &required::<Vec<_>>(refs, "readAdmittedPageRefs refs")?,
+                &required(scope, "readAdmittedPageRefs scope")?,
+            )
+        })
+    }
+
+    /// `readPageSynopses(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ page_id, slug, source_id, title, type, synopsis }]`.
+    #[napi]
+    pub fn read_page_synopses<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_synopses(
+                &required::<Vec<_>>(refs, "readPageSynopses refs")?,
+                &required(scope, "readPageSynopses scope")?,
+            )
+        })
+    }
+
+    /// `readSeedTitleSlugs(sourceId, types, title)`: at most two slugs.
+    #[napi]
+    pub fn read_seed_title_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        types: Vec<String>,
+        title: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_seed_title_slugs(&source_id, &types, &title)
+        })
+    }
+
     /// `revertToVersion(slug, versionId, { sourceId? }?)`: `null`.
     #[napi]
     pub fn revert_to_version<'env>(

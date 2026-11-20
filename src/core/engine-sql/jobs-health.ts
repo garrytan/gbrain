@@ -292,6 +292,17 @@ export async function readOldestWaitingAge(tx: Raw, queue: string, opts?: Signal
   return numOrNull(rows[0]?.age);
 }
 
+/**
+ * How many jobs wait, for the readiness worker probe. `excludeFactsAbsorb` leaves out `facts-absorb` jobs, which PGLite's
+ * automatic facts drain owns (its own readiness entry), not a worker.
+ */
+export async function countWaitingJobs(tx: Raw, excludeFactsAbsorb: boolean): Promise<number> {
+  const [row] = await tx.executeRaw<{ n: number }>(excludeFactsAbsorb
+    ? `SELECT count(*)::int AS n FROM minion_jobs WHERE status = 'waiting' AND name <> 'facts-absorb'`
+    : `SELECT count(*)::int AS n FROM minion_jobs WHERE status = 'waiting'`);
+  return num(row?.n);
+}
+
 /** Active jobs whose lock lapsed or whose stalled counter reached two, per name, most first and by name on a tie. */
 export async function listStuckActiveJobsByName(tx: Raw): Promise<Array<{ name: string; n: number }>> {
   const rows = await tx.executeRaw<{ name: string; n: number | string }>(

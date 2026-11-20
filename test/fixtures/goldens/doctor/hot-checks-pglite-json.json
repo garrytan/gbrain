@@ -221,7 +221,7 @@
             "details": {
               "audience": "personal",
               "audience_reasons": [
-                "no shared declaration; 0 non-automation client(s) active in 30d"
+                "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
               ],
               "backstop_visibility": "private",
               "capture_lanes": {
@@ -4604,6 +4604,23 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "entity_basis": "reserved_page",
+              "identifier_kinds": [],
+              "identifier_shared": 0,
+              "identifiers": 0,
+              "owner_member_set": false,
+              "person_types_unavailable": false,
+              "several_pages": false,
+              "unbound_google_sources": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+            "name": "owner_identity",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "auto_repair": {
@@ -5769,7 +5786,7 @@
             "details": {
               "audience": "personal",
               "audience_reasons": [
-                "no shared declaration; 0 non-automation client(s) active in 30d"
+                "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
               ],
               "backstop_visibility": "private",
               "capture_lanes": {
@@ -10161,6 +10178,23 @@
             "elapsed_ms": "<volatile>",
             "message": "The secret store holds no entries.",
             "name": "secret_store",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "entity_basis": "reserved_page",
+              "identifier_kinds": [],
+              "identifier_shared": 0,
+              "identifiers": 0,
+              "owner_member_set": false,
+              "person_types_unavailable": false,
+              "several_pages": false,
+              "unbound_google_sources": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+            "name": "owner_identity",
             "status": "ok"
           },
           {

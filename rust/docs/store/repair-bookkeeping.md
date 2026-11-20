@@ -203,26 +203,18 @@ the store test `repair_plan_scans`, which builds the damage directly.
 
 ## Git holds
 
-Every Git sync hold write (`writeGitHold`, `clearGitHold`, the meta rewrites and the retry request
-of `src/core/persistence/sync-holds.ts`) runs through three members
-(`src/core/engine-sql/git-holds.ts`). A hold is one `sync-hold` checkpoint per
-(source, incarnation, path); its source's summary is one `sync-hold-summary` checkpoint with the
-hold `count` and seven counters. The store applies each write as one store write
-(`persistence/git_holds.rs`).
+The Git sync hold rows and their summary counters belong to the hold store
+(`src/core/engine-sql/sync-hold-store.ts`, served over the op checkpoint row members). One member
+here is the retry request of `sources retry-held` (`src/core/engine-sql/git-holds.ts`); the store
+applies it as one store write (`persistence/git_holds.rs`).
 
 | Member | Store answer |
 | --- | --- |
-| `swapGitHold({ sourceId, incarnation, path, prior, next, summary })` | with `summary`, the summary row created with a zero count or stamped now; then the hold row replaced by `next` (null deletes it) only when it still holds `prior` (null: no row), compared as jsonb compares; when it swapped, `count` and each counter moved by the delta and clamped at zero (a counter stored as numeric text reads as its number); resolves whether it swapped |
-| `readGitHoldRecord(sourceId, incarnation, path)` | the hold's first record with the source's `config.mirror_read_only`, null when there is no record |
 | `requestGitHoldRetry(sourceId, incarnation, paths, requestedAt)` | the retry request's `paths` as the union of its paths and `paths`, once each in byte order, stamped `requestedAt` |
 
-A hold write reads the row, computes the next record and swaps it in, reading again up to five times
-when another write changed the row in between. Before, the write replaced the row without that
-check, so it could drop a repair stamp another write had just added. Retry paths now keep byte order
-on every engine (an update used the database collation), `requested_at` is the caller's ISO time,
-and a read-only mirror's `read_only_checkout` key sits in jsonb key order on Postgres too. A write
-that skips, or a clear with no hold, no longer creates the summary row. Pinned by
-`test/engine-parity/git-holds.test.ts` and the store test `git_holds`.
+Retry paths keep byte order on every engine (an update used the database collation), and
+`requested_at` is the caller's ISO time. Pinned by `test/engine-parity/git-holds.test.ts` and the
+store test `git_holds`.
 
 ## Repair busy set
 

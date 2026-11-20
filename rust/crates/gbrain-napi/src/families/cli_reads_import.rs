@@ -99,6 +99,32 @@ impl Brain {
         self.run(env, move |s| s.read_database_clock())
     }
 
+    /// `listLinkPageMetadataForSlugs(sourceId, slugs)`: the live pages named, by slug.
+    #[napi]
+    pub fn read_link_page_metadata_for_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_link_page_metadata_for_slugs(&source_id, &slugs)
+        })
+    }
+
+    /// `listAttendedOriginSlugs(sourceId, slugs?)`: the self-attended origin slugs, by slug.
+    #[napi]
+    pub fn list_attended_origin_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_attended_origin_slugs(&source_id, slugs.as_deref())
+        })
+    }
+
     /// `listLinkPageMetadata(sourceId?)`: live pages by source, then slug.
     #[napi]
     pub fn list_link_page_metadata<'env>(

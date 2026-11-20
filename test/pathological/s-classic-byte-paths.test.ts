@@ -126,7 +126,7 @@ describe('sync Git reads take no optional lock (GIT_OPTIONAL_LOCKS=0)', () => {
         gitRawOutput(repo, ['ls-files', '-z']);
         expect(computeSyncDelta(repo, first, second).status).toBe('ok');
         buildDetachedWorkingTreeManifest(repo);
-        const engine = { executeRaw: async () => [] } as unknown as Pick<BrainEngine, 'executeRaw'>;
+        const engine = { readRenameIdentityRows: async () => [], readLiveIdentityHolders: async () => [] } as unknown as Pick<BrainEngine, 'readRenameIdentityRows' | 'readLiveIdentityHolders'>;
         await confirmRenameIdentities(engine, repo, first, second, { added: [], modified: [], deleted: [], renamed: [{ from: 'a.md', to: 'b.md', similarity: 60 }] },
           { sourceId: 'default', sourcePathOf: p => p });
         git(repo, ['update-ref', 'refs/heads/probe', 'HEAD']);

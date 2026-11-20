@@ -44,6 +44,13 @@ pub(crate) struct SourceRecord {
     /// When the archive's recovery window ends (`sources.archive_expires_at`), or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive_expires_at_us: Option<i64>,
+    /// The commit the source's last git sync reached (`sources.last_commit`), or `None` before the
+    /// first one. Only `advance_source_commit` writes it; older records read as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_commit: Option<String>,
+    /// The newest synced content's commit time (`sources.newest_content_at`), or `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newest_content_at_us: Option<i64>,
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -72,10 +79,10 @@ impl From<SourceRecord> for SourceRow {
 }
 
 /// One source as `getSource` returns it: `SourceDetailRow` of `src/core/engine.ts`, dates as ISO
-/// strings. The store keeps no `last_commit` or `trust_frontmatter_overrides`: only the sync
-/// anchor and source admin SQL write those columns, and neither runs on a Rust brain, so they read
-/// as the column defaults (null, false). `contextual_retrieval_mode` is what
-/// `setSourceContextualRetrievalMode` stored.
+/// strings. The store keeps no `trust_frontmatter_overrides`: only source admin SQL writes that
+/// column, and it does not run on a Rust brain, so it reads as the column default (false).
+/// `contextual_retrieval_mode` is what `setSourceContextualRetrievalMode` stored and `last_commit` the
+/// one `advance_source_commit` stored.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceDetailRow {
     pub id: String,
@@ -95,7 +102,7 @@ impl From<SourceRecord> for SourceDetailRow {
             id: r.id,
             name: r.name,
             local_path: r.local_path,
-            last_commit: None,
+            last_commit: r.last_commit,
             last_sync_at: r.last_sync_at_us.map(iso),
             config: r.config,
             created_at: iso(r.created_at_us),
@@ -165,6 +172,8 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         contextual_retrieval_mode: None,
         archived_at_us: None,
         archive_expires_at_us: None,
+        last_commit: None,
+        newest_content_at_us: None,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -241,6 +250,8 @@ impl Store {
                     contextual_retrieval_mode: None,
                     archived_at_us: None,
                     archive_expires_at_us: None,
+                    last_commit: None,
+                    newest_content_at_us: None,
                 },
             };
             if input.name.is_some() {
@@ -273,6 +284,36 @@ impl Store {
             }
             put_json(tx, &source_key(id), &record)?;
             Ok(true)
+        })
+    }
+
+    /// `advanceSourceCommit`: records that the source's git sync reached `commit` and stamps
+    /// `last_sync_at` with the store clock. `newest_content_at` is left alone when `None`, cleared
+    /// when `Some(None)` and set when `Some(Some(iso))`. An unknown id changes nothing, as the
+    /// `UPDATE ... WHERE id` of the SQL engines does.
+    pub fn advance_source_commit(
+        &self,
+        id: &str,
+        commit: &str,
+        newest_content_at: Option<Option<&str>>,
+    ) -> Result<()> {
+        let newest = match newest_content_at {
+            Some(Some(text)) => Some(Some(parse_iso(text).ok_or_else(|| {
+                StoreError::invalid("newest_content_at must be an ISO timestamp ending in Z")
+            })?)),
+            Some(None) => Some(None),
+            None => None,
+        };
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(());
+            };
+            record.last_commit = Some(commit.to_string());
+            record.last_sync_at_us = Some(self.env.now_micros());
+            if let Some(newest) = newest {
+                record.newest_content_at_us = newest;
+            }
+            put_json(tx, &source_key(id), &record)
         })
     }
 
@@ -314,6 +355,15 @@ impl Store {
     /// `getSource(id)`: the source row, archived or not, or `None`. Mirrors `getSource`.
     pub fn get_source(&self, id: &str) -> Result<Option<SourceDetailRow>> {
         Ok(read_source(&*self.read()?, id)?.map(SourceDetailRow::from))
+    }
+
+    /// `countRepoBoundSources()`: how many sources that are not archived have a non-empty
+    /// local path. Mirrors `countRepoBoundSources`.
+    pub fn count_repo_bound_sources(&self) -> Result<u64> {
+        Ok(all_sources(&*self.read()?)?
+            .into_iter()
+            .filter(|r| !r.archived && r.local_path.as_deref().is_some_and(|p| !p.is_empty()))
+            .count() as u64)
     }
 
     /// `listSourceLocalPaths()`: the local path of every source that has a non-empty one,

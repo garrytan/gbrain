@@ -250,8 +250,11 @@ stay kept to it.
 
 An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
 by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
-(private or not), for its facts and timeline rows, and for pages and facts derived from them: a synthesized concept
-with an input page there, and any page or fact whose recorded derivation inputs reach a row there. None of the
+(private or not), for its facts and timeline rows, and for pages, facts, takes and timeline rows derived from them:
+a synthesized concept with an input page there, and any page, fact, take or timeline row whose recorded derivation
+inputs reach a row there, wherever its page is. A meeting in an owner-only source adds timeline rows only to pages in
+its own source, even with `link_resolution.cross_source` on, and a read that cannot learn the brain's schema version
+treats every row as owner-only once the brain has held owner-only data. None of the
 relaxations above widens it: `--private-pages granted-sources`, `--private-facts granted-sources`,
 `search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
 `visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote

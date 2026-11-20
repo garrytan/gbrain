@@ -47,3 +47,6 @@ export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: stri
   async (brain, op, fingerprint, completedKeys) => {
     await storeCall({ member: 'writeOpCheckpointRecord' }, () => brain.writeOpCheckpointRecord(op, fingerprint, completedKeys));
   };
+/** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
+export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
+  storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));

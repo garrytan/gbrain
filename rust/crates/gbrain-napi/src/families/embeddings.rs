@@ -57,6 +57,16 @@ impl Brain {
         })
     }
 
+    /// `readUnembeddedPageSummary(sourceId)`: `{ pages, oldest, held }`.
+    #[napi]
+    pub fn read_unembedded_page_summary<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_unembedded_page_summary(&source_id))
+    }
+
     /// `sumStaleChunkChars({ sourceId?, signature?, includeNullSignature? }?)`.
     #[napi]
     pub fn sum_stale_chunk_chars<'env>(

@@ -1,12 +1,12 @@
 {
   "golden": {
-    "count": 323,
+    "count": 325,
     "gaps": [
       17,
       18,
       19,
       100,
-      328
+      330
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -110,7 +110,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 329,
+    "latest": 331,
     "records": [
       {
         "handler": {
@@ -5360,6 +5360,32 @@
         "version": 327
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "owner_only_reads_complete",
+        "sql": {
+          "length": 4368,
+          "sha256": "be7268671a0dae503f88067a019c7f7af2181566b695b85f1fd9a241cbf25c6c"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 328
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "serves_since_subsecond",
+        "sql": {
+          "length": 1208,
+          "sha256": "eb377bc3f69f25e3ccdbd89318c6983e8e3cc4481c6a6e0f1dfd9eac8ff2d387"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 329
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5375,7 +5401,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "152f6a24db50c4a75274a446d9c3ae12020456d7b638a480267d914711e5ef82"
+          "sha256": "44af8809d750a51b57caaa56d4ff9afe8a0ac9a282cedc166e24879363788ae2"
         },
         "idempotent": true,
         "name": "projection_jobs_byte_order_index",
@@ -5386,7 +5412,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 329
+        "version": 331
       }
     ],
     "versions": [
@@ -5712,7 +5738,9 @@
       325,
       326,
       327,
-      329
+      328,
+      329,
+      331
     ]
   },
   "normalizer": "migrations-record-v1"
