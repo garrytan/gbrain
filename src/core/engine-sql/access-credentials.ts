@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { pgArray } from '../grants/encoding.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -470,4 +471,50 @@ export async function convertLegacyAccessTokenGrant(tx: Raw, id: string, columns
   const [row] = await tx.executeRaw<Record<string, unknown>>(LEGACY_TOKEN_CONVERT_SQL,
     [columns.source_grant, columns.source_id, lit(columns.federated_read), lit(columns.allowed_operations), lit(columns.takes_holders), id]);
   return row ?? null;
+}
+
+/**
+ * The statements `auth rescope` ran through executeRaw to write a token's grant (grants/legacy-token.ts writeTokenGrant,
+ * rescopeInTransaction and migrateLegacyTokens at 5a32485552), byte for byte.
+ */
+export const TOKEN_GRANT_WRITE_SQL = {
+  grant: `UPDATE access_tokens SET source_grant = $2, source_id = $3, federated_read = $4::text[], allowed_operations = $5::text[],
+       takes_holders = $6::text[], scopes = COALESCE($7::text[], scopes), grant_revision = grant_revision + 1, permissions = $8::jsonb
+     WHERE id = $1::uuid RETURNING grant_revision`,
+  private_pages: 'UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid',
+  private_facts: 'UPDATE access_tokens SET private_facts = $2 WHERE id = $1::uuid',
+  lock_legacy: 'SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE',
+} as const;
+
+/** One grant write: the five grant columns, the scopes (null keeps them) and the `permissions` mirror. */
+export interface AccessTokenGrantWrite {
+  columns: LegacyTokenGrantColumns;
+  scopes: string[] | null;
+  permissions: Record<string, unknown>;
+}
+
+/** The private grant columns of a token: what `--private-pages` and `--private-facts` set. */
+export type AccessTokenPrivateAxis = 'private_pages' | 'private_facts';
+
+/**
+ * Write the grant columns, the scopes when given and the `permissions` mirror of token `id` (a UUID), one more grant
+ * revision; the new revision, or null when no token has the id. The arrays bind as the TEXT[] literals the caller bound.
+ */
+export async function writeAccessTokenGrant(tx: Raw, id: string, write: AccessTokenGrantWrite): Promise<number | null> {
+  const lit = (v: string[] | null) => (v === null ? null : pgArray(v));
+  const c = write.columns;
+  const [row] = await executeRawJsonb<{ grant_revision: number }>(tx, TOKEN_GRANT_WRITE_SQL.grant,
+    [id, c.source_grant, c.source_id, lit(c.federated_read), lit(c.allowed_operations), lit(c.takes_holders), write.scopes === null ? null : `{${write.scopes.join(',')}}`],
+    [write.permissions]);
+  return row ? Number(row.grant_revision) : null;
+}
+
+/** Set one private grant column of token `id` (a UUID) to `value` ('none' or 'granted_sources'; the table refuses others). */
+export async function writeAccessTokenPrivateGrant(tx: Raw, id: string, axis: AccessTokenPrivateAxis, value: string): Promise<void> {
+  await tx.executeRaw(axis === 'private_pages' ? TOKEN_GRANT_WRITE_SQL.private_pages : TOKEN_GRANT_WRITE_SQL.private_facts, [id, value]);
+}
+
+/** The whole rows of the active tokens still on the legacy shape (no `source_grant`), oldest first, locked FOR UPDATE. */
+export function lockLegacyAccessTokens(tx: Raw): Promise<Record<string, unknown>[]> {
+  return tx.executeRaw<Record<string, unknown>>(TOKEN_GRANT_WRITE_SQL.lock_legacy);
 }

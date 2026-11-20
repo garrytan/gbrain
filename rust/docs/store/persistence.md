@@ -71,10 +71,13 @@ but has no binding.
 
 ### Access grants
 
-The access-grant members (`readOAuthClientReceiptGrant`, `readAccessTokenReceiptGrant`,
-`readOAuthClientMemberGrant`, `readAccessTokenMemberGrant`) refuse with `engine_capability_missing`: the store
-keeps OAuth clients and access tokens, but does not serve these four reads yet. The write re-check reads
-`readOAuthClientWriteGrant` and `readAccessTokenWriteGrant` are served ([journal.md](journal.md)).
+The access-grant members answer from the OAuth client and access token rows the store keeps
+([oauth-clients.md](oauth-clients.md), [access-tokens.md](access-tokens.md)). `readOAuthClientReceiptGrant` and
+`readAccessTokenReceiptGrant` return the row deleted or revoked too (the caller refuses it);
+`readOAuthClientMemberGrant` and `readAccessTokenMemberGrant` return nothing for a deleted client or a revoked token.
+A token id that is not a UUID is refused as PostgreSQL refuses it. The `lock` option changes nothing: the store runs
+one write transaction at a time. The write re-check reads `readOAuthClientWriteGrant` and
+`readAccessTokenWriteGrant` are served the same way ([journal.md](journal.md)).
 `readLocalWriterMemberGrant` is `readLocalWriterRow` (the revoked row is returned with its mark; the caller
 denies it). `readSharedSkillServingEpoch` is a UUID derived from the persistence brain id (SHA-256), stable for
 the brain, and `null` when the brain has no id, so membership denies.

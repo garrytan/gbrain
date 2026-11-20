@@ -177,6 +177,42 @@ impl Brain {
         })
     }
 
+    /// `writeAccessTokenGrant(id, { columns, scopes, permissions })`: the token's new grant revision, or null.
+    #[napi]
+    pub fn write_access_token_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        columns: Value,
+        scopes: Option<Vec<String>>,
+        permissions: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let columns: TokenGrantColumns = required(columns, "writeAccessTokenGrant columns")?;
+            s.write_access_token_grant(&id, &columns, scopes, permissions)
+        })
+    }
+
+    /// `writeAccessTokenPrivateGrant(id, axis, value)`: sets `private_pages` or `private_facts` of one token.
+    #[napi]
+    pub fn write_access_token_private_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        axis: String,
+        value: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_access_token_private_grant(&id, &axis, &value)
+        })
+    }
+
+    /// `lockLegacyAccessTokens()`: the whole rows of the active tokens with no source grant, oldest first, without hashes.
+    #[napi]
+    pub fn lock_legacy_access_tokens<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_legacy_access_tokens())
+    }
+
     /// `delete_expired_oauth_tokens(now)`: how many tokens with `expires_at` before `now` (epoch seconds) it deleted.
     #[napi]
     pub fn delete_expired_oauth_tokens<'env>(

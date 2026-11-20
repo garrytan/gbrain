@@ -461,7 +461,7 @@ src/core/google/loops-extract.ts	execute_raw	1
 src/core/google/loops-reciprocity.ts	execute_raw	1
 src/core/google/people-calendar-sweep.ts	execute_raw	3
 src/core/google/sweep-shared.ts	execute_raw	2
-src/core/grants/legacy-token.ts	execute_raw	7
+src/core/grants/legacy-token.ts	execute_raw	2
 src/core/grants/legacy-token.ts	sql_template	3
 src/core/grants/lifecycle.ts	sql_template	7
 src/core/grants/migration.ts	execute_raw	1

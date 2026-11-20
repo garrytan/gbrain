@@ -260,15 +260,14 @@ impl Store {
     }
 
     /// `readAccessTokenWriteGrant(tokenId)`: the token grant columns (`TOKEN_GRANT_ROW_COLUMNS`) and `revoked_at` (ISO
-    /// text or NULL) of the token with this id (a UUID, so any case), revoked or not, or None. The two private grants
-    /// are not kept and read as the table's default `'none'`.
+    /// text or NULL) of the token with this id (a UUID, so any case), revoked or not, or None.
     pub fn read_access_token_write_grant(&self, token_id: &str) -> Result<Option<Value>> {
         let read = self.read()?;
         Ok(
             load_token(&*read, &token_id.to_ascii_lowercase())?.map(|t| {
                 json!({
-                    "id": t.id, "scopes": t.scopes, "permissions": t.permissions, "private_pages": "none",
-                    "private_facts": "none", "grant_revision": t.grant_revision, "source_grant": t.source_grant,
+                    "id": t.id, "scopes": t.scopes, "permissions": t.permissions, "private_pages": t.private_pages,
+                    "private_facts": t.private_facts, "grant_revision": t.grant_revision, "source_grant": t.source_grant,
                     "source_id": t.source_id, "federated_read": t.federated_read,
                     "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
                     "revoked_at": t.revoked_at.map(iso),
