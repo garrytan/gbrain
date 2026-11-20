@@ -1,4 +1,5 @@
-//! Contradiction-probe runs and the judge cache.
+//! Contradiction-probe runs, the judge cache and the link contexts the edge-contradictions phase
+//! quotes.
 //!
 //! One `#[napi] impl Brain` block per family file; each method runs one `Store` call on the pool
 //! through `Brain::run` and resolves plain JSON (rust/README.md, "The brain store").
@@ -68,5 +69,20 @@ impl Brain {
     #[napi]
     pub fn sweep_contradiction_cache<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.sweep_contradiction_cache())
+    }
+
+    /// `listLinkContexts(fromPageId, toPageId, linkType)`: resolves up to three distinct
+    /// non-empty contexts, in byte order.
+    #[napi]
+    pub fn list_link_contexts<'env>(
+        &self,
+        env: &'env Env,
+        from_page_id: f64,
+        to_page_id: f64,
+        link_type: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_link_contexts(from_page_id, to_page_id, &link_type)
+        })
     }
 }
