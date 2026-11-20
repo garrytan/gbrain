@@ -6,7 +6,10 @@ The page sample read of `gbrain schema detect --fields` (`src/core/schema-pack/f
 TypeScript statements are in `src/core/engine-sql/field-usage.ts`; the store module is
 `rust/crates/gbrain-store/src/field_usage.rs`; the addon method is in `rust/crates/gbrain-napi/src/families/field_usage.rs`.
 
-Keys: none of its own. The read scans the core page rows (`all_pages`).
+Keys: none of its own. The read scans the core page rows once. It decodes only a page's id, source,
+type and deletion stamp to count it, and decodes the whole record only for a page that enters a
+type's sample. Memory holds at most `samplePerType` sampled pages per type, and no page body when
+`countsOnly` is set.
 
 Two behaviours are kept as the PGLite read has them (TODOS.md): the read does not look at `sources`, so pages of an
 archived source count and are sampled; and a segmented page (NULL compiled_truth) samples a null body, which the
