@@ -813,6 +813,39 @@ const PINS: Pin[] = [
     texts: ["SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count FROM op_checkpoints WHERE op=$1 AND fingerprint=$2"],
   },
   {
+    from: 'src/core/persistence/sync-holds.ts:598 readGitHoldListing (at 77ac0ed0e9)',
+    case: { method: 'readGitHoldListingRows', variant: 'default', run: e => e.readGitHoldListingRows(['default'], 5) },
+    texts: [`SELECT s.id AS source_id,
+      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
+    FROM sources s
+    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
+    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
+      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+      ORDER BY x.fingerprint LIMIT $4) h ON true
+    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
+    ORDER BY s.id, h.fingerprint`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:620 readGitHoldCodeCounts (at 77ac0ed0e9)',
+    case: { method: 'readGitHoldCodeCountRows', variant: 'default', run: e => e.readGitHoldCodeCountRows(['default']) },
+    texts: [`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
+    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:562 readGitImageHoldCounts (at 77ac0ed0e9)',
+    case: { method: 'readGitImageHoldCountRows', variant: 'default', run: e => e.readGitImageHoldCountRows(['default']) },
+    texts: [`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
+    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
+    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1168 readSyncConversions (at 77ac0ed0e9)',
+    case: { method: 'readSyncConversionRows', variant: 'default', run: e => e.readSyncConversionRows(['default']) },
+    texts: [`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
+    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`],
+  },
+  {
     from: 'src/core/persistence/sync-pass-row.ts:178 readPassRow (at 8b80bd80ab)',
     case: { method: 'readSyncPassRow', variant: 'default', run: e => e.readSyncPassRow('default', '1') },
     texts: ['SELECT completed_keys->0 AS value, updated_at, now() AS read_at FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],

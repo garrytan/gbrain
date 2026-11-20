@@ -88,6 +88,56 @@ export async function countGitHolds(exec: HoldStoreExec, sourceId: string, incar
   return Number(row?.count ?? 0);
 }
 
+/** One row per source incarnation: the blocked requests recent managed syncs converted in place (sync-holds.ts re-exports it). */
+export const SYNC_CONVERSION_OP = 'sync-conversions';
+
+/** A row of the bounded hold listing: the source, its current incarnation and outstanding count, and one hold record (null when none is listed). */
+export interface GitHoldListingRow<R = Record<string, unknown>> { source_id: string; incarnation: string; count: number; record: R | null }
+
+/**
+ * Each listed source with outstanding holds (its summary count above 0) and its first `limit` hold records of the current
+ * incarnation in fingerprint order, marked `read_only_checkout` on a read-only mirror; a source with no record listed
+ * answers one row with a null record. By source, then fingerprint.
+ */
+export async function readGitHoldListingRows<R = Record<string, unknown>>(exec: HoldStoreExec, sourceIds: readonly string[], limit: number): Promise<Array<GitHoldListingRow<R>>> {
+  if (!sourceIds.length) return [];
+  const rows = await exec.executeRaw<{ source_id: string; incarnation: string; count: number | string; record: R | null }>(`SELECT s.id AS source_id,
+      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
+    FROM sources s
+    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
+    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
+      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+      ORDER BY x.fingerprint LIMIT $4) h ON true
+    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
+    ORDER BY s.id, h.fingerprint`, [GIT_HOLD_SUMMARY_OP, GIT_HOLD_OP, [...sourceIds], Math.max(0, Math.floor(limit))]);
+  return rows.map(row => ({ source_id: row.source_id, incarnation: row.incarnation, count: Number(row.count), record: row.record }));
+}
+
+/** Each listed source's current-incarnation holds counted per code (`code` null for a record without one), in no set order. */
+export async function readGitHoldCodeCountRows(exec: HoldStoreExec, sourceIds: readonly string[]): Promise<Array<{ source_id: string; code: string | null; n: number }>> {
+  if (!sourceIds.length) return [];
+  const rows = await exec.executeRaw<{ source_id: string; code: string | null; n: number | string }>(`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
+    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`, [GIT_HOLD_OP, [...sourceIds]]);
+  return rows.map(row => ({ source_id: row.source_id, code: row.code, n: Number(row.n) }));
+}
+
+/** Each listed source whose current-incarnation summary counts unsupported-image holds, with that count, in no set order. */
+export async function readGitImageHoldCountRows(exec: HoldStoreExec, sourceIds: readonly string[]): Promise<Array<{ source_id: string; images: number }>> {
+  if (!sourceIds.length) return [];
+  const rows = await exec.executeRaw<{ source_id: string; images: number | string }>(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
+    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
+    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`, [GIT_HOLD_SUMMARY_OP, [...sourceIds]]);
+  return rows.map(row => ({ source_id: row.source_id, images: Number(row.images) }));
+}
+
+/** The stored conversion log of each listed source's current incarnation (sources without a log row are absent), in no set order. */
+export function readSyncConversionRows<C = Record<string, unknown>>(exec: HoldStoreExec, sourceIds: readonly string[]): Promise<Array<{ source_id: string; conversions: C[] | null }>> {
+  if (!sourceIds.length) return Promise.resolve([]);
+  return exec.executeRaw<{ source_id: string; conversions: C[] | null }>(`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
+    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`, [SYNC_CONVERSION_OP, [...sourceIds]]);
+}
+
 /** A managed sync pass row as read: the stored value (null when the row holds none), its stamp and the database clock at the read. */
 export interface SyncPassRowRead<V = Record<string, unknown>> { value: V | null; updated_at: Date | string; read_at: Date | string }
 

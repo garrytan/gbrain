@@ -61,13 +61,13 @@ import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
 import * as holdStore from '../engine-sql/sync-hold-store.ts';
-import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
+import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
 export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
-export const SYNC_CONVERSION_OP = 'sync-conversions';
+export { SYNC_CONVERSION_OP };
 /** How many conversions the log keeps per source. */
 export const SYNC_CONVERSION_KEEP = 20;
 /** Default for `GBRAIN_SYNC_HOLD_CAP`: how many holds a result lists in detail. Storage is never capped. */
@@ -79,7 +79,8 @@ export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 /** The hold store's typed members (engine-sql/sync-hold-store.ts); an executeRaw-only view runs the same statements. */
-type HoldStoreMember = 'lockGitHoldSummary' | 'adjustGitHoldSummary' | 'readGitHoldRow' | 'writeGitHoldRow' | 'replaceGitHoldRow' | 'deleteGitHoldRow' | 'countGitHolds';
+type HoldStoreMember = 'lockGitHoldSummary' | 'adjustGitHoldSummary' | 'readGitHoldRow' | 'writeGitHoldRow' | 'replaceGitHoldRow' | 'deleteGitHoldRow' | 'countGitHolds'
+  | 'readGitHoldListingRows' | 'readGitHoldCodeCountRows' | 'readGitImageHoldCountRows' | 'readSyncConversionRows';
 type HoldStore = Exec & Partial<Pick<BrainEngine, HoldStoreMember>>;
 /** An engine (its typed readGitHoldRecords) or an executeRaw-only view of one. */
 type HoldsReader = Pick<BrainEngine, 'readGitHoldRecords'> | Exec;
@@ -557,12 +558,10 @@ export async function readGitHold(engine: Exec, sourceId: string, incarnation: s
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
-export async function readGitImageHoldCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, number>> {
+export async function readGitImageHoldCounts(engine: HoldStore, sourceIds: string[]): Promise<Map<string, number>> {
   if (!sourceIds.length) return new Map();
-  const rows = await engine.executeRaw<{ source_id: string; images: number | string }>(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
-    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
-    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
-  return new Map(rows.map(row => [row.source_id, Number(row.images)]));
+  const rows = engine.readGitImageHoldCountRows ? await engine.readGitImageHoldCountRows(sourceIds) : await holdStore.readGitImageHoldCountRows(engine, sourceIds);
+  return new Map(rows.map(row => [row.source_id, row.images]));
 }
 
 /** Outstanding holds of the source's current incarnation (one indexed read). */
@@ -593,17 +592,10 @@ export async function readGitSourceHolds(engine: HoldsReader, opts: GitHoldRecor
  * (its summary row) and its first `limit` holds in path order, limited in SQL
  * so a source with 20k holds never loads them all.
  */
-export async function readGitHoldListing(engine: Exec, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
+export async function readGitHoldListing(engine: HoldStore, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
   if (!sourceIds.length) return [];
-  const rows = await engine.executeRaw<{ source_id: string; incarnation: string; count: number | string; record: GitHoldRecord | null }>(`SELECT s.id AS source_id,
-      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
-    FROM sources s
-    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
-    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
-      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-      ORDER BY x.fingerprint LIMIT $4) h ON true
-    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
-    ORDER BY s.id, h.fingerprint`, [GIT_HOLD_SUMMARY_OP, GIT_HOLD_OP, sourceIds, Math.max(0, Math.floor(limit))]);
+  const rows = engine.readGitHoldListingRows ? await engine.readGitHoldListingRows<GitHoldRecord>(sourceIds, limit)
+    : await holdStore.readGitHoldListingRows<GitHoldRecord>(engine, sourceIds, limit);
   const out = new Map<string, GitSourceHolds>();
   for (const row of rows) {
     const entry = out.get(row.source_id) ?? { sourceId: row.source_id, incarnation: row.incarnation, count: Number(row.count), holds: [] };
@@ -614,13 +606,11 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
 }
 
 /** GST-2843: each listed source's holds counted per code, over every hold of its current incarnation (not a listing's first rows). */
-export async function readGitHoldCodeCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
+export async function readGitHoldCodeCounts(engine: HoldStore, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
   const out = new Map<string, Record<string, number>>();
   if (!sourceIds.length) return out;
-  const rows = await engine.executeRaw<{ source_id: string; code: string; n: number | string }>(`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
-    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`, [GIT_HOLD_OP, sourceIds]);
-  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [row.code]: Number(row.n) });
+  const rows = engine.readGitHoldCodeCountRows ? await engine.readGitHoldCodeCountRows(sourceIds) : await holdStore.readGitHoldCodeCountRows(engine, sourceIds);
+  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [String(row.code)]: row.n });
   return out;
 }
 
@@ -1162,11 +1152,11 @@ export async function recordSyncConversion(tx: Exec, sourceId: string, incarnati
 }
 
 /** The conversion log of each listed source's current incarnation, newest first (sources with none are absent). */
-export async function readSyncConversions(engine: Exec, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
+export async function readSyncConversions(engine: HoldStore, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
   const out = new Map<string, SyncConversion[]>();
   if (!sourceIds.length || limit <= 0) return out;
-  const rows = await engine.executeRaw<{ source_id: string; conversions: SyncConversion[] | null }>(`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
-    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`, [SYNC_CONVERSION_OP, sourceIds]);
+  const rows = engine.readSyncConversionRows ? await engine.readSyncConversionRows<SyncConversion>(sourceIds)
+    : await holdStore.readSyncConversionRows<SyncConversion>(engine, sourceIds);
   for (const row of rows) if (Array.isArray(row.conversions) && row.conversions.length) out.set(row.source_id, row.conversions.slice(0, limit));
   return out;
 }

@@ -7,14 +7,14 @@
  *
  * Each store call is one store write transaction and the store runs one at a time, so a read followed by a write here
  * sees no other write between them: the summary row lock PGLite and Postgres take is implied. The SQL these members
- * stand for is engine-sql/sync-hold-store.ts, engine-sql/sync-hold-reads.ts and engine-sql/persistence-journal.ts.
+ * stand for (the hold listing, per-code and image counts and the conversion log among them) is engine-sql/sync-hold-store.ts, engine-sql/sync-hold-reads.ts and engine-sql/persistence-journal.ts.
  * Fingerprints list in byte order, where the SQL orders by the database collation; the two agree on the ASCII paths
  * the parity tests hold.
  */
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, type HeldCoverageRow } from '../../engine-sql/persistence-journal.ts';
 import { GIT_HOLD_RETRY_OP, type GitHoldRecordsQuery, type GitHoldReportInputs, type GitHoldSummaryRow } from '../../engine-sql/sync-hold-reads.ts';
 import {
-  GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, gitHoldFingerprint, summaryFingerprint,
+  GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint,
   type GitHoldSummaryWeights, type SyncPassRowRead, type SyncPassRowWrite,
 } from '../../engine-sql/sync-hold-store.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
@@ -224,6 +224,88 @@ export const readGitHoldRecords: StoreMember<[opts?: GitHoldRecordsQuery], Array
   });
   held.sort((a, b) => byText(a.source, b.source) || byText(a.fingerprint, b.fingerprint));
   return held.map(h => ({ record: h.record as never }));
+};
+
+/** The hold records of each source's current incarnation by fingerprint, marked `read_only_checkout` on a read-only mirror (one store listing). */
+async function currentHoldRecords(brain: StoreBrain, member: string, sources: Map<string, LiveSource>, wanted: Set<string>): Promise<Map<string, Array<{ fingerprint: string; record: JsonObject }>>> {
+  const out = new Map<string, Array<{ fingerprint: string; record: JsonObject }>>();
+  for (const row of await listRows(brain, member, GIT_HOLD_OP)) {
+    const record = first(row);
+    const source = record ? holdSource(sources, record) : undefined;
+    if (!record || !source || !wanted.has(source.id)) continue;
+    const mirror = (text(source.config.mirror_read_only) ?? 'false') === 'true';
+    out.set(source.id, [...(out.get(source.id) ?? []), { fingerprint: row.fingerprint, record: mirror ? { ...record, read_only_checkout: true } : record }]);
+  }
+  for (const list of out.values()) list.sort((a, b) => byText(a.fingerprint, b.fingerprint));
+  return out;
+}
+
+/** Each listed source with outstanding holds (its summary count above 0) and its first `limit` records; a source with none listed answers a null record. */
+export const readGitHoldListingRows: StoreMember<[sourceIds: readonly string[], limit: number], Array<{ source_id: string; incarnation: string; count: number; record: never | null }>> =
+  async (brain, sourceIds, limit) => {
+    const member = 'readGitHoldListingRows';
+    if (!sourceIds.length) return [];
+    const sources = await liveSources(brain, member);
+    const wanted = new Set(sourceIds);
+    const listed = [...wanted].filter(id => sources.has(id)).sort(byText);
+    const records = await currentHoldRecords(brain, member, sources, wanted);
+    const take = Math.max(0, Math.floor(limit));
+    const out: Array<{ source_id: string; incarnation: string; count: number; record: never | null }> = [];
+    for (const id of listed) {
+      const source = sources.get(id)!;
+      const count = counter(first(await readRow(brain, member, GIT_HOLD_SUMMARY_OP, summaryFingerprint(id, source.incarnation))), 'count');
+      if (count <= 0) continue;
+      const holds = (records.get(id) ?? []).slice(0, take);
+      if (!holds.length) out.push({ source_id: id, incarnation: source.incarnation, count, record: null });
+      for (const hold of holds) out.push({ source_id: id, incarnation: source.incarnation, count, record: hold.record as never });
+    }
+    return out;
+  };
+
+/** Each listed source's current-incarnation holds counted per code (`code` null for a record without one). */
+export const readGitHoldCodeCountRows: StoreMember<[sourceIds: readonly string[]], Array<{ source_id: string; code: string | null; n: number }>> = async (brain, sourceIds) => {
+  const member = 'readGitHoldCodeCountRows';
+  if (!sourceIds.length) return [];
+  const records = await currentHoldRecords(brain, member, await liveSources(brain, member), new Set(sourceIds));
+  const out: Array<{ source_id: string; code: string | null; n: number }> = [];
+  for (const [sourceId, list] of [...records].sort(([a], [b]) => byText(a, b))) {
+    const counts = new Map<string | null, number>();
+    for (const { record } of list) { const code = text(record.code); counts.set(code, (counts.get(code) ?? 0) + 1); }
+    for (const [code, n] of counts) out.push({ source_id: sourceId, code, n });
+  }
+  return out;
+};
+
+/** Each listed source whose current-incarnation summary counts unsupported-image holds, with that count. */
+export const readGitImageHoldCountRows: StoreMember<[sourceIds: readonly string[]], Array<{ source_id: string; images: number }>> = async (brain, sourceIds) => {
+  const member = 'readGitImageHoldCountRows';
+  if (!sourceIds.length) return [];
+  const sources = await liveSources(brain, member);
+  const out: Array<{ source_id: string; images: number }> = [];
+  for (const id of [...new Set(sourceIds)].sort(byText)) {
+    const source = sources.get(id);
+    if (!source) continue;
+    const images = counter(first(await readRow(brain, member, GIT_HOLD_SUMMARY_OP, summaryFingerprint(id, source.incarnation))), 'images');
+    if (images > 0) out.push({ source_id: id, images });
+  }
+  return out;
+};
+
+/** The stored conversion log of each listed source's current incarnation; a source without a log row is absent. */
+export const readSyncConversionRows: StoreMember<[sourceIds: readonly string[]], Array<{ source_id: string; conversions: never[] | null }>> = async (brain, sourceIds) => {
+  const member = 'readSyncConversionRows';
+  if (!sourceIds.length) return [];
+  const sources = await liveSources(brain, member);
+  const out: Array<{ source_id: string; conversions: never[] | null }> = [];
+  for (const id of [...new Set(sourceIds)].sort(byText)) {
+    const source = sources.get(id);
+    if (!source) continue;
+    const row = await readRow(brain, member, SYNC_CONVERSION_OP, summaryFingerprint(id, source.incarnation));
+    if (!row) continue;
+    const log = first(row)?.conversions;
+    out.push({ source_id: id, conversions: log === undefined ? null : log as never[] | null });
+  }
+  return out;
 };
 
 /** The pending `sources retry-held` request's keys for this fingerprint, or null. */

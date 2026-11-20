@@ -25,7 +25,7 @@ const ROUND_TRIP_MS = 40;
 const SLICE_BOUND_MS = 6_000;
 
 /** The typed hold-store members (engine-sql/sync-hold-store.ts); each one runs one statement, so it pays one round trip. */
-const HOLD_STORE_MEMBERS = new Set<PropertyKey>(['lockGitHoldSummary', 'adjustGitHoldSummary', 'readGitHoldRow', 'writeGitHoldRow', 'replaceGitHoldRow', 'deleteGitHoldRow', 'countGitHolds', 'readSyncPassRow', 'readLiveSyncPassRows', 'writeSyncPassRow']);
+const HOLD_STORE_MEMBERS = new Set<PropertyKey>(['lockGitHoldSummary', 'adjustGitHoldSummary', 'readGitHoldRow', 'writeGitHoldRow', 'replaceGitHoldRow', 'deleteGitHoldRow', 'countGitHolds', 'readGitHoldListingRows', 'readGitHoldCodeCountRows', 'readGitImageHoldCountRows', 'readSyncConversionRows', 'readSyncPassRow', 'readLiveSyncPassRows', 'writeSyncPassRow']);
 
 /** `engine` whose transactions wait `ROUND_TRIP_MS` before each statement (a remote database) and record how long each stayed open. */
 function remote(engine: BrainEngine, spans: number[]): BrainEngine {

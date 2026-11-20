@@ -22,7 +22,7 @@ import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
-import type { GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from './engine-sql/sync-hold-store.ts';
+import type { GitHoldListingRow, GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from './engine-sql/sync-hold-store.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -3576,6 +3576,14 @@ export interface BrainEngine {
   deleteGitHoldRow(sourceId: string, incarnation: string, path: string): Promise<void>;
   /** The source incarnation's outstanding holds (its summary's count), 0 without a summary. */
   countGitHolds(sourceId: string, incarnation: string): Promise<number>;
+  /** Each listed source with outstanding holds and its first `limit` current-incarnation hold records by fingerprint (a null record when none is listed), by source then fingerprint. */
+  readGitHoldListingRows<R = Record<string, unknown>>(sourceIds: readonly string[], limit: number): Promise<Array<GitHoldListingRow<R>>>;
+  /** Each listed source's current-incarnation holds counted per code, in no set order. */
+  readGitHoldCodeCountRows(sourceIds: readonly string[]): Promise<Array<{ source_id: string; code: string | null; n: number }>>;
+  /** Each listed source whose hold summary counts unsupported-image holds, with that count, in no set order. */
+  readGitImageHoldCountRows(sourceIds: readonly string[]): Promise<Array<{ source_id: string; images: number }>>;
+  /** The stored conversion log of each listed source's current incarnation, in no set order. */
+  readSyncConversionRows<C = Record<string, unknown>>(sourceIds: readonly string[]): Promise<Array<{ source_id: string; conversions: C[] | null }>>;
   /** The managed sync pass row of one source incarnation, or null (SQL in engine-sql/sync-hold-store.ts). */
   readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string): Promise<SyncPassRowRead<V> | null>;
   /** The managed sync pass rows of the sources' live incarnations (null: every source), in no set order. */

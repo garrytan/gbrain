@@ -1614,6 +1614,10 @@ export class PGLiteEngine implements BrainEngine {
   replaceGitHoldRow(sourceId: string, incarnation: string, path: string, expected: object, next: object) { return syncHoldStoreImpl.replaceGitHoldRow(this, sourceId, incarnation, path, expected, next); }
   deleteGitHoldRow(sourceId: string, incarnation: string, path: string) { return syncHoldStoreImpl.deleteGitHoldRow(this, sourceId, incarnation, path); }
   countGitHolds(sourceId: string, incarnation: string) { return syncHoldStoreImpl.countGitHolds(this, sourceId, incarnation); }
+  readGitHoldListingRows<R = Record<string, unknown>>(sourceIds: readonly string[], limit: number) { return syncHoldStoreImpl.readGitHoldListingRows<R>(this, sourceIds, limit); }
+  readGitHoldCodeCountRows(sourceIds: readonly string[]) { return syncHoldStoreImpl.readGitHoldCodeCountRows(this, sourceIds); }
+  readGitImageHoldCountRows(sourceIds: readonly string[]) { return syncHoldStoreImpl.readGitImageHoldCountRows(this, sourceIds); }
+  readSyncConversionRows<C = Record<string, unknown>>(sourceIds: readonly string[]) { return syncHoldStoreImpl.readSyncConversionRows<C>(this, sourceIds); }
   readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string) { return syncHoldStoreImpl.readSyncPassRow<V>(this, sourceId, incarnation); }
   readLiveSyncPassRows<V = Record<string, unknown>>(sourceIds: readonly string[] | null) { return syncHoldStoreImpl.readLiveSyncPassRows<V>(this, sourceIds); }
   writeSyncPassRow(sourceId: string, incarnation: string, value: { lease_token?: unknown }, opts?: SyncPassRowWrite) { return syncHoldStoreImpl.writeSyncPassRow(this, sourceId, incarnation, value, opts); }

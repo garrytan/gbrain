@@ -2,7 +2,8 @@
  * BrainEngine parity — the git sync hold store (`lockGitHoldSummary`, `adjustGitHoldSummary`, `readGitHoldRow`,
  * `writeGitHoldRow`, `replaceGitHoldRow`, `deleteGitHoldRow`, `countGitHolds`), the held-file reads built on it
  * (`readHeldPageRows`, `readHeldCoverageRows`, `readGitHoldRecords`, `readGitHoldReportInputs`), the managed sync pass
- * row (`writeSyncPassRow`, `readSyncPassRow`, `readLiveSyncPassRows`), which persistence/sync-holds.ts and
+ * row (`writeSyncPassRow`, `readSyncPassRow`, `readLiveSyncPassRows`), and the status reads (`readGitHoldListingRows`,
+ * `readGitHoldCodeCountRows`, `readGitImageHoldCountRows`, `readSyncConversionRows`), which persistence/sync-holds.ts and
  * persistence/sync-pass-row.ts call instead of raw SQL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -20,7 +21,8 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import {
-  clearGitHold, countGitHolds, readGitSourceHolds, recordHoldAttempt, writeGitHold, type GitHoldRecord,
+  clearGitHold, countGitHolds, readGitHoldCodeCounts, readGitHoldListing, readGitImageHoldCounts, readGitSourceHolds, readSyncConversions,
+  recordHoldAttempt, recordSyncConversion, writeGitHold, type GitHoldRecord,
 } from '../../src/core/persistence/sync-holds.ts';
 import { readLivePassRows, readPassRow, writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { heldFileCount } from '../../src/core/persistence/applied-watermark.ts';
@@ -99,6 +101,71 @@ describe('engine parity: git sync holds', () => {
         counted: 2, clears: [false, true, false], after: 1, afterFences: 0,
         missing: { summary: null, mirror: null },
       });
+      return result;
+    });
+
+  parityTest('the status reads list each source\'s first holds by path and count codes and images; no source has a conversion log',
+    { methods: ['writeGitHoldRow', 'readGitHoldListingRows', 'readGitHoldCodeCountRows', 'readGitImageHoldCountRows', 'readSyncConversionRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'mirror', { mirror_read_only: 'true' }, '/srv/brain/mirror');
+      await createSource(engine, backend, 'quiet', {}, '/srv/brain/quiet');
+      const inc = await incarnationOf(engine, 'repo');
+      const mirrorInc = await incarnationOf(engine, 'mirror');
+      await writeGitHold(engine, hold('repo', inc, 'notes/c.md'));
+      await writeGitHold(engine, hold('repo', inc, 'notes/a.md', { code: 'invalid_fence' } as Partial<HoldInput>));
+      await writeGitHold(engine, hold('repo', inc, 'img/b.png', { code: 'managed_image_sync_unsupported' } as Partial<HoldInput>));
+      await writeGitHold(engine, hold('repo', 'stale-incarnation', 'notes/z.md'));
+      await writeGitHold(engine, hold('mirror', mirrorInc, 'notes/m.md'));
+      const ids = ['repo', 'mirror', 'quiet', 'missing'];
+      const listing = (limit: number) => readGitHoldListing(engine, ids, limit).then(list => list.map(s => ({ ...s, holds: s.holds.map(shape) })));
+      const result = {
+        one: await listing(1), all: await listing(10), none: await listing(0),
+        codes: Object.fromEntries([...(await readGitHoldCodeCounts(engine, ids))].sort(([a], [b]) => a.localeCompare(b))),
+        images: [...(await readGitImageHoldCounts(engine, ids))],
+        conversions: [...(await readSyncConversions(engine, ids, 5))],
+        empty: [await engine.readGitHoldListingRows([], 5), await engine.readGitHoldCodeCountRows([]), await engine.readGitImageHoldCountRows([]), await engine.readSyncConversionRows([])],
+      };
+      const repoHold = (path: string, code = 'invalid_frontmatter') => ({ source_id: 'repo', path, code, page_id: null, run_id: 'run-1', attempts: 1, read_only_checkout: false });
+      const mirrorHold = { source_id: 'mirror', path: 'notes/m.md', code: 'invalid_frontmatter', page_id: null, run_id: 'run-1', attempts: 1, read_only_checkout: true };
+      expect(result as unknown).toEqual({
+        one: [
+          { sourceId: 'mirror', incarnation: mirrorInc, count: 1, holds: [mirrorHold] },
+          { sourceId: 'repo', incarnation: inc, count: 3, holds: [repoHold('img/b.png', 'managed_image_sync_unsupported')] },
+        ],
+        all: [
+          { sourceId: 'mirror', incarnation: mirrorInc, count: 1, holds: [mirrorHold] },
+          { sourceId: 'repo', incarnation: inc, count: 3, holds: [repoHold('img/b.png', 'managed_image_sync_unsupported'), repoHold('notes/a.md', 'invalid_fence'), repoHold('notes/c.md')] },
+        ],
+        none: [
+          { sourceId: 'mirror', incarnation: mirrorInc, count: 1, holds: [] },
+          { sourceId: 'repo', incarnation: inc, count: 3, holds: [] },
+        ],
+        codes: { mirror: { invalid_frontmatter: 1 }, repo: { invalid_frontmatter: 1, invalid_fence: 1, managed_image_sync_unsupported: 1 } },
+        images: [['repo', 1]],
+        conversions: [],
+        empty: [[], [], [], []],
+      });
+      // Incarnations are random per brain: the arms compare everything else.
+      const plain = (list: typeof result.one) => list.map(({ incarnation: _inc, ...rest }) => rest);
+      return { ...result, one: plain(result.one), all: plain(result.all), none: plain(result.none) };
+    });
+
+  parityTest('the conversion log reads newest first per source, current incarnation only (a managed sync writes it, so a Rust brain stops at the write)',
+    { methods: ['readSyncConversionRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'quiet', {}, '/srv/brain/quiet');
+      const inc = await incarnationOf(engine, 'repo');
+      const quietInc = await incarnationOf(engine, 'quiet');
+      await recordSyncConversion(engine, 'repo', inc, { request_id: 'r1', path: 'notes/a.md', slug: 'notes/a', run_id: 'run-1', outcome: 'held' });
+      await recordSyncConversion(engine, 'repo', inc, { request_id: 'r2', path: 'notes/d.md', slug: 'notes/d', run_id: 'run-2', outcome: 'refrozen' });
+      await recordSyncConversion(engine, 'quiet', quietInc, { request_id: 'r3', path: null, slug: null, run_id: 'run-3', outcome: 'held' });
+      await recordSyncConversion(engine, 'repo', 'stale-incarnation', { request_id: 'r4', path: null, slug: null, run_id: 'run-4', outcome: 'held' });
+      const read = async (limit: number) => [...(await readSyncConversions(engine, ['repo', 'quiet', 'missing'], limit))]
+        .map(([id, list]) => [id, list.map(c => c.request_id)] as const).sort(([a], [b]) => a.localeCompare(b));
+      const result = { five: await read(5), one: await read(1), zero: await read(0) };
+      expect(result).toEqual({ five: [['quiet', ['r3']], ['repo', ['r2', 'r1']]], one: [['quiet', ['r3']], ['repo', ['r2']]], zero: [] });
       return result;
     });
 

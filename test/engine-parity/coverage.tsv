@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 792/798
+# covered: 796/802
 # lifecycle: 9/9
 # pages: 51/51
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 75/75
+# persistence_journal: 79/79
 # entity_reads: 15/15
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -410,10 +410,14 @@ readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
 lockGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 adjustGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
-writeGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
+writeGitHoldRow	persistence_journal	yes	2	no	yes	yes	serves
 replaceGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
 deleteGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
 countGitHolds	persistence_journal	yes	2	no	yes	yes	serves
+readGitHoldListingRows	persistence_journal	yes	1	no	yes	yes	serves
+readGitHoldCodeCountRows	persistence_journal	yes	1	no	yes	yes	serves
+readGitImageHoldCountRows	persistence_journal	yes	1	no	yes	yes	serves
+readSyncConversionRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
 writeSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
