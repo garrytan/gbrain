@@ -1,6 +1,7 @@
 //! The reads behind the previews of `gbrain repair consolidate-ties`, `facts-rehome`,
 //! `ontology-facts` and `duplicate-facts` (`facts/repair_previews.rs`), `fact-claim-dates` (the facts of a UTC
-//! day), `url-clone-fences` (the live page of a path) and `purged-page-facts` (the gone-page candidates).
+//! day), `url-clone-fences` (the live page of a path) and `purged-page-facts` (the gone-page candidates), and the scan
+//! of `facts-home` with the fact snapshots (`facts/repair_home.rs`).
 
 mod common;
 
@@ -8,6 +9,7 @@ use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::facts::repair::PurgedCandidatesArgs;
+use gbrain_store::facts::repair_home::{HeldHomeArgs, HomeSourceArgs, SnapshotArgs};
 use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs, ValidDayArgs};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::write_guards::PageByPathArgs;
@@ -371,4 +373,178 @@ fn purged_candidates_list_gone_pages_with_their_flags() {
     assert!(rows.iter().all(|r| r["purged"] == false));
     assert_eq!(list(Some(vec![withdrawn as i64])).len(), 1);
     assert!(list(Some(vec![-1])).is_empty());
+}
+
+fn home() -> HomeSourceArgs {
+    args(json!({ "sourceId": "default" }))
+}
+
+#[test]
+fn facts_home_candidates_flag_live_and_deleted_entity_pages() {
+    let dir = TempDir::new("facts-repair-home-candidates");
+    let store = open(&dir);
+    put(&store, "people/alive");
+    put(&store, "people/gone");
+    store
+        .soft_delete_page("people/gone", Some("default"))
+        .unwrap();
+    let bare = fact(&store, "no entity", json!({}));
+    let alive = fact(&store, "alive", json!({ "entity_slug": "people/alive" }));
+    let gone = fact(&store, "gone", json!({ "entity_slug": "people/gone" }));
+    let ontology = fact(
+        &store,
+        "ontology",
+        json!({ "entity_slug": "people/alive", "dimension": "role", "value": "cto" }),
+    );
+    // A fence row and an expired fact are not candidates.
+    fact(
+        &store,
+        "fenced",
+        json!({ "row_num": 1, "source_markdown_slug": "people/alive" }),
+    );
+    let expired = fact(
+        &store,
+        "expired",
+        json!({ "entity_slug": "people/missing" }),
+    );
+    store
+        .expire_fact(&args::<gbrain_store::facts::ExpireFactArgs>(
+            json!({ "id": expired }),
+        ))
+        .unwrap();
+
+    let rows = store.list_facts_home_candidates(&home()).unwrap();
+    // No entity first, then by entity slug and id.
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [bare, alive, ontology, gone]
+    );
+    let flags = |i: usize| {
+        (
+            rows[i]["page_exists"].clone(),
+            rows[i]["page_deleted"].clone(),
+        )
+    };
+    assert_eq!(flags(0), (json!(false), json!(false)));
+    assert_eq!(flags(1), (json!(true), json!(false)));
+    assert_eq!(flags(3), (json!(false), json!(true)));
+    assert_eq!(rows[2]["dimension"], "role");
+    assert_eq!(rows[0]["dimension"], Value::Null);
+    assert_eq!(rows[0]["valid_from"], "2026-01-01T00:00:00.000000Z");
+}
+
+#[test]
+fn held_home_rows_are_the_named_rows_of_holding_pages() {
+    let dir = TempDir::new("facts-repair-home-held");
+    let store = open(&dir);
+    put(&store, "memory/unattributed");
+    put(&store, "people/alive");
+    put(&store, "people/alive-fence");
+    let held = fact(
+        &store,
+        "held",
+        json!({ "entity_slug": "people/alive", "row_num": 1, "source_markdown_slug": "memory/unattributed" }),
+    );
+    // Not held: on an ordinary page, naming no entity, naming a holding slug, or on a holding page with no page row.
+    fact(
+        &store,
+        "elsewhere",
+        json!({ "entity_slug": "people/alive", "row_num": 2, "source_markdown_slug": "people/alive-fence" }),
+    );
+    fact(
+        &store,
+        "no entity",
+        json!({ "row_num": 3, "source_markdown_slug": "memory/unattributed" }),
+    );
+    fact(
+        &store,
+        "holding entity",
+        json!({ "entity_slug": "memory/unattributed", "row_num": 4, "source_markdown_slug": "memory/unattributed" }),
+    );
+    fact(
+        &store,
+        "no holder",
+        json!({ "entity_slug": "people/alive", "row_num": 5, "source_markdown_slug": "people/alive/memory/unattributed" }),
+    );
+    let rows = store
+        .list_held_home_rows(&args::<HeldHomeArgs>(
+            json!({ "sourceId": "default", "days": 30 }),
+        ))
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"].as_u64().unwrap(), held);
+    assert_eq!(rows[0]["from_slug"], "memory/unattributed");
+    assert_eq!(rows[0]["page_exists"], true);
+    assert_eq!(rows[0]["held_since"].as_str().unwrap().len(), 20);
+    // `created_at` is the store's clock, so a fresh row is not yet older than 30 days.
+    assert_eq!(rows[0]["old"], false);
+}
+
+#[test]
+fn orphaned_fence_rows_name_the_missing_page() {
+    let dir = TempDir::new("facts-repair-home-orphans");
+    let store = open(&dir);
+    put(&store, "notes/live");
+    put(&store, "notes/deleted");
+    store
+        .soft_delete_page("notes/deleted", Some("default"))
+        .unwrap();
+    fact(
+        &store,
+        "on live",
+        json!({ "row_num": 1, "source_markdown_slug": "notes/live" }),
+    );
+    let deleted = fact(
+        &store,
+        "on deleted",
+        json!({ "row_num": 1, "source_markdown_slug": "notes/deleted" }),
+    );
+    let never = fact(
+        &store,
+        "on never",
+        json!({ "row_num": 2, "source_markdown_slug": "notes/never" }),
+    );
+    fact(&store, "database-only", json!({}));
+    let rows = store.list_orphaned_fence_rows(&home()).unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            json!({ "id": deleted, "slug": "notes/deleted" }),
+            json!({ "id": never, "slug": "notes/never" }),
+        ]
+    );
+}
+
+#[test]
+fn fact_snapshots_read_each_named_fact_as_the_jsonb_object() {
+    let dir = TempDir::new("facts-repair-home-snapshots");
+    let store = open(&dir);
+    let first = fact(
+        &store,
+        "claim one",
+        json!({ "entity_slug": "people/alive", "confidence": 0.8, "valid_until": "2026-03-04T05:06:07.5Z" }),
+    );
+    let second = fact(&store, "claim two", json!({}));
+    fact(&store, "claim three", json!({}));
+    let rows = store
+        .read_fact_snapshots(&args::<SnapshotArgs>(
+            json!({ "sourceId": "default", "ids": [second, first, 999999] }),
+        ))
+        .unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [first, second]
+    );
+    let value = &rows[0]["value"];
+    assert_eq!(value["fact"], "claim one");
+    assert_eq!(value["entity_slug"], "people/alive");
+    assert_eq!(value["confidence"], json!(0.8));
+    assert_eq!(value["valid_from"], "2026-01-01T00:00:00+00:00");
+    assert_eq!(value["valid_until"], "2026-03-04T05:06:07.5+00:00");
+    assert_eq!(value["expired_at"], Value::Null);
+    assert_eq!(value.as_object().unwrap().len(), 27);
 }

@@ -23,6 +23,7 @@ import { transientDatabaseFailure, transientInterruption } from '../persistence/
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { requestConfigValue } from '../config-snapshot.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
@@ -54,7 +55,7 @@ export async function holdingHome(engine: BrainEngine, sourceId: string, entity:
   if ((await getWorktreeBinding(engine, sourceId))?.canonical_git !== true) return null;
   if (/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) return null;
   if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG
-    && (await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [sourceId, entity])).length) return null;
+    && (await engine.readPageSnapshot(entity, { sourceId, includeDeleted: true }))?.page.deleted_at) return null;
   return holdingPageFor(engine, sourceId, entity);
 }
 
@@ -69,6 +70,8 @@ export async function holdingPageFor(engine: BrainEngine, sourceId: string, enti
        (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted`, [sourceId, entity]).catch((error: unknown) => {
     // GST-2667: an error the persistence consumer prepares again (a cancel, a stale plan, contention, a lost connection) is rethrown, never a refusal.
     if (error instanceof PreparationDeadlineError || transientDatabaseFailure(error) || transientInterruption(error)) throw error;
+    // An engine without raw SQL refuses the access read by name; that is never a folder-access refusal, so it stops the caller.
+    rethrowCapabilityMissing(error);
     return null;
   });
   const row = access?.[0];

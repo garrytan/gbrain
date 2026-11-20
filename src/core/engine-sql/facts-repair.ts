@@ -9,6 +9,7 @@ import { NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
 import { derivationPrivateSql, privateSnapshotFilterFragment } from '../search/private-visibility.ts';
 import type { FactAttribution } from '../engine.ts';
+import type { UnfencedFactRow } from '../facts/unfenced-facts.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
@@ -430,4 +431,102 @@ export async function listPurgedPageFactCandidates(raw: EngineRawRead, sourceIds
       FROM facts f
      WHERE ${CANDIDATE_WHERE} AND ($2::bigint[] IS NULL OR f.id = ANY($2::bigint[]))
      ORDER BY f.source_id, ${HEAD}, f.id`, [sourceIds, ids]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// facts-home (src/core/facts/facts-home.ts, src/core/persistence/prepared-maintenance.ts readFacts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type FactsHomeCandidateRow = UnfencedFactRow & { dimension: string | null; page_deleted: boolean };
+
+/** The active facts of a source with no fence position (ontology rows too), with whether the entity has a live and a deleted page, entity (no entity first) then id. Backs `gbrain repair facts-home`'s scan. */
+export async function listFactsHomeCandidates(raw: EngineRawRead, sourceId: string): Promise<FactsHomeCandidateRow[]> {
+  return raw<FactsHomeCandidateRow>(`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
+  f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, f.dimension, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists,
+    EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug NULLS FIRST, f.id`, [sourceId]);
+}
+
+export type HeldHomeRow = UnfencedFactRow & { held_since: string; old: boolean; from_slug: string };
+
+/** The fence rows held on a holding page of the source that name an entity (not a holding slug), with whether the entity has a live page, when the row was written and whether that was over `days` days ago, entity then id. */
+export async function listHeldHomeRows(raw: EngineRawRead, sourceId: string, days: number): Promise<HeldHomeRow[]> {
+  return raw<HeldHomeRow>(`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
+  f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
+      to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
+     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
+      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug, f.id`, [sourceId, String(days)]);
+}
+
+/** The active fence rows of a source whose page is not live, with that page's slug, by id. */
+export async function listOrphanedFenceRows(raw: EngineRawRead, sourceId: string): Promise<Array<{ id: number | string; slug: string }>> {
+  return raw<{ id: number | string; slug: string }>(`SELECT f.id, f.source_markdown_slug AS slug FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
+      AND f.expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL) ORDER BY f.id`, [sourceId]);
+}
+
+export interface FactSnapshotRow { id: number | string; value: Record<string, unknown> }
+
+/** Whole fact rows of a source as comparable snapshots (`lock`: FOR UPDATE, inside a transaction), by id. */
+export async function readFactSnapshots(raw: EngineRawRead, sourceId: string, ids: number[], lock: boolean): Promise<FactSnapshotRow[]> {
+  return raw<FactSnapshotRow>(lock
+    ? `SELECT f.id,jsonb_build_object(
+      'source_id',f.source_id,'entity_slug',f.entity_slug,'source_markdown_slug',f.source_markdown_slug,'row_num',f.row_num,
+      'fact',f.fact,'kind',f.kind,'visibility',f.visibility,'notability',f.notability,'context',f.context,
+      'valid_from',f.valid_from,'valid_until',f.valid_until,'expired_at',f.expired_at,'superseded_by',f.superseded_by,
+      'consolidated_at',f.consolidated_at,'consolidated_into',f.consolidated_into,
+      'source',f.source,'source_session',f.source_session,'confidence',f.confidence,
+      'claim_metric',f.claim_metric,'claim_value',f.claim_value,'claim_unit',f.claim_unit,'claim_period',f.claim_period,
+      'event_type',f.event_type,'dimension',f.dimension,'value',f.value,'dim_status',f.dim_status,'attributed_to',f.attributed_to
+    ) AS value FROM facts f
+    WHERE f.source_id=$1 AND f.id=ANY($2::integer[]) ORDER BY f.id FOR UPDATE`
+    : `SELECT f.id,jsonb_build_object(
+      'source_id',f.source_id,'entity_slug',f.entity_slug,'source_markdown_slug',f.source_markdown_slug,'row_num',f.row_num,
+      'fact',f.fact,'kind',f.kind,'visibility',f.visibility,'notability',f.notability,'context',f.context,
+      'valid_from',f.valid_from,'valid_until',f.valid_until,'expired_at',f.expired_at,'superseded_by',f.superseded_by,
+      'consolidated_at',f.consolidated_at,'consolidated_into',f.consolidated_into,
+      'source',f.source,'source_session',f.source_session,'confidence',f.confidence,
+      'claim_metric',f.claim_metric,'claim_value',f.claim_value,'claim_unit',f.claim_unit,'claim_period',f.claim_period,
+      'event_type',f.event_type,'dimension',f.dimension,'value',f.value,'dim_status',f.dim_status,'attributed_to',f.attributed_to
+    ) AS value FROM facts f
+    WHERE f.source_id=$1 AND f.id=ANY($2::integer[]) ORDER BY f.id`, [sourceId, ids]);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// visibility (src/core/repair/visibility.ts): the preview reads that carry no privacy predicate
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface VisibilityPageRow { id: number; source_id: string; slug: string; type: string; visibility: string | null; chars: number }
+
+/** The live synthesized concepts of these sources (only `conceptIds` when given) with their stored visibility and size, by id. Backs `gbrain repair visibility`'s lineage class. */
+export async function listConceptLineageRows(raw: EngineRawRead, sourceIds: string[], conceptIds: number[] | null, timeoutMs: number): Promise<VisibilityPageRow[]> {
+  return raw<VisibilityPageRow>(`SELECT c.id,c.source_id,c.slug,c.type,c.frontmatter->>'visibility' AS visibility,
+      length(c.compiled_truth) AS chars
+    FROM pages c WHERE c.type='concept' AND c.frontmatter->>'synthesized_by' IS NOT NULL AND c.deleted_at IS NULL
+      AND c.source_id=ANY($1::text[]) AND ($2::integer[] IS NULL OR c.id=ANY($2::integer[])) ORDER BY c.id`, [sourceIds, conceptIds], { timeoutMs });
+}
+
+export interface ConceptInputRow { concept_id: number; atom_id: number; linked: boolean }
+
+/** Each (concept, atom) input of these concepts: from a concept-provenance link (`linked`) or only from the atom's `concepts:` list. */
+export async function listConceptInputRows(raw: EngineRawRead, conceptIds: number[], timeoutMs: number): Promise<ConceptInputRow[]> {
+  return raw<ConceptInputRow>(`WITH c AS MATERIALIZED (
+      SELECT id,source_id,regexp_replace(slug,'^concepts/','') AS name FROM pages WHERE id=ANY($1::integer[])),
+    refs AS MATERIALIZED (
+      SELECT a.id AS atom_id,a.source_id,regexp_replace(ref,'^.*/','') AS name FROM pages a
+        CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(a.frontmatter->'concepts')='array' THEN a.frontmatter->'concepts' ELSE '[]'::jsonb END) ref
+        WHERE a.type='atom' AND a.deleted_at IS NULL AND a.source_id IN (SELECT source_id FROM c)),
+    members AS (
+      SELECT l.from_page_id AS concept_id,l.to_page_id AS atom_id,true AS linked FROM links l
+        JOIN c ON c.id=l.from_page_id JOIN pages a ON a.id=l.to_page_id AND a.source_id=c.source_id AND a.type='atom' AND a.deleted_at IS NULL
+        WHERE l.link_source='concept-provenance' AND l.link_type='synthesized_from'
+      UNION ALL
+      SELECT c.id,r.atom_id,false FROM refs r JOIN c ON c.source_id=r.source_id AND c.name=r.name)
+    SELECT concept_id,atom_id,bool_or(linked) AS linked FROM members GROUP BY concept_id,atom_id`, [conceptIds], { timeoutMs });
+}
+
+/** The live pages of these sources named by slug with their stored visibility, size and whether a label guard is raised, by id. Backs `gbrain repair visibility --slug`. */
+export async function listNamedVisibilityRows(raw: EngineRawRead, sourceIds: string[], slugs: string[], timeoutMs: number): Promise<Array<VisibilityPageRow & { guarded: boolean }>> {
+  return raw<VisibilityPageRow & { guarded: boolean }>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,COALESCE(p.body_bytes, 0) AS chars,
+      EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = p.id) AS guarded
+    FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND p.slug=ANY($2::text[]) ORDER BY p.id`, [sourceIds, slugs], { timeoutMs });
 }

@@ -1350,6 +1350,13 @@ export class PostgresEngine implements BrainEngine {
   listFactsOnValidDay(sourceId: string, day: string) { return factsRepairImpl.listFactsOnValidDay(this.executeRaw.bind(this), sourceId, day); }
   readLivePageByPath(sourceId: string, path: string) { return factsRepairImpl.readLivePageByPath(this.executeRaw.bind(this), sourceId, path); }
   listPurgedPageFactCandidates(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listPurgedPageFactCandidates(this.executeRaw.bind(this), sourceIds, ids); }
+  listFactsHomeCandidates(sourceId: string) { return factsRepairImpl.listFactsHomeCandidates(this.executeRaw.bind(this), sourceId); }
+  listHeldHomeRows(sourceId: string, days: number) { return factsRepairImpl.listHeldHomeRows(this.executeRaw.bind(this), sourceId, days); }
+  listOrphanedFenceRows(sourceId: string) { return factsRepairImpl.listOrphanedFenceRows(this.executeRaw.bind(this), sourceId); }
+  readFactSnapshots(sourceId: string, ids: number[], lock: boolean) { return lock ? factsRepairImpl.readFactSnapshots(this.executeRaw.bind(this), sourceId, ids, true) : this.ownRawRead(exec => factsRepairImpl.readFactSnapshots(exec.executeRaw.bind(exec), sourceId, ids, false)); }
+  listConceptLineageRows(sourceIds: string[], conceptIds: number[] | null, timeoutMs: number) { return factsRepairImpl.listConceptLineageRows(this.executeRaw.bind(this), sourceIds, conceptIds, timeoutMs); }
+  listConceptInputRows(conceptIds: number[], timeoutMs: number) { return factsRepairImpl.listConceptInputRows(this.executeRaw.bind(this), conceptIds, timeoutMs); }
+  listNamedVisibilityRows(sourceIds: string[], slugs: string[], timeoutMs: number) { return factsRepairImpl.listNamedVisibilityRows(this.executeRaw.bind(this), sourceIds, slugs, timeoutMs); }
   countPurgedPageFacts(sourceIds: string[], cap: number) { return factsRepairImpl.countPurgedPageFacts(this.executeRaw.bind(this), sourceIds, cap); }
   listUnwithdrawnFacts(sourceIds: string[], slug: string | null, fenceKind: string) { return factsRepairImpl.listUnwithdrawnFacts(this.executeRaw.bind(this), sourceIds, slug, fenceKind); }
   listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listWorldFactsFromPrivateSources(this.executeRaw.bind(this), sourceIds, ids); }

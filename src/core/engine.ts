@@ -3875,6 +3875,20 @@ export interface BrainEngine {
   readLivePageByPath(sourceId: string, path: string): Promise<{ id: number | string; slug: string } | null>;
   /** Every candidate fact of a purged page of these sources (or only `ids`) with its exclusion flags and whether a purge record names its page, in (source, slug, id) order. Reads page_purges, fact_withdrawals and open_loops. Backs `gbrain repair purged-page-facts`. */
   listPurgedPageFactCandidates(sourceIds: string[], ids: number[] | null): Promise<FactsRepairSql.PurgedCandidateRow[]>;
+  /** The active facts of a source with no fence position (ontology rows too), with whether the entity has a live and a deleted page, in (entity, no entity first, id) order. Backs `gbrain repair facts-home`'s scan. */
+  listFactsHomeCandidates(sourceId: string): Promise<FactsRepairSql.FactsHomeCandidateRow[]>;
+  /** The fence rows held on a holding page of the source that name an entity, with whether the entity has a live page and whether the row is over `days` days old, in (entity, id) order. Backs `gbrain repair facts-home`'s scan. */
+  listHeldHomeRows(sourceId: string, days: number): Promise<FactsRepairSql.HeldHomeRow[]>;
+  /** The active fence rows of a source whose page is not live, with that page's slug, by id. Backs `gbrain repair facts-home`'s scan. */
+  listOrphanedFenceRows(sourceId: string): Promise<Array<{ id: number | string; slug: string }>>;
+  /** Whole fact rows of a source as comparable snapshots, by id; `lock` takes FOR UPDATE (a SQL transaction only). Backs the approved-set digests of the maintenance repairs. */
+  readFactSnapshots(sourceId: string, ids: number[], lock: boolean): Promise<FactsRepairSql.FactSnapshotRow[]>;
+  /** The live synthesized concepts of these sources (only `conceptIds` when given) with their stored visibility and size, by id, under a `timeoutMs` statement bound. Backs `gbrain repair visibility`'s lineage class. */
+  listConceptLineageRows(sourceIds: string[], conceptIds: number[] | null, timeoutMs: number): Promise<FactsRepairSql.VisibilityPageRow[]>;
+  /** Each (concept, atom) input of these concepts: from a concept-provenance link (`linked`) or only from the atom's `concepts:` list. Backs `gbrain repair visibility`'s lineage class. */
+  listConceptInputRows(conceptIds: number[], timeoutMs: number): Promise<FactsRepairSql.ConceptInputRow[]>;
+  /** The live pages of these sources named by slug with their stored visibility, size and whether a label guard is raised, by id. Reads page_label_guards. Backs `gbrain repair visibility --slug`. */
+  listNamedVisibilityRows(sourceIds: string[], slugs: string[], timeoutMs: number): Promise<Array<FactsRepairSql.VisibilityPageRow & { guarded: boolean }>>;
   /** The bounded count of facts of a purged page, by class, capped at `cap`. Reads page_purges, fact_withdrawals and open_loops. */
   countPurgedPageFacts(sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }>;
   /** Facts a facts-fence generation (`fenceKind`) retired that no withdrawal covers, in (source, page, id) order; `slug` null is every page. Reads derived_generations, derived_generation_items and fact_withdrawals. */

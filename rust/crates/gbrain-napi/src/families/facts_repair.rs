@@ -17,6 +17,7 @@ use gbrain_store::facts::generations::UnwithdrawnArgs;
 use gbrain_store::facts::repair::{
     ClassifyArgs, LabelCountArgs, PurgedCandidatesArgs, PurgedCountArgs, TwinArgs, WorldFactArgs,
 };
+use gbrain_store::facts::repair_home::{HeldHomeArgs, HomeSourceArgs, SnapshotArgs};
 use gbrain_store::facts::repair_previews::{DuplicateRowsArgs, SourcesArgs, ValidDayArgs};
 use gbrain_store::write_guards::PageByPathArgs;
 
@@ -220,6 +221,58 @@ impl Brain {
         self.run(env, move |s| {
             let a: PurgedCandidatesArgs = required(args, "listPurgedPageFactCandidates args")?;
             s.list_purged_page_fact_candidates(&a)
+        })
+    }
+
+    /// `listFactsHomeCandidates({ sourceId })`: resolves the active facts with no fence position, with whether the entity has a live and a deleted page.
+    #[napi]
+    pub fn list_facts_home_candidates<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: HomeSourceArgs = required(args, "listFactsHomeCandidates args")?;
+            s.list_facts_home_candidates(&a)
+        })
+    }
+
+    /// `listHeldHomeRows({ sourceId, days })`: resolves the fence rows held on a holding page that name an entity.
+    #[napi]
+    pub fn list_held_home_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: HeldHomeArgs = required(args, "listHeldHomeRows args")?;
+            s.list_held_home_rows(&a)
+        })
+    }
+
+    /// `listOrphanedFenceRows({ sourceId })`: resolves `{ id, slug }` of each active fence row whose page is not live.
+    #[napi]
+    pub fn list_orphaned_fence_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: HomeSourceArgs = required(args, "listOrphanedFenceRows args")?;
+            s.list_orphaned_fence_rows(&a)
+        })
+    }
+
+    /// `readFactSnapshots({ sourceId, ids })`: resolves `{ id, value }` of each named fact, the value as the SQL's `jsonb_build_object`.
+    #[napi]
+    pub fn read_fact_snapshots<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SnapshotArgs = required(args, "readFactSnapshots args")?;
+            s.read_fact_snapshots(&a)
         })
     }
 }

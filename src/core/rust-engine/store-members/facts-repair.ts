@@ -16,6 +16,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
+import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { labelsOf } from './label-line.ts';
 
@@ -140,4 +141,31 @@ export const readLivePageByPath: Member<'readLivePageByPath'> = async (brain, so
 export const listPurgedPageFactCandidates: Member<'listPurgedPageFactCandidates'> = (brain, sourceIds, ids) => {
   wholeIds('listPurgedPageFactCandidates', ids);
   return storeCall({ member: 'listPurgedPageFactCandidates' }, () => brain.listPurgedPageFactCandidates({ sourceIds, ids }));
+};
+
+/**
+ * The scan of `gbrain repair facts-home` and the approved-set digest of the maintenance repairs: the store answers the rows of the
+ * SQL in its order (text sorts by byte). `listHeldHomeRows` counts `days` as 24-hour days from the store's clock, so a count that is
+ * not a whole number refuses. `readFactSnapshots` has no row lock: `lock` (FOR UPDATE, only inside a SQL transaction) refuses.
+ */
+const HOME_DATES = ['valid_from', 'valid_until'] as const;
+
+export const listFactsHomeCandidates: Member<'listFactsHomeCandidates'> = async (brain, sourceId) => {
+  const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listFactsHomeCandidates' }, () => brain.listFactsHomeCandidates({ sourceId }));
+  return rows.map(row => withDates(row, HOME_DATES)) as never;
+};
+
+export const listHeldHomeRows: Member<'listHeldHomeRows'> = async (brain, sourceId, days) => {
+  if (!Number.isSafeInteger(days)) refuseMember('listHeldHomeRows', 'a day count that is not a whole number');
+  const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listHeldHomeRows' }, () => brain.listHeldHomeRows({ sourceId, days }));
+  return rows.map(row => withDates(row, HOME_DATES)) as never;
+};
+
+export const listOrphanedFenceRows: Member<'listOrphanedFenceRows'> = (brain, sourceId) =>
+  storeCall({ member: 'listOrphanedFenceRows' }, () => brain.listOrphanedFenceRows({ sourceId }));
+
+export const readFactSnapshots: Member<'readFactSnapshots'> = (brain, sourceId, ids, lock) => {
+  if (lock) refuseMember('readFactSnapshots', 'a row lock (FOR UPDATE)');
+  wholeIds('readFactSnapshots', ids);
+  return storeCall({ member: 'readFactSnapshots' }, () => brain.readFactSnapshots({ sourceId, ids }));
 };

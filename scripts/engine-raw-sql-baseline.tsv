@@ -397,14 +397,14 @@ src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/derivation-inputs.ts	execute_raw	6	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
 src/core/facts/embedding-identity.ts	execute_raw	1
-src/core/facts/facts-home.ts	execute_raw	4
+src/core/facts/facts-home.ts	execute_raw	1
 src/core/facts/fence-fact-append.ts	execute_raw	1
 src/core/facts/fence-write.ts	execute_raw	2
 src/core/facts/file-body-guard.ts	execute_raw	2
 src/core/facts/forget.ts	execute_raw	4
 src/core/facts/fts-index.ts	execute_raw	3
 src/core/facts/gone-page-facts.ts	execute_raw	4
-src/core/facts/held-fact-move.ts	execute_raw	12
+src/core/facts/held-fact-move.ts	execute_raw	11
 src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
@@ -697,7 +697,7 @@ src/core/persistence/physical-root.ts	execute_raw	14
 src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
-src/core/persistence/prepared-maintenance.ts	execute_raw	13
+src/core/persistence/prepared-maintenance.ts	execute_raw	12
 src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
@@ -846,7 +846,7 @@ src/core/repair/timeline-order.ts	execute_raw	3
 src/core/repair/timeline.ts	execute_raw	2
 src/core/repair/unwithdrawn-facts.ts	execute_raw	3
 src/core/repair/url-clone-fences.ts	execute_raw	2
-src/core/repair/visibility.ts	execute_raw	10
+src/core/repair/visibility.ts	execute_raw	7
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2

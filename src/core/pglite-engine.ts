@@ -1674,6 +1674,13 @@ export class PGLiteEngine implements BrainEngine {
   listFactsOnValidDay(sourceId: string, day: string) { return factsRepairImpl.listFactsOnValidDay(this.rawRead, sourceId, day); }
   readLivePageByPath(sourceId: string, path: string) { return factsRepairImpl.readLivePageByPath(this.rawRead, sourceId, path); }
   listPurgedPageFactCandidates(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listPurgedPageFactCandidates(this.rawRead, sourceIds, ids); }
+  listFactsHomeCandidates(sourceId: string) { return factsRepairImpl.listFactsHomeCandidates(this.rawRead, sourceId); }
+  listHeldHomeRows(sourceId: string, days: number) { return factsRepairImpl.listHeldHomeRows(this.rawRead, sourceId, days); }
+  listOrphanedFenceRows(sourceId: string) { return factsRepairImpl.listOrphanedFenceRows(this.rawRead, sourceId); }
+  readFactSnapshots(sourceId: string, ids: number[], lock: boolean) { return factsRepairImpl.readFactSnapshots(this.rawRead, sourceId, ids, lock); }
+  listConceptLineageRows(sourceIds: string[], conceptIds: number[] | null, timeoutMs: number) { return factsRepairImpl.listConceptLineageRows(this.rawRead, sourceIds, conceptIds, timeoutMs); }
+  listConceptInputRows(conceptIds: number[], timeoutMs: number) { return factsRepairImpl.listConceptInputRows(this.rawRead, conceptIds, timeoutMs); }
+  listNamedVisibilityRows(sourceIds: string[], slugs: string[], timeoutMs: number) { return factsRepairImpl.listNamedVisibilityRows(this.rawRead, sourceIds, slugs, timeoutMs); }
   countPurgedPageFacts(sourceIds: string[], cap: number) { return factsRepairImpl.countPurgedPageFacts(this.rawRead, sourceIds, cap); }
   listUnwithdrawnFacts(sourceIds: string[], slug: string | null, fenceKind: string) { return factsRepairImpl.listUnwithdrawnFacts(this.rawRead, sourceIds, slug, fenceKind); }
   listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listWorldFactsFromPrivateSources(this.rawRead, sourceIds, ids); }

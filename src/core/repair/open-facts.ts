@@ -50,6 +50,8 @@ import { maintenancePreflight, publishMaintenancePage, submitDatabaseMaintenance
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { filesInCheckout, importAtRevision, labelFileRefusal, writeLabelFile } from './label-write.ts';
 import { PLAN_STATEMENT_MS } from './visibility.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 export const OPEN_FACTS_INTENT = 'managed_maintenance_open_fact_visibility';
@@ -235,6 +237,7 @@ function ledgerOpened(ledger: OpenFactsLedger, brainId: string, sourceId: string
 /** --undo: the opened facts still world and unchanged, grouped as writes, and the count of each one skipped by reason. */
 async function planUndo(engine: BrainEngine, scope: RepairScope, sel: Selection, ledger: OpenFactsLedger) {
   const opened = ledgerOpened(ledger, scope.brain_id, sel.source_id);
+  if (opened.size) refusePrivacyScan(engine);
   const rows = opened.size ? await engine.executeRaw<{ id: number; row_num: number | null; fact: string; visibility: string; source_markdown_slug: string | null;
     expired: boolean; superseded: boolean; fact_md5: string; cls: string; accepted_at: string | null }>(`SELECT f.id, f.row_num, f.fact, f.visibility, f.source_markdown_slug, f.expired_at IS NOT NULL AS expired,
       f.superseded_by IS NOT NULL AS superseded, md5(f.fact) AS fact_md5, ${openFactClassSql('f')} AS cls,
@@ -257,6 +260,14 @@ async function planUndo(engine: BrainEngine, scope: RepairScope, sel: Selection,
   return { groups: groupRows('close', sel, keep, null), skipped: Object.fromEntries(Object.entries(skipped).filter(([, n]) => n > 0)) };
 }
 
+/**
+ * The window, its counts and the undo's rows classify each fact by the privacy of its page (folder rules, privacy aliases, derivation lineage, withdrawals and
+ * trust proposals), a predicate the Rust store does not carry, so a Rust brain stops here by name, before any of those reads.
+ */
+function refusePrivacyScan(engine: BrainEngine): void {
+  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair open-facts privacy scan');
+}
+
 const listingOf = (groups: Group[]) => groups.flatMap(group => group.facts.map(fact => ({ item: `${group.source_id}:${group.slug}`, class: group.cls, detail: factLabel(group, fact) })));
 
 export const openFactsRepair: RepairHandler = {
@@ -271,6 +282,7 @@ export const openFactsRepair: RepairHandler = {
     if (opts?.apply) {
       if (!opts.expect) throw opError('invalid_params', 'gbrain repair open-facts --apply changes only the set a preview printed (opening a fact widens remote reads).',
         `Preview first: ${command} --json, then rerun it with --apply --expect and the preview_hash it printed.`);
+      if (!sel.undo) refusePrivacyScan(engine);
       const approved = await loadApprovedSet<Group>(engine, { command: 'open-facts', hash: opts.expect, previewCommand: command,
         emptyHash: async () => previewHash(hashParts(scope, sel, [], null)) });
       if (approved.items.some(group => digest(group.selection) !== digest(sel))) throw previewChangedError(opts.expect, command);
@@ -292,6 +304,7 @@ export const openFactsRepair: RepairHandler = {
         listing: listingOf(groups), details: { mode: 'undo', ledger: request.ledger.path, skipped, listed: groups.reduce((n, g) => n + g.facts.length, 0) } };
     }
     const size = Math.min(Math.max(1, opts?.limit ?? OPEN_FACTS_WINDOW), OPEN_FACTS_WINDOW_MAX);
+    refusePrivacyScan(engine);
     const window = await planWindow(engine, sel, size, null);
     const upper = window.length >= size ? window[window.length - 1]!.id : null;
     const groups = groupRows('open', sel, window, upper);

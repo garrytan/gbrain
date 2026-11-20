@@ -61,6 +61,7 @@ pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod repair_home;
 pub mod repair_previews;
 pub mod saved_match;
 pub mod trust;

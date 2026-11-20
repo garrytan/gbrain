@@ -69,7 +69,7 @@ fn vector_text(vector: &[f32]) -> String {
 }
 
 /// The claim and attribution columns a fence row carries, `confidence` as the `REAL` it is.
-fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
+pub(super) fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
     out.insert("kind".into(), json!(r.kind));
     out.insert("visibility".into(), json!(r.visibility));
     out.insert("notability".into(), json!(r.notability));

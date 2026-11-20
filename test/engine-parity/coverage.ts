@@ -193,7 +193,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
 
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
-    'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'listClosedConsolidationTies', 'listPagelessEntityFacts', 'listOntologyFactCandidates', 'listDuplicateFactRows', 'listFactsOnValidDay', 'readLivePageByPath', 'listPurgedPageFactCandidates', 'countPurgedPageFacts', 'listUnwithdrawnFacts',
+    'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'listClosedConsolidationTies', 'listPagelessEntityFacts', 'listOntologyFactCandidates', 'listDuplicateFactRows', 'listFactsOnValidDay', 'readLivePageByPath', 'listPurgedPageFactCandidates', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots', 'listConceptLineageRows', 'listConceptInputRows', 'listNamedVisibilityRows', 'countPurgedPageFacts', 'listUnwithdrawnFacts',
     'listWorldFactsFromPrivateSources'],
 
   // facts_trust: search relevance and trust reads
