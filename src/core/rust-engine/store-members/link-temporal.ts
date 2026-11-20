@@ -24,6 +24,7 @@ import { privacyAliasSql, privatePagesFilterFragment, privateSnapshotFilterFragm
 import type { VectorBackfillOpts } from '../../search-vector-backfill.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { coverageScope } from './coverage-scope.ts';
 import { ownerOnlyFormIn, storePagePolicy } from './private-provenance.ts';
 
 type PageRef = { slug: string; source_id: string };
@@ -212,20 +213,6 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 // flagged-page filter (the store reads each page's stamped tier and
 // write-gate receipts), and `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
-
-/** `ProjectionReadinessScope` as the store reads it. */
-function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
-  return {
-    sourceId: scope.sourceId ?? null,
-    sourceIds: scope.sourceIds ? [...scope.sourceIds] : null,
-    excludePrivate: storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null,
-    pageKind: scope.pageKind ?? null,
-    types: scope.types ? [...scope.types] : null,
-    excludeSlugPrefixes: [...(scope.excludeSlugPrefixes ?? [])],
-    minTrust: scope.minTrust || null,
-    suppressFlagged: scope.suppressFlagged === true,
-  };
-}
 
 const WORD_PATTERN_HEAD = '(^|[^[:alnum:]])';
 const WORD_PATTERN_TAIL = '([^[:alnum:]]|$)';

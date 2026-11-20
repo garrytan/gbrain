@@ -198,7 +198,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // doctor_pages: the page-table statements doctor checks ran through executeRaw (engine-sql/doctor-pages.ts)
   doctor_pages: ['listOversizedPages', 'listScraperJunkCandidates', 'countMarkedPages', 'countOversizedCorePages', 'readRawProvenanceGaps', 'countUnverifiedExtractions', 'listContentHashDuplicates', 'countTranscriptImportPages', 'countPageRows', 'countPagesBySlugPrefix', 'countLivePages', 'readOldestPageCreatedAt', 'countPageTrustTiers', 'countPagesWithMentionLinks', 'countImageModalityMismatches', 'readImagePageCoverage', 'listFactsPageBodies', 'listBracketPathPages', 'listSlugPathCandidates'],
   // doctor_search: the search-and-knowledge statements doctor checks ran through executeRaw (engine-sql/doctor-search.ts)
-  doctor_search: ['listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs', 'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages', 'countPagesHiddenByPrefix', 'listGitImageHoldCounts'],
+  doctor_search: ['listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs', 'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages', 'countPagesHiddenByPrefix', 'listGitImageHoldCounts', 'readProjectionBacklog'],
   // doctor_reads_acc: the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer reads (engine-sql/doctor-acc.ts)
   doctor_reads_acc: [
     'listPolicySourceIds', 'isAccessStateUnreadable', 'listRawOnlyRules',

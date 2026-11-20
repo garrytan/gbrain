@@ -222,6 +222,7 @@ import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
 import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
 import * as doctorSearchImpl from './engine-sql/doctor-search.ts';
+import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
@@ -1663,6 +1664,7 @@ export class PGLiteEngine implements BrainEngine {
   listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.rawRead); }
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.rawRead); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.rawRead, sourceIds); }
+  readProjectionBacklog(scope: PageReadScope) { return projectionBacklogImpl.readProjectionBacklog(this.rawRead, scope); }
   listGitImageHoldCounts(sourceIds: string[]) { return doctorSearchImpl.listGitImageHoldCounts(this.rawRead, sourceIds); }
   listTruncatedMarkdownBodies() { return doctorSearchImpl.listTruncatedMarkdownBodies(this.rawRead); }
   countSegmentedMarkdownBodies() { return doctorSearchImpl.countSegmentedMarkdownBodies(this.rawRead); }

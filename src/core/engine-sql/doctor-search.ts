@@ -20,7 +20,7 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
 export const DOCTOR_SEARCH_MEMBERS: readonly string[] = [
   'listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs',
   'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages',
-  'countPagesHiddenByPrefix', 'listGitImageHoldCounts',
+  'countPagesHiddenByPrefix', 'listGitImageHoldCounts', 'readProjectionBacklog',
 ];
 
 /** Rows `listTruncatedMarkdownBodies` reads: the list limit of the markdown_body_completeness check plus one (a full list means a floor). */

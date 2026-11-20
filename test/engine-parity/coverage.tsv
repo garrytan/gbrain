@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1172/1179
+# covered: 1173/1180
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -49,7 +49,7 @@
 # doctor_derived: 26/26
 # doctor_persistence: 37/37
 # doctor_pages: 19/19
-# doctor_search: 9/9
+# doctor_search: 10/10
 # doctor_reads_acc: 32/32
 # doctor_checkpoints: 17/17
 # doctor_sources: 6/6
@@ -98,7 +98,7 @@ getPage	pages	yes	115	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	568	yes	yes	yes	serves
+putPage	pages	yes	569	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -223,7 +223,7 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	5	no	yes	yes	serves
-upsertChunks	chunks	yes	30	yes	yes	yes	serves
+upsertChunks	chunks	yes	31	yes	yes	yes	serves
 sealChunks	chunks	yes	56	no	yes	yes	serves
 getChunks	chunks	yes	30	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
@@ -240,7 +240,7 @@ readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
-setChunkerVersion	chunks	yes	13	no	yes	yes	serves
+setChunkerVersion	chunks	yes	14	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
@@ -913,6 +913,7 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listFactsPageBodies	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+readProjectionBacklog	doctor_search	yes	1	no	yes	yes	serves
 listGitImageHoldCounts	doctor_search	yes	1	no	yes	yes	serves
 listTruncatedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves
 countSegmentedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves

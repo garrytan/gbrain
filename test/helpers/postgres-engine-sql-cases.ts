@@ -250,6 +250,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countSegmentedRecentPages': OOS.doctorSearch,
   'countPagesHiddenByPrefix': OOS.doctorSearch,
   'listGitImageHoldCounts': OOS.doctorSearch,
+  'readProjectionBacklog': OOS.doctorSearch,
   'listPolicySourceIds': OOS.doctorAcc,
   'isAccessStateUnreadable': OOS.doctorAcc,
   'listRawOnlyRules': OOS.doctorAcc,

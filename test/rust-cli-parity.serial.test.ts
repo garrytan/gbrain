@@ -486,9 +486,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
       // readRawProvenanceGaps counts the gaps in the store.
       // retrieval_reflex_health is gone from this list: its reads are served (doctor-search, slice 17), so it reports
-      // ok with the same no-socket message as PGLite.
-      untypedWarnings: ['extract_atoms_backlog', 'provenance_stamp_drift', 'sync_failures', 'text_projection_readiness',
-        'trust_scan'],
+      // ok with the same no-socket message as PGLite. text_projection_readiness is gone as well: readProjectionBacklog
+      // counts the projection queue in the store (doctor-search, slice 20).
+      untypedWarnings: ['extract_atoms_backlog', 'provenance_stamp_drift', 'sync_failures', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path

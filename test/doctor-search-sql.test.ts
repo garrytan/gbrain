@@ -13,7 +13,12 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { DOCTOR_SEARCH_SQL } from '../src/core/engine-sql/doctor-search.ts';
+import { readProjectionBacklog } from '../src/core/engine-sql/projection-backlog.ts';
 import { buildVisibilityClause } from '../src/core/search/sql-ranking.ts';
+import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
+import { projectionClassSql } from '../src/core/page-state/projection-class.ts';
+import type { PageReadScope } from '../src/core/types.ts';
 import { ORPHANED_ALIAS_COUNTS_SQL, SOFT_DELETED_ALIAS_COUNT_SQL } from '../src/core/repair/aliases.ts';
 
 describe('doctor search SQL text', () => {
@@ -82,5 +87,37 @@ SELECT source_id, type FROM pairs`);
     expect<string>(DOCTOR_SEARCH_SQL.gitImageHoldCounts).toBe(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
     FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
     WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`);
+  });
+
+  test('the projection backlog keeps the aggregate projectionBacklog ran, for every scope shape', async () => {
+    // The statement as page-state/projections.ts built it: its read filter numbers the bound values itself.
+    const original = (scope: PageReadScope) => {
+      const params: unknown[] = [];
+      const read = pageReadFilter('p', scope, params);
+      return { params, text: `SELECT COUNT(*) FILTER (WHERE k.cls='text')::int AS pending,
+      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason='rebuild_failed')::int AS failed,
+      COUNT(*) FILTER (WHERE k.cls='sealable')::int AS sealable,
+      COUNT(*) FILTER (WHERE k.cls='sealable' AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding_image IS NOT NULL
+        AND ${chunkGenerationFilter('p', 'c')}))::int AS sealable_with_visual,
+      COUNT(*) FILTER (WHERE k.cls='reimport')::int AS reimport,
+      COUNT(*) FILTER (WHERE k.cls='reimport' AND p.chunker_version < 0)::int AS ocr_required,
+      COUNT(*) FILTER (WHERE k.cls='protected')::int AS protected,
+      COUNT(*) FILTER (WHERE k.cls='archived')::int AS archived,
+      EXTRACT(EPOCH FROM now()-MIN(j.updated_at) FILTER (WHERE k.cls IN ('text','sealable','reimport')))::float8 AS oldest,
+      now()::text AS as_of
+    FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
+    JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL
+    CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
+    WHERE ${read}` };
+    };
+    const scopes: PageReadScope[] = [{}, { sourceId: 'default' }, { sourceIds: ['a', 'b'] }, { sourceIds: [], sourceId: 'a' }, { sourceIds: ['a'], excludePrivate: true },
+      { sourceId: 'a', minTrust: 'user_confirmed', suppressFlagged: true }];
+    for (const scope of scopes) {
+      const seen: Array<{ text: string; params: unknown[] }> = [];
+      const row = { pending: '2', failed: 1, sealable: 0, sealable_with_visual: 0, reimport: 3, ocr_required: 1, protected: 0, archived: 4, oldest: 12.7, as_of: '2026-11-19 00:00:00+00' };
+      const result = await readProjectionBacklog((async (text: string, params?: unknown[]) => { seen.push({ text, params: params ?? [] }); return [row]; }) as never, scope);
+      expect(seen).toEqual([original(scope)]);
+      expect(result).toEqual({ pending: 2, failed: 1, oldest_age_seconds: 12, sealable: 0, sealable_with_visual: 0, reimport: 3, ocr_required: 1, protected: 0, archived: 4, as_of: row.as_of });
+    }
   });
 });

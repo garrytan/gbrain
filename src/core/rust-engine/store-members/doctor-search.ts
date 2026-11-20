@@ -5,6 +5,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { coverageScope } from './coverage-scope.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -37,3 +38,17 @@ export const listGitImageHoldCounts: Member<'listGitImageHoldCounts'> = async (b
   storeCall({ member: 'listGitImageHoldCounts' }, async () =>
     (await brain.listGitImageHoldCounts(sourceIds)).map((row: { source_id: string; images: unknown }) => ({ source_id: row.source_id, images: Number(row.images) })));
 
+
+export const readProjectionBacklog: Member<'readProjectionBacklog'> = async (brain, scope) => {
+  const input = coverageScope('readProjectionBacklog', scope);
+  return storeCall({ member: 'readProjectionBacklog' }, async () => {
+    const row = await brain.readProjectionBacklog(input);
+    const n = (value: unknown) => Number(value ?? 0);
+    return {
+      pending: n(row.pending), failed: n(row.failed), sealable: n(row.sealable), sealable_with_visual: n(row.sealable_with_visual),
+      reimport: n(row.reimport), ocr_required: n(row.ocr_required), protected: n(row.protected), archived: n(row.archived),
+      oldest_age_seconds: row.oldest === null || row.oldest === undefined ? null : Math.max(0, Math.floor(Number(row.oldest))),
+      as_of: String(row.as_of ?? ''),
+    };
+  });
+};

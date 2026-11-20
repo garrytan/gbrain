@@ -84,7 +84,7 @@ pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{
-    activation_started_us, parse_timestamptz, queue_page_projection,
+    activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs,
 };
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;

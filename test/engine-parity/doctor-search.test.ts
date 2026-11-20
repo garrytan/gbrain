@@ -239,4 +239,55 @@ describe('doctor search reads', () => {
       return { empty, all, one, none };
     },
   );
+
+  parityTest(
+    'readProjectionBacklog counts the queue by class in the read scope, archived sources included, and reads the age and clock',
+    { methods: ['putPage', 'upsertChunks', 'setChunkerVersion', 'readProjectionBacklog'] },
+    async (engine, backend) => {
+      const ZERO = { pending: 0, failed: 0, sealable: 0, sealable_with_visual: 0, reimport: 0, ocr_required: 0, protected: 0, archived: 0 };
+      // The wire shape a doctor check reads: the counts, whether a job is waiting, and whether the clock is a timestamp (neither value is compared).
+      const read = async (scope: Parameters<BrainEngine['readProjectionBacklog']>[0]) => {
+        const { oldest_age_seconds, as_of, ...counts } = await engine.readProjectionBacklog(scope);
+        return { counts, aged: oldest_age_seconds !== null && oldest_age_seconds >= 0, clock: /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/.test(as_of) };
+      };
+      const empty = await read({});
+      await createSource(engine, backend, 'other');
+      await put(engine, 'notes/a');
+      await put(engine, 'notes/b');
+      await put(engine, 'notes/c', {}, 'other');
+      const image = (slug: string, body: string) => put(engine, slug, { page_kind: 'image', compiled_truth: body });
+      const importerChunk = (text: string) => ({ chunk_index: 0, chunk_text: text, chunk_source: 'image_asset' as const, modality: 'image' as const });
+      await image('images/plain', 'plain ocr');
+      await image('images/sealable', 'sealable ocr');
+      await engine.upsertChunks('images/sealable', [importerChunk('sealable ocr')]);
+      await engine.setChunkerVersion('images/sealable', 4);
+      // The chunk no longer holds the page's text, and the page's provenance is distrusted: the importer must seal it.
+      await image('images/edited', 'edited ocr');
+      await engine.upsertChunks('images/edited', [importerChunk('something else')]);
+      await engine.setChunkerVersion('images/edited', -1);
+      await image('images/fenced', '<!--- gbrain:facts:begin -->\nfact\n<!--- gbrain:facts:end -->');
+      const all = await read({});
+      const inDefault = await read({ sourceId: 'default' });
+      const inOther = await read({ sourceIds: ['other'] });
+      const bothListed = await read({ sourceIds: ['default', 'other'] });
+      // An empty `sourceIds` names no source: `sourceId` decides.
+      const emptyList = await read({ sourceIds: [], sourceId: 'other' });
+      const missing = await read({ sourceId: 'absent' });
+      await archiveSource(engine, backend, 'other');
+      const archived = await read({});
+      const archivedOther = await read({ sourceId: 'other' });
+      const expected = {
+        all: { counts: { ...ZERO, pending: 3, sealable: 1, reimport: 2, ocr_required: 1, protected: 1 }, aged: true, clock: true },
+        inDefault: { counts: { ...ZERO, pending: 2, sealable: 1, reimport: 2, ocr_required: 1, protected: 1 }, aged: true, clock: true },
+        inOther: { counts: { ...ZERO, pending: 1 }, aged: true, clock: true },
+      };
+      expect({ empty, all, inDefault, inOther }).toEqual({ empty: { counts: ZERO, aged: false, clock: true }, ...expected });
+      expect(bothListed).toEqual(all);
+      expect(emptyList).toEqual(inOther);
+      expect(missing).toEqual(empty);
+      expect(archived).toEqual({ counts: { ...ZERO, pending: 2, sealable: 1, reimport: 2, ocr_required: 1, protected: 1, archived: 1 }, aged: true, clock: true });
+      expect(archivedOther).toEqual({ counts: { ...ZERO, archived: 1 }, aged: false, clock: true });
+      return { empty, all, inDefault, inOther, bothListed, emptyList, missing, archived, archivedOther };
+    },
+  );
 });
