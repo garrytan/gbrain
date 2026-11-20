@@ -2,9 +2,10 @@
  * BrainEngine parity — the config reads that moved off executeRaw.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: the DB-plane config merge (`applyDbPlaneReadSideMerge`) and the
- *    transcript-archive ledger read (`readArchiveLedger`) return the same
- *    result on every engine arm, the Rust arm included.
+ *  - Contract: the DB-plane config merge (`applyDbPlaneReadSideMerge`), the
+ *    transcript-archive ledger read (`readArchiveLedger`) and the locked keyed
+ *    read (`getConfigValues(keys, { lock: 'share' })`) return the same result
+ *    on every engine arm, the Rust arm included.
  *  - Regression: an engine whose typed config reads drop a prefixed key,
  *    read a LIKE wildcard where the old statement matched a literal, or read a
  *    neighbouring source's ledger rows.
@@ -45,6 +46,23 @@ describe('engine parity: typed config reads', () => {
       expect(m.expansion_model).toBeUndefined();
       expect(m.cycle).toEqual({ alpha: '1', beta: 'two' });
       return merged;
+    },
+  );
+
+  parityTest(
+    'getConfigValues with lock share returns the rows, in key order, that the unlocked read returns',
+    { methods: ['setConfig', 'transaction', 'getConfigValues'] },
+    async (engine) => {
+      // memory-prepare re-checks the embedding config this way under the publication's transaction.
+      await engine.setConfig('embedding_model', 'openai:text-embedding-3-large');
+      await engine.setConfig('embedding_dimensions', '1536');
+      await engine.setConfig('embedding_modelX', 'decoy');
+      const keys = ['embedding_model', 'embedding_dimensions', 'no_such_key'] as const;
+      const plain = await engine.getConfigValues(keys);
+      const locked = await engine.transaction(tx => tx.getConfigValues(keys, { lock: 'share' }));
+      expect(locked).toEqual(plain);
+      expect(locked.map(r => r.key)).toEqual(['embedding_dimensions', 'embedding_model']);
+      return { plain, locked, none: await engine.transaction(tx => tx.getConfigValues([], { lock: 'share' })) };
     },
   );
 

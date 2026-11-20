@@ -17,5 +17,6 @@ export const listConfigKeys: StoreMember<[prefix: string], string[]> = (brain, p
 export const getAllConfig: StoreMember<[], Record<string, string>> = (brain) =>
   storeCall({ member: 'getAllConfig' }, () => brain.getAllConfig());
 
-export const getConfigValues: StoreMember<[keys: readonly string[]], Array<{ key: string; value: string }>> = (brain, keys) =>
+/** `lock: 'share'` asks the SQL engines to hold the rows FOR SHARE; the store runs one write transaction at a time, so it changes nothing here. */
+export const getConfigValues: StoreMember<[keys: readonly string[], opts?: { lock?: 'share' }], Array<{ key: string; value: string }>> = (brain, keys) =>
   storeCall({ member: 'getConfigValues' }, () => brain.getConfigValues([...keys]));

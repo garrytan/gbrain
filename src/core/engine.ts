@@ -3371,8 +3371,9 @@ export interface BrainEngine {
   /**
    * The stored `{ key, value }` rows for the named config keys in one read, ordered by key; a key with no row is
    * absent. Reads the table itself, not the request config snapshot (`getConfig` / `getAllConfig` honor that).
+   * `lock: 'share'` holds the rows FOR SHARE until the caller's transaction ends (Rust: one writer, so no lock).
    */
-  getConfigValues(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
+  getConfigValues(keys: readonly string[], opts?: { lock?: 'share' }): Promise<Array<{ key: string; value: string }>>;
 
   /**
    * The `enabled` value of every `persistence_brain` singleton row, as stored (a healthy brain has exactly one boolean).

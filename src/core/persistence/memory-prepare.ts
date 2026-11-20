@@ -101,9 +101,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
   await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
   signal?.throwIfAborted();
-  // The first read is a typed keyed read (its rows ordered by key, as this statement orders them); the re-check under
-  // lock keeps the statement, for its FOR SHARE.
-  const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
+  // Both reads are typed keyed reads, rows ordered by key; the re-check under lock holds the rows FOR SHARE.
   const observedEmbeddingConfig = embeddingConfigText(await readConfigRows(engine, EMBEDDING_CONFIG_KEYS));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
   signal?.throwIfAborted();
@@ -147,7 +145,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const widening = restatedOld ? { from: restatedOld.visibility, to: 'world' } : heldFor ? { from: 'private', to: 'world' } : null;
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
-    if (embedding && embeddingConfigText(await tx.executeRaw<{ key: string; value: string }>(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
+    if (embedding && embeddingConfigText(await tx.getConfigValues(EMBEDDING_CONFIG_KEYS, { lock: 'share' })) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
     if ((await lexical(tx))?.id !== lexicalOld?.id) conflict(row);

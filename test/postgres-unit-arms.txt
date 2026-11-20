@@ -780,6 +780,7 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-embedding-config-lock.test.ts
 test/remember-pageless-entity-gst2446.test.ts
 test/remember-restated-private-2875.test.ts
 test/remember-segmented-entity-9213.test.ts

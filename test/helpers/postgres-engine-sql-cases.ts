@@ -1505,7 +1505,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('getRawData', [['default', (e) => e.getRawData(SLUG)]]),
   ...variants('getIngestLog', [['default', (e) => e.getIngestLog()]]),
   ...variants('getConfig', [['default', (e) => e.getConfig('embedding_model')]]),
-  ...variants('getConfigValues', [['default', (e) => e.getConfigValues(['embedding_model', 'auto_link'])]]),
+  ...variants('getConfigValues', [['default', (e) => e.getConfigValues(['embedding_model', 'auto_link'])], ['share', (e) => e.getConfigValues(['embedding_model', 'auto_link'], { lock: 'share' })]]),
   ...variants('readManagedModeRows', [['default', (e) => e.readManagedModeRows()]]),
   ...variants('getSourceStrictness', [['default', (e) => e.getSourceStrictness(SRC)]]),
   ...variants('readPersistenceBrainId', [['default', (e) => e.readPersistenceBrainId()]]),
