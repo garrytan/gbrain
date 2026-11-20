@@ -51,71 +51,102 @@ async function contextFor(engine: BrainEngine, path: Path, op: typeof putPage): 
 }
 
 /**
- * Two Rust-engine stops that are not link preparation's, named so a case can end on them without hiding a wrong put result:
- *  - PROJECTION_PASS: after any put returns, the persistence consumer's projection pass refuses on raw_sql (page-state/projections.ts
- *    selectWindowJobs, the `probed` statement at :665, reached from persistence/consumer.ts runResidentProjectionInvocation); the
- *    consumer catches it and writes `[persistence] ... reason=engine_capability_missing` to stderr. A put with no wikilink hits it too.
- *  - LINK_EFFECT: the MCP path builds its links in the post-commit `links` effect (persistence/effects.ts runLinksEffect, whose first
- *    statement is `engine.executeRaw` at persistence/effect-links.ts:110, a read of persistence_requests), so a Rust brain never builds
- *    them and the page keeps no link.
- * The harness wants a case that reached a typed refusal to END on one. `endOnNamedStop` runs after the case compared its put result
- * with the expected one (`expectPut`), so a wrong answer, page or link fails as itself and never becomes an accepted refusal.
+ * Three Rust-engine stops that are not link preparation's. A case may end on one only when the engine's own refusal is observed at
+ * that site: the test wraps `engine.executeRaw` and records, for each call the Rust engine refuses (`engine_capability_missing`),
+ * the function and file of the frame that made the call (the call-time stack). It matches on that function and file, never on the
+ * consumer's stderr text (which names a phase and a message, not a site, and is the same for every refusal).
+ *  - PROJECTION_PASS: a refused call from `selectWindowJobs` in page-state/projections.ts, the projection pass the persistence
+ *    consumer runs after any put (a put with no wikilink hits it too).
+ *  - LINK_EFFECT: a refused call from `runLinksEffect` in persistence/effect-links.ts, the post-commit `links` effect the MCP path
+ *    builds its links in; a Rust brain never builds them and the page keeps no link.
+ *  - PUT_PAGES: the error the put_pages handler throws, whose stack runs through `readBatch` in persistence/page-batch.ts and whose
+ *    detail names `member=executeRaw`; the batch cannot start, so there is nothing to compare.
+ * A refusal at any other site, or a thrown refusal that is not PUT_PAGES, fails the case as an ordinary error. The put result is
+ * compared with the expected one before any stop is accepted.
  */
-const PROJECTION_PASS = 'page-state/projections.ts:665 selectWindowJobs (projection pass, persistence/consumer.ts runResidentProjectionInvocation)';
-const LINK_EFFECT = 'persistence/effect-links.ts:110 runLinksEffect (executeRaw of persistence_requests, post-commit links effect)';
+type Site = { fn: string; file: string };
+const PROJECTION_PASS: Site = { fn: 'selectWindowJobs', file: 'page-state/projections.ts' };
+const LINK_EFFECT: Site = { fn: 'runLinksEffect', file: 'persistence/effect-links.ts' };
+const PUT_PAGES: Site = { fn: 'readBatch', file: 'persistence/page-batch.ts' };
+const siteName = (site: Site) => `${site.file} ${site.fn}`;
 
-/** Collects the persistence consumer's stderr lines while `run` and its effects settle. */
-async function withConsumerLog<T>(run: () => Promise<T>): Promise<{ value: T; refusedByConsumer: (bounded: boolean) => Promise<boolean> }> {
-  const lines: string[] = [];
-  const write = process.stderr.write.bind(process.stderr);
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    if (String(chunk).includes('[persistence]')) lines.push(String(chunk));
-    return (write as (...a: unknown[]) => boolean)(chunk, ...rest);
-  }) as typeof process.stderr.write;
-  const refused = () => lines.some((l) => l.includes('reason=engine_capability_missing'));
-  try {
-    const value = await run();
-    return { value, refusedByConsumer: async (bounded) => {
-      // Bounded wait: the consumer's refusal is written by a background pass, so give it up to 5 s to appear.
-      for (const deadline = Date.now() + 5000; bounded && !refused() && Date.now() < deadline;) await Bun.sleep(25);
-      process.stderr.write = write as typeof process.stderr.write;
-      return refused();
-    } };
-  } catch (error) {
-    process.stderr.write = write as typeof process.stderr.write;
-    throw error;
+/** The first frame under src/core in a stack: the function and file that made the call. */
+function frameOf(stack: string | undefined): Site | null {
+  for (const line of (stack ?? '').split('\n')) {
+    const found = /at (?:async )?(?:\S+ )?\(?(?:.*\/)?src\/core\/([^:)]+):\d+/.exec(line);
+    if (found) return { fn: /at (?:async )?(\S+) \(/.exec(line)?.[1] ?? '<anonymous>', file: found[1]! };
   }
+  return null;
+}
+const isSite = (found: Site | null, site: Site) => found !== null && found.fn === site.fn && found.file === site.file;
+
+/** Records the sites of every executeRaw call the engine refuses with engine_capability_missing, until `stop`. */
+function observeRefusals(engine: BrainEngine) {
+  const sites: Site[] = [];
+  const target = engine as unknown as { executeRaw: (...args: unknown[]) => unknown };
+  const original = target.executeRaw;
+  target.executeRaw = function (this: unknown, ...args: unknown[]) {
+    const caller = frameOf(new Error().stack);
+    const result = original.apply(this ?? engine, args);
+    Promise.resolve(result).catch((error: { code?: string }) => {
+      if (error?.code === 'engine_capability_missing') sites.push(caller ?? { fn: '<unknown>', file: '<unknown>' });
+    });
+    return result;
+  };
+  return {
+    sites,
+    stop: () => { target.executeRaw = original; },
+  };
 }
 
 /** The typed refusal a case ends on, naming the site. */
-const stoppedAt = (site: string) => Object.assign(new Error(`stopped on a typed refusal outside link preparation: ${site}`),
+const stoppedAt = (site: Site) => Object.assign(new Error(`stopped on a typed refusal outside link preparation: ${siteName(site)}`),
   { code: 'engine_capability_missing', reason: 'raw_sql' });
 
+/** A refusal no case names: an ordinary failure (it carries no capability code, so the harness cannot take it for a stop). */
+const unexpected = (what: string, error?: unknown) => new Error(`unexpected refusal, not a named stop: ${what}${error === undefined ? '' : `: ${(error as Error)?.message ?? String(error)}`}`);
+
 /**
- * Runs a put case: the put's result is compared with `expected` on every arm; only then may the Rust arm end on a named stop.
- * `expected` holds the links the page ends with where the engine builds them. The one allowed difference is the MCP path on
- * Rust, whose links are not built (LINK_EFFECT): its links are then empty, everything else must still be equal to `expected`.
+ * Runs a put case: the put's result is compared with `expected` on every arm; only then may the Rust arm end on a named stop,
+ * and only on the stop it observed. `expected` holds the links the page ends with where the engine builds them. The one allowed
+ * difference is the MCP path on Rust, whose links are not built (LINK_EFFECT, which must then be observed): its links are then
+ * empty, everything else must still be equal to `expected`. `batch` marks a put_pages case, which on Rust stops by itself (PUT_PAGES).
  */
-async function putCase<T extends { links: unknown }>(backend: string, path: Path, run: () => Promise<T>, expected: T, wantsLinks: boolean): Promise<T> {
-  const { value, refusedByConsumer } = await withConsumerLog(run);
-  const linksNotBuilt = backend === 'rust' && path === 'mcp' && wantsLinks && (value.links as unknown[]).flat().length === 0;
-  if (linksNotBuilt) expect({ ...value, links: null }).toEqual({ ...expected, links: null });
-  else expect(value).toEqual(expected);
-  const refused = await refusedByConsumer(backend === 'rust');
-  if (backend !== 'rust') return value;
-  if (linksNotBuilt) {
-    if (!refused) throw new Error('the MCP put to an existing page built no link on Rust and the consumer logged no typed refusal that explains it');
-    throw stoppedAt(LINK_EFFECT);
-  }
-  if (refused) throw stoppedAt(PROJECTION_PASS);
-  return value;
+async function putCase<T extends { links: unknown }>(engine: BrainEngine, backend: string, path: Path, run: () => Promise<T>, expected: T, wantsLinks: boolean, batch = false): Promise<T> {
+  if (backend !== 'rust') return await run().then((value) => { expect(value).toEqual(expected); return value; });
+  const observed = observeRefusals(engine);
+  try {
+    let value: T;
+    try { value = await run(); } catch (error) {
+      const thrown = error as { code?: string; detail?: unknown; stack?: string };
+      const through = (thrown.stack ?? '').split('\n').some((l) => l.includes(`src/core/${PUT_PAGES.file}`) && l.includes(`at ${PUT_PAGES.fn} `));
+      if (batch && thrown.code === 'engine_capability_missing' && through && String(thrown.detail).includes('member=executeRaw')) throw stoppedAt(PUT_PAGES);
+      throw unexpected('the put threw', error);
+    }
+    const linksNotBuilt = path === 'mcp' && wantsLinks && (value.links as unknown[]).flat().length === 0;
+    if (linksNotBuilt) expect({ ...value, links: null }).toEqual({ ...expected, links: null });
+    else expect(value).toEqual(expected);
+    // The consumer's refusals arrive from background passes: wait (bounded) for the site this case needs.
+    const need = linksNotBuilt ? LINK_EFFECT : PROJECTION_PASS;
+    for (const deadline = Date.now() + 5000; !observed.sites.some((s) => isSite(s, need)) && Date.now() < deadline;) await Bun.sleep(25);
+    const others = observed.sites.filter((s) => !isSite(s, PROJECTION_PASS) && !isSite(s, LINK_EFFECT));
+    if (others.length > 0) throw unexpected(`executeRaw refused at ${others.map(siteName).join(', ')}`);
+    if (linksNotBuilt) {
+      if (!observed.sites.some((s) => isSite(s, LINK_EFFECT))) throw unexpected('the MCP put built no link on Rust and the links effect was not seen refusing');
+      throw stoppedAt(LINK_EFFECT);
+    }
+    if (observed.sites.some((s) => isSite(s, LINK_EFFECT))) throw unexpected('the links effect refused, but the page has every expected link');
+    if (observed.sites.some((s) => isSite(s, PROJECTION_PASS))) throw stoppedAt(PROJECTION_PASS);
+    return value;
+  } finally { observed.stop(); }
 }
 
 const page = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${body}\n`;
 const BATCH_COUNTS = { committed: 2, failed: 0, pending: 0, total: 2 };
 /** A page a world-only caller must never read. */
 const PRIVATE = { type: 'person', title: 'Secret Example', compiled_truth: 'The private body that must not leave.', frontmatter: { visibility: 'private' } };
-const HIDDEN = { found: false, leaked: false };
+const HIDDEN = { outcome: 'page_not_found', leaked: false };
+const PUBLIC = { outcome: 'read', slug: 'people/alice-example', titled: true, body: true, leaked: false };
 // The public page both bodies also link to: its link shows the links effect ran, so a missing link to the private page means something.
 const REQUEST = 'b0000000-0000-4000-8000-0000000000d1';
 
@@ -146,12 +177,19 @@ async function worldOnlyContext(engine: BrainEngine): Promise<OperationContext> 
     logger: { info() {}, warn() {}, error() {} } } as OperationContext;
 }
 
-/** What get_page shows that caller for `slug`: whether it found the page, and whether the private body reached it. */
+/**
+ * What get_page shows that caller for `slug`. A private page must read as `page_not_found` (the same as a missing one, so no
+ * existence oracle); any other failure (a capability refusal, a crash) is rethrown, never taken for hiding. A page the caller
+ * may read shows its slug, whether its title and body arrived (a remote reader gets them as a quoted excerpt); `leaked` is whether the private body reached the caller either way.
+ */
 async function readAsCaller(ctx: OperationContext, slug: string) {
-  let shown: unknown;
-  try { shown = await getPageOp.handler(ctx, { slug }); } catch (error) { shown = { thrown: (error as { code?: string }).code ?? String(error) }; }
-  const text = JSON.stringify(shown);
-  return { found: !text.includes('"thrown"') && !text.includes('"error"'), leaked: text.includes('must not leave') };
+  try {
+    const shown = await getPageOp.handler(ctx, { slug }) as Record<string, unknown>;
+    return { outcome: 'read', slug: shown.slug, titled: String(shown.title).includes('Alice Example'), body: String(shown.compiled_truth).includes('A person.'), leaked: JSON.stringify(shown).includes('must not leave') };
+  } catch (error) {
+    if ((error as { code?: string }).code === 'page_not_found') return { outcome: 'page_not_found', leaked: false };
+    throw error;
+  }
 }
 
 async function putOne(engine: BrainEngine, path: Path, slug: string, body: string) {
@@ -185,7 +223,7 @@ describe('engine parity: put with a wikilink', () => {
     for (const [label, target, slug, links] of CASES) {
       parityTest(`${path}: put_page with a [[wikilink]] to ${label}`, {
         methods: ['putPage', 'updateSlug', 'getLinks', 'getPage'], requires: 'raw_sql', timeout: 120_000,
-      }, (engine, backend) => inFreshHome(() => putCase(backend, path, async () => {
+      }, (engine, backend) => inFreshHome(() => putCase(engine, backend, path, async () => {
         await seed(engine);
         const answer = await putOne(engine, path, slug, `See [[${target}]] for context.`);
         return { answer, stored: await storedPage(engine, slug), links: await linksOf(engine, slug, links[path].length) };
@@ -196,7 +234,7 @@ describe('engine parity: put with a wikilink', () => {
       methods: ['putPage', 'updateSlug', 'getLinks', 'getPage'], requires: 'raw_sql', timeout: 120_000,
     }, (engine, backend) => inFreshHome(() => {
       const aLinks = path === 'cli' ? [link('notes/batch-a', 'people/alice-example'), link('notes/batch-a', 'people/bob-example')] : [link('notes/batch-a', 'people/alice-example')];
-      return putCase(backend, path, async () => {
+      return putCase(engine, backend, path, async () => {
         await seed(engine);
         const ctx = await contextFor(engine, path, putPages);
         const answer = await putPages.handler(ctx, { request_id: REQUEST, pages: [
@@ -208,7 +246,7 @@ describe('engine parity: put with a wikilink', () => {
           stored: [await storedPage(engine, 'notes/batch-a'), await storedPage(engine, 'notes/batch-b')],
           links: [await linksOf(engine, 'notes/batch-a', aLinks.length), await linksOf(engine, 'notes/batch-b', 0)] };
       }, { state: 'committed', counts: BATCH_COUNTS, pages: [{ slug: 'notes/batch-a', state: 'committed', status: 'created_or_updated' }, { slug: 'notes/batch-b', state: 'committed', status: 'created_or_updated' }],
-        stored: [{ slug: 'notes/batch-a', type: 'note', title: 'notes/batch-a' }, { slug: 'notes/batch-b', type: 'note', title: 'notes/batch-b' }], links: [aLinks, []] }, true);
+        stored: [{ slug: 'notes/batch-a', type: 'note', title: 'notes/batch-a' }, { slug: 'notes/batch-b', type: 'note', title: 'notes/batch-b' }], links: [aLinks, []] }, true, true);
     }));
   }
 
@@ -227,7 +265,7 @@ describe('engine parity: put with a wikilink', () => {
       // The CLI path (a local writer) links the private page, resolving an alias to its canonical page; the MCP effect links the
       // public page only, as it does not link an alias slug and does not link a private target.
       const expectedLinks: Link[] = [link(slug, 'people/alice-example'), ...(path === 'cli' ? [link(slug, 'people/secret-example')] : [])];
-      return putCase(backend, path, async () => {
+      return putCase(engine, backend, path, async () => {
         // Both cases hold the same pages: a private page renamed from `secret-old`, so `secret-old` is its alias.
         await engine.putPage('people/secret-old', PRIVATE);
         await engine.updateSlug('people/secret-old', 'people/secret-example');
@@ -239,10 +277,10 @@ describe('engine parity: put with a wikilink', () => {
         const fingerprint = await engine.readSourceSlugFingerprint('default');
         const aliases = await engine.readLiveSlugAliases('default', [target]);
         return { answer: { status: answer.status, slug: answer.slug }, stored: await storedPage(engine, slug), links,
-          read: await readAsCaller(ctx, 'people/secret-example'), readAlias: await readAsCaller(ctx, 'people/secret-old'),
+          read: await readAsCaller(ctx, 'people/secret-example'), readAlias: await readAsCaller(ctx, 'people/secret-old'), readPublic: await readAsCaller(ctx, 'people/alice-example'),
           fingerprint: { n: fingerprint.n, slugs: [...fingerprint.slugs].sort() }, aliases: aliases.map((a) => ({ ...a })) };
       }, { answer: { status: 'created_or_updated', slug }, stored: { slug, type: 'note', title: slug }, links: expectedLinks,
-        read: HIDDEN, readAlias: HIDDEN,
+        read: HIDDEN, readAlias: HIDDEN, readPublic: PUBLIC,
         fingerprint: { n: 3, slugs: [slug, 'people/alice-example', 'people/secret-example'].sort() },
         aliases: label.includes('alias') ? [{ alias_slug: 'people/secret-old', canonical_slug: 'people/secret-example' }] : [] }, expectedLinks.length > 0);
     }));
