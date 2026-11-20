@@ -11,7 +11,16 @@
  * turns a void callback into a callback id, the owner refuses the rest).
  */
 import { OperationError } from '../../ops/contract.ts';
+import { PageMissingError } from '../../engine-errors.ts';
 import { guardedBodySite, guardSegmentedBody, type SegmentedBodyField } from '../../page-body/page-shape.ts';
+import { PageSourceMissingError } from '../../page-state/guards.ts';
+import {
+  PageProjectionConflictError, PageRevisionConflictError, PageSnapshotAmbiguousError, RevisionBackfillPendingError,
+} from '../../page-state/types.ts';
+import { DerivedLinkEndpointChangedError, DerivedLinkRepairRequiredError, DerivedLinkSettingsChangedError } from '../../derived-links.ts';
+import { RetryAbortError } from '../../retry.ts';
+import { EmbeddingColumnNotRegisteredError } from '../../search/embedding-column.ts';
+import { GBrainError } from '../../types.ts';
 import { ReadDeadlineError } from '../../read-deadline.ts';
 import { StatementDeadlineError } from '../../statement-deadline.ts';
 
@@ -41,14 +50,28 @@ export class OwnerIpcEncodeError extends Error {
 
 // Error classes the client rebuilds with their own prototype, so `instanceof` and getters keep working. An error of
 // another class is rebuilt on the nearest built-in prototype and keeps its `name`, own properties and JSON.
-const ERROR_CLASSES: Record<string, ErrorConstructor | (new (...args: never[]) => Error)> = {
+const BUILT_IN_ERROR_CLASSES: Record<string, ErrorConstructor | (new (...args: never[]) => Error)> = {
   Error, TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError,
   OperationError, ReadDeadlineError, StatementDeadlineError,
 };
 
+// The domain errors a served member or whole operation throws and a caller recovers from with `instanceof` (add_link
+// reclassifies a PageMissingError, revision handling reads PageRevisionConflictError and its subclasses). They are
+// listed in a function so a module-load cycle through the engine never reads a class before it exists.
+const domainErrorClasses = (): Record<string, new (...args: never[]) => Error> => ({
+  PageMissingError, PageRevisionConflictError, RevisionBackfillPendingError, PageProjectionConflictError,
+  PageSnapshotAmbiguousError, PageSourceMissingError,
+  DerivedLinkEndpointChangedError, DerivedLinkSettingsChangedError, DerivedLinkRepairRequiredError,
+  EmbeddingColumnNotRegisteredError, GBrainError, RetryAbortError,
+});
+
+let errorClasses: Record<string, ErrorConstructor | (new (...args: never[]) => Error)> | undefined;
+const ERROR_CLASSES = (): Record<string, ErrorConstructor | (new (...args: never[]) => Error)> =>
+  errorClasses ??= { ...BUILT_IN_ERROR_CLASSES, ...domainErrorClasses() };
+
 /** Registers an error class the owner may throw, so a client rebuilds it with that prototype. */
 export function registerOwnerIpcErrorClass(name: string, cls: new (...args: never[]) => Error): void {
-  ERROR_CLASSES[name] = cls;
+  ERROR_CLASSES()[name] = cls;
 }
 
 function isPlainObject(value: object): boolean {
@@ -90,9 +113,9 @@ export function decodeError(wire: Wire, opts: DecodeOptions = {}): unknown {
   if (!wire || typeof wire !== 'object' || Array.isArray(wire)) return wire;
   if (wire.$t === 'throw') return decodeValue(wire.v, opts);
   if (wire.$t !== 'err') return decodeValue(wire, opts);
-  const cls = typeof wire.cls === 'string' ? ERROR_CLASSES[wire.cls] : undefined;
+  const cls = typeof wire.cls === 'string' ? ERROR_CLASSES()[wire.cls] : undefined;
   const name = typeof wire.name === 'string' ? wire.name : 'Error';
-  const fallback = ERROR_CLASSES[name] ?? Error;
+  const fallback = ERROR_CLASSES()[name] ?? Error;
   const error = Object.create((cls ?? fallback).prototype) as Error;
   for (const entry of Array.isArray(wire.props) ? wire.props : []) {
     if (!Array.isArray(entry) || typeof entry[0] !== 'string') continue;

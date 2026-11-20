@@ -9,7 +9,18 @@
  * cross the socket, and rust-owner-ipc.test.ts covers only plain values. No production seam is added.
  */
 import { describe, expect, test } from 'bun:test';
-import { decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
+import { decodeError, decodeValue, encodeError, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
+import { PageMissingError } from '../src/core/engine-errors.ts';
+import {
+  PageProjectionConflictError, PageRevisionConflictError, PageSnapshotAmbiguousError, RevisionBackfillPendingError,
+} from '../src/core/page-state/types.ts';
+import { PageSourceMissingError } from '../src/core/page-state/guards.ts';
+import { RetryAbortError } from '../src/core/retry.ts';
+import { EmbeddingColumnNotRegisteredError } from '../src/core/search/embedding-column.ts';
+import { GBrainError } from '../src/core/types.ts';
+import {
+  DerivedLinkEndpointChangedError, DerivedLinkRepairRequiredError, DerivedLinkSettingsChangedError,
+} from '../src/core/derived-links.ts';
 import { guardSegmentedBody } from '../src/core/page-body/page-shape.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 
@@ -60,5 +71,56 @@ describe('a page stored in segments crosses the owner socket (getPage, readPageS
     expect(refusal(() => back.rows[1]!.compiled_truth).code).toBe('page_body_segmented');
     expect((back.snapshot.page as Record<string, unknown>).slug).toBe('notes/large');
     expect(refusal(() => (back.snapshot.page as Record<string, unknown>).timeline).code).toBe('page_body_segmented');
+  });
+});
+
+const REVISION = '0a1b2c3d-0000-4000-8000-000000000001';
+const OTHER_REVISION = '0a1b2c3d-0000-4000-8000-000000000002';
+
+describe('the domain errors a served method throws keep their class across the owner socket', () => {
+  // Each is a class a served engine member or whole operation throws and a caller recovers from with `instanceof`
+  // (add_link reclassifies a PageMissingError, revision-conflict handling reads PageRevisionConflictError.code).
+  const cases: Array<[string, Error, new (...args: never[]) => Error, Record<string, unknown>]> = [
+    ['PageMissingError', new PageMissingError('addLink', 'to', 'people/ada', 'default'), PageMissingError,
+      { operation: 'addLink', endpoint: 'to', slug: 'people/ada', sourceId: 'default' }],
+    ['PageRevisionConflictError', new PageRevisionConflictError(REVISION, OTHER_REVISION), PageRevisionConflictError,
+      { code: 'revision_conflict', expectedRevision: REVISION, currentRevision: OTHER_REVISION }],
+    ['PageRevisionConflictError (revision required)', new PageRevisionConflictError(undefined, OTHER_REVISION), PageRevisionConflictError,
+      { code: 'revision_required', currentRevision: OTHER_REVISION }],
+    ['RevisionBackfillPendingError', new RevisionBackfillPendingError(REVISION), RevisionBackfillPendingError,
+      { code: 'revision_backfill_pending', expectedRevision: REVISION }],
+    ['PageProjectionConflictError', new PageProjectionConflictError(REVISION, OTHER_REVISION, ['chunk_digest'], 'notes/a', 'default'), PageProjectionConflictError,
+      { changed: ['chunk_digest'], slug: 'notes/a', sourceId: 'default' }],
+    ['DerivedLinkEndpointChangedError', new DerivedLinkEndpointChangedError('An endpoint moved'), DerivedLinkEndpointChangedError,
+      { code: 'revision_conflict' }],
+    ['DerivedLinkSettingsChangedError', new DerivedLinkSettingsChangedError(), DerivedLinkSettingsChangedError,
+      { code: 'revision_conflict' }],
+    ['DerivedLinkRepairRequiredError', new DerivedLinkRepairRequiredError(), DerivedLinkRepairRequiredError,
+      { code: 'derived_link_provenance_required' }],
+    ['PageSnapshotAmbiguousError', new PageSnapshotAmbiguousError(), PageSnapshotAmbiguousError, {}],
+    ['PageSourceMissingError', new PageSourceMissingError('gone'), PageSourceMissingError, { sourceId: 'gone' }],
+    ['EmbeddingColumnNotRegisteredError', new EmbeddingColumnNotRegisteredError('embedding_x', ['embedding']), EmbeddingColumnNotRegisteredError,
+      { code: 'embedding_column_not_registered', columnName: 'embedding_x', validColumns: ['embedding'] }],
+    ['GBrainError', new GBrainError('Bad thing', 'it broke', 'fix it', 'https://example.test/doc'), GBrainError,
+      { problem: 'Bad thing', cause_description: 'it broke', fix: 'fix it', docs_url: 'https://example.test/doc' }],
+    ['RetryAbortError', new RetryAbortError(), RetryAbortError, { tag: 'RETRY_ABORTED' }],
+  ];
+
+  for (const [name, error, cls, props] of cases) {
+    test(`${name} decodes as its own class with its properties and message`, () => {
+      const back = decodeError(JSON.parse(JSON.stringify(encodeError(error)))) as Error;
+      expect(back).toBeInstanceOf(cls);
+      expect(back.name).toBe(error.name);
+      expect(back.message).toBe(error.message);
+      for (const [key, value] of Object.entries(props)) expect((back as unknown as Record<string, unknown>)[key]).toEqual(value);
+    });
+  }
+
+  test('keeps the inheritance the recovery code relies on', () => {
+    const wire = (e: Error) => decodeError(JSON.parse(JSON.stringify(encodeError(e))));
+    expect(wire(new RevisionBackfillPendingError(REVISION))).toBeInstanceOf(PageRevisionConflictError);
+    expect(wire(new PageProjectionConflictError(REVISION, OTHER_REVISION, [], 'a', 'default'))).toBeInstanceOf(PageRevisionConflictError);
+    expect(wire(new DerivedLinkSettingsChangedError())).toBeInstanceOf(DerivedLinkEndpointChangedError);
+    expect(wire(new PageMissingError('addTimelineEntry', 'page', 'a', 'default'))).not.toBeInstanceOf(PageRevisionConflictError);
   });
 });
