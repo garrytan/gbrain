@@ -7,8 +7,12 @@
  * Placeholders that a caller numbered by hand (`$1` the limit, `$2` the slug) stay hand-numbered inside `trustedSql`
  * string literals of a fragment with no bound values, so the text is the caller's byte for byte.
  */
+import { pageEligibleSql } from '../eligibility/sql.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
 import { privatePagesFilterForCaller, privatePagesFilterFragmentFast } from '../search/private-visibility.ts';
-import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import type { PageReadScope } from '../types.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { poolWhere, type FactPoolFilters, type FactPoolScope } from './facts-trust.ts';
 
@@ -304,4 +308,84 @@ export interface AttendanceScanRow { id: string; slug: string; source_id: string
 export async function listAttendanceScanWindow(raw: EngineRawRead, sourceId: string, afterSlug: string, limit: number): Promise<AttendanceScanRow[]> {
   return raw<AttendanceScanRow>(`SELECT id::text, slug, source_id, type, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted
     FROM pages WHERE source_id=$1 AND slug COLLATE "C">$2 ORDER BY slug COLLATE "C" LIMIT $3`, [sourceId, afterSlug, limit]);
+}
+
+/** The filters of `gbrain storage-list` on a card's frontmatter (`CardFilters` in storage-manifest/find.ts). */
+export interface ShelfCardFilters { store?: string; status?: string; onSourceMachine?: boolean }
+
+/** A shelf card row (`CardRow` in storage-manifest/find.ts). */
+export interface ShelfCardRow { id: string; title: string; status: string | null; kind: string | null; stores: string[]; original_path: string | null; on_source_machine: boolean | null; updated_at: string }
+
+/** The card columns of one page `p`. The store list is distinct and by byte, as the Rust store sorts it. No values. */
+const SHELF_CARD_COLUMNS = `p.slug AS id, p.title, p.frontmatter->'storage'->>'status' AS status, p.frontmatter->'storage'->>'kind' AS kind,
+  COALESCE((SELECT array_agg(DISTINCT (loc->>'store') COLLATE "C") FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'storage'->'locations') = 'array' THEN p.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc), ARRAY[]::text[]) AS stores,
+  p.frontmatter->'storage'->>'original_path' AS original_path,
+  CASE p.frontmatter->'storage'->>'on_source_machine' WHEN 'true' THEN true WHEN 'false' THEN false END AS on_source_machine,
+  p.updated_at::text AS updated_at`;
+
+/** The read policy over `p` for a live card read (`pageReadFilter('p', scope, params, true)`): its scope, privacy and trust floor, then live and unquarantined in an unarchived source. */
+function shelfPolicyFragment(scope: PageReadScope | undefined): SqlFragment {
+  const parts: SqlFragment[] = [];
+  if (scope?.sourceIds?.length) parts.push(sqlFragment`p.source_id = ANY(${[...scope.sourceIds]}::text[])`);
+  else if (scope?.sourceId) parts.push(sqlFragment`p.source_id = ${scope.sourceId}`);
+  if (scope?.excludePrivate) parts.push(sqlFragment`${trustedSql(privatePagesFilterForCaller('p'))}`);
+  if (scope?.minTrust || scope?.suppressFlagged) parts.push(sqlFragment`${trustedSql(pageEligibleSql('p', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged }))}`);
+  parts.push(
+    sqlFragment`p.deleted_at IS NULL`,
+    sqlFragment`${trustedSql(quarantineFilterFragment('p'))}`,
+    sqlFragment`EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived)`,
+  );
+  return joinFragments(parts, ' AND ');
+}
+
+/** The card filters as ` AND ...` conjuncts over `p` (`cardFilterSql`), empty when none apply. */
+function shelfCardFilterFragment(filters: ShelfCardFilters): SqlFragment {
+  const parts: SqlFragment[] = [];
+  if (filters.status) parts.push(sqlFragment`p.frontmatter->'storage'->>'status' = ${filters.status}`);
+  if (filters.store) parts.push(sqlFragment`EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'storage'->'locations') = 'array' THEN p.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc WHERE loc->>'store' = ${filters.store})`);
+  if (filters.onSourceMachine !== undefined) parts.push(sqlFragment`p.frontmatter->'storage'->>'on_source_machine' = ${String(filters.onSourceMachine)}`);
+  return parts.length ? sqlFragment` AND ${joinFragments(parts, ' AND ')}` : sqlFragment``;
+}
+
+/**
+ * One page of the storage shelf's cards and the count of all of them (`gbrain storage-list`): the live, unquarantined pages
+ * of type `cardType` in source `sourceId` that pass `policy` and `filters`, by slug (by byte), `limit` from `offset`.
+ */
+export async function listCardRows(raw: EngineRawRead, sourceId: string, cardType: string, opts: { limit: number; offset: number; filters: ShelfCardFilters; policy?: PageReadScope }): Promise<{ cards: ShelfCardRow[]; total: number }> {
+  const where = sqlFragment`p.source_id = ${sourceId} AND p.type = ${cardType} AND ${shelfPolicyFragment(opts.policy)}${shelfCardFilterFragment(opts.filters)}`;
+  const count = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM pages p WHERE ${where}`);
+  const [counted] = await raw<{ n: number }>(count.text, count.params);
+  const page = renderFragment(sqlFragment`SELECT ${trustedSql(SHELF_CARD_COLUMNS)} FROM pages p WHERE ${where} ORDER BY p.slug COLLATE "C" LIMIT ${opts.limit} OFFSET ${opts.offset}`);
+  const cards = await raw<ShelfCardRow>(page.text, page.params);
+  return { cards: cards.map(c => ({ ...c, stores: c.stores ?? [] })), total: Number(counted?.n ?? 0) };
+}
+
+/** A ranked card row of `gbrain storage-find`: the card plus the columns the ranking sorts on. */
+export type FindCardRow = ShelfCardRow & { exact_id: boolean; exact_alias: boolean; exact_title: boolean; matched: number; similarity: number };
+
+/** The phrase `findCardRows` searches for: the lowercased trimmed text, its alias form and its words. */
+export interface FindCardQuery { lower: string; aliasNorm: string; terms: readonly string[] }
+
+/**
+ * The cards of the shelf that pass `policy` and `filters`, ranked for a phrase (`gbrain storage-find`): exact id, exact alias,
+ * exact title, the count of words found by the `simple` text search in the title, aliases, slug and bounded body, then the
+ * best trigram word similarity on the title and aliases, then slug by byte. At most 500 rows; the caller picks the hits.
+ */
+export async function findCardRows(raw: EngineRawRead, sourceId: string, cardType: string, query: FindCardQuery, opts: { filters: ShelfCardFilters; policy?: PageReadScope }): Promise<FindCardRow[]> {
+  const q = renderFragment(sqlFragment`
+    SELECT ${trustedSql(SHELF_CARD_COLUMNS)},
+      p.slug = ${query.lower} AS exact_id,
+      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = ${query.aliasNorm}) AS exact_alias,
+      lower(btrim(p.title)) = ${query.lower} AS exact_title,
+      (SELECT count(*) FROM unnest(${[...query.terms]}::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
+      GREATEST(word_similarity(${query.lower}, lower(p.title)),
+        COALESCE((SELECT max(word_similarity(${query.lower}, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
+    FROM pages p
+    CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
+      || ' ' || p.slug || ' ' || ${trustedSql(boundedBodyPrefixSql('p'))}) AS doc) d
+    WHERE p.source_id = ${sourceId} AND p.type = ${cardType} AND ${shelfPolicyFragment(opts.policy)}${shelfCardFilterFragment(opts.filters)}
+    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
+    LIMIT 500`);
+  const rows = await raw<FindCardRow>(q.text, q.params);
+  return rows.map(r => ({ ...r, stores: r.stores ?? [] }));
 }

@@ -27,7 +27,7 @@ impl Brain {
         })
     }
 
-    /// `listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy?)`: one row per source.
+    /// `listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy?, fast)`: one row per source.
     #[napi]
     pub fn list_chat_channel_census<'env>(
         &self,
@@ -36,10 +36,11 @@ impl Brain {
         chat_types: Vec<String>,
         dm_types: Vec<String>,
         policy: Option<Value>,
+        fast: bool,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let policy: Option<PrivacyPolicy> = arg(policy, "listChatChannelCensus policy")?;
-            s.list_chat_channel_census(&source_ids, &chat_types, &dm_types, policy.as_ref())
+            s.list_chat_channel_census(&source_ids, &chat_types, &dm_types, policy.as_ref(), fast)
         })
     }
 
@@ -87,6 +88,62 @@ impl Brain {
         source_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_shelf_page_rows(&source_id))
+    }
+
+    /// `listCardRows(sourceId, cardType, status, store, onSourceMachine, limit, offset)`: `{ cards, total }`.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_card_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        card_type: String,
+        status: Option<String>,
+        store: Option<String>,
+        on_source_machine: Option<bool>,
+        limit: i64,
+        offset: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_card_rows(
+                &source_id,
+                &card_type,
+                status.as_deref(),
+                store.as_deref(),
+                on_source_machine,
+                limit,
+                offset,
+            )
+        })
+    }
+
+    /// `findCardRows(sourceId, cardType, query, aliasNorm, terms, status, store, onSourceMachine)`: the ranked card rows.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_card_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        card_type: String,
+        query: String,
+        alias_norm: String,
+        terms: Vec<String>,
+        status: Option<String>,
+        store: Option<String>,
+        on_source_machine: Option<bool>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_card_rows(
+                &source_id,
+                &card_type,
+                &query,
+                &alias_norm,
+                &terms,
+                status.as_deref(),
+                store.as_deref(),
+                on_source_machine,
+            )
+        })
     }
 
     /// `listLiveSourceIncarnations(sourceIds)`: `{ id, incarnation }` rows.

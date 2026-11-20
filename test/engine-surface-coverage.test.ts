@@ -227,7 +227,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Collate-equal page, mention and fact-pool reads
   'listPageTypePairs', 'countPagesWithMentionLinks', 'listGazetteerSourceIds', 'listGazetteerPages', 'listGazetteerAliasRows', 'listStaleMentionPages', 'listStaleMentionLinks', 'listPoolEntityPairs', 'listPoolUnbackedKeys',
   // Collate-equal page-set reads
-  'readPageSizeRows', 'listChatChannelCensus', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'readCompanyBrainEvidenceRows', 'listShelfPageRows', 'listLiveSourceIncarnations', 'listAttendanceScanWindow',
+  'readPageSizeRows', 'listChatChannelCensus', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'readCompanyBrainEvidenceRows', 'listShelfPageRows', 'listCardRows', 'findCardRows', 'listLiveSourceIncarnations', 'listAttendanceScanWindow',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',

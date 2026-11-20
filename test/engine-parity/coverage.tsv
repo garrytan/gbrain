@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1024/1034
+# covered: 1026/1036
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 19/19
 # ontology: 4/4
 # collate_reads: 9/9
-# collate_sets: 8/8
+# collate_sets: 10/10
 # raw_files: 7/7
 # takes: 24/24
 # dream: 3/3
@@ -102,7 +102,7 @@ getPage	pages	yes	115	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	557	yes	yes	yes	serves
+putPage	pages	yes	559	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -318,11 +318,13 @@ listStaleMentionLinks	collate_reads	yes	1	no	yes	yes	serves
 listPoolEntityPairs	collate_reads	yes	1	no	yes	yes	serves
 listPoolUnbackedKeys	collate_reads	yes	1	no	yes	yes	serves
 readPageSizeRows	collate_sets	yes	1	no	yes	yes	serves
-listChatChannelCensus	collate_sets	yes	1	no	yes	yes	serves
+listChatChannelCensus	collate_sets	yes	2	no	yes	yes	serves
 listLinkPageMetadataForSlugs	collate_sets	yes	1	no	yes	yes	serves
 listAttendedOriginSlugs	collate_sets	yes	1	no	yes	yes	serves
 readCompanyBrainEvidenceRows	collate_sets	yes	1	no	yes	yes	serves
 listShelfPageRows	collate_sets	yes	1	no	yes	yes	serves
+listCardRows	collate_sets	yes	1	no	yes	yes	serves
+findCardRows	collate_sets	yes	2	no	yes	yes	serves
 listLiveSourceIncarnations	collate_sets	yes	2	no	yes	yes	serves
 listAttendanceScanWindow	collate_sets	yes	2	no	yes	yes	serves
 putRawData	raw_files	yes	5	yes	yes	yes	serves
@@ -410,7 +412,7 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	12	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	26	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	27	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	13	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
@@ -852,7 +854,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	31	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	29	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

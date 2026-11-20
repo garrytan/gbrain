@@ -57,7 +57,8 @@ pub(crate) use stem::pg_lower;
 #[allow(unused_imports)]
 pub(crate) use tsearch::{
     TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,
-    setweight, to_tsvector, ts_matches, websearch_to_tsquery,
+    plainto_tsquery_simple, setweight, to_tsvector, to_tsvector_simple, ts_matches,
+    websearch_to_tsquery,
 };
 
 pub(crate) use title_fuzzy::{real_to_js, sql_ilike, sql_like};

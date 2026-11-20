@@ -2,24 +2,30 @@
 //! members of `src/core/engine-sql/collate-page-reads.ts` that read a source's pages as a set.
 //!
 //! Members: readPageSizeRows, listChatChannelCensus, listLinkPageMetadataForSlugs, listAttendedOriginSlugs,
-//! readCompanyBrainEvidenceRows, listShelfPageRows, listLiveSourceIncarnations, listAttendanceScanWindow.
+//! readCompanyBrainEvidenceRows, listShelfPageRows, listCardRows, findCardRows, listLiveSourceIncarnations,
+//! listAttendanceScanWindow.
 //!
 //! Each reads the page, link and source records the SQL engines keep in tables. Rust text orders by byte, as the
 //! `COLLATE "C"` the SQL states. A read the SQL leaves unordered (`listAttendedOriginSlugs`,
 //! `listLiveSourceIncarnations`) returns its rows in byte order, which no caller depends on.
 
 use crate::Store;
+use crate::aliases::page_alias_rows;
 use crate::cli_reads::import::LinkPageMetadataRow;
-use crate::cli_reads::pg_text::fm_text;
+use crate::cli_reads::pg_text::{btrim, fm_text, pg_lower, timestamptz_text};
 use crate::error::{Result, StoreError};
-use crate::facts::privacy::{PrivacyPolicy, page_hidden};
+use crate::facts::privacy::{PrivacyPolicy, cheap_page_visible, folder_rules_allow, page_hidden};
+use crate::keyword::{
+    plainto_tsquery_simple, to_tsvector_simple, trgm_word_similarity, ts_matches,
+};
 use crate::kv::KvRead;
 use crate::links::{no_nul, out_links};
-use crate::page_body::segmented_reference;
+use crate::page_body::{segmented_reference, truth_lead};
 use crate::page_embedding_budget::budget_state;
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::read_source;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The link sources a canonical edge to a page's own origin may carry (`listAttendedOriginSlugs`).
@@ -46,6 +52,92 @@ fn page_bytes(read: &dyn KvRead, page: &PageRecord) -> Result<(i64, bool)> {
             false,
         ),
     })
+}
+
+/// The card filters: a `storage.status` text, a location `store` text, and `on_source_machine` as the text `true` or `false`.
+struct CardFilter<'a> {
+    status: Option<&'a str>,
+    store: Option<&'a str>,
+    machine: Option<String>,
+}
+
+/// The live unquarantined pages of type `card_type` in an unarchived `source_id` that pass `filter`, by slug.
+fn card_pages(
+    read: &dyn KvRead,
+    source_id: &str,
+    card_type: &str,
+    filter: &CardFilter<'_>,
+) -> Result<Vec<PageRecord>> {
+    if read_source(read, source_id)?.is_none_or(|s| s.archived) {
+        return Ok(Vec::new());
+    }
+    Ok(live_in(read, source_id)?
+        .into_iter()
+        .filter(|p| p.page_type == card_type && !p.frontmatter.contains_key("quarantine"))
+        .filter(|p| {
+            let storage = storage_of(p);
+            filter
+                .status
+                .is_none_or(|v| storage_text(storage, "status").as_deref() == Some(v))
+                && filter.store.is_none_or(|v| {
+                    locations(storage).any(|loc| fm_text(loc, "store").as_deref() == Some(v))
+                })
+                && filter.machine.as_deref().is_none_or(|v| {
+                    storage_text(storage, "on_source_machine").as_deref() == Some(v)
+                })
+        })
+        .collect())
+}
+
+/// One card of a page: `{ id, title, status, kind, stores, original_path, on_source_machine, updated_at }`.
+fn card_json(p: &PageRecord) -> Value {
+    let storage = storage_of(p);
+    let mut stores: Vec<Option<String>> = locations(storage)
+        .map(|loc| fm_text(loc, "store"))
+        .collect();
+    stores.sort_by(|a, b| match (a, b) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    });
+    stores.dedup();
+    let machine = match storage_text(storage, "on_source_machine").as_deref() {
+        Some("true") => json!(true),
+        Some("false") => json!(false),
+        _ => Value::Null,
+    };
+    json!({
+        "id": p.slug, "title": p.title,
+        "status": storage_text(storage, "status"), "kind": storage_text(storage, "kind"),
+        "stores": stores, "original_path": storage_text(storage, "original_path"),
+        "on_source_machine": machine, "updated_at": timestamptz_text(p.updated_at_us),
+    })
+}
+
+/// `left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES)` counts code points.
+const BOUNDED_PREFIX_CHARS: usize = 64 * 1024;
+
+/// `frontmatter -> 'storage'` as an object: any other value (or none) reads every `->>` on it as NULL.
+fn storage_of(page: &PageRecord) -> Option<&Map<String, Value>> {
+    page.frontmatter.get("storage").and_then(Value::as_object)
+}
+
+/// `frontmatter -> 'storage' ->> key`.
+fn storage_text(storage: Option<&Map<String, Value>>, key: &str) -> Option<String> {
+    storage.and_then(|s| fm_text(s, key))
+}
+
+/// The object elements of `storage -> 'locations'` when it is an array (`jsonb_typeof(...) = 'array'`); any other element
+/// reads `->> 'store'` as NULL, so it is an empty object here.
+fn locations(storage: Option<&Map<String, Value>>) -> impl Iterator<Item = &Map<String, Value>> {
+    static NONE: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
+    storage
+        .and_then(|s| s.get("locations"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|loc| loc.as_object().unwrap_or(&NONE))
 }
 
 /// Whether the page of `id` may be an edge end of `source_id`'s company brain: live and in the source.
@@ -123,6 +215,26 @@ fn first_edge(
     Ok(best.map(|b| b.3))
 }
 
+/// Whether the census leaves `page` out: the page policy, or with `fast` the folder rules first and the rest of the
+/// policy only for a page that fails the cheap test.
+fn census_hidden(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+    fast: bool,
+) -> Result<bool> {
+    if !fast {
+        return page_hidden(read, page, policy);
+    }
+    if !folder_rules_allow(read, page, policy)? {
+        return Ok(true);
+    }
+    if cheap_page_visible(page, policy.honor_aliases) {
+        return Ok(false);
+    }
+    page_hidden(read, page, policy)
+}
+
 impl Store {
     /// `readPageSizeRows(sourceId, maxBytes, slugs)`: `{ slug, bytes, segmented, frontmatter, state, reason }` of the
     /// source's live pages (only `slugs` when given) that carry `embed_skip`, hold more than `max_bytes`, are segmented
@@ -162,12 +274,17 @@ impl Store {
 
     /// `listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy)`: `{ source_id, chat_pages, channels }` per source
     /// that holds a live chat page the caller can read (`policy` none hides nothing), by source.
+    /// `fast` reads the policy as `privatePagesFilterFragmentFast` does: a page under no folder rule
+    /// with no `visibility`, `derived_from`, `readable_by`, `pinned_question` (or alias) key and a
+    /// plain type passes without the rest of the policy, so a page in an owner-only source that
+    /// passes that cheap test is counted, as the statement counts it.
     pub fn list_chat_channel_census(
         &self,
         source_ids: &[String],
         chat_types: &[String],
         dm_types: &[String],
         policy: Option<&PrivacyPolicy>,
+        fast: bool,
     ) -> Result<Vec<Value>> {
         let read = self.read()?;
         let mut census: BTreeMap<String, (u64, BTreeSet<String>)> = BTreeMap::new();
@@ -179,7 +296,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = policy
-                && page_hidden(&*read, &page, policy)?
+                && census_hidden(&*read, &page, policy, fast)?
             {
                 continue;
             }
@@ -294,6 +411,128 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `listCardRows(sourceId, cardType, status, store, onSourceMachine, limit, offset)`: `{ cards, total }`, the live
+    /// unquarantined pages of type `card_type` in `source_id` (an unarchived source) that pass the card filters, by slug,
+    /// `limit` from `offset`; `total` counts all of them. A card is `{ id, title, status, kind, stores, original_path,
+    /// on_source_machine, updated_at }` read from the page's `storage` frontmatter object; `stores` is the distinct
+    /// location stores by byte, a missing store (`null`) last.
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_card_rows(
+        &self,
+        source_id: &str,
+        card_type: &str,
+        status: Option<&str>,
+        store: Option<&str>,
+        on_source_machine: Option<bool>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Value> {
+        let read = self.read()?;
+        let filter = CardFilter {
+            status,
+            store,
+            machine: on_source_machine.map(|b| b.to_string()),
+        };
+        let cards = card_pages(&*read, source_id, card_type, &filter)?;
+        let total = cards.len();
+        let page = cards
+            .iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .map(card_json)
+            .collect::<Vec<_>>();
+        Ok(json!({ "cards": page, "total": total }))
+    }
+
+    /// `findCardRows(sourceId, cardType, query, aliasNorm, terms, status, store, onSourceMachine)`: the cards of
+    /// `list_card_rows` that pass the filters, each with its ranking columns, best first, at most 500. `query` is the
+    /// lowercased trimmed phrase and `alias_norm` its alias form. `exact_id` is `slug = query`; `exact_alias` is an alias
+    /// row equal to `alias_norm`; `exact_title` is `lower(btrim(title)) = query`; `matched` counts the terms the
+    /// `simple` text search finds in the document `title aliases slug body` (the body is the first 65536 characters of
+    /// the compiled truth, or of the truth lead of a segmented page; a page with no body matches no term);
+    /// `similarity` is the best `word_similarity(query, ...)` over the lowercased title and the aliases. The order is
+    /// `exact_id`, `exact_alias`, `exact_title`, `matched`, `similarity` (each greatest first), then slug by byte.
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_card_rows(
+        &self,
+        source_id: &str,
+        card_type: &str,
+        query: &str,
+        alias_norm: &str,
+        terms: &[String],
+        status: Option<&str>,
+        store: Option<&str>,
+        on_source_machine: Option<bool>,
+    ) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let filter = CardFilter {
+            status,
+            store,
+            machine: on_source_machine.map(|b| b.to_string()),
+        };
+        let mut rows = Vec::new();
+        for page in card_pages(&*read, source_id, card_type, &filter)? {
+            let aliases: Vec<String> = page_alias_rows(&*read, source_id, &page.slug)?
+                .into_iter()
+                .map(|(alias, _)| alias)
+                .collect();
+            let body = match page.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => truth_lead(&*read, page.id)?,
+            };
+            let mut matched = 0usize;
+            if let Some(body) = body.filter(|_| !terms.is_empty()) {
+                let prefix = body
+                    .char_indices()
+                    .nth(BOUNDED_PREFIX_CHARS)
+                    .map_or(body.as_str(), |(at, _)| &body[..at]);
+                let doc = to_tsvector_simple(&format!(
+                    "{} {} {} {}",
+                    page.title,
+                    aliases.join(" "),
+                    page.slug,
+                    prefix
+                ))?;
+                for term in terms {
+                    if ts_matches(&doc, &plainto_tsquery_simple(term)?) {
+                        matched += 1;
+                    }
+                }
+            }
+            let similarity = aliases
+                .iter()
+                .map(|alias| trgm_word_similarity(query, alias))
+                .fold(
+                    trgm_word_similarity(query, &pg_lower(&page.title)),
+                    f32::max,
+                );
+            let mut card = card_json(&page);
+            card["exact_id"] = json!(page.slug == query);
+            card["exact_alias"] = json!(aliases.iter().any(|a| a == alias_norm));
+            card["exact_title"] = json!(pg_lower(btrim(&page.title)) == query);
+            card["matched"] = json!(matched);
+            card["similarity"] = json!(f64::from(similarity));
+            rows.push(card);
+        }
+        let flag = |row: &Value, key: &str| row[key].as_bool().unwrap_or(false);
+        // Stable: `card_pages` is by slug byte, the last sort key.
+        rows.sort_by(|a, b| {
+            flag(b, "exact_id")
+                .cmp(&flag(a, "exact_id"))
+                .then(flag(b, "exact_alias").cmp(&flag(a, "exact_alias")))
+                .then(flag(b, "exact_title").cmp(&flag(a, "exact_title")))
+                .then(b["matched"].as_u64().cmp(&a["matched"].as_u64()))
+                .then(
+                    b["similarity"]
+                        .as_f64()
+                        .partial_cmp(&a["similarity"].as_f64())
+                        .unwrap_or(Ordering::Equal),
+                )
+        });
+        rows.truncate(500);
+        Ok(rows)
     }
 
     /// `listLiveSourceIncarnations(sourceIds)`: `{ id, incarnation }` of each listed source that exists and is not

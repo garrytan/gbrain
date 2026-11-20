@@ -533,6 +533,8 @@ export const RUST_ENGINE_MEMBERS = {
   listAttendedOriginSlugs: 'pages',
   readCompanyBrainEvidenceRows: 'pages',
   listShelfPageRows: 'pages',
+  listCardRows: 'pages',
+  findCardRows: 'pages',
   listLiveSourceIncarnations: 'sources',
   listAttendanceScanWindow: 'pages',
   // code_edges

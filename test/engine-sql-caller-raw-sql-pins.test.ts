@@ -42,6 +42,13 @@ import { poolWhere, type FactPoolScope } from '../src/core/engine-sql/facts-trus
 /** page-embedding-budget.ts readPageSizeStates `bytes` at dded7edc51, verbatim. */
 const PAGE_SIZE_BYTES = `(CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)`;
 /** attendance-repair.ts PAGE_PIN_SQL at dded7edc51, verbatim. */
+/** The card columns of the old `CARD_COLUMNS` (find.ts at dded7edc51), with the store list distinct and sorted by byte. */
+const SHELF_CARD_PIN_COLUMNS = `p.slug AS id, p.title, p.frontmatter->'storage'->>'status' AS status, p.frontmatter->'storage'->>'kind' AS kind,
+  COALESCE((SELECT array_agg(DISTINCT (loc->>'store') COLLATE "C") FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'storage'->'locations') = 'array' THEN p.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc), ARRAY[]::text[]) AS stores,
+  p.frontmatter->'storage'->>'original_path' AS original_path,
+  CASE p.frontmatter->'storage'->>'on_source_machine' WHEN 'true' THEN true WHEN 'false' THEN false END AS on_source_machine,
+  p.updated_at::text AS updated_at`;
+const SHELF_LIVE_PIN = `p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived)`;
 const ATTENDANCE_PAGE_PIN_SQL = 'id::text, slug, source_id, type, knowledge_revision::text AS revision';
 
 const POOL_SCOPE: FactPoolScope = { sourceIds: ['default'], worldOnly: true, excludePrivate: false };
@@ -722,6 +729,60 @@ SELECT source_id, type FROM pairs`],
     from: 'src/core/storage-manifest/find.ts:86 readShelfCards, at dded7edc51',
     case: { method: 'listShelfPageRows', variant: 'default', run: e => e.listShelfPageRows('default') },
     texts: ['SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug COLLATE "C"'],
+  },
+  {
+    from: 'src/core/storage-manifest/find.ts:78 and :80 listCards, at dded7edc51',
+    case: { method: 'listCardRows', variant: 'default', run: e => e.listCardRows('storage', 'stored-object', { limit: 5, offset: 0, filters: {} }) },
+    texts: [
+      `SELECT count(*)::int AS n FROM pages p WHERE p.source_id = $1 AND p.type = $2 AND ${SHELF_LIVE_PIN}`,
+      `SELECT ${SHELF_CARD_PIN_COLUMNS} FROM pages p WHERE p.source_id = $1 AND p.type = $2 AND ${SHELF_LIVE_PIN} ORDER BY p.slug COLLATE "C" LIMIT $3 OFFSET $4`,
+    ],
+  },
+  {
+    from: 'src/core/storage-manifest/find.ts:78 and :80 listCards with a source scope and the three filters, at dded7edc51',
+    case: { method: 'listCardRows', variant: 'scoped and filtered', run: e => e.listCardRows('storage', 'stored-object', { limit: 5, offset: 0, filters: { status: 'archived', store: 's3', onSourceMachine: true }, policy: { sourceId: 'storage' } }) },
+    texts: [
+      `SELECT count(*)::int AS n FROM pages p WHERE p.source_id = $1 AND p.type = $2 AND p.source_id = $3 AND ${SHELF_LIVE_PIN} AND p.frontmatter->'storage'->>'status' = $4 AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'storage'->'locations') = 'array' THEN p.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc WHERE loc->>'store' = $5) AND p.frontmatter->'storage'->>'on_source_machine' = $6`,
+      `SELECT ${SHELF_CARD_PIN_COLUMNS} FROM pages p WHERE p.source_id = $1 AND p.type = $2 AND p.source_id = $3 AND ${SHELF_LIVE_PIN} AND p.frontmatter->'storage'->>'status' = $4 AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'storage'->'locations') = 'array' THEN p.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc WHERE loc->>'store' = $5) AND p.frontmatter->'storage'->>'on_source_machine' = $6 ORDER BY p.slug COLLATE "C" LIMIT $7 OFFSET $8`,
+    ],
+  },
+  {
+    // The old text numbered its parameters by variable ($3 for the phrase everywhere); each use is now its own parameter,
+    // numbered by position, and the card stores sort by byte.
+    from: 'src/core/storage-manifest/find.ts:46 findCards, at dded7edc51',
+    case: { method: 'findCardRows', variant: 'default', run: e => e.findCardRows('storage', 'stored-object', { lower: 'tax papers', aliasNorm: 'tax papers', terms: ['tax', 'papers'] }, { filters: {} }) },
+    texts: [`
+    SELECT ${SHELF_CARD_PIN_COLUMNS},
+      p.slug = $1 AS exact_id,
+      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = $2) AS exact_alias,
+      lower(btrim(p.title)) = $3 AS exact_title,
+      (SELECT count(*) FROM unnest($4::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
+      GREATEST(word_similarity($5, lower(p.title)),
+        COALESCE((SELECT max(word_similarity($6, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
+    FROM pages p
+    CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
+      || ' ' || p.slug || ' ' || left(coalesce(p.compiled_truth, p.truth_lead), 65536)) AS doc) d
+    WHERE p.source_id = $7 AND p.type = $8 AND ${SHELF_LIVE_PIN}
+    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
+    LIMIT 500`],
+  },
+  {
+    from: 'src/core/storage-manifest/find.ts:46 findCards with a source scope and the three filters, at dded7edc51',
+    case: { method: 'findCardRows', variant: 'scoped and filtered', run: e => e.findCardRows('storage', 'stored-object', { lower: 'tax', aliasNorm: 'tax', terms: ['tax'] }, { filters: { status: 'archived', store: 's3', onSourceMachine: true }, policy: { sourceId: 'storage' } }) },
+    texts: [`
+    SELECT ${SHELF_CARD_PIN_COLUMNS},
+      p.slug = $1 AS exact_id,
+      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = $2) AS exact_alias,
+      lower(btrim(p.title)) = $3 AS exact_title,
+      (SELECT count(*) FROM unnest($4::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
+      GREATEST(word_similarity($5, lower(p.title)),
+        COALESCE((SELECT max(word_similarity($6, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
+    FROM pages p
+    CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
+      || ' ' || p.slug || ' ' || left(coalesce(p.compiled_truth, p.truth_lead), 65536)) AS doc) d
+    WHERE p.source_id = $7 AND p.type = $8 AND p.source_id = $9 AND ${SHELF_LIVE_PIN} AND p.frontmatter->'storage'->>'status' = $10 AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'storage'->'locations') = 'array' THEN p.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc WHERE loc->>'store' = $11) AND p.frontmatter->'storage'->>'on_source_machine' = $12
+    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
+    LIMIT 500`],
   },
   {
     from: 'src/core/attendance-repair.ts:100 identity, at dded7edc51',

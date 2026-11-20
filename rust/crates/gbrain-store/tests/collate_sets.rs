@@ -6,6 +6,7 @@ mod memory_env;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::links::LinkBatchInput;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -156,7 +157,9 @@ fn the_chat_census_counts_pages_and_distinct_channels_per_source_by_byte() {
     );
     put_in(&s, "a-z", "d2", "dm", "t", "x", json!({}));
     put_in(&s, "a0", "c1", "chat", "#only", "x", json!({}));
-    let rows = s.list_chat_channel_census(&all, &chat, &dm, None).unwrap();
+    let rows = s
+        .list_chat_channel_census(&all, &chat, &dm, None, false)
+        .unwrap();
     assert_eq!(strings(&rows, "source_id"), ["a0", "b"]);
     // b: general (twice), '' (c3), ops, 7 -> 4 channels over 5 pages.
     assert_eq!(
@@ -164,15 +167,95 @@ fn the_chat_census_counts_pages_and_distinct_channels_per_source_by_byte() {
         json!({ "source_id": "b", "chat_pages": 5, "channels": 4 })
     );
     let both = [chat[0].clone(), dm[0].clone()];
-    let rows = s.list_chat_channel_census(&all, &both, &dm, None).unwrap();
+    let rows = s
+        .list_chat_channel_census(&all, &both, &dm, None, false)
+        .unwrap();
     assert_eq!(strings(&rows, "source_id"), ["a-z", "a0", "b"]);
     assert_eq!(
         rows[0],
         json!({ "source_id": "a-z", "chat_pages": 2, "channels": 2 })
     );
     let only = ["a0".to_string()];
-    let rows = s.list_chat_channel_census(&only, &both, &dm, None).unwrap();
+    let rows = s
+        .list_chat_channel_census(&only, &both, &dm, None, false)
+        .unwrap();
     assert_eq!(strings(&rows, "source_id"), ["a0"]);
+}
+
+#[test]
+fn the_fast_census_counts_a_cheap_page_the_full_policy_hides() {
+    let dir = TempDir::new("collate-sets-census-fast");
+    let s = open(&dir);
+    source(&s, "open");
+    s.upsert_source(&args::<SourceInput>(
+        json!({ "id": "locked", "name": "locked", "config": { "owner_only": true } }),
+    ))
+    .unwrap();
+    for id in ["open", "locked"] {
+        put_in(&s, id, "plain", "chat", "#plain", "x", json!({}));
+        put_in(
+            &s,
+            id,
+            "private",
+            "chat",
+            "#private",
+            "x",
+            json!({ "visibility": "private" }),
+        );
+        put_in(
+            &s,
+            id,
+            "readers",
+            "chat",
+            "#readers",
+            "x",
+            json!({ "readable_by": ["member:a"] }),
+        );
+        put_in(
+            &s,
+            id,
+            "alias",
+            "chat",
+            "#alias",
+            "x",
+            json!({ "access": "private" }),
+        );
+        put_in(
+            &s,
+            id,
+            "null-key",
+            "chat",
+            "#nullkey",
+            "x",
+            json!({ "visibility": null }),
+        );
+    }
+    let chat = ["chat".to_string()];
+    let all = ["open".to_string(), "locked".to_string()];
+    let policy: PrivacyPolicy = args(json!({
+        "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn",
+    }));
+    let counts = |fast: bool| {
+        let rows = s
+            .list_chat_channel_census(&all, &chat, &[], Some(&policy), fast)
+            .unwrap();
+        rows.iter()
+            .map(|r| {
+                (
+                    r["source_id"].as_str().unwrap().to_string(),
+                    r["chat_pages"].as_u64().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // The full policy hides the owner-only source whole and every private, restricted or aliased page.
+    assert_eq!(counts(false), [("open".to_string(), 2)]);
+    // The fast form passes the cheap page of the owner-only source (and the page whose `visibility` key holds JSON null, a key
+    // that is present, goes to the full policy, which keeps it in the open source only).
+    assert_eq!(
+        counts(true),
+        [("locked".to_string(), 1), ("open".to_string(), 2)]
+    );
 }
 
 #[test]
@@ -275,6 +358,201 @@ fn shelf_rows_are_the_live_pages_with_their_frontmatter_by_byte() {
     assert_eq!(rows[1]["type"], "stored-object");
     assert_eq!(rows[1]["frontmatter"], json!({ "k": 1 }));
     assert!(s.list_shelf_page_rows("other").unwrap().is_empty());
+}
+
+#[test]
+fn card_rows_page_the_live_cards_by_byte_and_read_the_storage_object() {
+    let dir = TempDir::new("collate-sets-cards");
+    let s = open(&dir);
+    let card = |status: &str, stores: Value, machine: Value| {
+        json!({ "storage": { "status": status, "kind": "dataset", "original_path": "/p", "on_source_machine": machine,
+                              "locations": stores } })
+    };
+    put(
+        &s,
+        "ab",
+        "stored-object",
+        "Ab",
+        "x",
+        card(
+            "archived",
+            json!([{ "store": "s3" }, { "store": "b2" }, { "store": "s3" }]),
+            json!(true),
+        ),
+    );
+    put(
+        &s,
+        "a-z",
+        "stored-object",
+        "A-z",
+        "x",
+        card(
+            "missing",
+            json!([{ "store": "gcs" }, {}, "text"]),
+            json!("false"),
+        ),
+    );
+    put(
+        &s,
+        "plain",
+        "stored-object",
+        "Plain",
+        "x",
+        json!({ "storage": "not an object" }),
+    );
+    put(
+        &s,
+        "held",
+        "stored-object",
+        "Held",
+        "x",
+        json!({ "quarantine": { "why": "x" }, "storage": { "status": "archived" } }),
+    );
+    put(&s, "gone", "stored-object", "Gone", "x", json!({}));
+    s.soft_delete_page("gone", None).unwrap();
+    put(&s, "note", "note", "Note", "x", json!({}));
+    let rows = |status, store, machine, limit, offset| {
+        s.list_card_rows(
+            "default",
+            "stored-object",
+            status,
+            store,
+            machine,
+            limit,
+            offset,
+        )
+        .unwrap()
+    };
+    let all = rows(None, None, None, 10, 0);
+    assert_eq!(all["total"], 3);
+    let ids: Vec<&str> = all["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["a-z", "ab", "plain"]);
+    assert_eq!(all["cards"][1]["stores"], json!(["b2", "s3"]));
+    assert_eq!(all["cards"][0]["stores"], json!(["gcs", null]));
+    assert_eq!(all["cards"][1]["on_source_machine"], true);
+    assert_eq!(all["cards"][0]["on_source_machine"], false);
+    assert_eq!(all["cards"][2]["status"], Value::Null);
+    assert_eq!(all["cards"][2]["stores"], json!([]));
+    assert!(
+        all["cards"][1]["updated_at"]
+            .as_str()
+            .unwrap()
+            .ends_with("+00")
+    );
+    let page = rows(None, None, None, 1, 1);
+    assert_eq!(
+        (page["total"].clone(), page["cards"][0]["id"].clone()),
+        (json!(3), json!("ab"))
+    );
+    assert_eq!(rows(Some("archived"), None, None, 10, 0)["total"], 1);
+    assert_eq!(
+        rows(None, Some("gcs"), None, 10, 0)["cards"][0]["id"],
+        "a-z"
+    );
+    assert_eq!(rows(None, None, Some(false), 10, 0)["total"], 1);
+    assert_eq!(rows(None, None, None, 10, 5)["cards"], json!([]));
+    s.set_source_archived("default", true).unwrap();
+    assert_eq!(
+        rows(None, None, None, 10, 0),
+        json!({ "cards": [], "total": 0 })
+    );
+}
+
+#[test]
+fn found_card_rows_rank_exact_matches_then_words_then_similarity() {
+    let dir = TempDir::new("collate-sets-find");
+    let s = open(&dir);
+    let card = || json!({ "storage": { "status": "archived" } });
+    put(
+        &s,
+        "disk",
+        "stored-object",
+        "Disk Backup",
+        "Photos of the 2019 Lisbon trip",
+        card(),
+    );
+    put(&s, "tax", "stored-object", "  Tax Papers ", "forms", card());
+    put(
+        &s,
+        "other",
+        "stored-object",
+        "Other",
+        "nothing here",
+        json!({ "storage": { "status": "missing" } }),
+    );
+    put(
+        &s,
+        "held",
+        "stored-object",
+        "Tax Held",
+        "tax",
+        json!({ "quarantine": 1 }),
+    );
+    s.set_page_aliases("disk", "default", &["old drive".to_string()])
+        .unwrap();
+    let terms = |words: &[&str]| words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+    let find = |query: &str, alias: &str, words: &[&str], status| {
+        s.find_card_rows(
+            "default",
+            "stored-object",
+            query,
+            alias,
+            &terms(words),
+            status,
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let ids = |rows: &[Value]| strings(rows, "id");
+
+    let by_title = find("tax papers", "tax papers", &["tax", "papers"], None);
+    assert_eq!(ids(&by_title), ["tax", "disk", "other"]);
+    assert_eq!(by_title[0]["exact_title"], true);
+    assert_eq!(by_title[0]["matched"], 2);
+    assert_eq!(by_title[1]["matched"], 0);
+
+    let by_alias = find("old drive", "old drive", &["old", "drive"], None);
+    assert_eq!(ids(&by_alias)[0], "disk");
+    assert_eq!(
+        (
+            by_alias[0]["exact_alias"].clone(),
+            by_alias[0]["exact_title"].clone()
+        ),
+        (json!(true), json!(false))
+    );
+
+    let by_id = find("other", "other", &["other"], None);
+    assert_eq!(
+        (ids(&by_id)[0].as_str(), by_id[0]["exact_id"].clone()),
+        ("other", json!(true))
+    );
+
+    // The `simple` search does not stem: `photo` is not `photos`, `lisbon` is found by its lowercase form.
+    let words = find("photo lisbon", "photo lisbon", &["photo", "lisbon"], None);
+    assert_eq!(
+        (ids(&words)[0].as_str(), words[0]["matched"].clone()),
+        ("disk", json!(1))
+    );
+    // The slug is part of the document, and a term with no token matches nothing.
+    assert_eq!(find("disk", "disk", &["disk"], None)[0]["matched"], 1);
+    assert_eq!(find("x", "x", &["!!"], None)[0]["matched"], 0);
+
+    let similar = find("backup", "backup", &[], None);
+    assert_eq!(ids(&similar)[0], "disk");
+    assert!(similar[0]["similarity"].as_f64().unwrap() > 0.5);
+
+    assert_eq!(
+        ids(&find("tax", "tax", &["tax"], Some("missing"))),
+        ["other"]
+    );
+    s.set_source_archived("default", true).unwrap();
+    assert!(find("tax", "tax", &["tax"], None).is_empty());
 }
 
 #[test]

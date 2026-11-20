@@ -3691,6 +3691,9 @@ export interface BrainEngine {
   readCompanyBrainEvidenceRows(sourceId: string): Promise<CollatePageReadsSql.CompanyBrainEvidenceRows>;
   /** Every live page of one source with its title, type and frontmatter, by slug (by byte). */
   listShelfPageRows(sourceId: string): Promise<CollatePageReadsSql.ShelfPageRow[]>;
+  listCardRows(sourceId: string, cardType: string, opts: { limit: number; offset: number; filters: CollatePageReadsSql.ShelfCardFilters; policy?: PageReadScope }): Promise<{ cards: CollatePageReadsSql.ShelfCardRow[]; total: number }>;
+  /** The ranked card rows of the storage shelf for a phrase (`gbrain storage-find`), at most 500. */
+  findCardRows(sourceId: string, cardType: string, query: CollatePageReadsSql.FindCardQuery, opts: { filters: CollatePageReadsSql.ShelfCardFilters; policy?: PageReadScope }): Promise<CollatePageReadsSql.FindCardRow[]>;
   /** The id and incarnation of each of `sourceIds` that exists and is not archived, in no promised order. */
   listLiveSourceIncarnations(sourceIds: readonly string[]): Promise<Array<{ id: string; incarnation: string }>>;
   /** The first `limit` pages of one source (soft-deleted included) after `afterSlug` by byte, in slug (byte) order. */

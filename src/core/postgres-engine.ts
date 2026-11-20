@@ -1342,6 +1342,8 @@ export class PostgresEngine implements BrainEngine {
   listAttendedOriginSlugs(sourceId: string, slugs: readonly string[] | null) { return collatePageReadsImpl.listAttendedOriginSlugs(this.executeRaw.bind(this), sourceId, slugs); }
   readCompanyBrainEvidenceRows(sourceId: string) { return collatePageReadsImpl.readCompanyBrainEvidenceRows(this.executeRaw.bind(this), sourceId); }
   listShelfPageRows(sourceId: string) { return collatePageReadsImpl.listShelfPageRows(this.executeRaw.bind(this), sourceId); }
+  listCardRows(sourceId: string, cardType: string, opts: Parameters<BrainEngine['listCardRows']>[2]) { return collatePageReadsImpl.listCardRows(this.executeRaw.bind(this), sourceId, cardType, opts); }
+  findCardRows(sourceId: string, cardType: string, query: Parameters<BrainEngine['findCardRows']>[2], opts: Parameters<BrainEngine['findCardRows']>[3]) { return collatePageReadsImpl.findCardRows(this.executeRaw.bind(this), sourceId, cardType, query, opts); }
   listLiveSourceIncarnations(sourceIds: readonly string[]) { return collatePageReadsImpl.listLiveSourceIncarnations(this.executeRaw.bind(this), sourceIds); }
   listAttendanceScanWindow(sourceId: string, afterSlug: string, limit: number) { return collatePageReadsImpl.listAttendanceScanWindow(this.executeRaw.bind(this), sourceId, afterSlug, limit); }
 

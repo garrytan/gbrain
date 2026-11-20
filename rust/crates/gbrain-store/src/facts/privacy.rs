@@ -576,6 +576,52 @@ fn readers_allowed(
     Ok(plain || !origin_restricted(read, page)?)
 }
 
+/// The folder-rule conjunct alone of `privatePagesFilterFragmentFast`
+/// (`folderRulesAllowedSql(alias, [])`): the page is under no folder rule, no coverage the
+/// record carries and, outside a caller record, no pending prefix. It is the first conjunct of
+/// the fast filter whatever the member-access form, and judges the page by an empty satisfied set.
+pub(crate) fn folder_rules_allow(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let folders = FolderAccess {
+        satisfied: &[],
+        coverage: &policy.folder_coverage,
+        record: policy.caller_record,
+    };
+    let pending = pending_covers(read, &page.source_id, &page.slug)?;
+    let rules = if folders.record && pending {
+        kept_rules(read, &page.source_id, page.id)?
+    } else {
+        stamped_rules(read, page)?
+    };
+    Ok(
+        folders.satisfies_all(rules.iter())
+            && !folders.covers(page)
+            && (folders.record || !pending),
+    )
+}
+
+/// The cheap first test of `privatePagesFilterFragmentFast`: no `visibility`, `derived_from`,
+/// `readable_by` or `pinned_question` key (nor, with `honor_aliases`, an `access` or
+/// `confidentiality` key) and a type that is not atom, concept, event or question. A SQL `->`
+/// read is NULL only for an absent key, so a key holding JSON null counts as present.
+pub(crate) fn cheap_page_visible(page: &PageRecord, honor_aliases: bool) -> bool {
+    let fm = &page.frontmatter;
+    let aliases =
+        honor_aliases && (fm.contains_key("access") || fm.contains_key("confidentiality"));
+    !(fm.contains_key("visibility")
+        || fm.contains_key("derived_from")
+        || aliases
+        || fm.contains_key("readable_by")
+        || fm.contains_key("pinned_question")
+        || matches!(
+            page.page_type.as_str(),
+            "atom" | "concept" | "event" | "question"
+        ))
+}
+
 /// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
 fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
     let key = keys::text(keys::CONFIG, &[RESTRICTIONS_PRESENT_KEY]);

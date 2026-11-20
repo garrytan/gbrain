@@ -176,10 +176,16 @@ fn english_dict(ty: TokenType) -> Option<Dict> {
     }
 }
 
-/// `parsetext` for the `english` configuration. A token of `MAXSTRLEN` bytes or more is skipped
+/// The `simple` configuration: every token type `english` maps goes to the `simple` dictionary (lowercase, no stem,
+/// no stopword); the same four types stay unmapped.
+fn simple_dict(ty: TokenType) -> Option<Dict> {
+    english_dict(ty).map(|_| Dict::Simple)
+}
+
+/// `parsetext` for the `english` configuration, or for `simple` when `simple` is set. A token of `MAXSTRLEN` bytes or more is skipped
 /// without taking a position; a stopword takes a position and emits no word; a lexeme longer than
 /// `MAXSTRLEN` bytes (lowercasing can lengthen a token) takes its position and is dropped.
-fn parsetext(text: &str) -> Vec<ParsedWord> {
+fn parsetext(text: &str, simple: bool) -> Vec<ParsedWord> {
     let mut out = Vec::new();
     let mut pos: u32 = 0;
     for (ty, token) in parse(text) {
@@ -188,7 +194,11 @@ fn parsetext(text: &str) -> Vec<ParsedWord> {
         if token.len() >= MAXSTRLEN {
             continue;
         }
-        let lexeme = match english_dict(ty) {
+        let lexeme = match if simple {
+            simple_dict(ty)
+        } else {
+            english_dict(ty)
+        } {
             None => continue,
             Some(Dict::EnglishStem) => english_stem(token),
             Some(Dict::Simple) => {
@@ -247,7 +257,12 @@ fn make_tsvector(mut words: Vec<ParsedWord>) -> Result<TsVector> {
 
 /// `to_tsvector('english', text)`.
 pub(crate) fn to_tsvector(text: &str) -> Result<TsVector> {
-    make_tsvector(parsetext(text))
+    make_tsvector(parsetext(text, false))
+}
+
+/// `to_tsvector('simple', text)`.
+pub(crate) fn to_tsvector_simple(text: &str) -> Result<TsVector> {
+    make_tsvector(parsetext(text, true))
 }
 
 /// `setweight(vector, weight)`: every position gets the weight; lexemes without positions stay
@@ -409,6 +424,8 @@ pub(crate) struct TsQuery {
 /// The tsquery parser state: `polstr` collects items in push order (PG `lcons`es them, so the
 /// final array is the reverse).
 struct QueryBuilder {
+    /// Parse operands under the `simple` configuration instead of `english`.
+    simple: bool,
     pushed: Vec<QItem>,
     /// `curop - op`: the bytes of operand text pushed so far (each operand plus its NUL).
     sumlen: usize,
@@ -417,6 +434,7 @@ struct QueryBuilder {
 impl QueryBuilder {
     fn new() -> Self {
         QueryBuilder {
+            simple: false,
             pushed: Vec::new(),
             sumlen: 0,
         }
@@ -450,7 +468,7 @@ impl QueryBuilder {
     /// `pushval_morph`: parse one operand's text and push its lexemes, joined by `qoperator`,
     /// with stopword placeholders for the stopwords between them.
     fn pushval_morph(&mut self, text: &str, qoperator: Op) -> Result<()> {
-        let words = parsetext(text);
+        let words = parsetext(text, self.simple);
         if words.is_empty() {
             self.push_stop();
             return Ok(());
@@ -705,6 +723,16 @@ fn cleanup_stopwords(query: &TsQuery) -> TsQuery {
 /// `plainto_tsquery('english', text)`.
 pub(crate) fn plainto_tsquery(text: &str) -> Result<TsQuery> {
     let mut b = QueryBuilder::new();
+    if !text.is_empty() {
+        b.pushval_morph(text, Op::And)?;
+    }
+    b.finish()
+}
+
+/// `plainto_tsquery('simple', text)`.
+pub(crate) fn plainto_tsquery_simple(text: &str) -> Result<TsQuery> {
+    let mut b = QueryBuilder::new();
+    b.simple = true;
     if !text.is_empty() {
         b.pushval_morph(text, Op::And)?;
     }
@@ -1483,6 +1511,27 @@ mod tests {
             bad.len(),
             bad.join("\n")
         );
+    }
+
+    /// PGLite 0.5.16: `to_tsvector('simple', t)::text` and `plainto_tsquery('simple', t)::text`.
+    #[test]
+    fn the_simple_configuration_lowercases_without_stemming_or_stopwords() {
+        let cases = [
+            (
+                "Photos of the 2019 Lisbon-trip, a.b@c.com http://x.org/p",
+                "'/p':11 '2019':4 'a.b@c.com':8 'lisbon':6 'lisbon-trip':5 'of':2 'photos':1 'the':3 'trip':7 'x.org':10 'x.org/p':9",
+                "'photos' & 'of' & 'the' & '2019' & 'lisbon-trip' & 'lisbon' & 'trip' & 'a.b@c.com' & 'x.org/p' & 'x.org' & '/p'",
+            ),
+            (
+                "The Running dogs 3d-printer",
+                "'3d':5 '3d-printer':4 'dogs':3 'printer':6 'running':2 'the':1",
+                "'the' & 'running' & 'dogs' & '3d-printer' & '3d' & 'printer'",
+            ),
+        ];
+        for (text, vector, query) in cases {
+            assert_eq!(to_tsvector_simple(text).unwrap().to_text(), vector);
+            assert_eq!(plainto_tsquery_simple(text).unwrap().to_text(), query);
+        }
     }
 
     #[test]

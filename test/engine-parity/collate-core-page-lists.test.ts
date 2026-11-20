@@ -38,6 +38,9 @@ import { readForecastJournal } from '../../src/core/forecast-journal.ts';
 import { checkTypeProliferation } from '../../src/core/onboard/checks.ts';
 import { loadActivePack } from '../../src/core/schema-pack/load-active.ts';
 import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { emptyHome, withEnv } from '../helpers/with-env.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -135,6 +138,25 @@ describe('census, size states and file lists', () => {
     return census.chat_sources;
   });
 
+  parityTest('chatChannelCensus counts a plain chat page of an owner-only source, as the fast page filter lets it through', { methods: ['putPage', 'listChatChannelCensus'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'own-texts', { owner_only: true });
+    const chat = (extra: Record<string, unknown> = {}) => note('Thread', { type: 'dm', ...extra });
+    await engine.putPage('chat/plain', chat(), { sourceId: 'own-texts' });
+    await engine.putPage('chat/private', chat({ frontmatter: { visibility: 'private' } }), { sourceId: 'own-texts' });
+    await engine.putPage('chat/readers', chat({ frontmatter: { readable_by: ['member:someone'] } }), { sourceId: 'own-texts' });
+    await engine.putPage('chat/plain', chat(), { sourceId: 'default' });
+    await engine.putPage('chat/private', chat({ frontmatter: { visibility: 'private' } }), { sourceId: 'default' });
+    const sources = ['default', 'own-texts'];
+    // The statement's cheap test passes the plain page whether or not the full policy would hide it (an owner-only source hides
+    // every row of its brain there), so a plain page of the owner-only source is counted and a private or restricted page is not.
+    const outside = await chatChannelCensus(engine, sources);
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    const inScope = await withEngineScope(engine, () => chatChannelCensus(engine, sources));
+    expect(outside).toEqual({ sources, chat_pages: 2, channels: 2, chat_sources: sources });
+    expect(inScope).toEqual(outside);
+    return { outside, inScope };
+  });
+
   parityTest('readPageSizeStates lists the pages that carry a size state by slug byte', { methods: ['putPage', 'readPageSizeRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'size-example');
     for (const slug of MIXED_SLUGS) await engine.putPage(slug, note(slug, { frontmatter: { embed_skip: true } }), { sourceId: 'size-example' });
@@ -178,7 +200,7 @@ describe('storage shelf and fact pool lists', () => {
     }
   }
 
-  parityTest('listCards pages the shelf by slug byte with an offset, without a skip or a repeat', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('listCards pages the shelf by slug byte with an offset, without a skip or a repeat', { methods: ['putPage', 'listCardRows'] }, async (engine, backend) => {
     await seedShelf(engine, backend);
     const walked: string[] = [];
     for (let offset = 0; offset < MIXED_SLUGS.length; offset++) {
@@ -188,7 +210,7 @@ describe('storage shelf and fact pool lists', () => {
     return walked;
   });
 
-  parityTest('findCards breaks a tie between equal cards by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findCards breaks a tie between equal cards by slug byte', { methods: ['putPage', 'findCardRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'storage');
     for (const slug of MIXED_SLUGS) {
       await engine.putPage(slug, { type: STORED, title: 'Zebra crate', compiled_truth: 'Same body.', timeline: '' } as never, { sourceId: 'storage' });
@@ -196,6 +218,30 @@ describe('storage shelf and fact pool lists', () => {
     const ids = (await findCards(engine, 'zebra crate', { limit: 10, filters: {} })).hits.map(h => h.id);
     expect(ids).toEqual([...BYTE_SLUGS]);
     return ids;
+  });
+
+  parityTest('findCards ranks exact id, alias and title, then the words found, then the closest title', { methods: ['putPage', 'setPageAliases', 'findCardRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'storage');
+    const card = (slug: string, title: string, body: string, status = 'archived', stores: unknown[] = [{ store: 's3' }]) =>
+      engine.putPage(slug, { type: STORED, title, compiled_truth: body, timeline: '', frontmatter: { storage: { status, kind: 'dataset', locations: stores } } } as never, { sourceId: 'storage' });
+    await card('disk-backup', 'Disk Backup', 'Photos of the 2019 Lisbon trip, running notes');
+    await card('tax-papers', '  Tax Papers ', 'Forms and receipts', 'missing', [{ store: 'gcs' }, { store: 'b2' }]);
+    await card('old-drive', 'Spare', 'Nothing relevant');
+    await card('Zeta', 'Zeta crate', 'x');
+    await card('alpha', 'Alpha crate', 'x');
+    await engine.setPageAliases('old-drive', 'storage', ['old drive', 'spinning disk']);
+    const out: unknown[] = [];
+    for (const query of ['tax papers', 'Old Drive', 'zeta', 'lisbon photos', 'photo lisbon', 'crate', 'disk backups', 'unrelated words']) {
+      const found = await findCards(engine, query, { limit: 10, filters: {} });
+      out.push([query, found.terms, found.hits.map(h => [h.id, h.match, h.matched_terms, h.similarity]), found.closest.map(c => [c.id, c.similarity])]);
+    }
+    const filtered = await findCards(engine, 'crate', { limit: 10, filters: { status: 'missing', store: 'b2', onSourceMachine: undefined } });
+    out.push(filtered.hits.map(h => h.id), filtered.closest.map(c => c.id));
+    const scoped = await findCards(engine, 'tax papers', { limit: 1, filters: {}, policy: { sourceId: 'storage' } });
+    out.push(scoped.hits.map(h => [h.id, h.stores]));
+    expect(scoped.hits[0].stores).toEqual(['b2', 'gcs']);
+    expect((await findCards(engine, 'tax papers', { limit: 10, filters: {} })).hits[0].match).toBe('title');
+    return out;
   });
 
   parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'listShelfPageRows'] }, async (engine, backend) => {

@@ -722,6 +722,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAttendedOriginSlugs': OOS.callerRawSql,
   'readCompanyBrainEvidenceRows': OOS.callerRawSql,
   'listShelfPageRows': OOS.callerRawSql,
+  'listCardRows': OOS.callerRawSql,
+  'findCardRows': OOS.callerRawSql,
   'listLiveSourceIncarnations': OOS.callerRawSql,
   'listAttendanceScanWindow': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
@@ -1691,6 +1693,14 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('readCompanyBrainEvidenceRows', [['default', (e) => e.readCompanyBrainEvidenceRows('default')]]),
   ...variants('listShelfPageRows', [['default', (e) => e.listShelfPageRows('default')]]),
+  ...variants('findCardRows', [
+    ['default', (e) => e.findCardRows('storage', 'stored-object', { lower: 'tax papers', aliasNorm: 'tax papers', terms: ['tax', 'papers'] }, { filters: {} })],
+    ['scoped and filtered', (e) => e.findCardRows('storage', 'stored-object', { lower: 'tax', aliasNorm: 'tax', terms: ['tax'] }, { filters: { status: 'archived', store: 's3', onSourceMachine: true }, policy: { sourceId: 'storage' } })],
+  ]),
+  ...variants('listCardRows', [
+    ['default', (e) => e.listCardRows('storage', 'stored-object', { limit: 5, offset: 0, filters: {} })],
+    ['scoped and filtered', (e) => e.listCardRows('storage', 'stored-object', { limit: 5, offset: 0, filters: { status: 'archived', store: 's3', onSourceMachine: true }, policy: { sourceId: 'storage' } })],
+  ]),
   ...variants('listLiveSourceIncarnations', [['default', (e) => e.listLiveSourceIncarnations(['default'])]]),
   ...variants('listAttendanceScanWindow', [['default', (e) => e.listAttendanceScanWindow('default', '', 10)]]),
   ...variants('readMayActFor', [
