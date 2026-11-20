@@ -66,6 +66,7 @@ import * as factsForget from './facts-forget.ts';
 import * as factsRecall from './facts-recall.ts';
 import * as factsQuoted from './facts-quoted.ts';
 import * as schemaDetect from './schema-detect.ts';
+import * as edgeProposals from './edge-proposals.ts';
 import * as factsWritePath from './facts-write-path.ts';
 import * as factsRemember from './facts-remember.ts';
 import * as derivationTrust from './derivation-trust.ts';
@@ -129,6 +130,8 @@ export const STORE_MEMBERS = {
   ...factRelinkWrites,
   // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
   ...schemaDetect,
+  // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).
+  ...edgeProposals,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").

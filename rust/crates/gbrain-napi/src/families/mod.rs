@@ -44,6 +44,7 @@ mod decide_store;
 mod derivation_trust;
 mod dream;
 mod dream_config;
+mod edge_proposals;
 mod embedding_catalog;
 mod embedding_install;
 mod embeddings;

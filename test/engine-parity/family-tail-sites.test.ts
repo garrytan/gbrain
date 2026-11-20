@@ -15,18 +15,24 @@
  *    readLastContradictionsPromptVersion answers the newest run's prompt version and listEvalCandidateQueries the newest
  *    captured queries; listVisiblePageSlugs
  *    keeps the slugs a caller may see under each page-policy part and readPagesForVersionHistory reads the pages a version
- *    history belongs to.
+ *    history belongs to. runPhaseEdgeContradictions, end to end with a stub judge: propose mode records one dated closure
+ *    and a rejected pair is not judged again; apply mode writes the closure line, undo reopens it, and a closure line the
+ *    user deletes makes the proposal reverted_by_user.
  *  - Regression: an engine that drops a clause hands the contradiction judge a private page's text, closes a stranger's
  *    relationship or names a private page to a remote caller in `most_connected`.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18),
  *    so no case compared them across engines.
- *  - Seam: none. Pages come from putPage, links from addLink, takes from
+ *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence; on a Rust brain that
+ *    write queues on a refused link-preparation read, so those cases stop on that typed refusal), links from addLink or
+ *    replaceDerivedLinks, takes from
  *    addTakesBatch, runs and queries from their typed writers. Ids differ between arms, so every case maps them to slugs or
  *    to the name of the row it seeded.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { operations, type OperationContext } from '../../src/core/operations.ts';
+import { applyEdgeProposal, rejectEdgeProposal, runPhaseEdgeContradictions, undoEdgeProposal, type EdgeJudgeFn } from '../../src/core/cycle/edge-contradictions.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -167,6 +173,189 @@ describe('engine parity: edge-contradictions phase statements', () => {
     expect(out).toMatchObject({ stale: 'stale', reopened: 'proposed', rejected: true, rejectedAgain: false, afterReject: 'rejected',
       rejectApplied: false, reverted: 1, afterRevert: 'reverted_by_user', revertedAgain: 0, undone: 'undone', landed: false, noHash: null, noEvidence: null });
     return out;
+  });
+});
+
+/** put_page through the operation, as the phase's own unit test seeds pages: the write derives the page's links and dated evidence. */
+async function putThroughOp(engine: BrainEngine, slug: string, fm: string, body: string): Promise<void> {
+  const ctx = { engine, config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false,
+    sourceId: 'default' } as unknown as OperationContext;
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+  await operations.find(o => o.name === 'put_page')!.handler(ctx, { slug, ...(snapshot ? { expected_revision: snapshot.revision } : {}),
+    content: `---\n${fm}\n---\n\n${body}` });
+}
+
+const TWO_EMPLOYERS = [
+  'Alice works at [Acme](../companies/acme-example) and at [Widget](../companies/widget-co).', '', '## Timeline', '',
+  '- **2019-02-01** | test — joined [Acme](../companies/acme-example)',
+  '- **2024-05-01** | test — joined [Widget](../companies/widget-co)',
+].join('\n');
+
+/** Alice with two dated works_at employers (Acme from 2019, Widget from 2024), written through put_page. */
+async function seedThroughOp(engine: BrainEngine): Promise<void> {
+  await putThroughOp(engine, ACME, 'type: company\ntitle: Acme', 'A company.');
+  await putThroughOp(engine, WIDGET, 'type: company\ntitle: Widget', 'A company.');
+  await putThroughOp(engine, ALICE, 'type: person\ntitle: Alice', TWO_EMPLOYERS);
+}
+
+/** The same graph, published as derived links with the page's own dated evidence (no put_page link preparation). */
+async function seedThroughDerivedLinks(engine: BrainEngine): Promise<void> {
+  await engine.putPage(ACME, page('Acme', 'company'));
+  await engine.putPage(WIDGET, page('Widget', 'company'));
+  await engine.putPage(ALICE, { ...page('Alice', 'person'), compiled_truth: TWO_EMPLOYERS });
+  const snapshot = (await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!;
+  const link = (to: string, context: string) => ({ from_slug: ALICE, to_slug: to, link_type: 'works_at', context, link_source: 'markdown',
+    from_source_id: 'default', to_source_id: 'default' });
+  await engine.replaceDerivedLinks({ slug: ALICE, sourceId: 'default', expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation },
+    [link(ACME, 'works at Acme'), link(WIDGET, 'works at Widget')]);
+}
+
+const conflictJudge: EdgeJudgeFn = async () => [{ a: 1, b: 2, conflict: true, confidence: 0.9 }];
+
+/** The phase outcome without its wall-clock duration. */
+const phaseView = (r: Awaited<ReturnType<typeof runPhaseEdgeContradictions>>) => ({ status: r.status, detail: r.detail, totals: r.totals });
+
+async function liveEmployers(engine: BrainEngine): Promise<string[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await engine.listEdgeContradictionCandidates({ today, maxSubjects: 10, pendingCutoff: null,
+    personFilter: { types: ['person'], per_source: [] } });
+  return rows.map(r => r.target_slug);
+}
+
+/**
+ * The engine the phase gets: it keeps the ids recordEdgeProposal answers (the phase does not return them) and the
+ * last typed capability refusal the engine threw.
+ */
+function watched(engine: BrainEngine) {
+  const ids: number[] = [];
+  let refusal: unknown = null;
+  const wrapped = new Proxy(engine, {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        const out = value.apply(target, args);
+        if (!(out instanceof Promise)) return out;
+        return out.then((r: unknown) => {
+          if (key === 'recordEdgeProposal' && typeof r === 'number') ids.push(r);
+          return r;
+        }, (e: unknown) => {
+          if ((e as { code?: unknown })?.code === 'engine_capability_missing') refusal = e;
+          throw e;
+        });
+      };
+    },
+  });
+  return { engine: wrapped, ids, refusal: () => refusal };
+}
+
+/**
+ * Run a write that a missing capability can queue instead of refuse: put_page answers `write_pending` with
+ * blocked_reason engine_capability_missing when a step of its link preparation is refused. The case then stops on
+ * that typed refusal, which is what the queued write is waiting for.
+ */
+async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const blocked = (error as { writeRequest?: { blocked_reason?: unknown } })?.writeRequest?.blocked_reason;
+    if (blocked === 'engine_capability_missing' && w.refusal() !== null) throw w.refusal();
+    throw error;
+  }
+}
+
+describe('engine parity: the edge-contradictions phase end to end', () => {
+  parityTest('propose mode records one dated closure, reject keeps both employers, and the next run skips the known pair', {
+    methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
+      'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal', 'putPage',
+      'replaceDerivedLinks', 'rejectOpenEdgeProposal'],
+  }, async (base) => {
+    const w = watched(base);
+    const engine = w.engine;
+    await seedThroughDerivedLinks(engine);
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+    const before = await liveEmployers(engine);
+    const proposed = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));
+    expect(w.ids.length).toBe(1);
+    const id = w.ids[0]!;
+    const proposal = async () => {
+      const p = await engine.readEdgeProposal(id);
+      return p && { status: p.status, subject: p.subject_slug, ending: p.ending_slug, link_type: p.link_type, close_date: String(p.close_date).slice(0, 10),
+        line: p.generated_line };
+    };
+    const out = {
+      before, proposed, proposal: await proposal(),
+      afterPropose: await liveEmployers(engine),
+      reject: await rejectEdgeProposal(engine, id),
+      rejectAgain: await rejectEdgeProposal(engine, id),
+      applyRejected: await applyEdgeProposal(engine, id),
+      rejected: (await proposal())?.status,
+      rerun: phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge })),
+      afterRerun: await liveEmployers(engine),
+    };
+    expect(out).toMatchObject({ before: [ACME, WIDGET], afterPropose: [ACME, WIDGET], afterRerun: [ACME, WIDGET], rejected: 'rejected',
+      reject: { status: 'rejected' }, rejectAgain: { status: 'refused' }, applyRejected: { status: 'refused', reason: 'proposal is rejected' },
+      proposal: { status: 'proposed', subject: ALICE, ending: ACME, close_date: '2024-05-01' } });
+    expect(out.proposed.totals).toMatchObject({ judged: 1, proposed: 1, applied: 0 });
+    expect(out.rerun.totals).toMatchObject({ skipped_known: 1, judged: 0 });
+    return out;
+  });
+
+  parityTest('apply mode closes the older employer through a timeline line, undo reopens it, and the next run skips the known pair', {
+    methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
+      'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
+      'readEdgeProposalEvidence', 'readEdgeProposalHash', 'edgeClosureLanded', 'setEdgeProposalStatus', 'markEdgeProposalUndone'],
+  }, async (base) => {
+    const w = watched(base);
+    const engine = w.engine;
+    return orTheQueuedRefusal(w, async () => {
+      await seedThroughOp(engine);
+      await engine.setConfig('dream.edge_contradictions.mode', 'apply');
+      const before = await liveEmployers(engine);
+      const applied = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));
+      expect(w.ids.length).toBe(1);
+      const id = w.ids[0]!;
+      const out = {
+        before, applied, afterApply: await liveEmployers(engine),
+        timeline: (await engine.getPage(ALICE, { sourceId: 'default' }))?.timeline?.includes('gbrain-dream (inferred) — Ended works_at [[companies/acme-example]]'),
+        replay: await applyEdgeProposal(engine, id),
+        undo: await undoEdgeProposal(engine, id),
+        afterUndo: await liveEmployers(engine),
+        undone: (await engine.readEdgeProposal(id))?.status,
+        rerun: phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge })),
+      };
+      // One live employer is no longer a candidate group (it needs two targets).
+      expect(out).toMatchObject({ before: [ACME, WIDGET], afterApply: [], timeline: true, replay: { status: 'applied', reason: 'already applied' },
+        undo: { status: 'undone' }, afterUndo: [ACME, WIDGET], undone: 'undone' });
+      expect(out.applied.totals).toMatchObject({ judged: 1, proposed: 1, applied: 1 });
+      expect(out.rerun.totals).toMatchObject({ skipped_known: 1, judged: 0 });
+      return out;
+    });
+  });
+
+  parityTest('an applied closure line the user deletes makes the proposal reverted_by_user, and the judge is not asked again', {
+    methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
+      'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
+      'readEdgeProposalEvidence', 'readEdgeProposalHash', 'edgeClosureLanded', 'setEdgeProposalStatus'],
+  }, async (base) => {
+    const w = watched(base);
+    const engine = w.engine;
+    return orTheQueuedRefusal(w, async () => {
+      await seedThroughOp(engine);
+      await engine.setConfig('dream.edge_contradictions.mode', 'apply');
+      const applied = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));
+      // The user rewrites the page without the closure line.
+      await seedThroughOp(engine);
+      let calls = 0;
+      // The revert statement takes proposals updated before now(); let the clock tick past the apply.
+      await new Promise(r => setTimeout(r, 25));
+      const again = phaseView(await runPhaseEdgeContradictions(engine, { judge: async (input) => { calls++; return conflictJudge(input); } }));
+      const out = { applied, afterRewrite: await liveEmployers(engine), again, calls };
+      expect(out.applied.totals).toMatchObject({ proposed: 1, applied: 1 });
+      expect(out).toMatchObject({ afterRewrite: [ACME, WIDGET], calls: 0 });
+      expect(out.again.totals).toMatchObject({ reverted: 1 });
+      return out;
+    });
   });
 });
 
