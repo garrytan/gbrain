@@ -545,7 +545,7 @@ src/core/page-body/read-range.ts	execute_raw	6
 src/core/page-body/rechunk.ts	execute_raw	8
 src/core/page-body/segment-blocks.ts	execute_raw	2
 src/core/page-body/segment-conversation.ts	execute_raw	3
-src/core/page-body/segment-derive.ts	execute_raw	33
+src/core/page-body/segment-derive.ts	execute_raw	32
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
@@ -924,7 +924,6 @@ src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/migration-export.ts	execute_raw	7
-src/core/shared-skills/migration-members.ts	execute_raw	1
 src/core/shared-skills/migration-projection.ts	execute_raw	2
 src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1

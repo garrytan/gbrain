@@ -3790,6 +3790,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSharedSkillMigrationRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listShelfPageRows#default": {
         "flagOffLanes": [
           "pool"
@@ -4486,6 +4497,17 @@
         "flagOnScopes": []
       },
       "migrateFactsToCanonical#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "normalizeDerivationClaims#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -8103,6 +8125,7 @@
         "listSessionFactsForClassification": "none",
         "listSharedSkillCatalogHeads": "none",
         "listSharedSkillFollowSources": "none",
+        "listSharedSkillMigrationRows": "none",
         "listSharedSkillPackRoots": "none",
         "listShelfPageRows": "none",
         "listSimilarActiveFacts": "none",
@@ -8217,6 +8240,7 @@
         "moveChunkIndexes": "none",
         "moveFactWithdrawalSubject": "none",
         "nextLivePageAfter": "none",
+        "normalizeDerivationClaims": "none",
         "notifierCoverageRecorded": "none",
         "oauthClientLive": "none",
         "onCheckout": "none",
