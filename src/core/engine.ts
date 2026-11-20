@@ -86,7 +86,7 @@ import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './en
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
 import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef, SplitFactsPages } from './engine-sql/repair-fence-scans.ts';
-import type { AttributionTable, FailedWriteQuery, FailedWriteRow, OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
+import type { AttributionTable, DriftConflictBounds, DriftConflictDetails, DriftConflictGroups, DriftConflictQuery, FailedWriteQuery, FailedWriteRow, OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceIncarnationListRow, SourceInsert, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
@@ -1729,6 +1729,12 @@ export interface BrainEngine {
   countUnfilledAttribution(table: AttributionTable, sourceIds: readonly string[]): Promise<number>;
   /** failed-writes: the refused requests of `sourceIds` the preview lists, by sequence, less the fact requests a later one recovered. */
   listFailedWriteRequests(sourceIds: readonly string[], query: FailedWriteQuery): Promise<FailedWriteRow[]>;
+  /** Drift audit: the source's incarnation and its newest and oldest request sequence; null for an unknown source. */
+  readDriftConflictBounds(sourceId: string): Promise<DriftConflictBounds | null>;
+  /** Drift audit: the window's `source_changed` conflict totals and one page of per-slug groups, by slug (engine-sql/repair-plan-scans.ts). */
+  listDriftConflictGroups(sourceId: string, query: DriftConflictQuery): Promise<DriftConflictGroups>;
+  /** Drift audit: the newest committed receipt of each slug and, with `paths`, each live page's recorded file. */
+  readDriftConflictDetails(sourceId: string, slugs: readonly string[], opts: { paths: boolean }): Promise<DriftConflictDetails>;
   /** GST-1209: live segmented pages of unarchived sources whose live rows do not tile the body, by source and slug. */
   listUntiledSegmentedPages(opts?: UntiledPageQuery): Promise<UntiledPage[]>;
   /** The first record of each `op` checkpoint naming a source and its current incarnation, by source then fingerprint. */

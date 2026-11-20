@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1096/1102
+# covered: 1099/1105
 # lifecycle: 9/9
 # pages: 62/62
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 15/15
 # wanted_links: 2/2
 # write_misc: 63/69
-# repair_bookkeeping: 51/51
+# repair_bookkeeping: 54/54
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -98,7 +98,7 @@ getPage	pages	yes	138	yes	yes	yes	serves
 readPageSnapshot	pages	yes	38	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	590	yes	yes	yes	serves
+putPage	pages	yes	591	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -496,15 +496,15 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	8	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	43	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	49	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	25	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	44	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	50	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	26	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	20	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	21	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	54	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	55	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	3	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	5	no	yes	yes	serves
@@ -1061,6 +1061,9 @@ countSegmentedOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listProvenAttributionTargets	repair_bookkeeping	yes	1	no	yes	yes	serves
 countUnfilledAttribution	repair_bookkeeping	yes	1	no	yes	yes	serves
 listFailedWriteRequests	repair_bookkeeping	yes	2	no	yes	yes	serves
+readDriftConflictBounds	repair_bookkeeping	yes	2	no	yes	yes	serves
+listDriftConflictGroups	repair_bookkeeping	yes	2	no	yes	yes	serves
+readDriftConflictDetails	repair_bookkeeping	yes	2	no	yes	yes	serves
 listUntiledSegmentedPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listSourceHoldRecords	repair_bookkeeping	yes	1	no	yes	yes	serves
 requestGitHoldRetry	repair_bookkeeping	yes	1	no	yes	yes	serves

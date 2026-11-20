@@ -1678,3 +1678,152 @@ fn failed_writes_lists_guard_drift_and_moved_fact_refusals_less_the_recovered_on
         .unwrap_err();
     assert_eq!(refused.code, INVALID_ARGUMENT);
 }
+
+#[test]
+fn drift_conflicts_group_source_changed_receipts_by_slug_inside_the_window() {
+    use gbrain_store::drift_conflicts::DriftConflictQuery;
+    let dir = TempDir::new("persist-drift-conflicts");
+    let store = open(&dir);
+    let drift = "The canonical file contains an uncoordinated local edit.";
+    assert_eq!(
+        store.read_drift_conflict_bounds("missing").unwrap(),
+        Value::Null
+    );
+    let empty = store.read_drift_conflict_bounds("default").unwrap();
+    assert_eq!(
+        (empty["top"].clone(), empty["bottom"].clone()),
+        (Value::Null, Value::Null)
+    );
+    put_unsealed(&store, "notes/a", "a");
+    let req = |n: u8| format!("d0000000-0000-4000-8000-0000000000{n:02x}");
+    let settle = |n: u8,
+                  slug: &str,
+                  intent: Value,
+                  state: &str,
+                  code: Option<&str>,
+                  message: Option<&str>| {
+        settled_with(
+            &store,
+            &req(n),
+            "put_page",
+            slug,
+            intent,
+            state,
+            code,
+            message,
+            Value::Null,
+        )
+    };
+    settle(0xd1, "notes/a", json!({}), "committed", None, None);
+    settle(
+        0xd2,
+        "notes/a",
+        json!({ "kind": "managed_sync_import" }),
+        "conflict",
+        Some("source_changed"),
+        Some(drift),
+    );
+    settle(
+        0xd3,
+        "notes/a",
+        json!({}),
+        "conflict",
+        Some("source_changed"),
+        Some("other"),
+    );
+    settle(
+        0xd4,
+        "people/b",
+        json!({}),
+        "conflict",
+        Some("source_changed"),
+        Some(drift),
+    );
+    settle(
+        0xd5,
+        "notes/a",
+        json!({}),
+        "conflict",
+        Some("revision_conflict"),
+        Some(drift),
+    );
+    let bounds = store.read_drift_conflict_bounds("default").unwrap();
+    let top: i64 = bounds["top"].as_str().unwrap().parse().unwrap();
+    let query = |floor: i64, prefixes: Option<Vec<String>>, live: bool, after: &str, limit: u64| {
+        DriftConflictQuery {
+            incarnation: bounds["incarnation"].as_str().unwrap().into(),
+            floor: floor.to_string(),
+            through: top.to_string(),
+            slug_prefixes: prefixes,
+            require_live_page: live,
+            exclude_private: None,
+            after: after.into(),
+            limit,
+            drift_message: drift.into(),
+        }
+    };
+    let all = store
+        .list_drift_conflict_groups("default", &query(0, None, false, "", 10))
+        .unwrap();
+    assert_eq!(
+        (all["slugs"].clone(), all["receipts"].clone()),
+        (json!(2), json!(3))
+    );
+    let rows = all["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["slug"], json!("notes/a"));
+    assert_eq!(rows[0]["receipts"], json!(2));
+    assert_eq!(rows[0]["drift_receipts"], json!(1));
+    assert_eq!(
+        rows[0]["producers"],
+        json!(["put_page", "put_page:managed_sync_import"])
+    );
+    assert_eq!(rows[0]["last_request_id"], json!(req(0xd3)));
+    assert_eq!(rows[0]["first_seen"].as_str().unwrap().len(), 20);
+    assert_eq!(rows[1]["slug"], json!("people/b"));
+    let paged = store
+        .list_drift_conflict_groups("default", &query(0, None, false, "notes/a", 1))
+        .unwrap();
+    assert_eq!(paged["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(paged["rows"][0]["slug"], json!("people/b"));
+    let window = store
+        .list_drift_conflict_groups("default", &query(top - 2, None, false, "", 10))
+        .unwrap();
+    assert_eq!(window["receipts"], json!(1));
+    let fenced = store
+        .list_drift_conflict_groups(
+            "default",
+            &query(0, Some(vec!["people/b".into()]), false, "", 10),
+        )
+        .unwrap();
+    assert_eq!(fenced["slugs"], json!(1));
+    let live = store
+        .list_drift_conflict_groups("default", &query(0, None, true, "", 10))
+        .unwrap();
+    assert_eq!(
+        (live["slugs"].clone(), live["receipts"].clone()),
+        (json!(1), json!(2))
+    );
+    let refused = store
+        .list_drift_conflict_groups(
+            "default",
+            &DriftConflictQuery {
+                floor: "x".into(),
+                ..query(0, None, false, "", 1)
+            },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code, INVALID_ARGUMENT);
+    let details = store
+        .read_drift_conflict_details("default", &["notes/a".into(), "people/b".into()], true)
+        .unwrap();
+    assert_eq!(details["committed"].as_array().unwrap().len(), 1);
+    assert_eq!(details["committed"][0]["request_id"], json!(req(0xd1)));
+    assert_eq!(
+        details["recorded"],
+        json!([{ "slug": "notes/a", "source_path": null, "source_uri": null }])
+    );
+    let no_paths = store
+        .read_drift_conflict_details("default", &["notes/a".into()], false)
+        .unwrap();
+    assert_eq!(no_paths["recorded"], json!([]));
+}

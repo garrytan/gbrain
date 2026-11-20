@@ -259,6 +259,38 @@ disposition and replay walks). Pinned by `test/engine-parity/persistence.test.ts
 test `persistence`
 (`failed_writes_lists_guard_drift_and_moved_fact_refusals_less_the_recovered_ones`).
 
+### Drift conflicts
+
+The drift-conflict audit (`auditDriftConflicts` in `src/core/persistence/drift-conflicts.ts`, behind
+`gbrain repair file-drift`'s survey, `gbrain sources reconcile --audit --conflicts` and MCP
+`list_write_conflicts`) reads the journal through three members
+(`src/core/engine-sql/repair-plan-scans.ts`); the store answers from `drift_conflicts.rs`.
+
+- `readDriftConflictBounds(sourceId)` is `{ incarnation, top, bottom }`: the source's current
+  incarnation and the newest and oldest request sequence of that incarnation (null with none), or
+  null for an unknown source.
+- `listDriftConflictGroups(sourceId, query)` is `{ slugs, receipts, rows }`. A receipt is a request
+  of the source and `incarnation` with a sequence above `floor` through `through`, in state
+  `conflict` with `source_changed`. `slugPrefixes` fences the lower-cased slug (a prefix ending `/`
+  matches the slugs under it; any other matches the slug and the slugs under it).
+  `requireLivePage` keeps receipts whose page is live; `excludePrivate` also applies the caller's
+  remote read floor to that page, sent as a page policy (`storePageTextPolicy`, the caller's
+  reader identity included; any other caller policy refuses). `slugs` and `receipts` count the
+  whole window; `rows` are the groups of the slugs after `after`, at most `limit`, each with its
+  receipts, the receipts whose message is `driftMessage`, the first and last `created_at` in whole
+  UTC seconds, the distinct `operation[:kind]` producers and the request id of the highest
+  sequence. A `floor` or `through` that is not an integer is `invalid_argument`.
+- `readDriftConflictDetails(sourceId, slugs, { paths })` is `{ committed, recorded }`: each slug's
+  newest committed request that keeps its intent and is not compacted (`request_id`,
+  `completed_at`), and with `paths` each live page's `source_path` and `source_uri`.
+
+The store sorts slugs and producers in byte order. The SQL sorts them in the database's default
+collation, which is the same order for the lower-case ASCII slugs a source holds. The live file
+check (`liveFileDrift`, the owner host with a binding) stays raw SQL. Pinned by
+`test/engine-parity/persistence.test.ts`, the runner case in
+`test/engine-parity/repair-runner.test.ts` and the store test `persistence`
+(`drift_conflicts_group_source_changed_receipts_by_slug_inside_the_window`).
+
 ## Git holds
 
 The Git sync hold rows and their summary counters belong to the hold store

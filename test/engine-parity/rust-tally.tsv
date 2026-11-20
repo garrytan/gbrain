@@ -96,7 +96,7 @@ test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	37	2
 test/engine-parity/persistence-declaration.test.ts	7	3
-test/engine-parity/persistence.test.ts	53	0
+test/engine-parity/persistence.test.ts	54	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/reads-privacy.test.ts	51	0
@@ -113,7 +113,7 @@ test/engine-parity/repair-owner-kinds.test.ts	3	1
 test/engine-parity/repair-page-reads.test.ts	3	0
 test/engine-parity/repair-page-scans.test.ts	4	0
 test/engine-parity/repair-plan-scans.test.ts	2	0
-test/engine-parity/repair-runner.test.ts	13	2
+test/engine-parity/repair-runner.test.ts	14	2
 test/engine-parity/repair-source-reads.test.ts	2	0
 test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resolve-reads.test.ts	7	0

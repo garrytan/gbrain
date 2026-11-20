@@ -158,6 +158,10 @@ describe('engine parity: the repair runner', () => {
     methods: ['readOpCheckpointRecord', 'writeOpCheckpointRecord', 'readPersistenceBrainId', 'readCounterRows', 'listFailedWriteRequests', 'listSourceIncarnations'],
     timeout: 60_000,
   }, previewThenApply('failed-writes'));
+  parityTest('gbrain repair file-drift surveys a brain with no drift conflicts, and its apply refuses with the same code', {
+    methods: ['readDriftConflictBounds', 'listDriftConflictGroups', 'readDriftConflictDetails'],
+    timeout: 60_000,
+  }, previewThenApply('file-drift'));
   for (const kind of B1_KINDS) {
     if (REFUSED_APPLY.has(kind)) {
       parityTest(`gbrain repair ${kind} previews, and its apply refuses with the same code`, {

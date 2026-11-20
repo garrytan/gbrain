@@ -764,6 +764,75 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('the drift-conflict reads group source_changed receipts by slug inside the window, fenced by prefix and page visibility', {
+    methods: ['readDriftConflictBounds', 'listDriftConflictGroups', 'readDriftConflictDetails', 'readSourceMembership', 'lockPersistenceCounters',
+      'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'putPage'],
+  }, async (engine) => {
+    const drift = 'The canonical file contains an uncoordinated local edit.';
+    const unknown = await engine.readDriftConflictBounds('missing');
+    const before = await engine.readDriftConflictBounds('default');
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await engine.putPage('notes/drift-a', { type: 'note', title: 'A', compiled_truth: 'a', timeline: '' });
+    await engine.putPage('notes/drift-b', { type: 'note', title: 'B', compiled_truth: 'b', timeline: '', frontmatter: { visibility: 'private' } });
+    const settle = async (n: string, operation: string, slug: string, intent: Record<string, unknown>, state: 'conflict' | 'committed' | 'failed',
+      errorCode: string | null, errorMessage: string | null) => {
+      await engine.lockPersistenceCounters(KEYS);
+      const { id } = await engine.insertWriteRequest({ ...insertRow(incarnation, `d0000000-0000-4000-8000-0000000000${n}`), operation, slug, intent });
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state, outcome: {}, errorCode, errorMessage, consumerVersion: 'parity', consumerHostId: null, errorDetail: null,
+        resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 0, terminalReservation: 4096, probePurges: false,
+      });
+    };
+    await settle('d1', 'put_page', 'notes/drift-a', { slug: 'notes/drift-a' }, 'committed', null, null);
+    await settle('d2', 'put_page', 'notes/drift-a', { kind: 'managed_sync_import' }, 'conflict', 'source_changed', drift);
+    await settle('d3', 'add_timeline_entry', 'notes/drift-a', { slug: 'notes/drift-a' }, 'conflict', 'source_changed', 'other');
+    await settle('d4', 'put_page', 'notes/drift-b', { slug: 'notes/drift-b' }, 'conflict', 'source_changed', drift);
+    await settle('d5', 'put_page', 'notes/drift-gone', { slug: 'notes/drift-gone' }, 'conflict', 'source_changed', drift);
+    await settle('d6', 'put_page', 'people/drift-c', { slug: 'people/drift-c' }, 'conflict', 'source_changed', drift);
+    await settle('d7', 'put_page', 'notes/drift-a', { slug: 'notes/drift-a' }, 'conflict', 'revision_conflict', drift);
+    await settle('d8', 'put_page', 'notes/drift-a', { slug: 'notes/drift-a' }, 'committed', null, null);
+    const bounds = (await engine.readDriftConflictBounds('default'))!;
+    const top = BigInt(bounds.top!);
+    const query = { incarnation: bounds.incarnation, floor: '0', through: String(top), requireLivePage: false, excludePrivate: false,
+      after: '', limit: 10, driftMessage: drift };
+    const groups = async (q: Partial<typeof query> & { slugPrefixes?: string[] }) => {
+      const out = await engine.listDriftConflictGroups('default', { ...query, ...q });
+      return { slugs: out.slugs, receipts: out.receipts, rows: out.rows.map(r => ({ ...r, first_seen: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.first_seen),
+        last_seen: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.last_seen) })) };
+    };
+    const details = await engine.readDriftConflictDetails('default', ['notes/drift-a', 'notes/drift-b', 'notes/drift-gone'], { paths: true });
+    const answers = {
+      unknown, before: before && { incarnation: before.incarnation === incarnation, top: before.top, bottom: before.bottom },
+      bounds: { incarnation: bounds.incarnation === incarnation, ordered: BigInt(bounds.bottom!) < top },
+      all: await groups({}), paged: await groups({ after: 'notes/drift-a', limit: 1 }),
+      window: await groups({ floor: String(top - 4n) }), notes: await groups({ slugPrefixes: ['notes/'] }),
+      exact: await groups({ slugPrefixes: ['people/drift-c'] }), live: await groups({ requireLivePage: true }),
+      visible: await groups({ requireLivePage: true, excludePrivate: true }), other: await engine.listDriftConflictGroups('default', { ...query, incarnation: TOKEN }),
+      committed: details.committed.map(r => ({ slug: r.slug, request_id: r.request_id, completed: /Z$/.test(r.completed_at) })).sort((a, b) => a.slug.localeCompare(b.slug)),
+      recorded: [...details.recorded].sort((a, b) => a.slug.localeCompare(b.slug)),
+      noPaths: (await engine.readDriftConflictDetails('default', ['notes/drift-a'], { paths: false })).recorded,
+      none: await engine.readDriftConflictDetails('default', [], { paths: true }),
+    };
+    const group = (slug: string, receipts: number, drift_receipts: number, producers: string[], n: string) =>
+      ({ slug, receipts, drift_receipts, first_seen: true, last_seen: true, producers, last_request_id: `d0000000-0000-4000-8000-0000000000${n}` });
+    const a = group('notes/drift-a', 2, 1, ['add_timeline_entry', 'put_page:managed_sync_import'], 'd3');
+    const b = group('notes/drift-b', 1, 1, ['put_page'], 'd4');
+    const gone = group('notes/drift-gone', 1, 1, ['put_page'], 'd5');
+    const c = group('people/drift-c', 1, 1, ['put_page'], 'd6');
+    expect(answers).toEqual({
+      unknown: null, before: { incarnation: true, top: null, bottom: null }, bounds: { incarnation: true, ordered: true },
+      all: { slugs: 4, receipts: 5, rows: [a, b, gone, c] }, paged: { slugs: 4, receipts: 5, rows: [b] },
+      window: { slugs: 2, receipts: 2, rows: [gone, c] }, notes: { slugs: 3, receipts: 4, rows: [a, b, gone] },
+      exact: { slugs: 1, receipts: 1, rows: [c] }, live: { slugs: 2, receipts: 3, rows: [a, b] }, visible: { slugs: 1, receipts: 2, rows: [a] },
+      other: { slugs: 0, receipts: 0, rows: [] },
+      committed: [{ slug: 'notes/drift-a', request_id: 'd0000000-0000-4000-8000-0000000000d8', completed: true }],
+      recorded: [{ slug: 'notes/drift-a', source_path: null, source_uri: null }, { slug: 'notes/drift-b', source_path: null, source_uri: null }],
+      noPaths: [], none: { committed: [], recorded: [] },
+    });
+    return answers;
+  });
+
   parityTest('the failed-writes read lists guard, drift and moved-fact refusals, without a fact request a later batch recovered', {
     methods: ['listFailedWriteRequests', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
   }, async (engine) => {

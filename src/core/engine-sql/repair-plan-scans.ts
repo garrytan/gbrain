@@ -1,11 +1,13 @@
 /**
- * The plan reads of the `frontmatter`, `segmented-tiling`, `attribution-backfill` and `failed-writes` repairs and the source hold listing, moved here from
- * repair/frontmatter.ts, page-body/body-tiling.ts, repair/attribution-backfill.ts, repair/failed-writes.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
+ * The plan reads of the `frontmatter`, `segmented-tiling`, `attribution-backfill` and `failed-writes` repairs, the drift-conflict audit
+ * (`gbrain repair file-drift`'s survey) and the source hold listing, moved here from repair/frontmatter.ts, page-body/body-tiling.ts,
+ * repair/attribution-backfill.ts, repair/failed-writes.ts, persistence/drift-conflicts.ts and persistence/sync-holds.ts so the Rust engine can serve them as typed
  * members. PGLite and Postgres read unscoped through executeRaw, as before. The Rust engine scans its records
  * (rust/crates/gbrain-store/src/repair_plan_scans.rs; rust/docs/store/repair-bookkeeping.md, "Repair plan scans").
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import { liveTilingSql, untiledSql } from '../page-body/schema.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 
 /** A live page of a source that records an origin, with the first 400 characters of its compiled truth (null when segmented). */
 export interface OriginPathPageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string | null }
@@ -209,4 +211,86 @@ export async function listFailedWriteRequests(exec: LegacyUnscopedRead, sourceId
   if (!factIds.length) return rows;
   const recovered = new Set((await exec.executeRaw<{ id: string }>(RECOVERED_FACT_REQUESTS_SQL, [factIds])).map(row => row.id));
   return rows.filter(row => !recovered.has(row.id));
+}
+
+/** A source's current incarnation and the newest and oldest request sequence it holds (null: none). */
+export interface DriftConflictBounds { incarnation: string; top: string | null; bottom: string | null }
+
+/**
+ * The drift-conflict audit window of one source: its conflict receipts (`conflict` with `source_changed`) of `incarnation` with
+ * a sequence above `floor` through `through`. `slugPrefixes` (normalized, at least one) fences the slugs; `requireLivePage`
+ * keeps receipts whose page is live, and `excludePrivate` also applies the caller's remote read floor to that page. The
+ * groups are the slugs after `after`, at most `limit`; `driftMessage` is the refusal message a drift receipt carries.
+ */
+export interface DriftConflictQuery {
+  incarnation: string; floor: string; through: string; slugPrefixes?: readonly string[]; requireLivePage: boolean; excludePrivate: boolean;
+  after: string; limit: number; driftMessage: string;
+}
+
+/** One slug's conflict receipts in the window. */
+export interface DriftConflictGroupRow {
+  slug: string; receipts: number; drift_receipts: number; first_seen: string; last_seen: string; producers: string[]; last_request_id: string;
+}
+
+/** The window's distinct slugs and receipts, and the asked page of slug groups. */
+export interface DriftConflictGroups { slugs: number; receipts: number; rows: DriftConflictGroupRow[] }
+
+/** The newest committed receipt of each slug, and (with `paths`) each live page's recorded file. */
+export interface DriftConflictDetails {
+  committed: Array<{ slug: string; request_id: string; completed_at: string }>;
+  recorded: Array<{ slug: string; source_path: string | null; source_uri: string | null }>;
+}
+
+const likeEscape = (value: string) => value.replace(/[\\%_]/g, char => `\\${char}`);
+
+export async function readDriftConflictBounds(exec: LegacyUnscopedRead, sourceId: string): Promise<DriftConflictBounds | null> {
+  // The window is bounded by this source's own requests (its current incarnation, the request table's
+  // (source_incarnation, sequence) index), so its sequences never reveal write activity in other sources.
+  const [bounds] = await exec.executeRaw<DriftConflictBounds>(
+    `SELECT s.incarnation::text AS incarnation,
+        (SELECT max(r.sequence) FROM persistence_requests r WHERE r.source_incarnation=s.incarnation)::text AS top,
+        (SELECT min(r.sequence) FROM persistence_requests r WHERE r.source_incarnation=s.incarnation)::text AS bottom
+       FROM sources s WHERE s.id=$1`, [sourceId]);
+  return bounds ?? null;
+}
+
+export async function listDriftConflictGroups(exec: LegacyUnscopedRead, sourceId: string, query: DriftConflictQuery): Promise<DriftConflictGroups> {
+  const params: unknown[] = [sourceId, query.floor, query.through, query.incarnation];
+  const where = [`r.source_id=$1`, `r.source_incarnation=$4::uuid`, `r.sequence > $2::bigint`, `r.sequence <= $3::bigint`, `r.state='conflict'`, `r.error_code='source_changed'`];
+  if (query.slugPrefixes) {
+    const alternatives = query.slugPrefixes.map(base => {
+      params.push(base.endsWith('/') ? `${likeEscape(base)}%` : likeEscape(base));
+      const at = params.length;
+      return base.endsWith('/') ? `lower(r.slug) LIKE $${at}` : `(lower(r.slug) = $${at} OR lower(r.slug) LIKE $${at} || '/%')`;
+    });
+    where.push(`(${alternatives.join(' OR ')})`);
+  }
+  if (query.requireLivePage || query.excludePrivate) {
+    where.push(`EXISTS (SELECT 1 FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL${query.excludePrivate ? ` AND ${remoteReadFloorSql('p')}` : ''})`);
+  }
+  const filtered = where.join(' AND ');
+  const [totals] = await exec.executeRaw<{ slugs: number; receipts: number }>(
+    `SELECT count(DISTINCT r.slug)::int AS slugs, count(*)::int AS receipts FROM persistence_requests r WHERE ${filtered}`, params);
+  params.push(query.after, query.limit, query.driftMessage);
+  const rows = await exec.executeRaw<DriftConflictGroupRow>(
+    `SELECT r.slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=$${params.length})::int AS drift_receipts,
+        to_char(min(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first_seen,
+        to_char(max(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
+        array_agg(DISTINCT r.operation || COALESCE(':' || (r.intent->>'kind'), '') ORDER BY r.operation || COALESCE(':' || (r.intent->>'kind'), '')) AS producers,
+        (array_agg(r.request_id::text ORDER BY r.sequence DESC))[1] AS last_request_id
+      FROM persistence_requests r WHERE ${filtered} AND r.slug > $${params.length - 2}
+      GROUP BY r.slug ORDER BY r.slug LIMIT $${params.length - 1}`, params);
+  return { slugs: Number(totals?.slugs ?? 0), receipts: Number(totals?.receipts ?? 0), rows };
+}
+
+export async function readDriftConflictDetails(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[], opts: { paths: boolean }): Promise<DriftConflictDetails> {
+  if (!slugs.length) return { committed: [], recorded: [] };
+  // The newest committed receipt per slug, read through the slug intent index (receipts within retention).
+  const committed = await exec.executeRaw<DriftConflictDetails['committed'][number]>(
+    `SELECT DISTINCT ON (r.slug) r.slug, r.request_id::text, to_char(r.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS completed_at
+       FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=ANY($2::text[]) AND r.intent IS NOT NULL AND NOT r.compacted AND r.state='committed'
+      ORDER BY r.slug, r.sequence DESC`, [sourceId, [...slugs]]);
+  const recorded = opts.paths ? await exec.executeRaw<DriftConflictDetails['recorded'][number]>(
+    'SELECT slug, source_path, source_uri FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, [...slugs]]) : [];
+  return { committed, recorded };
 }

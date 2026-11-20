@@ -376,6 +376,46 @@ impl Brain {
         })
     }
 
+    /// `readDriftConflictBounds(sourceId)`: resolves `{ incarnation, top, bottom }` or null.
+    #[napi]
+    pub fn read_drift_conflict_bounds<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_drift_conflict_bounds(&source_id))
+    }
+
+    /// `listDriftConflictGroups(sourceId, query)`: resolves `{ slugs, receipts, rows }`
+    /// (`DriftConflictQuery`).
+    #[napi]
+    pub fn list_drift_conflict_groups<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::drift_conflicts::DriftConflictQuery =
+                required(query, "listDriftConflictGroups query")?;
+            s.list_drift_conflict_groups(&source_id, &q)
+        })
+    }
+
+    /// `readDriftConflictDetails(sourceId, slugs, paths)`: resolves `{ committed, recorded }`.
+    #[napi]
+    pub fn read_drift_conflict_details<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        paths: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_drift_conflict_details(&source_id, &slugs, paths)
+        })
+    }
+
     /// `listUntiledSegmentedPages(sourceIds, slugs, limit)`: resolves `[{ id, source_id, slug,
     /// revision, body_generation, body_bytes, segment_count, source_path, n, covered, gapless }]`.
     #[napi]
