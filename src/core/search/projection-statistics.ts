@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { analyzeDeferred, lockTableForAnalyze } from '../analyze-lock.ts';
 import { beginFullAnalyze, maybeRefreshPlannerStats, plannerAutoAnalyzeEnabled } from '../planner-stats.ts';
+import { forwardWholeOperation } from '../rust-engine/owner-ipc/whole-op.ts';
 
 export const PROJECTION_STATISTICS_NAME = 'pages_text_projection_current_stats';
 
@@ -287,10 +288,12 @@ export function guardSearchStatistics(engine: BrainEngine & { registerBeforeDisc
 /**
  * Refreshes the planner statistics after a write pass that changed `changedPages` pages (omitted: always). A pass
  * `statisticsStillCurrent` vouches for skips the ANALYZE; PGLite then analyzes only the hot tables its row deltas
- * mark stale.
+ * mark stale. A client of a Rust brain's owner asks the owner to refresh its own statistics (whole-op.ts).
  */
 export async function refreshProjectionStatistics(engine: BrainEngine, changedPages = Infinity): Promise<boolean> {
   try {
+    const viaOwner = forwardWholeOperation<boolean>(engine, 'refreshProjectionStatistics', [changedPages]);
+    if (viaOwner) return await viaOwner;
     if (await statisticsStillCurrent(engine, changedPages)) {
       await maybeRefreshPlannerStats(engine, 'import', { throttle: false });
       return true;

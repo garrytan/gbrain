@@ -5,6 +5,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
+import { refreshProjectionStatistics } from '../../search/projection-statistics.ts';
 import type { OwnerWholeOperation } from './server.ts';
 import type { WholeOperationName } from './whole-op.ts';
 
@@ -16,5 +17,6 @@ export function ownerWholeOperations(): Readonly<Record<WholeOperationName, Owne
     importFromFile: (engine, ...args) => importFromFile(engine, ...(args as Args<typeof importFromFile>)),
     importImageFile: (engine, ...args) => importImageFile(engine, ...(args as Args<typeof importImageFile>)),
     importManagedFiles: (engine, ...args) => importManagedFiles(engine, ...(args as Args<typeof importManagedFiles>)),
+    refreshProjectionStatistics: (engine, ...args) => refreshProjectionStatistics(engine, ...(args as Args<typeof refreshProjectionStatistics>)),
   };
 }

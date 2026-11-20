@@ -1,7 +1,7 @@
 /**
  * Whole operations a client of a Rust brain's owner sends as one request. A write path that opens its own
- * transaction (the file and content imports) cannot run in a client, because transactions do not cross the owner
- * socket (routes.ts). Its entry point calls `forwardWholeOperation` first; on a client engine the whole operation runs
+ * transaction (the file and content imports, and the planner statistics refresh an import ends with) cannot run in a
+ * client, because transactions do not cross the owner socket (routes.ts). Its entry point calls `forwardWholeOperation` first; on a client engine the whole operation runs
  * inside the owner, transaction included, and its result or error comes back as the in-process call would give it.
  *
  * Only data crosses: an option that is a function (a coordinator `prepare` seam) refuses with
@@ -19,7 +19,8 @@ import { resolve } from 'node:path';
 import { callerIsRemote, ownerConnectionFor, ownerRejoinFor, type OwnerConnection } from './client.ts';
 import { ownerGone, ownerIpcRefusal } from './routes.ts';
 
-export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
+export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles'
+  | 'refreshProjectionStatistics';
 
 /** True when `engine` reaches its brain through another process (a client of the Rust brain's owner). */
 export function isOwnerClient(engine: object): boolean {
@@ -33,6 +34,7 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
   importFromFile: [0],
   importImageFile: [0],
   importManagedFiles: [],
+  refreshProjectionStatistics: [],
 };
 
 /**

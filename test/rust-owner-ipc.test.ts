@@ -155,8 +155,7 @@ describe('two or more client processes on one owner', () => {
     }
   });
 
-  // Skipped in this slice: needs the shared-TS wiring (import-file, persistence/local-client, the transaction member) that lands in the next slice.
-  test.skip('two writer processes put pages, links, timeline and a whole import through the owner', async () => {
+  test('two writer processes put pages, links, timeline and a whole import through the owner', async () => {
     const results = await Promise.all([runChild('write', db, 0), runChild('write', db, 1)]);
     for (const [worker, r] of results.entries()) {
       expect(r.out.fatal, r.stderr).toBeUndefined();
@@ -178,8 +177,7 @@ describe('two or more client processes on one owner', () => {
     expect(stats()).toEqual({ active: 0, queued: 0, connections: 0, inflightBytes: 0 });
   }, 120_000);
 
-  // Skipped in this slice: needs the shared-TS wiring (import-file, persistence/local-client, the transaction member) that lands in the next slice.
-  test.skip('two reader processes get results byte-identical to in-process calls', async () => {
+  test('two reader processes get results byte-identical to in-process calls', async () => {
     const local = JSON.stringify(await readScript(owner));
     const results = await Promise.all([runChild('read', db, 0), runChild('read', db, 1)]);
     for (const r of results) {
@@ -551,7 +549,7 @@ describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {
   beforeAll(async () => { owner = new PGLiteEngine(); await owner.connect({}); }, 120_000);
   afterAll(async () => { await owner?.disconnect(); });
 
-  // Skipped in this slice: needs the shared-TS wiring (import-file, persistence/local-client, the transaction member) that lands in the next slice.
+  // Skipped: needs the persistence socket path for a Rust brain (persistence/local-client), not on this line yet.
   test.skip('put_page goes to the serve owner\'s persistence socket; with no serve owner the engine path runs', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-cli-'));
     const db = join(dir, 'brain.rust');
@@ -738,7 +736,7 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
     }
   }, 60_000);
 
-  // Skipped in this slice: the serve owner's persistence socket needs the shared-TS wiring that lands in the next slice.
+  // Skipped: needs the persistence socket path for a Rust brain (persistence/local-client), not on this line yet.
   describe.skip('with a serve owner that reports persistence_journal', () => {
     // The owner hosts PGLite, which reports persistence_journal; the Rust engine does not yet (see the test above).
     let served: ReturnType<typeof rustHome>;
