@@ -138,6 +138,21 @@ store keeps:
 Both targets lists are checked on every arm: a target outside `PAGE_CHILD_FK_TARGETS` throws
 `not a page child column`. Pinned by `test/engine-parity/repair-page-reads.test.ts`.
 
+## Alias targets
+
+`gbrain repair aliases` and doctor's `dangling_aliases` check read the alias targets whose page is
+not live (`src/core/engine-sql/alias-orphans.ts`). Unlike the page child rows above, alias rows have
+no foreign key to their page on any engine, and the store keeps them past a hard delete (the module
+comment of `aliases.rs`), so both members run store code (`aliases/orphans.rs`), not an invariant.
+
+| Member | Store answer |
+| --- | --- |
+| `listAliasTargets(sourceIds)` | counts the by-page keys (`0x03`) by slug and the slug alias records (`0x01`) by `canonical_slug`, then reads each target's page row: `missing` with none, `soft_deleted` with `deleted_at`, skipped when live; byte order, as the SQL's `COLLATE "C"` |
+| `deleteOrphanedAliases(sourceId, slug)` | in one write, when the slug has no page row, deletes its page aliases (both keys) and every slug alias that resolves to it (both keys); a rename redirect whose alias is the slug and the rename history stay |
+
+Pinned by `test/engine-parity/repair-aliases.test.ts` and the store test
+`alias_targets_name_missing_and_soft_deleted_pages_and_the_delete_takes_only_missing_ones`.
+
 ## Repair kinds by batch
 
 The plan of record for moving the 67 `gbrain repair` kinds onto the engine contract. Flags are the

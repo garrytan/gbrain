@@ -33,6 +33,15 @@ function failing(match: RegExp): BrainEngine {
   } }) as BrainEngine;
 }
 
+/** The engine with the typed member `member` failing the way a cancelled statement does. */
+function failingMember(member: keyof BrainEngine): BrainEngine {
+  return new Proxy(engine, { get(target, key) {
+    const value = Reflect.get(target, key);
+    if (key !== member) return typeof value === 'function' ? value.bind(target) : value;
+    return () => Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+  } }) as BrainEngine;
+}
+
 describe('#7145 unknown reads', () => {
   test('coverage whose read failed is unknown, not 0% with a remediation', async () => {
     for (let n = 1; n <= MIN_ENTITY_PAGES_FOR_COVERAGE; n++) {
@@ -48,7 +57,7 @@ describe('#7145 unknown reads', () => {
   });
 
   test('dangling_aliases whose read failed is unknown, not clear', async () => {
-    const result = await checkDanglingAliases(failing(/slug_aliases|page_aliases|slug_redirects/));
+    const result = await checkDanglingAliases(failingMember('listAliasTargets'));
     expect(result.check).toMatchObject({ name: 'dangling_aliases', status: 'warn', details: { health: 'unknown' } });
     expect(result.check.message).toContain('Dangling aliases unknown');
   });

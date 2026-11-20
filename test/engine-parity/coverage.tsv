@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 954/954
+# covered: 956/956
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
-# repair_bookkeeping: 28/28
+# repair_bookkeeping: 30/30
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -97,13 +97,13 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	547	yes	yes	yes	serves
+putPage	pages	yes	548	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	22	yes	yes	yes	serves
+deletePage	pages	yes	23	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	154	yes	yes	yes	serves
+softDeletePage	pages	yes	155	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -383,12 +383,12 @@ getStats	stats_ingest	yes	6	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	22	no	yes	yes	serves
+updateSlug	sync_aliases	yes	23	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	20	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	20	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	21	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
@@ -925,6 +925,8 @@ countAccessReaderDrift	repair_bookkeeping	yes	1	no	yes	yes	serves
 deriveAccessReaders	repair_bookkeeping	yes	1	no	yes	yes	serves
 readOriginIndexState	repair_bookkeeping	yes	1	no	yes	yes	serves
 listOriginTwinCounts	repair_bookkeeping	yes	1	no	yes	yes	serves
+listAliasTargets	repair_bookkeeping	yes	1	no	yes	yes	serves
+deleteOrphanedAliases	repair_bookkeeping	yes	1	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

@@ -77,6 +77,7 @@ import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpoint
 import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget } from './engine-sql/managed-sync-orphans.ts';
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
+import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1566,6 +1567,10 @@ export interface BrainEngine {
   readOriginIndexState(): Promise<OriginIndexState>;
   /** Live duplicate-origin groups per source, by source id, at most `limit` sources. */
   listOriginTwinCounts(limit: number): Promise<OriginTwinCount[]>;
+  /** Alias targets of `sourceIds` (every source when null) whose page is missing or soft-deleted, by source then slug in byte order (engine-sql/alias-orphans.ts). */
+  listAliasTargets(sourceIds: readonly string[] | null): Promise<AliasTarget[]>;
+  /** Deletes both alias tables' rows that resolve to `(sourceId, slug)` when it has no page row; how many rows went. */
+  deleteOrphanedAliases(sourceId: string, slug: string): Promise<number>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

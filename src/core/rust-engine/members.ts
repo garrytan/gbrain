@@ -209,6 +209,9 @@ export const RUST_ENGINE_MEMBERS = {
   deriveAccessReaders: 'pages',
   readOriginIndexState: 'pages',
   listOriginTwinCounts: 'pages',
+  // The alias targets of repair aliases and doctor dangling_aliases (engine-sql/alias-orphans.ts).
+  listAliasTargets: 'pages',
+  deleteOrphanedAliases: 'pages',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',

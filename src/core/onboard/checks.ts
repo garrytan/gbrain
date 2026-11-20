@@ -28,7 +28,6 @@ import { embeddingEnablement, type ReadinessState } from '../readiness.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { loadConfig } from '../config.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
-import { ORPHANED_ALIAS_COUNTS_SQL, SOFT_DELETED_ALIAS_COUNT_SQL } from '../repair/aliases.ts';
 import { repairPreviewCommand } from '../repair/registry.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
@@ -778,9 +777,18 @@ export async function checkDanglingAliases(
   let orphaned: Array<{ source_id: string; slug_redirects: number; page_aliases: number }> = [];
   let soft = { slug_redirects: 0, page_aliases: 0 };
   try {
-    orphaned = await engine.executeRaw(ORPHANED_ALIAS_COUNTS_SQL);
-    const [row] = await engine.executeRaw<typeof soft>(SOFT_DELETED_ALIAS_COUNT_SQL);
-    if (row) soft = row;
+    const bySource = new Map<string, { source_id: string; slug_redirects: number; page_aliases: number }>();
+    for (const target of await engine.listAliasTargets(null)) {
+      if (target.page === 'soft_deleted') {
+        soft = { slug_redirects: soft.slug_redirects + target.slug_redirects, page_aliases: soft.page_aliases + target.page_aliases };
+        continue;
+      }
+      const row = bySource.get(target.source_id) ?? { source_id: target.source_id, slug_redirects: 0, page_aliases: 0 };
+      row.slug_redirects += target.slug_redirects;
+      row.page_aliases += target.page_aliases;
+      bySource.set(target.source_id, row);
+    }
+    orphaned = [...bySource.values()];
   } catch (error) {
     // #7145: only a pre-v105 brain (no alias tables) has nothing to report; any other failure is unknown, not clear.
     if (!isMissingSchemaObject(error, 'table', ['slug_aliases', 'page_aliases'])) {
