@@ -190,7 +190,8 @@ rm -rf "$app.previous"
 say "Installed $app, signed by certificate $leaf."
 
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
-"$app/Contents/MacOS/$program" register
+registration="$("$app/Contents/MacOS/$program" register)"
+say "$registration"
 label="gui/$(id -u)/$bundle_id"
 if launchctl print "$label" >/dev/null 2>&1; then
   launchctl kickstart -k "$label"
@@ -198,6 +199,8 @@ if launchctl print "$label" >/dev/null 2>&1; then
 fi
 if ! "$app/Contents/MacOS/$program" validate-config >/dev/null 2>&1; then
   say "There is no valid helper config yet, so the helper restarts every 10 seconds until one exists. Write one with: \"$app/Contents/MacOS/$program\" init --port <port>"
+elif [ "$registration" != "background agent registered and on" ]; then
+  say "GBrain Helper starts once you turn it on in System Settings, so this install didn't wait for it to answer."
 else
   port="$(/usr/bin/plutil -extract port raw "$support/config.json")"
   answered=0
@@ -217,7 +220,7 @@ cat <<EOF
 What stays on this Mac: GBrain Helper runs in the background and shows in System Settings under
 General > Login Items & Extensions, and in the Privacy lists you allow it in. To remove it:
   1. "$app/Contents/MacOS/$program" send-setup --off
-  2. launchctl bootout $label
+  2. "$app/Contents/MacOS/$program" unregister
   3. rm -rf "$app"
   4. security delete-generic-password -s $bundle_id -a send-keys
      security delete-keychain "$keychain"
