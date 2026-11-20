@@ -7,7 +7,7 @@
  *    keep) leaves "X \u24d0 Y" (its small letter) alone, and the other way round, on every engine arm (PGLite always;
  *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1): the covering check, the fence dates, the
  *    writer check, the fact guards, the purge guards, the fence overlays, a page read, the export and withdrawal
- *    discovery all answer for the spelling written only. A ledger hash a pre-v330 Postgres stored for the capital
+ *    discovery all answer for the spelling written only. A ledger hash a pre-v332 Postgres stored for the capital
  *    (the hash of the small letter) matches the small letter only: that is the named residual.
  *  - Regression: Postgres folded case by the server's lower(), and glibc lowers 69 code points PGLite keeps, so on
  *    en_US.utf8 "X \u24b6 Y" and "X \u24d0 Y" had one fingerprint and a purge of either refused both on Postgres only.
@@ -195,9 +195,9 @@ describe('engine parity: a ledger row of one letter case never reaches a case on
     return slugs;
   });
 
-  // Named residual: a withdrawal Postgres stored for the capital before v330 carries the hash of the small letter (the
+  // Named residual: a withdrawal Postgres stored for the capital before v332 carries the hash of the small letter (the
   // server lowered it). No fold can tell that row from a withdrawal of the small letter, so it matches the small letter
-  // only, on every engine; v330 adds a current-hash twin only where the claim survives in a fact or a fence.
+  // only, on every engine; v332 adds a current-hash twin only where the claim survives in a fact or a fence.
   parityTest('a ledger hash of the glibc-lowered capital matches the small letter only', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
     const { capital, small } = pair('Kappa');
     await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash,withdrawn_at) VALUES ($1,'world',$2,$3)`, [SRC, sha(`kappa ${SMALL} claim`), T1]);

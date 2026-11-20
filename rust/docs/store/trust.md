@@ -54,7 +54,7 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
-hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v330 can hold
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v332 can hold
 `gbrain_fact_fingerprint_v2(claim)` (whitespace by the database locale); the SQL reads match that hash too. The store
 never wrote one: it folds the explicit `is_pg_space` list, which `gbrain_fact_fingerprint` folds on every engine. Deleting a source removes its rows (the table's
 `ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename does not move them; the rename callers call

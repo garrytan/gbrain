@@ -22,14 +22,14 @@ export function normalizeLoweredClaim(claim: string): string {
  * Whitespace the fact fingerprint and the fence overlay fold, as an explicit regex class: the code points Rust
  * `is_pg_space` (rust/crates/gbrain-store/src/cli_reads/pg_text.rs) and PGLite's `[[:space:]]` take. Postgres
  * `[[:space:]]` follows the database locale (en_US.utf8 leaves out U+0085 and adds U+1680), so a locale class would
- * give one claim two fingerprints across engines (v330).
+ * give one claim two fingerprints across engines (v332).
  */
 export const FACT_SPACE_CLASS = '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]';
 
 // Built-ins are schema-qualified instead of pinning search_path on these SQL
 // functions, which must stay inlinable (an index expression uses them); the
 // results are byte-identical (test/fact-fingerprint-search-path.test.ts).
-// The current fold lowers by PGLite's case map (pgliteLowerSql) and folds FACT_SPACE_CLASS; the pre-v330 Postgres folds
+// The current fold lowers by PGLite's case map (pgliteLowerSql) and folds FACT_SPACE_CLASS; the pre-v332 Postgres folds
 // lowered by the server's lower() and folded its [[:space:]].
 const normalizeClaimSql = (space: string, lower: (x: string) => string) => `pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.translate(${lower('claim')}, '${FINGERPRINT_PUNCTUATION.replace(/'/g, "''")}', '${' '.repeat([...FINGERPRINT_PUNCTUATION].length)}'), '${space}+', ' ', 'g'), '\\.(?=[. ]|$)', ' ', 'g'), ' +', ' ', 'g'), ' ')`;
 const serverLower = (x: string) => `pg_catalog.lower(${x})`;
@@ -38,7 +38,7 @@ const sha256HexSql = (text: string) => `pg_catalog.encode(pg_catalog.sha256(pg_c
 const at = (claim: string) => (sql: string) => sql.replace(/\bclaim\b/g, () => claim);
 /** SQL: the current normalized claim of SQL expression `claim` (gbrain_fact_normalize, inlined). */
 const currentNormSql = (claim: string) => at(claim)(NORMALIZE_CLAIM_SQL);
-/** SQL: the pre-v330 Postgres normalization (v174 to v329) of SQL expression `claim`. */
+/** SQL: the pre-v332 Postgres normalization (v174 to v331) of SQL expression `claim`. */
 const v2NormSql = (claim: string) => at(claim)(normalizeClaimSql('[[:space:]]', serverLower));
 /** SQL: the pre-v174 normalization of SQL expression `claim` (lower-cased, locale whitespace collapsed, no punctuation fold). */
 const v1NormSql = (claim: string) => `pg_catalog.regexp_replace(pg_catalog.lower(pg_catalog.btrim(${claim})), '[[:space:]]+', ' ', 'g')`;
@@ -58,15 +58,15 @@ const unambiguousLegacyHashSql = (claim: string, old: string, sameClaim: boolean
   `(SELECT CASE WHEN legacy_fold.t IS DISTINCT FROM ${currentNormSql('legacy_fold.t')}${sameClaim ? ` OR legacy_fold.t = ${currentNormSql(claim)}` : ''} THEN ${sha256HexSql('legacy_fold.t')} END FROM (SELECT ${old} AS t) legacy_fold)`;
 
 /**
- * The v2 fingerprint (`gbrain_fact_fingerprint` before v330: the server's lower() and the locale's `[[:space:]]`) of SQL
+ * The v2 fingerprint (`gbrain_fact_fingerprint` before v332: the server's lower() and the locale's `[[:space:]]`) of SQL
  * expression `claim`, spelled with built-ins only so a guard function can match a legacy ledger hash at any migration
- * point, before v330 creates gbrain_fact_fingerprint_v2.
+ * point, before v332 creates gbrain_fact_fingerprint_v2.
  */
 export function factFingerprintV2Sql(claim: string): string {
   return sha256HexSql(v2NormSql(claim));
 }
 
-/** The pre-v174 fingerprint (gbrain_fact_fingerprint_v1 before v330) of SQL expression `claim`, every claim included. */
+/** The pre-v174 fingerprint (gbrain_fact_fingerprint_v1 before v332) of SQL expression `claim`, every claim included. */
 export function factFingerprintV1Sql(claim: string): string {
   return sha256HexSql(v1NormSql(claim));
 }
@@ -115,8 +115,8 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
   // reference only built-ins.
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint(claim TEXT) RETURNS TEXT
     LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${sha256HexSql(NORMALIZE_CLAIM_SQL)} $fn$`,
-  // v330: the current fingerprint under its version name, and the locale-folded one every ledger hash Postgres
-  // stored before v330 carries (where no current fingerprint can equal it). A ledger hash matches a claim by any of
+  // v332: the current fingerprint under its version name, and the locale-folded one every ledger hash Postgres
+  // stored before v332 carries (where no current fingerprint can equal it). A ledger hash matches a claim by any of
   // fingerprint, _v2 and _v1.
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v3(claim TEXT) RETURNS TEXT
     LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${sha256HexSql(NORMALIZE_CLAIM_SQL)} $fn$`,
@@ -135,7 +135,7 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * entity_slug`. Fingerprints fold case, whitespace and punctuation (v174);
  * ledger rows written earlier carry the exact v1 fingerprint and keep
  * matching through gbrain_fact_fingerprint_v1, and rows Postgres wrote before
- * v330 folded whitespace by locale and keep matching through _v2.
+ * v332 folded whitespace by locale and keep matching through _v2.
  */
 /**
  * GBRA-574 A1: whether row `r`'s entity is unbacked, as SQL: a bare name key (no directory, the form conversation

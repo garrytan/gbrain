@@ -5192,13 +5192,13 @@ updates that row in `facts`, and the write role then needs a permissive `UPDATE`
 `facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
 same `writer_coordinator_required` error.
 
-**Check that the upgrade replaced every guard.** Migrations v318, v321 and v330 can only replace a guard
+**Check that the upgrade replaced every guard.** Migrations v318, v321 and v332 can only replace a guard
 function the role running them owns. A guard owned by another role is left as it was, and each
 migration only names it in one stderr line. Left by v318, it still lets a scoped writer without
 ledger policies through (`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`).
 Left by v321, a facts guard still lacks the name-tag rule, so a claim forgotten or
 purged under another subject can come back on a name tag (`guards: N purge or withdrawal guard(s)
-keep their body from before name keys ...`). Left by v330, a fact or take guard still refuses a purged claim
+keep their body from before name keys ...`). Left by v332, a fact or take guard still refuses a purged claim
 only by the server's earlier fold, so on Postgres a purged claim holding U+0085 is stored again (`guards: N purge or
 withdrawal guard(s) keep their body from before the PGLite case fold ...`). After upgrading, run this as any role that can read
 the catalog. Every one of the seven rows must show `fails_closed = t`:
@@ -5218,9 +5218,9 @@ For a row with `fails_closed = f`, connect as the role in its `owner` column and
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
 is missing its check or its current body, provided the migrating role owns it. You can also run
 gbrain once as the owning role instead. Run the query again to confirm. The query sees only the
-ledger check, so a guard v321 or v330 left still shows `fails_closed = t`. On Postgres, `gbrain doctor`
+ledger check, so a guard v321 or v332 left still shows `fails_closed = t`. On Postgres, `gbrain doctor`
 (`guard_ledger_checks`) runs the same check, also checks the current body of the four fact and take guards
-(`legacy_fold`, the v330 body, in `gbrain_refuse_purged_fact`, `gbrain_refuse_purged_take`,
+(`legacy_fold`, the v332 body, in `gbrain_refuse_purged_fact`, `gbrain_refuse_purged_take`,
 `gbrain_preserve_fact_withdrawal` and `gbrain_guard_inserted_facts`), and names each guard left behind with its owner, and the fix:
 `gbrain apply-migrations --yes` when the doctor's role may re-create it, else the
 `ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.

@@ -327,7 +327,7 @@ import { v323 } from './v323-token-read-shared.ts';
 import { v324 } from './v324-secret-store.ts';
 import { v325 } from './v325-entity-identity-reviews.ts';
 import { v326 } from './v326-projection-jobs-byte-order-index.ts';
-import { v330 } from './v330-fact-fingerprint-v3.ts';
+import { v332 } from './v332-fact-fingerprint-v3.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -653,5 +653,5 @@ export const MIGRATIONS: Migration[] = [
   v324,
   v325,
   v326,
-  v330,
+  v332,
 ];

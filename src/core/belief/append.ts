@@ -84,8 +84,8 @@ async function tombstoned(tx: BrainEngine, sourceId: string, drafts: BeliefEvent
     UNION SELECT claim_hash AS fp FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($3::text[])`,
   [sourceId, facts.map(d => d.claimFp!), takes.map(d => d.claimFp!)]);
   const out = new Set(rows.map(r => r.fp));
-  // A claim whose fingerprint form differs from its tombstone's (a purge recorded before v330, or a draft keyed by the claim's
-  // pre-v330 fingerprint after it) matches by its text: its current fingerprint or a pre-v330 one no current fingerprint can equal (legacyFingerprintV2Sql).
+  // A claim whose fingerprint form differs from its tombstone's (a purge recorded before v332, or a draft keyed by the claim's
+  // pre-v332 fingerprint after it) matches by its text: its current fingerprint or a pre-v332 one no current fingerprint can equal (legacyFingerprintV2Sql).
   const text = (d: BeliefEventDraft) => { const v = d.value as Record<string, unknown> | null | undefined; const c = v?.[d.subjectKind === 'fact' ? 'fact' : 'claim'];
     return typeof c === 'string' && mayHaveLegacyFingerprint(c) ? c : null; };
   const forms = [...facts, ...takes].flatMap(d => { const c = text(d); return c && !out.has(d.claimFp!) ? [[d.subjectKind, d.claimFp!, c] as const] : []; });

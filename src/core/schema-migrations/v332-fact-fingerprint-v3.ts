@@ -7,14 +7,14 @@ import { REFUSE_PURGED_FACT_FUNCTION_SQL, REFUSE_PURGED_TAKE_FUNCTION_SQL } from
 /**
  * One guard's CREATE OR REPLACE in its own block. Like v321, a guard another role owns (42501) is left, never an abort,
  * and the handler names it on stderr; until a role that owns it runs a migration (failClosedLedgerGuards reads the
- * v330 marker, legacy_fold), it matches purge tombstones by the earlier fold only. The fingerprint functions stay
+ * v332 marker, legacy_fold), it matches purge tombstones by the earlier fold only. The fingerprint functions stay
  * fail-closed: the fingerprint index is built from them.
  */
 const replaceGuardIfOwned = (sql: string): string =>
-  `DO $v330_guard$ BEGIN EXECUTE $v330_body$${sql}$v330_body$; EXCEPTION WHEN insufficient_privilege THEN NULL; END $v330_guard$;`;
+  `DO $v332_guard$ BEGIN EXECUTE $v332_body$${sql}$v332_body$; EXCEPTION WHEN insufficient_privilege THEN NULL; END $v332_guard$;`;
 
 const GUARD_SQL = [FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL, FACT_INSERT_GUARD_FUNCTION_SQL, REFUSE_PURGED_FACT_FUNCTION_SQL, REFUSE_PURGED_TAKE_FUNCTION_SQL];
-/** Each guard's name and the body v330 installs (the text between its $fn$ quotes, as pg_proc.prosrc holds it). */
+/** Each guard's name and the body v332 installs (the text between its $fn$ quotes, as pg_proc.prosrc holds it). */
 const GUARD_BODIES = GUARD_SQL.map(sql => ({ name: /FUNCTION\s+(?:public\.)?(\w+)\(/.exec(sql)![1]!, body: /\$fn\$([\s\S]*)\$fn\$/.exec(sql)![1]! }));
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
@@ -95,12 +95,12 @@ BEGIN
 END
 $fp_v3$`;
 
-export const v330: Migration = {
-  version: 330,
+export const v332: Migration = {
+  version: 332,
   name: 'fact_fingerprint_v3',
   idempotent: true,
   sql: FACT_FINGERPRINT_V3_SQL,
-  // Names each guard the block above left: another role owns it and its body is not the one v330 installs.
+  // Names each guard the block above left: another role owns it and its body is not the one v332 installs.
   handler: async engine => {
     const left = await engine.executeRaw<{ sig: string; qualified: string; role: string }>(
       `SELECT p.oid::regprocedure::text AS sig, quote_ident(n.nspname) || '.' || quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')' AS qualified,
