@@ -241,6 +241,7 @@ import * as takeProposals from './engine-sql/take-proposals.ts';
 import * as extractBookkeeping from './engine-sql/extract-bookkeeping.ts';
 import * as purgeSlugStores from './engine-sql/purge-slug-stores.ts';
 import * as conceptRebuildSql from './engine-sql/concept-rebuild.ts';
+import * as graduationCatalog from './engine-sql/graduation-catalog.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
 import * as versionReasons from './engine-sql/version-reasons.ts';
 import * as versionPrune from './engine-sql/version-prune.ts';
@@ -3882,6 +3883,9 @@ export class PGLiteEngine implements BrainEngine {
   listConceptIncomingLinks(pageId: number) { return conceptRebuildSql.listConceptIncomingLinks(this, pageId); }
   carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number) { return conceptRebuildSql.carryConceptIncomingLinks(this, sourceId, slug, incoming, oldId); }
   readTombstoneWindow(pageId: number, hours: number) { return conceptRebuildSql.readTombstoneWindow(this, pageId, hours); }
+  listCatalogRelations() { return graduationCatalog.listCatalogRelations(this); }
+  readCatalogSchemaVersion() { return graduationCatalog.readCatalogSchemaVersion(this); }
+  listCatalogForeignKeys() { return graduationCatalog.listCatalogForeignKeys(this); }
   async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
   async listTakeSupersessionCandidates(sourceIds: readonly string[]) { return takesReads.listTakeSupersessionCandidates(this, sourceIds); }
   async countZeroWeightWithTakes() { return takesReads.countZeroWeightWithTakes(this); }

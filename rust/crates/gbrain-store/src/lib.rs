@@ -21,6 +21,7 @@ pub mod format;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
+pub mod keyspaces;
 pub mod kv;
 pub mod links;
 pub mod occ_kv;

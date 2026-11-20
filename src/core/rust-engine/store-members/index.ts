@@ -95,6 +95,7 @@ import * as decideStore from './decide-store.ts';
 import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
+import * as graduationCatalog from './graduation-catalog.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 
 export const STORE_MEMBERS = {
@@ -165,6 +166,8 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  // The engine graduation inventory's catalog reads, answered from the store's keyspace list (rust/docs/store/keyspaces.md).
+  ...graduationCatalog,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

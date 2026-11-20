@@ -45,7 +45,7 @@ export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
  * method forces a visible family assignment here.
  */
 export const FAMILIES: Record<string, readonly string[]> = {
-  lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
+  lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'listCatalogRelations', 'readCatalogSchemaVersion', 'listCatalogForeignKeys', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
     'registerBeforeDisconnect', 'withReservedConnection'],
   pages: ['getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
     'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',

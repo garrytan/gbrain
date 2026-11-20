@@ -17,6 +17,7 @@ mod field_usage;
 mod graph;
 mod import_members;
 mod journal;
+mod keyspaces;
 mod large_page;
 mod links;
 mod op_checkpoint;

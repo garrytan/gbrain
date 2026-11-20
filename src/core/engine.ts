@@ -2,6 +2,7 @@ import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawal
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as PurgeVerifySql from './engine-sql/purge-verify.ts';
+import type * as GraduationCatalogSql from './engine-sql/graduation-catalog.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
@@ -4526,6 +4527,15 @@ export interface BrainEngine {
   carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number): Promise<{ id: number; carried: number } | null>;
   /** When a tombstone's `hours` recovery window ends (ISO, UTC) and whether it has; null for a live or missing page. */
   readTombstoneWindow(pageId: number, hours: number): Promise<{ until: string; past: boolean } | null>;
+  /**
+   * The engine graduation inventory's catalog reads (SQL in engine-sql/graduation-catalog.ts). listCatalogRelations
+   * returns the SQL relations of the current schema, or on a store with no relations (the Rust engine) its keyspace
+   * list; readCatalogSchemaVersion the schema version the brain records (null when none); listCatalogForeignKeys the
+   * foreign key constraints, refused by name on a store that keeps no list of its references.
+   */
+  listCatalogRelations(): Promise<GraduationCatalogSql.CatalogRelations>;
+  readCatalogSchemaVersion(): Promise<number | null>;
+  listCatalogForeignKeys(): Promise<GraduationCatalogSql.CatalogForeignKey[]>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

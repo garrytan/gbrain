@@ -96,6 +96,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'deletePurgedSlugStoreRows', 'listPageSecretOccurrences', 'deletePurgedSlugHolds',
   // the held-concept rebuild's reads and link carry (engine-sql/concept-rebuild.ts)
   'readHeldConcept', 'isConceptStillHeld', 'lockHeldConcept', 'lockLiveConceptMembers', 'listLiveConceptMemberRevisions', 'listConceptIncomingLinks', 'carryConceptIncomingLinks', 'readTombstoneWindow',
+  // the engine graduation inventory's catalog reads (engine-sql/graduation-catalog.ts)
+  'listCatalogRelations', 'readCatalogSchemaVersion', 'listCatalogForeignKeys',
   // the purge receipt's reads (engine-sql/purge-verify.ts)
   'countPurgeProbe', 'listPurgeProbeItems', 'listBeliefEventValuesAfter', 'listLiveFactContextsAfter', 'listSegmentedProseBodies', 'listPurgeProseSlugs', 'countPagePurgeTombstones', 'readPagePurgeRequest', 'listPurgeEffectStates', 'countPurgeFingerprintRows',
   // the extract receipt write's page reads and the extract_rollup_7d day upsert (engine-sql/extract-bookkeeping.ts)

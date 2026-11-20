@@ -6,8 +6,8 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 961/961
-# lifecycle: 9/9
+# covered: 964/964
+# lifecycle: 12/12
 # pages: 48/48
 # search: 7/7
 # search_reads: 9/9
@@ -89,6 +89,9 @@ transaction	lifecycle	yes	118	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
+listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
+readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
+listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
