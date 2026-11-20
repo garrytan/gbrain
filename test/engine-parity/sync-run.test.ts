@@ -81,6 +81,7 @@ describe('engine parity: a whole sync run', () => {
     return withEnv({ GBRAIN_HOME: home }, async () => {
       // A full sync on a non-PGLite engine imports with 4 workers. Postgres workers open their own connections, which
       // do not see this arm's per-test schema, so the Postgres arm imports with one worker. Rust keeps the 4 workers.
+      // This is a limit of the test harness, not of the engine: this case does not cover a multi-worker Postgres import.
       const workers = backend === 'postgres' ? { concurrency: 1 } : {};
       const opts = { repoPath: root, sourceId: 'notes', noPull: true, noEmbed: true, noExtract: true, ...workers };
       const first = view(await performSync(engine, opts));

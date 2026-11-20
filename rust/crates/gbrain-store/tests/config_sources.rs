@@ -399,3 +399,22 @@ fn initial_config_refuses_the_version_key() {
     };
     assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
 }
+
+#[test]
+fn the_purge_epoch_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-purge-epoch");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(0));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(1));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(2));
+    // An unknown source changes nothing and returns no row, as the UPDATE ... RETURNING does.
+    assert_eq!(store.advance_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("default").unwrap(), Some(0));
+    let before = store.get_source("wiki").unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(2));
+    assert_eq!(store.get_source("wiki").unwrap(), before);
+}

@@ -59,10 +59,10 @@ describe('engine parity: large-page write guard', () => {
     await engine.putPage('notes/sz-gone', { ...NOTE, compiled_truth: 'gone body over the limit', timeline: '' });
     await engine.softDeletePage('notes/sz-gone');
     await publishSegmentedPage(engine, 'notes/sz-segmented', [ONE, TWO]);
-    // Compared in slug byte order: the statement's ORDER BY p.slug follows the database collation on Postgres
-    // (en_US puts notes/sz-big before notes/sz-b-skip), while PGLite and the Rust store order by bytes.
+    // Rows come back in slug byte order on every arm: the statement sorts COLLATE "C", so a Postgres brain on en_US
+    // (which puts notes/sz-big before notes/sz-b-skip) answers in the order PGLite and the Rust store do.
     const view = (rows: Awaited<ReturnType<typeof engine.readPageSizeRows>>) =>
-      [...rows].sort((a, b) => Buffer.compare(Buffer.from(a.slug), Buffer.from(b.slug))).map(r => ({ slug: r.slug, bytes: r.bytes === null ? null : Number(r.bytes), segmented: r.segmented, skip: r.frontmatter?.embed_skip ?? null, state: r.state, reason: r.reason }));
+      rows.map(r => ({ slug: r.slug, bytes: r.bytes === null ? null : Number(r.bytes), segmented: r.segmented, skip: r.frontmatter?.embed_skip ?? null, state: r.state, reason: r.reason }));
     const seen = {
       all: view(await engine.readPageSizeRows('default', 12, null)),
       some: view(await engine.readPageSizeRows('default', 12, ['notes/sz-big', 'notes/sz-small', 'notes/sz-gone', 'notes/sz-missing'])),

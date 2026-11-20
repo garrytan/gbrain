@@ -53,6 +53,11 @@ const PINS: Pin[] = [
     texts: ['SELECT purge_epoch FROM sources WHERE id = $1'],
   },
   {
+    from: 'src/core/belief/purge.ts:50 bumpPurgeEpoch',
+    case: { method: 'advanceSourcePurgeEpoch', variant: 'default', run: e => e.advanceSourcePurgeEpoch('default') },
+    texts: ['UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch'],
+  },
+  {
     from: 'src/core/minions/submission-authority.ts:144 assertCurrentRemoteJobPrincipal (OAuth client)',
     case: { method: 'readJobPrincipal', variant: 'oauth-client', run: e => e.readJobPrincipal({ kind: 'oauth_client', id: 'client-1' }) },
     texts: ['SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1'],

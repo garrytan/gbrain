@@ -43,6 +43,15 @@ pub(crate) struct SourceRecord {
     /// The newest synced content's commit time (`sources.newest_content_at`), or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub newest_content_at_us: Option<i64>,
+    /// The source's purge counter (`sources.purge_epoch`), which every fact purge advances in the
+    /// transaction that writes its tombstones (`advance_source_purge_epoch`). Records written
+    /// before the field existed, and sources never purged, read as 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub purge_epoch: i64,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -165,6 +174,7 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         upstream_checked_at_us: None,
         upstream_commit: None,
         upstream_behind: None,
+        purge_epoch: 0,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -243,6 +253,7 @@ impl Store {
                     upstream_checked_at_us: None,
                     upstream_commit: None,
                     upstream_behind: None,
+                    purge_epoch: 0,
                 },
             };
             if input.name.is_some() {
@@ -306,6 +317,26 @@ impl Store {
             }
             put_json(tx, &source_key(id), &record)
         })
+    }
+
+    /// `advanceSourcePurgeEpoch(sourceId)`: adds one to the source's purge epoch and returns the
+    /// new value, as `UPDATE sources SET purge_epoch = purge_epoch + 1 ... RETURNING` does; an
+    /// unknown id changes nothing and returns `None` (no row).
+    pub fn advance_source_purge_epoch(&self, id: &str) -> Result<Option<i64>> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(None);
+            };
+            record.purge_epoch += 1;
+            put_json(tx, &source_key(id), &record)?;
+            Ok(Some(record.purge_epoch))
+        })
+    }
+
+    /// `readSourcePurgeEpoch(sourceId)`: the source's purge epoch as stored, or `None` for an
+    /// unknown id.
+    pub fn read_source_purge_epoch(&self, id: &str) -> Result<Option<i64>> {
+        Ok(read_source(&*self.read()?, id)?.map(|record| record.purge_epoch))
     }
 
     /// Archives or restores a source. Returns whether the source exists.

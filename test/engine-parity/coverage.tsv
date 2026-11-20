@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 778/784
+# covered: 779/785
 # lifecycle: 9/9
-# pages: 53/53
+# pages: 54/54
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 11/11
@@ -85,7 +85,7 @@ getPage	pages	yes	97	yes	yes	yes	serves
 readPageSnapshot	pages	yes	30	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	425	yes	yes	yes	serves
+putPage	pages	yes	427	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -118,22 +118,23 @@ readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
 writeSourceUpstreamObservation	pages	yes	1	no	yes	yes	serves
-readPageIdentity	pages	yes	1	no	yes	yes	serves
+readPageIdentity	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	1	no	yes	yes	serves
 readPageSizeRows	pages	yes	3	no	yes	yes	serves
 holdPageEmbedding	pages	yes	1	no	yes	yes	serves
-readReasonPurgeTombstones	pages	yes	4	no	yes	yes	serves
-writeReasonPurgeTombstones	pages	yes	2	no	yes	yes	serves
+readReasonPurgeTombstones	pages	yes	5	no	yes	yes	serves
+writeReasonPurgeTombstones	pages	yes	4	no	yes	yes	serves
+advanceSourcePurgeEpoch	pages	yes	2	no	yes	yes	serves
 listSourcePathPages	pages	yes	3	no	yes	yes	serves
-readRenameIdentityRows	pages	yes	2	no	yes	yes	serves
-readLiveIdentityHolders	pages	yes	2	no	yes	yes	serves
+readRenameIdentityRows	pages	yes	3	no	yes	yes	serves
+readLiveIdentityHolders	pages	yes	4	no	yes	yes	serves
 advanceSourceCommit	pages	yes	5	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	3	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpLastRetrieved	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
-refreshPageOrigin	pages	yes	4	no	yes	yes	serves
+refreshPageOrigin	pages	yes	5	no	yes	yes	serves
 searchKeyword	search	yes	18	yes	yes	yes	serves
 countKeywordPages	search	yes	8	no	yes	yes	serves
 searchKeywordPages	search	yes	10	no	yes	yes	serves
@@ -406,7 +407,7 @@ readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	1	no	yes	yes	serves
-readSourcePurgeEpoch	persistence_journal	yes	2	no	yes	yes	serves
+readSourcePurgeEpoch	persistence_journal	yes	3	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves

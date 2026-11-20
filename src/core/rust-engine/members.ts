@@ -139,6 +139,7 @@ export const RUST_ENGINE_MEMBERS = {
   holdPageEmbedding: 'sources',
   readReasonPurgeTombstones: 'sources',
   writeReasonPurgeTombstones: 'sources',
+  advanceSourcePurgeEpoch: 'sources',
   readRenameIdentityRows: 'sources',
   readLiveIdentityHolders: 'sources',
   listSourceRecords: 'sources',

@@ -4,26 +4,16 @@
 //! SQL engines' 22021/22P05 retry path never runs here.
 
 use crate::Store;
-use crate::cli_reads::pg_text::jsonb_text;
+use crate::cli_reads::pg_text::fm_text;
 use crate::error::Result;
 use crate::pages::read_page_by_id;
 use serde::Serialize;
-use serde_json::{Map, Value};
 
 /// The row of `readPageIdentity`: `PageIdentityRow`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PageIdentityRow {
     pub fm_id: Option<String>,
     pub title: Option<String>,
-}
-
-/// `frontmatter->>'id'`: a string's text, NULL for a JSON null or no key, else the jsonb text.
-fn fm_id(frontmatter: &Map<String, Value>) -> Option<String> {
-    match frontmatter.get("id") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(other) => Some(jsonb_text(other)),
-    }
 }
 
 impl Store {
@@ -34,7 +24,7 @@ impl Store {
         Ok(read_page_by_id(&*read, page_id)?
             .filter(|page| page.deleted_at_us.is_none())
             .map(|page| PageIdentityRow {
-                fm_id: fm_id(&page.frontmatter),
+                fm_id: fm_text(&page.frontmatter, "id"),
                 title: Some(page.title),
             }))
     }

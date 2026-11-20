@@ -39,6 +39,7 @@ import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
+import { inSlugByteOrder } from './sync-reconcile.ts';
 
 const HEAD_BYTES = 64 * 1024;
 
@@ -313,8 +314,9 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'readRen
       return rows;
     }
   };
-  const stored = await perPath(titled, paths => engine.readRenameIdentityRows(opts.sourceId,
-    [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path)))));
+  // Slug byte order: two live pages can share a source_path, and the first match below must be the same page on every engine.
+  const stored = inSlugByteOrder(await perPath(titled, paths => engine.readRenameIdentityRows(opts.sourceId,
+    [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path))))));
   for (const path of titled) {
     const row = stored.find(page => page.source_path === path || page.source_path === sourcePathOf(path))
       ?? stored.find(page => page.source_path === null && page.slug === resolveSlugForPath(sourcePathOf(path)));

@@ -1479,6 +1479,8 @@ export interface BrainEngine {
   readReasonPurgeTombstones(sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]>;
   /** Stores the pairs not stored yet and returns how many it added; an unknown source throws (engine-sql/sources.ts). */
   writeReasonPurgeTombstones(sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number>;
+  /** Adds one to the source's purge epoch and returns the new value as stored, or null for an unknown source (engine-sql/sources.ts). */
+  advanceSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
   listSourcePathPages(sourceId: string): Promise<SourcePathPageRow[]>;
   /** The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order (engine-sql/sources.ts). */

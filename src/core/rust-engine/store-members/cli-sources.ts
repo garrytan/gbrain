@@ -81,6 +81,10 @@ export const readReasonPurgeTombstones: StoreMember<[sourceId: string, pair?: Re
 export const writeReasonPurgeTombstones: StoreMember<[sourceId: string, pairs: readonly ReasonPurgeTombstone[]], number> = async (brain, sourceId, pairs) =>
   Number(await storeCall({ member: 'writeReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, pairs.map(pair => ({ commit_sha: pair.commit_sha, path: pair.path })))));
 
+/** The store's purge epoch advance (sources.rs `advance_source_purge_epoch`): the new epoch, or null for an unknown source. */
+export const advanceSourcePurgeEpoch: StoreMember<[sourceId: string], number | null> = async (brain, sourceId) =>
+  (await storeCall({ member: 'advanceSourcePurgeEpoch', sourceId }, () => brain.advanceSourcePurgeEpoch(sourceId))) as number | null;
+
 export const listSourcePathPages: StoreMember<[sourceId: string], SourcePathPageRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourcePathPages', sourceId }, () => brain.listSourcePathPages(sourceId))) as SourcePathPageRow[];
 

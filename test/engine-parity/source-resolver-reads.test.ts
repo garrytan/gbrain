@@ -34,6 +34,10 @@
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
  */
 import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { markedScopeSources, withoutScopeSources } from '../../src/core/access/attest-sources.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustEngine } from '../../src/core/rust-engine.ts';
@@ -43,6 +47,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { loadConnectorSourceIds } from '../../src/commands/orphans.ts';
 import { sourceConfigText, sourceRecordsRawConfig } from '../../src/core/source-rows.ts';
 import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../../src/core/access/owner-only.ts';
+import { confirmRenameIdentities } from '../../src/core/sync-rename-identity.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -418,6 +423,65 @@ describe('engine parity: source-resolution reads', () => {
       spec: { fm_id: 'doc-1', title: 'Spec' }, gone: null, missing: null,
     });
     return seen;
+  });
+
+  parityTest('a non-string frontmatter id reads as jsonb text: object, array and nested values', {
+    methods: ['putPage', 'readLiveIdentityHolders', 'readPageIdentity'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    const put = (slug: string, title: string, id: unknown) => engine.putPage(slug, { ...NOTE, title, frontmatter: { id } }, { sourceId: 'a' });
+    // jsonb's text form, as Postgres `frontmatter->>'id'` prints it: ", " and ": " separators, keys by (length, bytes).
+    const object = await put('notes/id-object', 'Object', { bb: 1, a: [1, 2] });
+    await put('notes/id-array', 'Array', [1, 'x', null, 2.5]);
+    await put('notes/id-nested', 'Nested', { outer: { k: [true, { z: 'é' }] }, n: null });
+    const seen = {
+      byId: bySlug(await engine.readLiveIdentityHolders('a', ['{"a": [1, 2], "bb": 1}', '[1, "x", null, 2.5]', '{"n": null, "outer": {"k": [true, {"z": "é"}]}}'], [])),
+      compact: await engine.readLiveIdentityHolders('a', ['{"bb":1,"a":[1,2]}', '[1,"x",null,2.5]'], []),
+      object: await engine.readPageIdentity(object.id),
+    };
+    expect(seen).toEqual({
+      byId: [
+        { slug: 'notes/id-array', source_path: null, fm_id: '[1, "x", null, 2.5]', title: 'Array' },
+        { slug: 'notes/id-nested', source_path: null, fm_id: '{"n": null, "outer": {"k": [true, {"z": "é"}]}}', title: 'Nested' },
+        { slug: 'notes/id-object', source_path: null, fm_id: '{"a": [1, 2], "bb": 1}', title: 'Object' },
+      ],
+      compact: [],
+      object: { fm_id: '{"a": [1, 2], "bb": 1}', title: 'Object' },
+    });
+    return seen;
+  });
+
+  parityTest('a rename compares the stored title of the first page in slug byte order when two live pages match its path', {
+    methods: ['putPage', 'refreshPageOrigin', 'readRenameIdentityRows', 'readLiveIdentityHolders'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    // The source lives in sub/ of its Git repository, so a page can record the old file as sub/notes/old.md (the Git
+    // path) or notes/old.md (the source path); the live-origin index allows both. notes/z-first is written first, so
+    // Postgres and PGLite return it first (heap order) while the Rust store returns notes/a-second first (slug order).
+    // The caller sorts by slug bytes, so every engine compares notes/a-second's stored title, which differs.
+    for (const [slug, title, sourcePath] of [['notes/z-first', 'Plan', 'sub/notes/old.md'], ['notes/a-second', 'Other', 'notes/old.md']] as const) {
+      await engine.putPage(slug, { ...NOTE, title }, { sourceId: 'a' });
+      await engine.refreshPageOrigin(slug, { sourceId: 'a', sourcePath });
+    }
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-rename-order-'));
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const commit = () => { git('add', '-A'); git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'step'); return git('rev-parse', 'HEAD'); };
+      git('init', '-q', '-b', 'main');
+      mkdirSync(join(root, 'sub/notes'), { recursive: true });
+      writeFileSync(join(root, 'sub/notes/old.md'), '---\ntitle: Plan\n---\nThe plan, first draft.\n');
+      const base = commit();
+      rmSync(join(root, 'sub/notes/old.md'));
+      writeFileSync(join(root, 'sub/notes/new.md'), '---\ntitle: Plan\n---\nThe plan, second draft with more text.\n');
+      const target = commit();
+      const manifest = { added: [], modified: [], deleted: [], renamed: [{ from: 'sub/notes/old.md', to: 'sub/notes/new.md', similarity: 80 }] };
+      const decided = await confirmRenameIdentities(engine, root, base, target, manifest, { sourceId: 'a', sourcePathOf: path => path.replace(/^sub\//, '') });
+      const seen = { renamed: decided.renamed, downgraded: (decided.downgradedRenames ?? []).map(pair => ({ from: pair.from, to: pair.to, reason: pair.reason })) };
+      expect(seen).toEqual({ renamed: [], downgraded: [{ from: 'sub/notes/old.md', to: 'sub/notes/new.md', reason: 'no_identity_signal' }] });
+      return seen;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   parityTest('countSourcePages counts one source\'s pages, soft-deleted pages only when asked', { methods: ['countSourcePages'] }, async (engine, backend) => {

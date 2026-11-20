@@ -43,6 +43,7 @@ import { buildPartialResult } from '../../core/sync-lock.ts';
 import { noteCommittedProgress } from '../../core/forward-progress.ts';
 import {
   MASS_RECONCILE_RATIO,
+  inSlugByteOrder,
   planReconcileDeletes,
   listEverCommittedPaths,
   massReconcileAllowed,
@@ -458,7 +459,7 @@ async function reconcileFullSyncDeletes(
     // #5988 (E13): the old page of a held rename keeps its origin until the
     // renamed file imports; its file being gone does not make it stale.
     const heldOrigins = await heldRenameOrigins(engine, sid);
-    const rows = (await engine.listSourcePathPages(sid)).filter(row => !heldOrigins.has(row.source_path));
+    const rows = inSlugByteOrder(await engine.listSourcePathPages(sid)).filter(row => !heldOrigins.has(row.source_path));
     // #774: a scoped full sync is authoritative ONLY for its scope — pages
     // whose source_path lives outside the subpath (e.g. from an earlier
     // root-level sync of this source) are out of this walk's sight and must

@@ -309,15 +309,16 @@ export interface PageSizeRow { slug: string; bytes: number | string | null; segm
 const PAGE_SIZE_ROWS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
        FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
 const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
        FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($3::text[])
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
 
 /**
  * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are
- * segmented or have a page_embedding_budget row, by slug: the rows page-embedding-budget.ts readPageSizeStates maps.
+ * segmented or have a page_embedding_budget row, in slug byte order (COLLATE "C", so a Postgres brain on a locale
+ * collation answers in PGLite's order): the rows page-embedding-budget.ts readPageSizeStates maps.
  */
 export async function readPageSizeRows(exec: LegacyUnscopedRead, sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]> {
   return slugs
@@ -348,6 +349,16 @@ export async function writeReasonPurgeTombstones(exec: SqlExecutor, sourceId: st
   return (await exec.executeRaw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
     SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
   [sourceId, pairs.map(pair => pair.commit_sha), pairs.map(pair => pair.path)])).length;
+}
+
+/**
+ * Adds one to the source's purge epoch and returns the new value as stored, or null for an unknown source: the bump a
+ * fact, page or replayed purge makes in its transaction, so a request prepared under the old epoch is refused
+ * (belief/purge.ts `bumpPurgeEpoch`) and a cached sync reason scan is not reused (reason-trailers.ts).
+ */
+export async function advanceSourcePurgeEpoch(exec: SqlExecutor, sourceId: string): Promise<string | number | null> {
+  const [row] = await exec.executeRaw<{ purge_epoch: string | number }>('UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch', [sourceId]);
+  return row?.purge_epoch ?? null;
 }
 
 /** Sets the page's embedding hold to `held` with `reason`, adding its page_embedding_budget row when it has none (page-embedding-budget.ts). */

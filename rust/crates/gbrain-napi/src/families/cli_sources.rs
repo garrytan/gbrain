@@ -115,6 +115,27 @@ impl Brain {
         })
     }
 
+    /// `advanceSourcePurgeEpoch(sourceId)`: the source's new purge epoch, or null for an unknown
+    /// source.
+    #[napi]
+    pub fn advance_source_purge_epoch<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.advance_source_purge_epoch(&source_id))
+    }
+
+    /// `readSourcePurgeEpoch(sourceId)`: the source's purge epoch, or null for an unknown source.
+    #[napi]
+    pub fn read_source_purge_epoch<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_purge_epoch(&source_id))
+    }
+
     /// `listSourcePathPages(sourceId)`: the source's live pages that have a `source_path`.
     #[napi]
     pub fn list_source_path_pages<'env>(

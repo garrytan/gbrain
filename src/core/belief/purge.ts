@@ -47,9 +47,8 @@ let redactionFault: PurgeRedactionFault | null = null;
 export function __setPurgeRedactionFaultForTests(fault: PurgeRedactionFault | null): void { redactionFault = fault; }
 
 /** The source's purge counter, incremented in the purge transaction; payloads prepared under an older epoch are refused. */
-export async function bumpPurgeEpoch(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<number> {
-  const [row] = await tx.executeRaw<{ purge_epoch: string | number }>('UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch', [sourceId]);
-  return Number(row?.purge_epoch ?? 0);
+export async function bumpPurgeEpoch(tx: Pick<BrainEngine, 'advanceSourcePurgeEpoch'>, sourceId: string): Promise<number> {
+  return Number(await tx.advanceSourcePurgeEpoch(sourceId) ?? 0);
 }
 
 export async function sourceHasBeliefEvents(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {

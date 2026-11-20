@@ -528,7 +528,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
-  'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
+  'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources', 'advanceSourcePurgeEpoch': 'sources',
   'readPageIdentity': 'sources', 'writeSourceSyncHeartbeat': 'sources', 'writeSourceUpstreamObservation': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
@@ -1078,6 +1078,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('holdPageEmbedding', [['default', (e) => e.holdPageEmbedding(1, 'awaiting_approval')]]),
   ...variants('readReasonPurgeTombstones', [['default', (e) => e.readReasonPurgeTombstones(SRC)], ['pair', (e) => e.readReasonPurgeTombstones(SRC, { commit_sha: 'abc', path: 'notes/a.md' })]]),
   ...variants('writeReasonPurgeTombstones', [['default', (e) => e.writeReasonPurgeTombstones(SRC, [{ commit_sha: 'abc', path: 'notes/a.md' }])]]),
+  ...variants('advanceSourcePurgeEpoch', [['default', (e) => e.advanceSourcePurgeEpoch(SRC)]]),
 
   // ── files ──
   ...variants('upsertFile', [

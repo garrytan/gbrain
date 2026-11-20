@@ -30,6 +30,9 @@
     "advanceSourceCommit#newest": {
       "raw": 1
     },
+    "advanceSourcePurgeEpoch#default": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "bumpLastRetrieved#default": {
