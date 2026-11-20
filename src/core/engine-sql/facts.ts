@@ -433,8 +433,9 @@ export async function listFactsByEntity(
     // (valid_until <= now()) at read time — exact-time, zero-maintenance.
     // History readers pass activeOnly:false and stay unfiltered. Parity with
     // the pglite engine's _listFacts predicate.
-    const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
-      SELECT * FROM facts
+    // GST-3170: a fact dated in the future ranks as of when it was written. Each branch keeps an index-ordered scan
+    // (idx_facts_entity_active), so the merge sorts at most 2 x (limit + offset) rows.
+    const where = sqlFragment`
       WHERE source_id = ${source_id}
         AND entity_slug = ${entitySlug}${opts?.sessionId ? sqlFragment` AND source_session = ${opts.sessionId}` : sqlFragment``}
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
@@ -442,8 +443,11 @@ export async function listFactsByEntity(
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
         ${visibilityClause(visibility)}${privacyClause(opts)}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
-        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
-      ORDER BY valid_from DESC, id DESC
+        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}`;
+    const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
+      SELECT * FROM ((SELECT * FROM facts ${where} AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT ${limit + offset})
+        UNION ALL (SELECT * FROM facts ${where} AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})) f
+      ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
     return rows.map(rowToFact);
