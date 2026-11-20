@@ -98,6 +98,20 @@ impl Brain {
         self.run(env, move |s| s.list_git_image_hold_counts(source_ids))
     }
 
+    /// `countAtomExtractionBacklog`: the pages awaiting atom extraction.
+    #[napi]
+    pub fn count_atom_extraction_backlog<'env>(
+        &self,
+        env: &'env Env,
+        query: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query: gbrain_store::link_queries::AtomBacklogQuery =
+                arg(query, "countAtomExtractionBacklog query")?;
+            s.count_atom_extraction_backlog(&query)
+        })
+    }
+
     /// `readProjectionBacklog`: a coverage scope: the projection queue by class.
     #[napi]
     pub fn read_projection_backlog<'env>(

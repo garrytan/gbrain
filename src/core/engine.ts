@@ -29,6 +29,7 @@ import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
 import type * as DoctorSearchSql from './engine-sql/doctor-search.ts';
+import type * as AtomBacklogSql from './engine-sql/atom-backlog.ts';
 import type * as ProjectionBacklogSql from './engine-sql/projection-backlog.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
@@ -5231,6 +5232,8 @@ export interface BrainEngine {
   listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
   /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  /** Pages awaiting atom extraction (no atom of their current content yet, no held or tombstoned disposition) in the query's source scope; `opts.signal` cancels the count on the SQL engines. */
+  countAtomExtractionBacklog(query: AtomBacklogSql.AtomBacklogQuery, opts?: { signal?: AbortSignal }): Promise<number>;
   /** The projection queue by class (pending text, failed, sealable and reimport images, protected, archived) in a read scope, the age of the oldest job that needs work, and the database time of the count. */
   readProjectionBacklog(scope: PageReadScope): Promise<ProjectionBacklogSql.ProjectionBacklogCounts>;
   /** Unsupported-image holds (managed_image_sync_unsupported) per source's current incarnation among sourceIds; sources with none are not listed. */

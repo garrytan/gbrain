@@ -17,6 +17,12 @@ export async function connectorAtomPagesEnabled(engine: BrainEngine): Promise<bo
   return !/^(false|0|off|no)$/i.test(((await engine.getConfig(CONNECTOR_ATOM_PAGES_KEY).catch(() => null)) ?? '').trim());
 }
 
+/** The backlog count's form of the same opt-out: the page types and connector source kinds to leave out, or null while connector pages are extracted. */
+export async function connectorAtomExclusion(engine: BrainEngine): Promise<{ pageTypes: string[]; sourceKinds: string[] } | null> {
+  if (await connectorAtomPagesEnabled(engine)) return null;
+  return { pageTypes: [...CONNECTOR_ATOM_PAGE_TYPES], sourceKinds: [...CONNECTOR_SOURCE_KINDS] };
+}
+
 /** The discovery/backlog predicate over `pages p`: empty unless opted out, else the connector email/meeting exclusion. */
 export async function connectorAtomExclusionSql(engine: BrainEngine): Promise<string> {
   if (await connectorAtomPagesEnabled(engine)) return '';

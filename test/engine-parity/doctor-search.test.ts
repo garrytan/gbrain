@@ -290,4 +290,45 @@ describe('doctor search reads', () => {
       return { empty, all, inDefault, inOther, bothListed, emptyList, missing, archived, archivedOther };
     },
   );
+  parityTest(
+    'countAtomExtractionBacklog counts live extractable pages with no atom of their content, by source and connector opt-out',
+    { methods: ['putPage', 'getPage', 'softDeletePage', 'countAtomExtractionBacklog'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'mail', { kind: 'google' });
+      await createSource(engine, backend, 'repo', { kind: 'checkout' });
+      const long = (extra: Partial<PageInput> = {}): Partial<PageInput> => ({ compiled_truth: 'x'.repeat(600), ...extra });
+      const query = (extra: Partial<Parameters<BrainEngine['countAtomExtractionBacklog']>[0]> = {}) => engine.countAtomExtractionBacklog({
+        sourceId: null, types: ['note', 'email', 'source'], minChars: 500, maxInputChars: 100_000, connectorExclusion: null, ...extra });
+      const empty = await query();
+      await put(engine, 'notes/answered', long());
+      await put(engine, 'notes/open', long({ compiled_truth: 'y'.repeat(700) }));
+      await put(engine, 'notes/short', { compiled_truth: 'short' });
+      await put(engine, 'notes/other-type', long({ type: 'project' }));
+      await put(engine, 'notes/greenfield', long({ frontmatter: { imported_from: 'markdown-greenfield' } }));
+      await put(engine, 'notes/dreamed', long({ frontmatter: { dream_generated: true } }));
+      await put(engine, 'sources/raw', long({ type: 'source', frontmatter: { raw: 'r.json' } }));
+      await put(engine, 'sources/plain', long({ type: 'source' }));
+      await put(engine, 'mail/one', long({ type: 'email' }), 'mail');
+      await put(engine, 'mail/note', long(), 'mail');
+      await put(engine, 'repo/mail', long({ type: 'email' }), 'repo');
+      await put(engine, 'notes/deleted', long());
+      await engine.softDeletePage('notes/deleted');
+      const hash = (await engine.getPage('notes/answered'))!.content_hash!;
+      await put(engine, 'atoms/answered', { type: 'atom', compiled_truth: 'a', frontmatter: { source_hash: hash.slice(0, 16) } });
+      const connectors = { pageTypes: ['email', 'meeting'], sourceKinds: ['google', 'github'] };
+      const all = await query();
+      const inDefault = await query({ sourceId: 'default' });
+      const inMail = await query({ sourceId: 'mail' });
+      const optedOut = await query({ connectorExclusion: connectors });
+      const mailOptedOut = await query({ sourceId: 'mail', connectorExclusion: connectors });
+      // A managed extraction does not answer its page.
+      await put(engine, 'notes/managed', long({ compiled_truth: 'm'.repeat(800) }));
+      const managedHash = (await engine.getPage('notes/managed'))!.content_hash!;
+      await put(engine, 'atoms/managed', { type: 'atom', compiled_truth: 'a', frontmatter: { source_hash: managedHash.slice(0, 16), managed_extraction: true } });
+      const managed = await query({ sourceId: 'default' });
+      const result = { empty, all, inDefault, inMail, optedOut, mailOptedOut, managed };
+      expect(result).toEqual({ empty: 0, all: 5, inDefault: 2, inMail: 2, optedOut: 4, mailOptedOut: 1, managed: 3 });
+      return result;
+    },
+  );
 });
