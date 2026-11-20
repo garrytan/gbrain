@@ -2,6 +2,43 @@
   "golden": {
     "domain": "sources",
     "methods": {
+      "advanceSourceCommit": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2",
+            "textSha256": "e08954b8645774987704b5860cd2d5d760ed91d5d41ade4de5c89ebf6b72e498"
+          }
+        ],
+        "newest-cleared": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ],
+        "newest-content": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -205,6 +242,18 @@
             ],
             "sql": "SELECT chunker_version FROM sources WHERE id = $1",
             "textSha256": "89548ea315a927cbdaffec58bb971086a7f2e7d29ad81af3e05f73fa62dc9e77"
+          }
+        ]
+      },
+      "readSourceLastCommit": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT last_commit FROM sources WHERE id=$1",
+            "textSha256": "46104614de5ece42e06e3353a0fe15d3a09e7ac512730edd3bc0033b99bdd237"
           }
         ]
       },

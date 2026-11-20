@@ -21,6 +21,15 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
+    "advanceSourceCommit#default": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest-cleared": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest-content": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeTraversalCache#allSources": {
@@ -373,6 +382,9 @@
       "raw": 1
     },
     "readSourceChunkerVersion#default": {
+      "raw": 1
+    },
+    "readSourceLastCommit#default": {
       "raw": 1
     },
     "readSourceRow#default": {

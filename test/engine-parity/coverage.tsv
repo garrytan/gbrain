@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 926/932
+# covered: 935/942
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -34,7 +34,7 @@
 # import_guards: 12/12
 # access_grants: 6/6
 # access_members: 11/11
-# persistence_journal: 112/112
+# persistence_journal: 121/122
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -106,7 +106,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	8	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	6	no	yes	yes	serves
+getSource	pages	yes	7	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	2	no	yes	yes	serves
@@ -426,16 +426,21 @@ readNotifierSources	persistence_journal	yes	1	no	yes	yes	serves
 writeNotifierState	persistence_journal	yes	2	no	yes	yes	serves
 writeNotifierCoverage	persistence_journal	yes	3	no	yes	yes	serves
 recordNotifierSyncerHost	persistence_journal	yes	1	no	yes	yes	serves
-readNotifierStatusRows	persistence_journal	yes	3	no	yes	yes	serves
+readNotifierStatusRows	persistence_journal	yes	4	no	yes	yes	serves
 hasNotifierCoverage	persistence_journal	yes	2	no	yes	yes	serves
-upsertWantedMarker	persistence_journal	yes	3	no	yes	yes	serves
-attachWantedMarkerJob	persistence_journal	yes	1	no	yes	yes	serves
+upsertWantedMarker	persistence_journal	yes	5	no	yes	yes	serves
+attachWantedMarkerJob	persistence_journal	yes	3	no	yes	yes	serves
 readWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
-readDueWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
-pruneSatisfiedWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
+readDueWantedMarkers	persistence_journal	yes	3	no	yes	yes	serves
+pruneSatisfiedWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
 clearWantedMarker	persistence_journal	yes	1	no	yes	yes	serves
-settleFreshnessMarker	persistence_journal	yes	1	no	yes	yes	serves
+settleFreshnessMarker	persistence_journal	yes	2	no	yes	yes	serves
 listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
+readSourceSyncShape	persistence_journal	yes	3	no	yes	yes	serves
+readNotifierFirstDue	persistence_journal	yes	2	no	yes	yes	serves
+readDrainHolderProgress	persistence_journal	yes	1	no	yes	yes	serves
+advanceSourceCommit	persistence_journal	yes	2	no	yes	yes	serves
+readSourceLastCommit	persistence_journal	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	22	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -530,6 +535,11 @@ settleNoopEmbeddingRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
+readDrainLeaseBeacon	persistence_journal	yes	1	no	yes	yes	serves
+writeDrainLeaseHolder	persistence_journal	yes	1	no	yes	yes	serves
+refreshDrainLeaseHolder	persistence_journal	no	0	no	-	-	-
+releaseDrainLeaseHolder	persistence_journal	yes	1	no	yes	yes	serves
+readLiveJobIds	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 readMentionIndexStatus	entity_reads	yes	2	no	yes	yes	serves
 countLivePagesInSource	entity_reads	yes	1	no	yes	yes	serves
@@ -552,7 +562,7 @@ readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
-readCycleLocks	cycle_locks	yes	9	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	10	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
@@ -583,7 +593,7 @@ deleteExpiredOauthCredentials	minion_queue	yes	1	no	yes	yes	serves
 convertLegacyAccessTokenGrant	minion_queue	yes	1	no	yes	yes	serves
 insertOauthToken	minion_queue	yes	3	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	3	no	yes	yes	serves
-pauseJob	minion_queue	yes	8	no	yes	yes	serves
+pauseJob	minion_queue	yes	9	no	yes	yes	serves
 resumeJob	minion_queue	yes	2	no	yes	yes	serves
 failParentJob	minion_queue	yes	3	no	yes	yes	serves
 resolveParentJob	minion_queue	yes	1	no	yes	yes	serves
@@ -595,7 +605,7 @@ delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
 releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
 markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
 promoteDelayedJobs	minion_queue	yes	3	no	yes	yes	serves
-cancelJobs	minion_queue	yes	15	no	yes	yes	serves
+cancelJobs	minion_queue	yes	16	no	yes	yes	serves
 killTimedOutJobs	minion_queue	yes	1	no	yes	yes	serves
 killWallClockJobs	minion_queue	yes	1	no	yes	yes	serves
 pruneJobs	minion_queue	yes	2	no	yes	yes	serves
@@ -842,7 +852,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	6	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

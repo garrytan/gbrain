@@ -4969,6 +4969,41 @@
       }
     },
     "sources": {
+      "advanceSourceCommit": {
+        "default": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "newest-cleared": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "newest-content": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -5200,6 +5235,19 @@
         ]
       },
       "readSourceChunkerVersion": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourceLastCommit": {
         "default": [
           {
             "paramCount": 1,
