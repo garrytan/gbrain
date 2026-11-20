@@ -465,7 +465,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
-      onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
+      // canonical_content_writes is gone from this list: the owned-content read is a typed member on Rust, and a Rust
+      // brain has no writer-owned source yet, so the check skips as it does on this PGLite brain.
+      onlyRust: ['checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
         'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
@@ -474,7 +476,7 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
+      untypedWarnings: ['backup_coverage', 'child_table_orphans',
         'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack

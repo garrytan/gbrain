@@ -260,7 +260,7 @@ class Reporter implements ReporterInternal {
       total,
       done: 0,
       startedAt: now,
-      cpuAtStart: process.threadCpuUsage(),
+      cpuAtStart: threadCpuUsage(),
       lastEmitMs: now,
       lastDoneEmitted: 0,
       live: null,
@@ -309,7 +309,7 @@ class Reporter implements ReporterInternal {
 
     const elapsedMs = now - s.startedAt;
     if (this.renderMode === 'json') {
-      const cpu = process.threadCpuUsage(s.cpuAtStart);
+      const cpu = threadCpuUsage(s.cpuAtStart);
       const obj: Record<string, unknown> = {
         event: 'tick',
         phase: s.phase,
@@ -469,6 +469,15 @@ class Reporter implements ReporterInternal {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * This thread's CPU time (since `since` when given). Bun before 1.4 has no `process.threadCpuUsage`; there the process
+ * total stands in, so a reporter never throws on start and its events keep the same fields on every runtime.
+ */
+function threadCpuUsage(since?: NodeJS.CpuUsage): NodeJS.CpuUsage {
+  const perThread = (process as { threadCpuUsage?: (prev?: NodeJS.CpuUsage) => NodeJS.CpuUsage }).threadCpuUsage;
+  return typeof perThread === 'function' ? perThread.call(process, since) : process.cpuUsage(since);
+}
 
 export function createProgress(opts: ProgressOptions = {}): ProgressReporter {
   const stream = opts.stream ?? process.stderr;
