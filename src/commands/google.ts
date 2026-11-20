@@ -296,7 +296,9 @@ async function resolveClientCreds(
     return validateClientPair(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
   }
   // 4. Already on file.
-  const existing = await vault.getClient(GOOGLE_PROVIDER);
+  const account = typeof f.reauth === 'string' ? f.reauth : f.account;
+  const entry = account ? await vault.get(credentialId(GOOGLE_PROVIDER, account)) : null;
+  const existing = await vault.getClient(GOOGLE_PROVIDER, entry?.meta.client_id);
   if (existing) return { client_id: existing.client_id, client_secret: existing.client_secret };
   // 5. TTY prompt (readLineSafe returns '' immediately on non-TTY).
   const pastedId = await readLineSafe('Google OAuth client ID (or Enter to see setup steps): ', '', 120_000);
@@ -424,7 +426,7 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
     if (f.code) {
       const pending = readPending();
       if (!pending) throw new CredentialError('consent_timeout');
-      const client = await vault.getClient(GOOGLE_PROVIDER);
+      const client = await vault.getClient(GOOGLE_PROVIDER, pending.client_id);
       if (!client) throw new CredentialError('not_connected', ' (no OAuth client on file)');
       const parsed = parsePastedRedirect(f.code, pending.state);
       const tokens = await exchangeCode(
@@ -477,21 +479,7 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
       setCliExitVerdict(2);
       return;
     }
-    // Refresh tokens are bound to the client that minted them: silently
-    // replacing the stored client (stale env vars suffice) breaks every
-    // sibling account's refresh with a misleading "revoked" diagnosis.
-    // Warn loudly; proceeding is still legal (BYO users rotate clients).
-    const priorClient = await vault.getClient(GOOGLE_PROVIDER);
-    if (priorClient && priorClient.client_id !== creds.client_id) {
-      const accounts = await vault.list({ provider: GOOGLE_PROVIDER });
-      if (accounts.length > 0) {
-        process.stderr.write(
-          `[google] warning: replacing the stored OAuth client (${priorClient.client_id.slice(0, 12)}…) ` +
-            `with a different one. Refresh tokens are client-bound — if refresh starts failing for the ` +
-            `${accounts.length} already-connected account(s), run \`gbrain google connect --reauth <email>\`.\n`,
-        );
-      }
-    }
+    // Store this issuer without replacing the clients of sibling accounts.
     await vault.putClient({
       provider: GOOGLE_PROVIDER,
       client_id: creds.client_id,

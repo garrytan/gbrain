@@ -107,7 +107,6 @@ async function runExport(args: string[]): Promise<void> {
   }
 
   const entries: CredentialEntry[] = [];
-  const providers = new Set<string>();
   for (const m of chosen) {
     // Testing-mode custody warning (D3-A): the 7-day expiry travels with the tokens.
     if (m.provider === 'google' && m.client_ref === 'byo' && m.consent_publish_state !== 'production') {
@@ -120,15 +119,20 @@ async function runExport(args: string[]): Promise<void> {
     const full = await vault.get(m.id);
     if (full) {
       entries.push(full);
-      providers.add(full.provider);
     }
   }
   // Refresh tokens are bound to the client that minted them: byo clients
   // MUST travel with their tokens or the bundle imports dead credentials.
   const clients: ProviderClientRecord[] = [];
-  for (const p of providers) {
-    const c = await vault.getClient(p);
-    if (c) clients.push(c);
+  for (const entry of entries) {
+    if (entry.client_ref !== 'byo') continue;
+    const c = await vault.getClient(entry.provider, entry.meta.client_id ?? null);
+    if (c && (!entry.meta.client_id || c.client_id === entry.meta.client_id)) {
+      // Bind legacy single-client exports too, so import order cannot change
+      // which client their refresh tokens use on a multi-client destination.
+      entry.meta.client_id = c.client_id;
+      if (!clients.some(prior => prior.provider === c.provider && prior.client_id === c.client_id)) clients.push(c);
+    }
   }
 
   const passphrase = await passphraseFrom(args);
@@ -195,6 +199,15 @@ async function runImport(args: string[]): Promise<void> {
     return fail(e instanceof Error ? e.message : String(e));
   }
   const vault = openVault();
+  // Old version-1 bundles may lack per-entry issuer metadata. Bind them to
+  // their bundle's sole provider client, never the destination's default.
+  // Validate the whole payload before mutating the destination vault.
+  for (const entry of payload.credentials) {
+    if (entry.client_ref !== 'byo' || entry.meta.client_id) continue;
+    const clients = payload.clients.filter(c => c.provider === entry.provider);
+    if (clients.length !== 1) return fail(`Cannot determine the issuing OAuth client for ${entry.id}; export it again from the original vault.`);
+    entry.meta.client_id = clients[0]!.client_id;
+  }
   for (const c of payload.clients) await vault.putClient(c);
   for (const e of payload.credentials) await vault.put(e);
   if (json) {

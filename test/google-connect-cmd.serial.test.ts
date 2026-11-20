@@ -22,6 +22,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runGoogleCalendars, runGoogleConnect } from '../src/commands/google.ts';
+import { runCreds } from '../src/commands/creds.ts';
+import { FileVaultBackend } from '../src/core/creds/vault.ts';
+import { GoogleTokenProvider } from '../src/core/creds/providers/google.ts';
+import { exportBundle, importBundle } from '../src/core/creds/export.ts';
 import { CredentialError } from '../src/core/creds/errors.ts';
 import type { CredentialEntry, ProviderClientRecord, VaultFileShape } from '../src/core/creds/vault.ts';
 import {
@@ -280,6 +284,106 @@ describe('runGoogleConnect — needs_client_credentials (non-TTY, no creds anywh
 });
 
 describe('runGoogleConnect — two-step paste flow', () => {
+  test('a second client preserves sibling refresh and account-specific reauth', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      const first = googleClient();
+      const old: CredentialEntry = { id: 'google:old@example.com', provider: 'google', kind: 'oauth2', client_ref: 'byo',
+        secret: { refresh_token: 'synthetic-old-refresh' },
+        meta: { account: 'old@example.com', client_id: first.client_id, connected_at: new Date().toISOString() } };
+      writeVault(home, [first], { [old.id]: old });
+      const second = { ...first, client_id: '999999-second.apps.googleusercontent.com', client_secret: `${CLIENT_SECRET}-second` };
+      const file = join(home, 'second-client.json');
+      writeFileSync(file, JSON.stringify({ installed: second }));
+      const start = await captured(() => runGoogleConnect(['--client-json', file, '--account', 'a@example.com', '--paste', '--json']));
+      expect(JSON.parse(start.out).status).toBe('awaiting_consent');
+      expect(start.err).not.toContain('replacing the stored OAuth client');
+      await new GoogleTokenProvider(new FileVaultBackend(), old.id).forceRefresh();
+      const refresh = new URLSearchParams(fetchCalls.find(c => c.url.includes('oauth2.googleapis.com'))!.body);
+      expect(refresh.get('client_id')).toBe(first.client_id);
+      expect(refresh.get('client_secret')).toBe(first.client_secret);
+      const pending = JSON.parse(readFileSync(pendingPath(home), 'utf8')) as PendingShape;
+      const finish = await captured(() => runGoogleConnect(['--code', `http://localhost/?code=synthetic-code&state=${pending.state}`, '--json']));
+      expect(JSON.parse(finish.out).status).toBe('connected');
+      expect(readVault(home).credentials['google:a@example.com'].meta.client_id).toBe(second.client_id);
+      const reauth = await captured(() => runGoogleConnect(['--reauth', 'old@example.com', '--paste', '--json']));
+      expect(JSON.parse(reauth.out).status).toBe('awaiting_consent');
+      expect((JSON.parse(readFileSync(pendingPath(home), 'utf8')) as PendingShape).client_id).toBe(first.client_id);
+    });
+  });
+
+  test('pending code exchange keeps its issuer when a different client is stored later', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      const first = googleClient();
+      const second = { ...first, client_id: '999999-second.apps.googleusercontent.com', client_secret: `${CLIENT_SECRET}-second` };
+      writeVault(home, [first]);
+      const pending = writePendingFile(home);
+      await new FileVaultBackend().putClient(second);
+      const result = await captured(() => runGoogleConnect(['--code', `http://localhost/?code=synthetic-code&state=${pending.state}`, '--json']));
+      expect(JSON.parse(result.out).status).toBe('connected');
+      const exchange = new URLSearchParams(fetchCalls.find(c => c.url.includes('oauth2.googleapis.com'))!.body);
+      expect(exchange.get('client_id')).toBe(first.client_id);
+      expect(exchange.get('client_secret')).toBe(first.client_secret);
+      expect(readVault(home).credentials['google:a@example.com'].meta.client_id).toBe(first.client_id);
+    });
+  });
+
+  test('credential export/import carries each selected issuing client without leaking secrets', async () => {
+    const home = freshHome(), target = freshHome();
+    const passphrase = 'synthetic-transfer-passphrase';
+    const bundle = join(home, 'bundle.json');
+    const a: CredentialEntry = { id: 'google:a@example.com', provider: 'google', kind: 'oauth2', client_ref: 'byo',
+      secret: { refresh_token: 'synthetic-refresh-a' },
+      meta: { account: 'a@example.com', client_id: CLIENT_ID, connected_at: new Date().toISOString(), consent_publish_state: 'production' } };
+    const second = { ...googleClient(), client_id: '999999-second.apps.googleusercontent.com', client_secret: `${CLIENT_SECRET}-second` };
+    const b = { ...a, id: 'google:b@example.com', meta: { ...a.meta, account: 'b@example.com', client_id: second.client_id } };
+    await withEnv(connectEnv(home, { GBRAIN_TEST_BUNDLE_PASSPHRASE: passphrase }), async () => {
+      writeVault(home, [googleClient(), second], { [a.id]: a, [b.id]: b });
+      for (const ids of [a.id, `${a.id},${b.id}`]) {
+        const result = await captured(() => runCreds(['export', '--out', bundle, '--ids', ids, '--passphrase-env', 'GBRAIN_TEST_BUNDLE_PASSPHRASE', '--json']));
+        expect(JSON.parse(result.out).ok).toBe(true);
+        const wire = readFileSync(bundle, 'utf8');
+        expect(wire).not.toContain(CLIENT_SECRET);
+        expect(result.out + result.err).not.toContain(CLIENT_SECRET);
+        const payload = importBundle(JSON.parse(wire), passphrase);
+        expect(payload.clients.map(c => c.client_id)).toEqual(ids.includes(',') ? [CLIENT_ID, second.client_id] : [CLIENT_ID]);
+      }
+    });
+    await withEnv(connectEnv(target, { GBRAIN_TEST_BUNDLE_PASSPHRASE: passphrase }), async () => {
+      const result = await captured(() => runCreds(['import', bundle, '--passphrase-env', 'GBRAIN_TEST_BUNDLE_PASSPHRASE', '--json']));
+      expect(JSON.parse(result.out).status).toBe('imported');
+      const vault = new FileVaultBackend();
+      expect(readVault(target).clients).toHaveLength(2);
+      fetchCalls = [];
+      await new GoogleTokenProvider(vault, a.id).forceRefresh();
+      await new GoogleTokenProvider(vault, b.id).forceRefresh();
+      expect(fetchCalls.map(c => new URLSearchParams(c.body).get('client_id'))).toEqual([CLIENT_ID, second.client_id]);
+    });
+  });
+
+  test('legacy bundle import binds its own issuer even on a multi-client destination', async () => {
+    const home = freshHome();
+    const passphrase = 'synthetic-legacy-transfer';
+    const bundle = join(home, 'legacy-bundle.json');
+    const entry: CredentialEntry = { id: 'google:legacy@example.com', provider: 'google', kind: 'oauth2', client_ref: 'byo',
+      secret: { refresh_token: 'synthetic-legacy-refresh' },
+      meta: { account: 'legacy@example.com', connected_at: new Date().toISOString(), consent_publish_state: 'production' } };
+    const second = { ...googleClient(), client_id: '999999-second.apps.googleusercontent.com' };
+    writeFileSync(bundle, JSON.stringify(exportBundle({ credentials: [entry], clients: [second] }, passphrase)));
+    await withEnv(connectEnv(home, { GBRAIN_TEST_BUNDLE_PASSPHRASE: passphrase }), async () => {
+      const vault = new FileVaultBackend();
+      await vault.putClient(googleClient());
+      const result = await captured(() => runCreds(['import', bundle, '--passphrase-env', 'GBRAIN_TEST_BUNDLE_PASSPHRASE', '--json']));
+      expect(JSON.parse(result.out).status).toBe('imported');
+      await vault.putClient(googleClient());
+      expect((await vault.get(entry.id))!.meta.client_id).toBe(second.client_id);
+      fetchCalls = [];
+      await new GoogleTokenProvider(vault, entry.id).forceRefresh();
+      expect(new URLSearchParams(fetchCalls[0]!.body).get('client_id')).toBe(second.client_id);
+    });
+  });
+
   test('step 1: --client-json + --paste (non-TTY) → awaiting_consent, 0600 pending file, client in the vault', async () => {
     const home = freshHome();
     await withEnv(connectEnv(home), async () => {
