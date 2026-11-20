@@ -10,6 +10,10 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 export const resolveLiveSlugByPath: StoreMember<[path: string], string | null> = (brain, path) =>
   storeCall({ member: 'resolveLiveSlugByPath' }, () => brain.resolveLiveSlugByPath(path));
 
+/** The ids of the sources that hold a live page at `slug`, archived or not, in byte order. */
+export const listLiveSlugSources: StoreMember<[slug: string], string[]> = (brain, slug) =>
+  storeCall({ member: 'listLiveSlugSources' }, () => brain.listLiveSlugSources(slug));
+
 /** The ids of the unarchived sources that hold a live page at `slug`, in byte order. */
 export const listUnarchivedSlugSources: StoreMember<[slug: string], string[]> = (brain, slug) =>
   storeCall({ member: 'listUnarchivedSlugSources' }, () => brain.listUnarchivedSlugSources(slug));

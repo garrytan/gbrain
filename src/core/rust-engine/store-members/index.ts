@@ -87,6 +87,7 @@ import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as repairReads from './repair-reads.ts';
 import * as slugReads from './slug-reads.ts';
+import * as typePageReads from './type-page-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
 import * as pageVisibility from './page-visibility.ts';
@@ -138,6 +139,7 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...repairReads,
   ...slugReads,
+  ...typePageReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
   // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").

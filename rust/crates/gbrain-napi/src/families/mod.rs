@@ -91,5 +91,6 @@ mod telemetry;
 mod timeline_queries;
 mod transactions;
 mod trust_tier_reads;
+mod type_page_reads;
 mod vectors;
 mod wanted_links;

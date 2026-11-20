@@ -150,6 +150,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listOrphanLifetimes',
   // Propose-takes failure tombstones (engine-sql/collate-take-proposals.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'recordFailureTombstone', 'listFailureTombstones',
+  'listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs', 'resolveLiveSlugByPath', 'listLiveSlugSources', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',

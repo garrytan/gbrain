@@ -293,6 +293,7 @@ import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import * as collateRepairReadsImpl from './engine-sql/collate-repair-reads.ts';
+import * as collateTypePageReadsImpl from './engine-sql/collate-type-page-reads.ts';
 import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
 import { postgresExecutor, type RunUnsafeOpts } from './engine-sql/dialect-postgres.ts';
@@ -1214,6 +1215,7 @@ export class PostgresEngine implements BrainEngine {
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number) { return cliReadsOpsImpl.scanExactBatch(this.executeRaw.bind(this), opts, afterPageId, batchPages, timeoutMs); }
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.executeRaw.bind(this), afterPageId); }
   resolveLiveSlugByPath(path: string) { return collateSlugReadsImpl.resolveLiveSlugByPath(this.executeRaw.bind(this), path); }
+  listLiveSlugSources(slug: string) { return collateSlugReadsImpl.listLiveSlugSources(this.executeRaw.bind(this), slug); }
   listUnarchivedSlugSources(slug: string) { return collateSlugReadsImpl.listUnarchivedSlugSources(this.executeRaw.bind(this), slug); }
   countLivePageTypes(scope: collateSlugReadsImpl.TypeScope) { return collateSlugReadsImpl.countLivePageTypes(this.executeRaw.bind(this), scope); }
   listTypeOrphanPages(opts: Parameters<typeof collateSlugReadsImpl.listTypeOrphanPages>[1]) { return collateSlugReadsImpl.listTypeOrphanPages(this.executeRaw.bind(this), opts); }
@@ -1224,6 +1226,10 @@ export class PostgresEngine implements BrainEngine {
   listDuplicateFactRows(sourceIds: readonly string[], auditSources: readonly string[]) { return collateRepairReadsImpl.listDuplicateFactRows(this.executeRaw.bind(this), sourceIds, auditSources); }
   listPagelessEntityFacts(sourceIds: string[]) { return collateRepairReadsImpl.listPagelessEntityFacts(this.executeRaw.bind(this), sourceIds); }
   listSourceIncarnations(sourceIds: string[]) { return collateRepairReadsImpl.listSourceIncarnations(this.executeRaw.bind(this), sourceIds); }
+  listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }) { return collateTypePageReadsImpl.listTypePageBodies(this.executeRaw.bind(this), opts); }
+  listSourceTypePageBodies(opts: { type: string; sourceId: string; limit: number }) { return collateTypePageReadsImpl.listSourceTypePageBodies(this.executeRaw.bind(this), opts); }
+  countRetypeCandidates(opts: collateTypePageReadsImpl.RetypeProbeOpts) { return collateTypePageReadsImpl.countRetypeCandidates(this.executeRaw.bind(this), opts); }
+  listRetypeSampleSlugs(opts: collateTypePageReadsImpl.RetypeProbeOpts) { return collateTypePageReadsImpl.listRetypeSampleSlugs(this.executeRaw.bind(this), opts); }
   listClosedConsolidationTies(sourceIds: readonly string[]) { return collateRepairReadsImpl.listClosedConsolidationTies(this.executeRaw.bind(this), sourceIds); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.executeRaw.bind(this), opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.executeRaw.bind(this), opts, timeoutMs); }

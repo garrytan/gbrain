@@ -296,6 +296,7 @@ import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import * as collateRepairReadsImpl from './engine-sql/collate-repair-reads.ts';
+import * as collateTypePageReadsImpl from './engine-sql/collate-type-page-reads.ts';
 import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { assertSchemaNotAhead } from './schema-client-behind.ts';
@@ -1539,6 +1540,7 @@ export class PGLiteEngine implements BrainEngine {
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number) { return cliReadsOpsImpl.scanExactBatch(this.rawRead, opts, afterPageId, batchPages, timeoutMs); }
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.rawRead, afterPageId); }
   resolveLiveSlugByPath(path: string) { return collateSlugReadsImpl.resolveLiveSlugByPath(this.rawRead, path); }
+  listLiveSlugSources(slug: string) { return collateSlugReadsImpl.listLiveSlugSources(this.rawRead, slug); }
   listUnarchivedSlugSources(slug: string) { return collateSlugReadsImpl.listUnarchivedSlugSources(this.rawRead, slug); }
   countLivePageTypes(scope: collateSlugReadsImpl.TypeScope) { return collateSlugReadsImpl.countLivePageTypes(this.rawRead, scope); }
   listTypeOrphanPages(opts: Parameters<typeof collateSlugReadsImpl.listTypeOrphanPages>[1]) { return collateSlugReadsImpl.listTypeOrphanPages(this.rawRead, opts); }
@@ -1549,6 +1551,10 @@ export class PGLiteEngine implements BrainEngine {
   listDuplicateFactRows(sourceIds: readonly string[], auditSources: readonly string[]) { return collateRepairReadsImpl.listDuplicateFactRows(this.rawRead, sourceIds, auditSources); }
   listPagelessEntityFacts(sourceIds: string[]) { return collateRepairReadsImpl.listPagelessEntityFacts(this.rawRead, sourceIds); }
   listSourceIncarnations(sourceIds: string[]) { return collateRepairReadsImpl.listSourceIncarnations(this.rawRead, sourceIds); }
+  listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }) { return collateTypePageReadsImpl.listTypePageBodies(this.rawRead, opts); }
+  listSourceTypePageBodies(opts: { type: string; sourceId: string; limit: number }) { return collateTypePageReadsImpl.listSourceTypePageBodies(this.rawRead, opts); }
+  countRetypeCandidates(opts: collateTypePageReadsImpl.RetypeProbeOpts) { return collateTypePageReadsImpl.countRetypeCandidates(this.rawRead, opts); }
+  listRetypeSampleSlugs(opts: collateTypePageReadsImpl.RetypeProbeOpts) { return collateTypePageReadsImpl.listRetypeSampleSlugs(this.rawRead, opts); }
   listClosedConsolidationTies(sourceIds: readonly string[]) { return collateRepairReadsImpl.listClosedConsolidationTies(this.rawRead, sourceIds); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }

@@ -126,6 +126,7 @@ import type {
   SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
 } from './engine-sql/jobs-subagent.ts';
 import type * as CollateRepairReads from './engine-sql/collate-repair-reads.ts';
+import type * as CollateTypePageReads from './engine-sql/collate-type-page-reads.ts';
 import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3458,6 +3459,8 @@ export interface BrainEngine {
   resolveLiveSlugByPath(path: string): Promise<string | null>;
   /** The ids of the unarchived sources that hold a live page at `slug`, in byte order (the scoped get_links miss hint, ops/links.ts). */
   listUnarchivedSlugSources(slug: string): Promise<string[]>;
+  /** The ids of the sources that hold a live page at `slug`, in byte order, archived or not (trust page refs, quarantine clear, extract-conversation-facts --grammar). */
+  listLiveSlugSources(slug: string): Promise<string[]>;
   /** How many live pages in scope carry each stored type (`schema review-orphans`, schema-pack/review.ts). The row order is open. */
   countLivePageTypes(scope: { sourceId?: string; sourceIds?: string[] }): Promise<Array<{ type: string | null; n: string }>>;
   /** The live pages in scope with an empty type or one of `types`, by source id then slug in byte order, up to `limit` (`schema review-orphans`). */
@@ -3478,6 +3481,14 @@ export interface BrainEngine {
   listSourceIncarnations(sourceIds: string[]): Promise<Array<{ id: string; incarnation: string }>>;
   /** The facts the pre-#6023 writeback closed at their own instant, with their partners, in (source, id) order (repair/consolidate-ties.ts). */
   listClosedConsolidationTies(sourceIds: readonly string[]): Promise<CollateRepairReads.ClosedTieRow[]>;
+  /** The live pages of a type (in one source when given), by slug then id in byte order, up to `limit` (page-to-link phase, schema-pack/page-to-link.ts). */
+  listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }): Promise<CollateTypePageReads.TypePageBody[]>;
+  /** The live pages of a type in one source, by slug in byte order, up to `limit` (page-to-alias phase, schema-pack/page-to-alias.ts). */
+  listSourceTypePageBodies(opts: { type: string; sourceId: string; limit: number }): Promise<CollateTypePageReads.TypePageBody[]>;
+  /** How many live pages of a type match a retype rule's source-path, slug (`LIKE`) and source filters (schema-pack/retype.ts). */
+  countRetypeCandidates(opts: CollateTypePageReads.RetypeProbeOpts): Promise<number>;
+  /** The first ten slugs, in byte order, of the live pages a retype rule matches (schema-pack/retype.ts). */
+  listRetypeSampleSlugs(opts: CollateTypePageReads.RetypeProbeOpts): Promise<string[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts): Promise<ExactIdentityRow[]>;
   /** rank_entities rows (engine-sql/graph-rank.ts); Postgres bounds the statement by `timeoutMs`, and a timeout throws the statement-timeout error. */

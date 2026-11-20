@@ -24,6 +24,17 @@ impl Brain {
         self.run(env, move |s| s.resolve_live_slug_by_path(&path))
     }
 
+    /// `listLiveSlugSources(slug)`: resolves the ids of the sources that hold a live page at the
+    /// slug, archived or not, in byte order.
+    #[napi]
+    pub fn list_live_slug_sources<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_live_slug_sources(&slug))
+    }
+
     /// `listUnarchivedSlugSources(slug)`: resolves the ids of the unarchived sources that hold a
     /// live page at the slug, in byte order.
     #[napi]

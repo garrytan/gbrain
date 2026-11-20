@@ -37,6 +37,17 @@ export async function listUnarchivedSlugSources(raw: EngineRawRead, slug: string
   return rows.map((r) => r.source_id);
 }
 
+/**
+ * The ids of the sources that hold a live page at `slug`, in byte order, archived or not: the holders the trust page-ref
+ * resolver (trust/refs.ts `resolvePageRef`), `gbrain quarantine clear` and `extract-conversation-facts --grammar` name
+ * when a slug is ambiguous.
+ */
+export async function listLiveSlugSources(raw: EngineRawRead, slug: string): Promise<string[]> {
+  const rows = await raw<{ source_id: string }>(
+    'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"', [slug]);
+  return rows.map((r) => r.source_id);
+}
+
 /** The live pages `schema review-orphans` reads: those of `sourceIds` when given, else of `sourceId`, else every source. */
 export interface TypeScope { sourceId?: string; sourceIds?: string[] }
 

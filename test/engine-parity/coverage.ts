@@ -265,7 +265,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
   repair_reads: ['countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows',
     'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies'],
   // slug_reads: slug reads that order by byte (engine-sql/collate-slug-reads.ts)
-  slug_reads: ['resolveLiveSlugByPath', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows'],
+  slug_reads: ['resolveLiveSlugByPath', 'listLiveSlugSources', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows'],
+  // type_page_reads: the schema-pack conversions' page reads (engine-sql/collate-type-page-reads.ts)
+  type_page_reads: ['listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
     'readInlinePageRegions', 'readStoredPageTier', 'readPageIndexingState', 'hasSegmentStorage'],
   // page_visibility: the remote page-write visibility guards (engine-sql/page-visibility.ts)

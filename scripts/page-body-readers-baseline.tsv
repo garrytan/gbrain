@@ -225,6 +225,8 @@ src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not 
 src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
 src/core/export-snapshot.ts	readExportPages	sql	STREAM	
 src/core/engine-sql/collate-slug-reads.ts	readExportPageRows	sql	STREAM	the export read of whole pages by id (was inside export-snapshot.ts readExportPages): inline pages only, a segmented page streams through segmentedExportMarkdown
+src/core/engine-sql/collate-type-page-reads.ts	listSourceTypePageBodies	sql	LEAD	the schema-pack sample read of a type's pages (was inside page-to-link.ts / page-to-alias.ts): the body is read to scan its links or aliases
+src/core/engine-sql/collate-type-page-reads.ts	listTypePageBodies	sql	LEAD	the schema-pack sample read of a type's pages (was inside page-to-link.ts / page-to-alias.ts): the body is read to scan its links or aliases
 src/core/extract-ner.ts	extractNerLinks	field	STREAM	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	call:serializePageToMarkdown	SEGW	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	field	STREAM	inline rows only (SQL filter)
@@ -643,10 +645,8 @@ src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	no
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	
-src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	sql	LEAD	
 src/core/schema-pack/page-to-link.ts	resolveSlug	field	LEAD	
 src/core/schema-pack/page-to-link.ts	runPageToLinkCore	field	LEAD	
-src/core/schema-pack/page-to-link.ts	runPageToLinkCore	sql	LEAD	
 src/core/search-vector-backfill.ts	backfillPageVectors	field	LEAD	
 src/core/search-vector-backfill.ts	backfillPageVectors	sql	LEAD	
 src/core/search/chunk-windows.ts	mapChunkWindowRows	field	STREAM	

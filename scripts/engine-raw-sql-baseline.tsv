@@ -128,7 +128,6 @@ src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/export.ts	execute_raw	2
-src/commands/extract-conversation-facts.ts	execute_raw	1
 src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-mentions-explain.ts	execute_raw	6
 src/commands/extract-stale-options.ts	execute_raw	1
@@ -164,7 +163,6 @@ src/commands/migrations/v0_31_0.ts	execute_raw	1
 src/commands/migrations/v0_32_2.ts	execute_raw	2
 src/commands/onboard.ts	execute_raw	1
 src/commands/pages-status.ts	execute_raw	2
-src/commands/quarantine.ts	execute_raw	1
 src/commands/recall.ts	execute_raw	1
 src/commands/reindex-code.ts	execute_raw	2
 src/commands/reindex-multimodal.ts	sql_template	5
@@ -893,10 +891,9 @@ src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
 src/core/schema-pack/lint-rules.ts	execute_raw	3
-src/core/schema-pack/page-to-alias.ts	execute_raw	3
-src/core/schema-pack/page-to-link.ts	execute_raw	1
+src/core/schema-pack/page-to-alias.ts	execute_raw	2
 src/core/schema-pack/query-cache-invalidator.ts	execute_raw	1
-src/core/schema-pack/retype.ts	execute_raw	3
+src/core/schema-pack/retype.ts	execute_raw	1
 src/core/schema-pack/stats.ts	execute_raw	2
 src/core/schema-pack/sync.ts	execute_raw	3
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
@@ -1003,7 +1000,6 @@ src/core/trust/page-write.ts	execute_raw	8
 src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/provenance-drift.ts	execute_raw	3
-src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15
 src/core/trust/supersede-handlers.ts	execute_raw	12	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet

@@ -1,7 +1,7 @@
 //! Slug reads that callers ran through `executeRaw` and that order by byte
 //! (`src/core/engine-sql/collate-slug-reads.ts`).
 //!
-//! Members: resolveLiveSlugByPath, listUnarchivedSlugSources, countLivePageTypes, listTypeOrphanPages, readExportPageRows.
+//! Members: resolveLiveSlugByPath, listLiveSlugSources, listUnarchivedSlugSources, countLivePageTypes, listTypeOrphanPages, readExportPageRows.
 //!
 //! Keys: none. Each read scans the page records (`pages::all_pages`), as `page_ops` does. Text
 //! sorts in byte order, which is what `COLLATE "C"` gives on Postgres and PGLite; a Rust `String`
@@ -74,6 +74,19 @@ impl Store {
             .min()
             .map(|(_, slug)| slug)
             .filter(|slug| !slug.is_empty()))
+    }
+
+    /// `listLiveSlugSources(slug)`: the ids of the sources that hold a live page at `slug`, archived
+    /// or not, in byte order (a source holds one live page per slug, so each id is once).
+    pub fn list_live_slug_sources(&self, slug: &str) -> Result<Vec<String>> {
+        no_nul("listLiveSlugSources", &[("slug", slug)])?;
+        let read = self.read()?;
+        let held: BTreeSet<String> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.slug == slug && p.deleted_at_us.is_none())
+            .map(|p| p.source_id)
+            .collect();
+        Ok(held.into_iter().collect())
     }
 
     /// `listUnarchivedSlugSources(slug)`: the distinct ids of the unarchived sources that hold a

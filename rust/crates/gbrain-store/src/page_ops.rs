@@ -338,7 +338,7 @@ fn push_char(out: &mut Vec<LikeToken>, c: char, fold: bool) {
 }
 
 /// `text LIKE pattern` (`fold` false) or `text ILIKE pattern` (`fold` true).
-fn like(text: &str, pattern: &str, fold: bool) -> bool {
+pub(crate) fn like(text: &str, pattern: &str, fold: bool) -> bool {
     let tokens = like_tokens(pattern, fold);
     let chars: Vec<char> = if fold {
         text.chars().flat_map(char::to_lowercase).collect()

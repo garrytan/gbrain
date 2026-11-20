@@ -85,7 +85,7 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return sources;
   });
 
-  parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'listLiveSlugSources'] }, async (engine, backend) => {
     await seed(engine, backend);
     const e = await errorOf(() => resolvePageRef(engine, { kind: 'page', sourceId: null, slug: SLUG } as never)) as OperationError;
     expect(e.message).toContain(`exists in 3 sources: ${BYTE_SOURCES.join(', ')}.`);
@@ -93,14 +93,14 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return { message: e.message, suggestion: e.suggestion };
   });
 
-  parityTest('quarantine clear names the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('quarantine clear names the sources by byte', { methods: ['putPage', 'listLiveSlugSources'] }, async (engine, backend) => {
     await seed(engine, backend);
     const err = await cli(() => runQuarantine(engine, ['clear', SLUG]));
     expect(err).toContain(`exists in 3 sources: ${BYTE_SOURCES.join(', ')}.`);
     return err;
   });
 
-  parityTest('extract-conversation-facts --grammar names the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('extract-conversation-facts --grammar names the sources by byte', { methods: ['putPage', 'listLiveSlugSources'] }, async (engine, backend) => {
     await seed(engine, backend);
     const err = await cli(() => runExtractConversationFacts(engine, ['--slug', SLUG, '--grammar', 'none', '--dry-run']));
     expect(err).toContain(`is in 3 sources (${BYTE_SOURCES.join(', ')})`);

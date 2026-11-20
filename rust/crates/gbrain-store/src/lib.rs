@@ -88,6 +88,7 @@ pub mod telemetry;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
+pub mod type_page_reads;
 pub mod vectors;
 pub mod wanted_links;
 pub mod write_attribution;

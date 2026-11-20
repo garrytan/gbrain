@@ -12,6 +12,7 @@ Rust `String` does.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.resolveLiveSlugByPath(path)` | the slug of the live page (not soft-deleted) whose `source_path` is `path`, across every source; with several (one per source: a source holds one live page per path), the one in the lowest source id by byte. Null when no live page claims the path. Text holding a NUL byte is `invalid_argument` | `resolveLiveSlugByPath` |
+| `brain.listLiveSlugSources(slug)` | the ids of the sources that hold a live page at `slug`, archived or not, in byte order, each once. Empty when none does | `listLiveSlugSources` |
 | `brain.listUnarchivedSlugSources(slug)` | the ids of the sources that hold a live page at `slug` and are not archived, in byte order, each once. Empty when none does | `listUnarchivedSlugSources` |
 | `brain.countLivePageTypes(scope)` | one `{type, n}` row per page type over the live pages of the scope (`{}` for all, `{sourceId}` or `{sourceIds}`), `n` as text, in no fixed order. A page with no type counts under the empty type | `countLivePageTypes` |
 | `brain.listTypeOrphanPages({scope, types, limit})` | `{slug, source_id, type}` of the live pages of the scope whose type is empty or in `types`, ordered by source id then slug, both by byte, cut at `limit` | `listTypeOrphanPages` |

@@ -83,6 +83,23 @@ fn typed(b: &Brain, source_id: &str, slug: &str, page_type: &str) {
 }
 
 #[test]
+fn live_slug_sources_list_every_live_holder_by_byte_archived_or_not() {
+    let b = brain("slug-reads-live-sources");
+    for id in ["ab", "a0", "a-z", "gone", "dead"] {
+        source(&b, id);
+        page(&b, id, "notes/shared", None);
+    }
+    b.set_source_archived("gone", true).unwrap();
+    b.soft_delete_page("notes/shared", Some("dead")).unwrap();
+    assert_eq!(
+        b.list_live_slug_sources("notes/shared").unwrap(),
+        vec!["a-z", "a0", "ab", "gone"]
+    );
+    assert!(b.list_live_slug_sources("missing").unwrap().is_empty());
+    assert!(b.list_live_slug_sources("bad\0slug").is_err());
+}
+
+#[test]
 fn unarchived_slug_sources_list_live_holders_by_byte() {
     let b = brain("slug-reads-unarchived-sources");
     for id in ["ab", "a0", "a-z", "gone", "dead"] {

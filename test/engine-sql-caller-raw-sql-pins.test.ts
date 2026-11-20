@@ -670,6 +670,11 @@ SELECT source_id, type FROM pairs`],
             ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 1`],
   },
   {
+    from: 'src/core/trust/refs.ts:79 resolvePageRef, src/commands/quarantine.ts:212 and src/commands/extract-conversation-facts.ts:1667, at dded7edc51',
+    case: { method: 'listLiveSlugSources', variant: 'default', run: e => e.listLiveSlugSources('notes/a') },
+    texts: ['SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"'],
+  },
+  {
     from: 'src/core/ops/links.ts:397 hintScopedLinkMiss, at dded7edc51',
     case: { method: 'listUnarchivedSlugSources', variant: 'default', run: e => e.listUnarchivedSlugSources('notes/a') },
     texts: [`SELECT DISTINCT p.source_id COLLATE "C" AS source_id FROM pages p JOIN sources s ON s.id = p.source_id
@@ -715,6 +720,41 @@ SELECT source_id, type FROM pairs`],
   ) SELECT p.*,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
     FROM export_page p WHERE p.deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/schema-pack/page-to-link.ts:141 runPageToLinkCore (source-scoped), at dded7edc51',
+    case: { method: 'listTypePageBodies', variant: 'sourceScoped', run: e => e.listTypePageBodies({ type: 'note', sourceId: 'default', limit: 5 }) },
+    texts: [`SELECT slug, compiled_truth, frontmatter FROM pages WHERE deleted_at IS NULL AND type = $1 AND source_id = $2 ORDER BY slug COLLATE "C", id LIMIT 5`],
+  },
+  {
+    from: 'src/core/schema-pack/page-to-link.ts:141 runPageToLinkCore (every source), at dded7edc51',
+    case: { method: 'listTypePageBodies', variant: 'anySource', run: e => e.listTypePageBodies({ type: 'note', limit: 5 }) },
+    texts: [`SELECT slug, compiled_truth, frontmatter FROM pages WHERE deleted_at IS NULL AND type = $1 ORDER BY slug COLLATE "C", id LIMIT 5`],
+  },
+  {
+    from: 'src/core/schema-pack/page-to-alias.ts:164 runPageToAliasCore, at dded7edc51',
+    case: { method: 'listSourceTypePageBodies', variant: 'default', run: e => e.listSourceTypePageBodies({ type: 'note', sourceId: 'default', limit: 5 }) },
+    texts: [`SELECT slug, compiled_truth, frontmatter FROM pages WHERE deleted_at IS NULL AND type = $1 AND source_id = $2 ORDER BY slug COLLATE "C" LIMIT 5`],
+  },
+  {
+    from: 'src/core/schema-pack/retype.ts:148 probeRule count (every filter), at dded7edc51',
+    case: { method: 'countRetypeCandidates', variant: 'filtered', run: e => e.countRetypeCandidates({ fromType: 'note', pathFilter: 'a/%', slugFilter: 'b/%', sourceId: 'default' }) },
+    texts: [`SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND type = $1 AND source_path LIKE $2 AND slug LIKE $3 AND source_id = $4`],
+  },
+  {
+    from: 'src/core/schema-pack/retype.ts:148 probeRule count (type only), at dded7edc51',
+    case: { method: 'countRetypeCandidates', variant: 'bare', run: e => e.countRetypeCandidates({ fromType: 'note' }) },
+    texts: [`SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND type = $1`],
+  },
+  {
+    from: 'src/core/schema-pack/retype.ts:153 probeRule sample (every filter), at dded7edc51',
+    case: { method: 'listRetypeSampleSlugs', variant: 'filtered', run: e => e.listRetypeSampleSlugs({ fromType: 'note', pathFilter: 'a/%', slugFilter: 'b/%', sourceId: 'default' }) },
+    texts: [`SELECT slug FROM pages WHERE deleted_at IS NULL AND type = $1 AND source_path LIKE $2 AND slug LIKE $3 AND source_id = $4 ORDER BY slug COLLATE "C" LIMIT 10`],
+  },
+  {
+    from: 'src/core/schema-pack/retype.ts:153 probeRule sample (type only), at dded7edc51',
+    case: { method: 'listRetypeSampleSlugs', variant: 'bare', run: e => e.listRetypeSampleSlugs({ fromType: 'note' }) },
+    texts: [`SELECT slug FROM pages WHERE deleted_at IS NULL AND type = $1 ORDER BY slug COLLATE "C" LIMIT 10`],
   },
   {
     from: 'src/core/repair/aliases.ts:28 ORPHANED_ALIAS_COUNTS_SQL, at dded7edc51',
