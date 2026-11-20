@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 function runDream(args: string[], extraEnv: Record<string, string> = {}): {
   stdout: string;
@@ -28,7 +29,7 @@ function runDream(args: string[], extraEnv: Record<string, string> = {}): {
   const result = spawnSync('bun', ['run', 'src/cli.ts', 'dream', ...args], {
     cwd: process.cwd(),
     encoding: 'utf8',
-    env: { ...process.env, ...extraEnv },
+    env: { ...envWithoutDatabaseUrl(), ...extraEnv },
     timeout: 30_000,
   });
   return {

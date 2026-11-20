@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { probeBrainIdentity } from '../src/core/connect-probe.ts';
 import { discoverOAuth, mintClientCredentialsToken } from '../src/core/remote-mcp-probe.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const PORT = 19735; // avoid the production 3131 + the oauth E2E's 19131
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -161,7 +162,7 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
     const r = spawnSync('bun', ['run', 'src/cli.ts', 'connect', ...args], {
       cwd: process.cwd(),
       encoding: 'utf8',
-      env: { ...process.env, GBRAIN_HOME: home, ...extraEnv },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: home, ...extraEnv },
     });
     return { code: r.status ?? 1, out: `${r.stdout ?? ''}\n${r.stderr ?? ''}` };
   };

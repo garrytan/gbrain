@@ -21,6 +21,7 @@ import { join } from 'path';
 import { runEvalLongMemEval } from '../src/commands/eval-longmemeval.ts';
 import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
 import { configureGateway, resetGateway, __setGenerateTextTransportForTests } from '../src/core/ai/gateway.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO = process.cwd();
 const CLI = join(REPO, 'src', 'cli.ts');
@@ -36,7 +37,7 @@ function run(args: string[]) {
     encoding: 'utf-8',
     timeout: 180_000,
     env: {
-      ...process.env,
+      ...envWithoutDatabaseUrl(),
       GBRAIN_HOME: join(tmp, 'home'),
       GBRAIN_SKIP_STARTUP_HOOKS: '1',
       GBRAIN_QUIET: '1',

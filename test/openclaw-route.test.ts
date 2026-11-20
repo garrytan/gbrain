@@ -17,6 +17,7 @@ import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 import { enumerateScaffoldEntries, loadBundleManifest } from '../src/core/skillpack/bundle.ts';
 import { openclawTurnPluginFiles } from '../src/core/setup/openclaw-turn-plugin.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const OPENCLAW_SKILL_READ_CAP_BYTES = 32_000;
@@ -35,7 +36,7 @@ function cli(args: string[]) {
   const r = spawnSync('bun', [join(REPO_ROOT, 'src', 'cli.ts'), ...args.map((a) => a.replace('<home>', home))], {
     encoding: 'utf8',
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: home, GBRAIN_HOME: home, OPENCLAW_STATE_DIR: '', OPENCLAW_CONFIG_PATH: '', OPENCLAW_WORKSPACE_DIR: '', PATH: `${join(home, 'bin')}:${process.env.PATH}` },
+    env: { ...envWithoutDatabaseUrl(), HOME: home, GBRAIN_HOME: home, OPENCLAW_STATE_DIR: '', OPENCLAW_CONFIG_PATH: '', OPENCLAW_WORKSPACE_DIR: '', PATH: `${join(home, 'bin')}:${process.env.PATH}` },
     timeout: 120_000,
   });
   return { code: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };

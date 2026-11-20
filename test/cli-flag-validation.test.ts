@@ -26,6 +26,7 @@ import {
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { buildFlagRegistry } from '../scripts/generate-flag-registry.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const BOGUS = '--definitely-not-a-real-flag-xyz';
 const EXEMPT = new Set(['call', 'config']); // jobs is exempt only for `submit`
@@ -287,7 +288,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     spawnSync('bun', ['src/cli.ts', ...args], {
       encoding: 'utf-8',
       timeout: 30_000,
-      env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     });
 
   test('init --migrate-only --dry-run fails loud BEFORE any engine work', () => {
@@ -402,7 +403,7 @@ describe('#5700 subprocess smoke — the reported invocation fails loud', () => 
     spawnSync('bun', ['src/cli.ts', ...args], {
       encoding: 'utf-8',
       timeout: 30_000,
-      env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     });
 
   test('put --content --source <id> exits 2 naming both flags', () => {

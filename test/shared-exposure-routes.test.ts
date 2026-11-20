@@ -8,7 +8,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCli } from './helpers/cli-spawn.ts';
+import { runCli, envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const CODE = 'unscoped_multi_user_token';
 const roots: string[] = [];
@@ -106,7 +106,7 @@ describe('brain routes on a repo-less keyless brain', () => {
     for (const [i, title] of titles.entries()) {
       const file = join(b.root, `p${i}.md`);
       writeFileSync(file, page(title));
-      const put = Bun.spawnSync(['sh', '-c', `'${process.execPath}' '${join(import.meta.dir, '..', 'src', 'cli.ts')}' put chats/p${i} < '${file}'`], { env: Object.fromEntries(Object.entries({ ...process.env, ...b.env }).filter(([, v]) => v !== undefined)) as Record<string, string> });
+      const put = Bun.spawnSync(['sh', '-c', `'${process.execPath}' '${join(import.meta.dir, '..', 'src', 'cli.ts')}' put chats/p${i} < '${file}'`], { env: Object.fromEntries(Object.entries({ ...envWithoutDatabaseUrl(), ...b.env }).filter(([, v]) => v !== undefined)) as Record<string, string> });
       expect(put.exitCode).toBe(0);
     }
     return b;

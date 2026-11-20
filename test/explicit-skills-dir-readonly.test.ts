@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { autoDetectSkillsDirReadOnly } from '../src/core/repo-root.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -82,7 +83,7 @@ describe('read-only GBRAIN_SKILLS_DIR detection', () => {
     const res = spawnSync('bun', [CLI, 'check-resolvable', '--json'], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
-      env: { ...process.env, GBRAIN_SKILLS_DIR: explicit },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKILLS_DIR: explicit },
       maxBuffer: 10 * 1024 * 1024,
     });
 
@@ -98,7 +99,7 @@ describe('read-only GBRAIN_SKILLS_DIR detection', () => {
     const res = spawnSync('bun', [CLI, 'check-resolvable', '--json'], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
-      env: { ...process.env, GBRAIN_SKILLS_DIR: invalid },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKILLS_DIR: invalid },
       maxBuffer: 10 * 1024 * 1024,
     });
 

@@ -10,13 +10,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { registerManifestEntries } from '../src/core/skill-manifest.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const dirs: string[] = [];
 afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
 function gbrain(args: string[], home: string) {
   return spawnSync(process.execPath, ['run', join(REPO, 'src/cli.ts'), ...args], { cwd: REPO, encoding: 'utf8', timeout: 120_000,
-    env: { ...process.env, GBRAIN_HOME: home, HOME: home } });
+    env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: home, HOME: home } });
 }
 
 describe('skillpack sync registers what it scaffolded (#4831)', () => {

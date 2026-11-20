@@ -26,6 +26,7 @@ import { execSync, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 const GBRAIN_CMD = 'bun';
@@ -41,7 +42,7 @@ function runGbrain(args: string[], opts: { cwd?: string } = {}): RunResult {
   const result = spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, ...args], {
     cwd: opts.cwd ?? REPO_ROOT,
     encoding: 'utf-8',
-    env: { ...process.env, OPENCLAW_WORKSPACE: '' }, // ensure walk-up tier wins
+    env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' }, // ensure walk-up tier wins
   });
   return {
     stdout: result.stdout ?? '',
@@ -122,7 +123,7 @@ describe('skillpack flow (E2E)', () => {
     const r0 = spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, 'skillpack', 'scaffold', 'apply-demo', '--workspace', ws], {
       cwd: gbrainRoot,
       encoding: 'utf-8',
-      env: { ...process.env, OPENCLAW_WORKSPACE: '' },
+      env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' },
     });
     expect(r0.status).toBe(0);
 
@@ -136,7 +137,7 @@ describe('skillpack flow (E2E)', () => {
     const r = spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, 'skillpack', 'reference', 'apply-demo', '--workspace', ws, '--apply-clean-hunks'], {
       cwd: gbrainRoot,
       encoding: 'utf-8',
-      env: { ...process.env, OPENCLAW_WORKSPACE: '' },
+      env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' },
     });
     expect(r.status).toBe(0);
     expect(readFileSync(join(ws, 'skills', 'apply-demo', 'SKILL.md'), 'utf-8')).toContain(
@@ -213,7 +214,7 @@ describe('skillpack flow (E2E)', () => {
     const r = spawnSync(
       GBRAIN_CMD,
       [...GBRAIN_ARGS, 'skillpack', 'harvest', 'contaminated', '--from', hostRoot],
-      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' } },
+      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' } },
     );
     expect(r.status).toBe(1); // lint_failed
     expect((r.stdout ?? '') + (r.stderr ?? '')).toContain('Wintermute');
@@ -250,7 +251,7 @@ describe('skillpack flow (E2E)', () => {
         hostRoot,
         '--no-lint',
       ],
-      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' } },
+      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' } },
     );
     expect(r.status).toBe(0);
     expect(existsSync(join(gbrainRoot, 'skills', 'bypass-test', 'SKILL.md'))).toBe(true);
@@ -333,7 +334,7 @@ describe('skillpack flow (E2E)', () => {
 
     const ws = scratchWorkspace();
     spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, 'skillpack', 'scaffold', 'warn-demo', '--workspace', ws], {
-      cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' },
+      cwd: gbrainRoot, encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' },
     });
     // Cause drift to make apply do something.
     writeFileSync(
@@ -344,7 +345,7 @@ describe('skillpack flow (E2E)', () => {
     const r = spawnSync(
       GBRAIN_CMD,
       [...GBRAIN_ARGS, 'skillpack', 'reference', 'warn-demo', '--workspace', ws, '--apply-clean-hunks'],
-      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' } },
+      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' } },
     );
     expect(r.status).toBe(0);
     // WARNING must be on stderr (survives stdout redirection).
@@ -372,13 +373,13 @@ describe('skillpack flow (E2E)', () => {
 
     const ws = scratchWorkspace();
     spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, 'skillpack', 'scaffold', 'json-demo', '--workspace', ws], {
-      cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' },
+      cwd: gbrainRoot, encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' },
     });
 
     const r = spawnSync(
       GBRAIN_CMD,
       [...GBRAIN_ARGS, 'skillpack', 'reference', 'json-demo', '--workspace', ws, '--apply-clean-hunks', '--json'],
-      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' } },
+      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '' } },
     );
     expect(r.status).toBe(0);
     // JSON mode: stderr stays clean for machine consumers.

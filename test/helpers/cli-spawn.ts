@@ -74,13 +74,24 @@ export function _setSpawnTarget(cmd: readonly string[] | null): void {
   spawnTargetOverride = cmd;
 }
 
-function buildEnv(opts?: CliSpawnOpts): Record<string, string> {
+/**
+ * The test process env without DATABASE_URL and GBRAIN_DATABASE_URL. A test
+ * that spawns the CLI directly (spawnSync) spreads this instead of
+ * process.env, so a Postgres test run cannot send the child's writes to the
+ * Postgres test database instead of the test's own PGLite brain.
+ */
+export function envWithoutDatabaseUrl(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) env[k] = v;
   }
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
+  return env;
+}
+
+function buildEnv(opts?: CliSpawnOpts): Record<string, string> {
+  const env = envWithoutDatabaseUrl();
   delete env.GBRAIN_REMOTE_CLIENT_SECRET;
   env.GBRAIN_SKIP_STARTUP_HOOKS = '1';
   if (opts?.home !== undefined) {

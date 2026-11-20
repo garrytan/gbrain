@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const fence = '---';
 
@@ -10,7 +11,7 @@ function runValidate(path: string): { stdout: string; code: number } {
   const r = spawnSync(process.execPath, ['run', 'src/cli.ts', 'frontmatter', 'validate', path], {
     encoding: 'utf8',
     cwd: process.cwd(),
-    env: process.env,
+    env: envWithoutDatabaseUrl(),
   });
   return { stdout: r.stdout ?? '', code: r.status ?? -1 };
 }
