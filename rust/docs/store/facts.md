@@ -616,9 +616,13 @@ subject `*` or the page ("The fact purge ledger"). A NUL character or a row numb
 factHash, requestId, actor, reason })` stores a tombstone and answers true, or false when the key exists
 (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A visibility other than `private` or `world`, a
 `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing source refuses as the
-foreign key does. `purge_fact` (facts/purge.ts) writes its main tombstone through this member; the holding-slug
-tombstones, the take and page purges, the purge epoch and the rest of the purge still run through `executeRaw`, which
-this engine refuses, so a full `purge_fact` does not run on Rust yet.
+foreign key does. `insertHoldingPagePurges({ sourceId, visibility, factHash, requestId, actor, reason, factIds })`
+(`facts/holding_purges.rs`) stores that tombstone under each holding page (`memory/unattributed` or a slug ending in
+`/memory/unattributed`) that holds one of the listed facts of the source, when the fact names an entity, one per page,
+through `insertFactPurge`, so the first row keeps its columns; it answers null. A NUL character, a `requestId` that is
+not a UUID or an id that is not a whole number refuses with `invalid_argument` even when no row would be added. `purge_fact`
+(facts/purge.ts) writes its main tombstone through `insertFactPurge`; the take and page purges, the purge epoch and the
+rest of the purge still run through `executeRaw`, which this engine refuses, so a full `purge_fact` does not run on Rust yet.
 
 Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
 and the purge half of `isFactWithdrawn` ([trust.md](trust.md)), which every fact writer runs before it saves;
@@ -852,8 +856,9 @@ What the store would need to hold to answer them, by family:
 
 The parity cases seed pages, tags, versions, facts, chunks and write requests through the typed writers. Stagings, takes,
 review and proposal rows, gate holds and receipts, open loops, core edit notices and view digests have no typed fixture, so
-those members are compared on empty tables only; `insertHoldingPagePurges` and `insertTakePurge` return nothing and have no
-typed reader, so they are compared by running without error.
+those members are compared on empty tables only; `insertTakePurge` returns nothing and has no typed reader, so it is compared
+by running without error. `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
+(holding-page-purges.test.ts).
 
 ## Not modeled
 

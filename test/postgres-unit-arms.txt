@@ -178,6 +178,7 @@ test/engine-parity/files-ops-sites.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
 test/engine-parity/held-fence-cells.test.ts
+test/engine-parity/holding-page-purges.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts

@@ -84,7 +84,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	121	no	yes	yes	serves
+transaction	lifecycle	yes	123	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -92,7 +92,7 @@ getPage	pages	yes	116	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	502	yes	yes	yes	serves
+putPage	pages	yes	504	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -392,7 +392,7 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	86	yes	yes	yes	serves
-insertFacts	facts	yes	110	no	yes	yes	serves
+insertFacts	facts	yes	112	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	60	no	yes	yes	serves
 listFactsByEntity	facts	yes	27	yes	yes	yes	serves
@@ -461,7 +461,7 @@ applyTransactionSettings	import_guards	yes	54	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
-readLedgerSource	import_guards	yes	9	no	yes	yes	serves
+readLedgerSource	import_guards	yes	11	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	24	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
@@ -679,7 +679,7 @@ readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listHeldFenceCells	cli_reads_ops	yes	5	no	yes	yes	serves
-readFenceOverlayRows	cli_reads_ops	yes	5	no	yes	yes	serves
+readFenceOverlayRows	cli_reads_ops	yes	6	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	6	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	8	no	yes	yes	serves
@@ -754,7 +754,7 @@ readLiveStoredBody	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listPageStates	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 countSegmentedVersionsOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	19	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	21	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	1	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	7	no	yes	yes	serves
 settleFactsReconcile	facts_purge	yes	4	no	yes	yes	serves
@@ -823,7 +823,7 @@ deletePageViewDigests	facts_purge	yes	2	no	yes	yes	refuses:facts
 deleteUnreferencedPurgedTexts	facts_purge	yes	2	no	yes	yes	refuses:facts
 listPurgeMatchCandidates	facts_purge	yes	1	no	yes	yes	refuses:facts
 lockPurgeSource	facts_purge	yes	1	no	yes	yes	refuses:facts
-insertHoldingPagePurges	facts_purge	yes	2	no	yes	yes	refuses:facts
+insertHoldingPagePurges	facts_purge	yes	4	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	2	no	yes	yes	refuses:facts
 deletePurgedTakes	facts_purge	yes	2	no	yes	yes	refuses:facts
 deletePurgeReviewQueue	facts_purge	yes	2	no	yes	yes	refuses:facts
@@ -1009,7 +1009,7 @@ findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
 insertFactWithdrawal	trust	yes	18	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
-isFactPurged	trust	yes	3	no	yes	yes	serves
+isFactPurged	trust	yes	4	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
