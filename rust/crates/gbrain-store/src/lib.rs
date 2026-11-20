@@ -51,6 +51,7 @@ pub mod embedding_install;
 pub mod embeddings;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;

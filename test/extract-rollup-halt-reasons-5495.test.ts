@@ -34,6 +34,7 @@ import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from './helpers/extract-atoms-page-fixtures.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { upsertExtractRollupDay as rollupDaySql } from '../src/core/engine-sql/extract-bookkeeping.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -195,6 +196,8 @@ test('extract_atoms records a credentials abort as provider_auth; an extract_fac
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }];
       return [];
     },
+    // The rollup upsert is a typed member; it runs the engine-sql statement through this stub's executeRaw.
+    async upsertExtractRollupDay(d: never, o?: { preV141?: boolean }) { return rollupDaySql(this as unknown as BrainEngine, d, o); },
     ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
     // The empty-fence guard reads its per-page count through the typed member: one guard-held page with three
     // unfenced rows (the bigint count arrives as text, as on Postgres), as the raw stub's COUNT(*) AS n answer did.

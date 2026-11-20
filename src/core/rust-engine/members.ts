@@ -939,6 +939,10 @@ export const RUST_ENGINE_MEMBERS = {
   writeOpCheckpointDoc: 'takes',
   listWriteRequestsByRequestId: 'takes',
   listGuardedTakeRows: 'takes',
+  // The extract receipt write's page reads and the extract_rollup_7d day upsert (store A 0x0A, extract_bookkeeping.rs).
+  readExtractReceiptSlot: 'pages',
+  readExtractReceiptSeal: 'pages',
+  upsertExtractRollupDay: 'pages',
   countMcpResolvedTakes: 'takes',
   listTakeSupersessionCandidates: 'takes',
   countZeroWeightWithTakes: 'salience',

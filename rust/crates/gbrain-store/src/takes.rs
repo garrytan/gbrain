@@ -20,6 +20,8 @@
 //!   `M next_take_proposal_id`.
 //! - `A 0x09 <source> 0x00 <slug> 0x00 <content hash> 0x00 <prompt> 0x00 <claim sha256>` -> the
 //!   proposal id: the table's idempotency index (`takes/proposals.rs`).
+//! - `A 0x0A <kind> 0x00 <source> 0x00 <day>` -> an `extract_rollup_7d` row (`extract_bookkeeping.rs`): not a
+//!   takes table; it shares the tag so every `A` sub-key is listed here.
 //! - Id counter: `M next_take_id`. Every row an `addTakesBatch` call reads takes an id, as the
 //!   Postgres sequence default does, inserted or not.
 //!

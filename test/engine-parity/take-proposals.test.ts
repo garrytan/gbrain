@@ -23,7 +23,8 @@ import { loadFailureLedger } from '../../src/core/cycle/propose-takes-failures.t
 import { runPhaseProposeTakes, type ProposeTakesExtractor } from '../../src/core/cycle/propose-takes.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
-import { createSource, parityArms } from './harness.ts';
+import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
+import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -109,12 +110,59 @@ const noIds = (r: { code: number | null; stdout: string; stderr: string }, ids: 
   return { code: r.code, stdout: swap(r.stdout), stderr: swap(r.stderr) };
 };
 
+/**
+ * Rust arm only: run the case on an engine that keeps every typed refusal a member raised, and end the case on the
+ * first one, even when the code under test caught it and carried on. The cycle cases reach page-state/projections.ts
+ * through the extract receipt write (resealSafeChunks, planProjectionKeep), whose raw SQL the Rust engine refuses
+ * until lane 3 cut 1 (7f1ee5198e + resealSafeChunks :467, Nov 23); this pins them to that refusal. The other arms run
+ * the case as written.
+ */
+async function stopAtCaughtRefusal<T>(engine: BrainEngine, backend: ParityBackend, run: (engine: BrainEngine) => Promise<T>): Promise<T> {
+  if (backend !== 'rust') return run(engine);
+  const caught: unknown[] = [];
+  const watch = (e: BrainEngine): BrainEngine => new Proxy(e, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function' || typeof prop !== 'string') return value;
+      return (...args: unknown[]) => {
+        if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
+          const fn = args[0] as (tx: BrainEngine) => unknown;
+          args = [(tx: BrainEngine) => fn(watch(tx)), ...args.slice(1)];
+        }
+        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+        if (!(result instanceof Promise)) return result;
+        return result.catch((error: unknown) => {
+          if ((error as { code?: unknown } | null)?.code === 'engine_capability_missing') caught.push(error);
+          throw error;
+        });
+      };
+    },
+  });
+  const result = await run(watch(engine));
+  if (caught.length > 0) throw caught[0];
+  return result;
+}
+
+/**
+ * Rust arm only: an accept's takes_add goes through the persistence coordinator, whose raw SQL
+ * (persistence/takes-prepare.ts and page-state/projections.ts) the Rust engine refuses, so the coordinator parks the
+ * write as `write_pending` blocked on `engine_capability_missing`. End the case on that capability refusal.
+ */
+function acceptRefusal(backend: ParityBackend, e: unknown): never {
+  const err = e as { code?: string; blocked_reason?: string; writeRequest?: { blocked_reason?: string | null } };
+  if (backend === 'rust' && err.code === 'write_pending'
+    && (err.writeRequest?.blocked_reason ?? err.blocked_reason) === 'engine_capability_missing') {
+    throw capabilityMissing('raw_sql', 'takes_add (the persistence coordinator: takes-prepare.ts and projections.ts)');
+  }
+  throw e;
+}
+
 describe('engine parity: the propose_takes cycle step fills the take proposal queue', () => {
   parityTest('propose_takes proposes each claim once, records an empty page, skips other sources, generated pages and receipts, and hits its cache on a rerun', {
     methods: ['putPage', 'listProposeTakesCandidatePages', 'takeProposalCached', 'listRejectedTakeProposalClaims', 'insertTakeProposal',
       'readOpCheckpointDoc', 'listPendingTakeProposals'],
     timeout: 120_000,
-  }, async (engine, backend) => {
+  }, async (engine, backend) => stopAtCaughtRefusal(engine, backend, async engine => {
     await createSource(engine, backend, 'other');
     await putPages(engine, [
       { slug: 'notes/p-a', body: 'Two claims live in this note.' },
@@ -140,12 +188,12 @@ describe('engine parity: the propose_takes cycle step fills the take proposal qu
     expect(got.rerunCalls).toEqual([]);
     expect(got.listed.map(r => r.claim_text)).toEqual(['Widget-co doubles revenue', 'Acme-example ships the widget by Q3', 'Fund-a leads the seed']);
     return got;
-  });
+  }));
 
   parityTest('a rejected claim is not proposed again on the same page; reject and accept refuse a proposal acted on, missing or in another source', {
     methods: ['putPage', 'insertTakeProposal', 'listRejectedTakeProposalClaims', 'listPendingTakeProposals', 'readTakeProposal', 'rejectTakeProposal'],
     timeout: 120_000,
-  }, async (engine, backend) => {
+  }, async (engine, backend) => stopAtCaughtRefusal(engine, backend, async engine => {
     await createSource(engine, backend, 'other');
     await putPages(engine, [{ slug: 'notes/r-a', body: 'Version one.' }, { slug: 'notes/r-other', body: 'Elsewhere.', sourceId: 'other' }]);
     await phase(engine, extractorOf({ 'notes/r-a': ['Keep this claim', 'Reject this claim'] }));
@@ -175,13 +223,13 @@ describe('engine parity: the propose_takes cycle step fills the take proposal qu
     expect(got.again.code).toBe(1);
     expect(got.missing).toEqual({ code: 1, stdout: '', stderr: "No take proposal #P2 in source 'default'.\n" });
     return got;
-  });
+  }));
 
   parityTest('takes propose --accept promotes the proposal into a take on its page; a second accept refuses', {
     methods: ['putPage', 'insertTakeProposal', 'readTakeProposal', 'claimTakeProposal', 'listWriteRequestsByRequestId', 'setTakeProposalPromotedRow',
       'listPendingTakeProposals', 'listTakes'],
     timeout: 120_000,
-  }, async (engine) => {
+  }, async (engine, backend) => {
     await putPages(engine, [{ slug: 'companies/acme-example', body: 'About acme-example.', type: 'company' }]);
     await phase(engine, extractorOf({ 'companies/acme-example': ['Acme-example hires a CFO this year', 'Acme-example opens a second office'] }));
     const first = await idOf(engine, 'Acme-example hires a CFO this year');
@@ -189,7 +237,8 @@ describe('engine parity: the propose_takes cycle step fills the take proposal qu
     const ids = [first, second];
     const page = await engine.getPage('companies/acme-example');
     const got = {
-      accepted: noIds(await takes(engine, ['propose', '--accept', String(first)]), ids),
+      // Rust: takes_add parks as write_pending until the coordinator's raw SQL is typed (acceptRefusal).
+      accepted: noIds(await takes(engine, ['propose', '--accept', String(first)]).catch(e => acceptRefusal(backend, e)), ids),
       edited: noIds(await takes(engine, ['propose', '--accept', String(second), '--claim', 'Acme-example opens two offices', '--weight', '0.9']), ids),
       again: noIds(await takes(engine, ['propose', '--accept', String(first)]), ids),
       rejectAccepted: noIds(await takes(engine, ['propose', '--reject', String(first)]), ids),
@@ -317,7 +366,7 @@ describe('engine parity: a page propose_takes keeps failing is held, listed and 
   parityTest('three counted failed runs hold the page; takes propose --failed lists it and --retry-failed releases it', {
     methods: ['putPage', 'readOpCheckpointDoc', 'writeOpCheckpointDoc', 'insertTakeProposal', 'listTakeProposalTombstones', 'deleteTakeProposalTombstones'],
     timeout: 120_000,
-  }, async (engine) => {
+  }, async (engine, backend) => stopAtCaughtRefusal(engine, backend, async engine => {
     await putPages(engine, [{ slug: 'notes/f-bad', body: 'A page the model cannot read.' }, { slug: 'notes/f-good', body: 'A healthy page.' }]);
     let healthy = 0;
     const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
@@ -346,7 +395,7 @@ describe('engine parity: a page propose_takes keeps failing is held, listed and 
     expect(got.failedJson as unknown[]).toEqual([{ slug: 'notes/f-bad', code: 'request_too_large', prompt_version: 'parity-v1', proposedAtIsTime: true }]);
     expect(got.after.stdout).toBe('No pages held by propose_takes in default.');
     return got;
-  });
+  }));
 
   parityTest('a ledger record dropped by --retry-failed without --slug releases every held page and keeps the ledger', {
     methods: ['putPage', 'readOpCheckpointDoc', 'writeOpCheckpointDoc', 'deleteTakeProposalTombstones'],
@@ -374,7 +423,7 @@ describe('engine parity: a nudge at a take proposal', () => {
   parityTest('a nudge at a stored proposal is logged; one at a missing proposal fails its foreign key; releasing the proposal deletes its nudges', {
     methods: ['putPage', 'insertTakeProposal', 'listPendingTakeProposals', 'insertTakeNudge', 'deleteTakeProposalTombstones', 'purgeTakeNudgesByWave'],
     timeout: 120_000,
-  }, async (engine) => {
+  }, async (engine, backend) => stopAtCaughtRefusal(engine, backend, async engine => {
     await putPages(engine, [{ slug: 'notes/n-a', body: 'A nudged claim.' }]);
     await phase(engine, extractorOf({ 'notes/n-a': ['A nudged claim'] }));
     const [pending] = await engine.listPendingTakeProposals({ sourceId: 'default', limit: 5 });
@@ -407,5 +456,5 @@ describe('engine parity: a nudge at a take proposal', () => {
       tombstones: ['notes/n-bad'], atTombstone: 'number', before: [1, 1], released: ['notes/n-bad'], after: [1, 0],
     });
     return got;
-  });
+  }));
 });

@@ -140,3 +140,5 @@ The failure ledger keeps one JSON document in an op checkpoint row: `brain.readO
 requests it admitted with `brain.listWriteRequestsByRequestId(requestId)` (`persistence.rs`). A source delete deletes
 the source's proposals and their index entries. Pinned by the unit tests in `takes/proposals.rs` and
 `test/engine-parity/take-proposals.test.ts`.
+The extract receipt and rollup rows the cycle writes alongside are in [extract-bookkeeping.md](extract-bookkeeping.md)
+(`A 0x0A`); the take-path gaps still refused on this engine are listed in [journal.md](journal.md).

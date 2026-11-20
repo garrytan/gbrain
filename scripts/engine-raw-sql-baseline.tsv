@@ -384,8 +384,7 @@ src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1
 src/core/extract-takes-from-pages.ts	execute_raw	1
 src/core/extract-timeline-from-meetings.ts	execute_raw	5
-src/core/extract/receipt-writer.ts	execute_raw	2
-src/core/extract/rollup-writer.ts	execute_raw	3
+src/core/extract/rollup-writer.ts	execute_raw	1
 src/core/extraction-lag.ts	execute_raw	1
 src/core/extraction-watermark.ts	execute_raw	5
 src/core/facts/absorb-log.ts	execute_raw	1

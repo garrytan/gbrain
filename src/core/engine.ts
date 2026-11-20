@@ -89,6 +89,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
+import type { ExtractReceiptSlot, ExtractRollupDelta } from './engine-sql/extract-bookkeeping.ts';
 import type { ProposeTakesCandidateScope, ProposeTakesPageRow, TakeProposalClaim, TakeProposalInsert, TakeProposalPageKey, TakeProposalRow, TakeProposalTombstone } from './engine-sql/take-proposals.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
@@ -4459,6 +4460,12 @@ export interface BrainEngine {
   writeOpCheckpointDoc(op: string, fingerprint: string, doc: unknown): Promise<void>;
   /** Every write request admitted under `requestId`, whichever principal admitted it. */
   listWriteRequestsByRequestId(requestId: string): Promise<WriteRequest[]>;
+  /** The page an extract receipt's slug holds, live or a tombstone (SQL in engine-sql/extract-bookkeeping.ts), or null. */
+  readExtractReceiptSlot(sourceId: string, slug: string): Promise<ExtractReceiptSlot | null>;
+  /** Whether the page's chunks are sealed at `safeVersion` with its current text; null for no page or a NULL answer. */
+  readExtractReceiptSeal(sourceId: string, slug: string, safeVersion: number): Promise<boolean | null>;
+  /** Add one extract event's deltas to its `(kind, source_id, day)` extract_rollup_7d row (the pre-v141 statement on request). */
+  upsertExtractRollupDay(d: ExtractRollupDelta, opts?: { preV141?: boolean }): Promise<void>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
