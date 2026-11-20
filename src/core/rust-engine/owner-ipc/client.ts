@@ -12,16 +12,31 @@
  * - The caller's AbortSignals (the request signal of request-signal.ts and any signal argument) end the call at once
  *   with `cancelled`, or `timeout` when the signal's reason is a TimeoutError, and tell the owner to stop it.
  * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and every later
- *   call with `owner_unavailable` (`not_sent`). There is no owner handoff in this release.
+ *   call with `owner_unavailable` (`not_sent`), unless the engine passed `rejoin` (RustEngine does): then the next call
+ *   runs the election again and goes to the new owner, or runs in this process when it became the owner.
+ * - Before it connects, the client checks the socket: a socket file owned by this OS user with no group or other
+ *   permission bits, else `owner_ipc_peer_refused` (`socket_owner`, `socket_mode`). After it connects, it reads the
+ *   owner's uid from the kernel and refuses any other (`peer_uid`). An owner that refuses the connection (another user,
+ *   or `owner_busy` with too many connections) sends a `refused` frame, and the connect rejects with its error. None
+ *   of these is retried by the election. Where peer uids cannot be read (Windows, other Unixes) only the socket checks
+ *   run.
+ * - A remote caller (callerIsRemote) sends only the read members of OWNER_IPC_REMOTE_READS; any other member is
+ *   refused here with `engine_capability_missing` and nothing is sent. A local caller's calls are unchanged.
  * - The socket holds the event loop open only while a call is in flight, so a finished CLI command exits.
  */
 import net, { type Socket } from 'node:net';
+import { lstatSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { engineKey } from '../../engine-key.ts';
 import { requestSignal } from '../../request-signal.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
 import { callerAccessRecord } from '../../search/private-visibility.ts';
-import { prepareLocalIpcPath } from '../../context/ipc-path.ts';
+import { isRemoteCaller } from '../../remote-caller.ts';
+import { currentSubmissionAuthority } from '../../minions/submission-authority.ts';
+import { currentVerifiedLocalWriter } from '../../persistence/identity.ts';
+import { isWindowsIpcPipe, prepareLocalIpcPath } from '../../context/ipc-path.ts';
+import { peerCredSupport, peerUid, type PeerCredSupport } from '../../cli-socket/peer-cred.ts';
 import type { Capability } from '../../engine-capabilities.ts';
 import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';
@@ -31,7 +46,8 @@ import {
   OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerSocketPath, readFrames, type OwnerHello,
 } from './protocol.ts';
 import {
-  OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
+  OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
+  ownerPeerRefused,
 } from './routes.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
@@ -57,12 +73,30 @@ interface Pending {
 }
 
 const connections = new WeakMap<object, OwnerConnection>();
+/** The election rerun of the engine a connection serves (InstallOwnerClientOptions.rejoin). */
+const rejoins = new WeakMap<OwnerConnection, () => Promise<void>>();
 /** countPagesBy grouper functions the client resolved to a fixed table; they cross the socket as that table. */
 const grouperTables = new WeakMap<object, { types: string[]; groups: string[] }>();
 
 /** The owner connection an engine reaches its brain through, or undefined when the engine owns it (or is no client). */
 export function ownerConnectionFor(engine: object): OwnerConnection | undefined {
   return connections.get(engineKey(engine));
+}
+
+/** The election rerun registered for `connection`, if its engine takes the brain over when the owner goes. */
+export function ownerRejoinFor(connection: OwnerConnection): (() => Promise<void>) | undefined {
+  return rejoins.get(connection);
+}
+
+/**
+ * True when the code running now serves a caller that is not the trusted local CLI: an agent-facing MCP request
+ * (remote-caller.ts), a job whose submission authority is not the application, or a remote verified writer. The owner
+ * socket does not carry that authority, so such a caller's writes and whole operations are not sent.
+ */
+export function callerIsRemote(): boolean {
+  const authority = currentSubmissionAuthority();
+  return isRemoteCaller() || (authority !== undefined && authority !== null && authority.kind !== 'application')
+    || currentVerifiedLocalWriter()?.remote === true;
 }
 
 function lastKey(path: string): string {
@@ -87,10 +121,46 @@ function abortError(member: string, signal: AbortSignal, startedAt: number, sent
     : ownerCallCancelled(member, sent);
 }
 
-/** Connects to the owner socket and reads its hello. Rejects with the socket error (ENOENT, ECONNREFUSED) or a timeout. */
-export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: number } = {}): Promise<OwnerConnection> {
+export interface ConnectOwnerOptions {
+  timeoutMs?: number;
+  /** This process's uid and the peer-uid reader (default: the platform's); tests inject another user. */
+  uid?: () => number | undefined;
+  peerCred?: PeerCredSupport;
+}
+
+const octal = (mode: number) => `0${(mode & 0o777).toString(8).padStart(3, '0')}`;
+
+/**
+ * The socket file is this user's and no other user can open it, or the refusal that says why not. A missing socket
+ * throws its ENOENT, which the election retries. Group or other bits on the socket are allowed only inside a directory
+ * this user owns with none: the owner binds inside its private 0700 directory and narrows the socket to 0600 just after
+ * listen, so a client that arrives in between is not refused.
+ */
+function socketFileProblem(socketPath: string, uid: number): Error | null {
+  const stat = lstatSync(socketPath);
+  if (!stat.isSocket()) return ownerPeerRefused('socket_owner', `path_is_not_a_socket socket_uid=${stat.uid} uid=${uid}`);
+  if (stat.uid !== uid) return ownerPeerRefused('socket_owner', `socket_uid=${stat.uid} uid=${uid}`);
+  if ((stat.mode & 0o077) === 0) return null;
+  const dir = lstatSync(dirname(socketPath));
+  if (dir.isDirectory() && dir.uid === uid && (dir.mode & 0o077) === 0) return null;
+  return ownerPeerRefused('socket_mode', `mode=${octal(stat.mode)} dir_mode=${octal(dir.mode)} dir_uid=${dir.uid}`);
+}
+
+/**
+ * Connects to the owner socket and reads its hello. Rejects with the socket error (ENOENT, ECONNREFUSED), a timeout,
+ * `owner_ipc_peer_refused` when the socket or the owner is not this OS user's, or the error of an owner `refused` frame.
+ */
+export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions = {}): Promise<OwnerConnection> {
   const socketPath = prepareLocalIpcPath(legacySocketPath, false, true);
   const timeoutMs = opts.timeoutMs ?? 2_000;
+  const uid = isWindowsIpcPipe(socketPath) || process.platform === 'win32' ? undefined : (opts.uid ?? (() => process.getuid?.()))();
+  if (uid !== undefined) {
+    try {
+      const problem = socketFileProblem(socketPath, uid);
+      if (problem) return Promise.reject(problem);
+    } catch (error) { return Promise.reject(error); }
+  }
+  const peerCred = uid === undefined ? undefined : (opts.peerCred ?? peerCredSupport());
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(socketPath);
     let hello: OwnerHello | undefined;
@@ -98,14 +168,38 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
       socket.destroy();
       reject(Object.assign(new Error('The brain owner did not answer its hello.'), { code: 'ETIMEDOUT' }));
     }, timeoutMs);
-    socket.once('error', error => { clearTimeout(timer); if (!hello) reject(error); });
-    socket.once('connect', () => { socket.write(frameLine({ t: 'hello', version: OWNER_IPC_VERSION })!); });
+    // Before the hello an error waits for the close: an owner that refused the connection sent a `refused` frame
+    // first, and its error (not the EPIPE of our hello write) is the one the connect rejects with.
+    let early: unknown;
+    socket.once('error', error => { clearTimeout(timer); if (!hello) early ??= error; });
+    socket.once('connect', () => {
+      if (peerCred?.ok) {
+        const peer = peerUid(socket, peerCred.read);
+        if (peer !== uid) {
+          clearTimeout(timer);
+          socket.destroy();
+          reject(ownerPeerRefused('peer_uid', `owner_uid=${peer ?? 'unreadable'} uid=${uid}`));
+          return;
+        }
+      }
+      socket.write(frameLine({ t: 'hello', version: OWNER_IPC_VERSION })!);
+    });
     const pending = new Map<number, Pending>();
     let closed = false;
     let nextId = 1;
     const refresh = () => { if (pending.size) socket.ref(); else socket.unref(); };
     const send = (frame: object) => { if (!socket.destroyed) socket.write(frameLine(frame, Number.MAX_SAFE_INTEGER)!); };
     readFrames(socket, frame => {
+      if (frame.t === 'refused') {
+        if (hello) return;
+        // The owner refused this connection before its hello (another user, too many connections); nothing was sent.
+        clearTimeout(timer);
+        try { early = decodeError(frame.error as Wire); }
+        catch (cause) { early = ownerIpcProtocol('result_undecodable', null, `refused_frame ${cause instanceof Error ? cause.message : String(cause)}`); }
+        reject(early);
+        socket.destroy();
+        return;
+      }
       if (frame.t === 'hello') {
         if (hello) return;
         if (frame.version !== OWNER_IPC_VERSION) {
@@ -147,12 +241,16 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
     socket.once('close', () => {
       clearTimeout(timer);
       closed = true;
-      if (!hello) { reject(Object.assign(new Error('The brain owner closed the connection before its hello.'), { code: 'ECONNRESET' })); return; }
+      if (!hello) { reject(early ?? Object.assign(new Error('The brain owner closed the connection before its hello.'), { code: 'ECONNRESET' })); return; }
       for (const call of pending.values()) { call.cleanup(); call.reject(ownerGone(call.member, hello.pid, true)); }
       pending.clear();
     });
 
     const request = (kind: 'call' | 'fn', member: string, args: unknown[]): Promise<unknown> => {
+      // A remote caller's write would run on the owner with the owner's authority; refuse it before anything is sent.
+      if (kind === 'call' && !OWNER_IPC_REMOTE_READS.has(member) && callerIsRemote()) {
+        return Promise.reject(ownerIpcRefusal(member, 'a remote caller\'s write is not sent to the brain owner'));
+      }
       if (closed || !hello) return Promise.reject(ownerGone(member, hello?.pid ?? null, false));
       const id = nextId++;
       const startedAt = Date.now();
@@ -286,24 +384,42 @@ async function countPagesByThroughOwner(connection: OwnerConnection, args: unkno
   return connection.request('call', 'countPagesBy', [query, table]);
 }
 
+export interface InstallOwnerClientOptions {
+  /**
+   * Runs the election again once the owner has gone (RustEngine: the engine becomes the new owner or a client of it,
+   * and replaces the installed members). A call made after the connection closed awaits it, then runs on whatever the
+   * engine now has; a call it cannot place still ends `owner_unavailable` (`not_sent`).
+   */
+  rejoin?: () => Promise<void>;
+}
+
 /**
  * Makes `engine` a client of the owner on `connection`: each forwarded member becomes an own property that sends the
  * call, each refused member rejects with `engine_capability_missing`, and the engine's capability set mirrors the
  * owner's. Returns the function that undoes it (on disconnect or when the owner goes away).
  */
-export function installOwnerClient(engine: object, connection: OwnerConnection): () => void {
+export function installOwnerClient(engine: object, connection: OwnerConnection, opts: InstallOwnerClientOptions = {}): () => void {
   const record = engine as EngineRecord;
   const installed: string[] = [];
+  const { rejoin } = opts;
   for (const [member, route] of Object.entries(OWNER_IPC_ROUTES)) {
     if (route === 'local') continue;
     const missing = missingOnRustOwner(connection.hello, member);
-    const value = missing !== null
+    const direct = missing !== null
       ? () => Promise.reject(capabilityMissing(missing, member))
       : route === 'refuse'
       ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
         ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
         : (...args: unknown[]) => connection.request('call', member, args);
+    const value = !rejoin ? direct : async function viaOwner(...args: unknown[]): Promise<unknown> {
+      if (connection.closed) {
+        await rejoin().catch(() => undefined);
+        const now = record[member];
+        if (now !== value && typeof now === 'function') return (now as (...a: unknown[]) => unknown).apply(engine, args);
+      }
+      return direct(...args);
+    };
     Object.defineProperty(record, member, { value, writable: true, configurable: true, enumerable: false });
     installed.push(member);
   }
@@ -311,6 +427,7 @@ export function installOwnerClient(engine: object, connection: OwnerConnection):
   if (capabilities instanceof Set) { capabilities.clear(); for (const c of connection.hello.capabilities) capabilities.add(c); }
   const key = engineKey(engine);
   connections.set(key, connection);
+  if (rejoin) rejoins.set(connection, rejoin);
   return () => {
     for (const member of installed) delete record[member];
     if (capabilities instanceof Set) capabilities.clear();

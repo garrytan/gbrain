@@ -40,6 +40,44 @@ export const OWNER_IPC_CALLBACK_KEYS: ReadonlySet<string> = new Set([
   'onVectorPoolMeta', 'onKeywordIncomplete', 'onMeta', 'onStatementBudget',
 ]);
 
+/**
+ * Forwarded members a remote caller (an agent-facing MCP request, a non-application submission authority, a remote
+ * verified writer) may send to the owner: each only reads. Every other member, a write or anything not listed here
+ * (executeRaw, lock and lease calls, settings), is refused for a remote caller at the client with
+ * `engine_capability_missing` before it is sent, because the owner would run it with the owner's own authority: the
+ * call does not carry the caller's remote flag, submission authority or verified writer. A new member is a write here
+ * until it is added. A local caller sends every forwarded member as before.
+ */
+export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
+  'aliasCanonicalRefs', 'batchLoadEmotionalInputs', 'cosinesByChunkIds', 'countChunklessPagesWithContent',
+  'countKeywordPages', 'countOnboardSignal', 'countPagesBy', 'countStaleChunks', 'countStaleFrontmatterKeyPages',
+  'countStalePagesForExtraction', 'countStaleTakes', 'countUnconsolidatedFacts', 'discoverOntologyDimensions',
+  'findAnomalies', 'findByTitleFuzzy', 'findCandidateDuplicates', 'findDuplicatePage', 'findDuplicatePages',
+  'findOntologyConflicts', 'findOrphanPages', 'findPages', 'findTrajectory', 'generatedPagesIn',
+  'getAdjacencyBoosts', 'getAllConfig', 'getAllSlugs', 'getBacklinkCounts', 'getBacklinks', 'getCalibrationCurve',
+  'getCalleesOf', 'getCallersOf', 'getChunkPage', 'getChunkReuseRows', 'getChunkWindows', 'getChunks',
+  'getChunksWithEmbeddings', 'getConfig', 'getConfigValues', 'getContentFlagsByPageIds',
+  'getContradictionCacheEntry', 'getDreamVerdict', 'getEdgesByChunk', 'getEffectiveDates', 'getEmbeddingsByChunkIds',
+  'getFactsHealth', 'getFile', 'getHealth', 'getIngestLog', 'getLastSeen', 'getLinks', 'getOnThisDay', 'getOntology',
+  'getPage', 'getPageSealState', 'getPageTimestamps', 'getRawData', 'getRecentSalience', 'getSalienceScores',
+  'getScorecard', 'getSince', 'getSource', 'getSourceStrictness', 'getStats', 'getTags', 'getTakeEmbeddings',
+  'getTimeline', 'getTimelineForDate', 'getUnverifiedExtractionPageIds', 'getVersions', 'hasSupersedeEdges',
+  'isFolderRestricted', 'listActiveTakesForPages', 'listAllPageRefs', 'listAllSources',
+  'listChunklessPagesWithContent', 'listConfigKeys', 'listCorpusSample', 'listEmbeddingStateRows',
+  'listEnrichCandidates', 'listEntityKeyRows', 'listEvalCandidates', 'listEvalCaptureFailures', 'listFactsByEntity',
+  'listFactsBySession', 'listFactsKeyset', 'listFactsSince', 'listFilesForPage', 'listIdentityDecisions',
+  'listLinkSources', 'listPages', 'listPrefixSampledPages', 'listRestrictedIdentityMembers', 'listSourceLocalPaths',
+  'listStaleChunks', 'listStaleFrontmatterKeyPages', 'listStalePagesForExtraction', 'listStaleTakes',
+  'listSupersessions', 'listTakes', 'livePageIdsAt', 'loadContradictionsTrend', 'pageCollapseFacts',
+  'pagesLinkingTo', 'readCycleLocks', 'readEmbeddingStateCounts', 'readLedgerSource', 'readLocalWriterRow',
+  'readManagedModeRows', 'readManifest', 'readPageSnapshot', 'readPageSnapshotsBatch', 'readPersistenceBrainId',
+  'readSegmentDerivations', 'readSegmentTexts', 'readTransactionSettings', 'relationalChainHop', 'relationalFanout',
+  'resolveAliases', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveSlugs', 'resolveSlugsByPaths',
+  'searchKeyword', 'searchKeywordChunks', 'searchKeywordPages', 'searchTakes', 'searchTakesVector', 'searchTitles',
+  'searchVector', 'slugsEndingIn', 'sumStaleChunkChars', 'supersedingPageSlugs', 'traverseGraph', 'traversePaths',
+  'traversePathsDetailed',
+]);
+
 /** The capability family a member belongs to, for the refusal's `reason`. */
 function memberCapability(member: string): Capability {
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
@@ -68,7 +106,7 @@ export function ownerGone(member: string, ownerPid: number | null, sent: boolean
       : 'Run the command again: with no owner running, this process opens the brain itself.',
     { reason: sent ? 'outcome_unknown' : 'not_sent', retryable: true,
       detail: `member=${member} via=owner_ipc owner_pid=${ownerPid ?? 'unknown'} sent=${sent}`,
-      why: 'This process reached the brain through the owner process. Taking over the brain while calls are in flight (owner handoff) is not part of this release, so calls in flight end here.' });
+      why: 'This process reached the brain through the owner process, which went away. A call in flight ends here because the owner may have started it; the next call of a long-lived engine runs the election again, so this process becomes the owner or a client of the new one.' });
 }
 
 /**
@@ -133,4 +171,44 @@ export function ownerIpcProtocol(reason: OwnerIpcProtocolReason, member: string 
         : 'Report this as a gbrain bug with the code, reason and detail; the call did not run.',
     { reason, retryable: false,
       detail: `${member === null ? '' : `member=${member} `}via=owner_ipc reason=${reason} ${detail}`.trim() });
+}
+
+export type OwnerBusyReason = 'queue_full' | 'inflight_bytes' | 'connections';
+
+/**
+ * The owner refused a call or a connection because a bound on its memory was reached (`owner_busy`, retryable): its
+ * queue of waiting calls, the bytes of call frames it holds, or its open connections. Nothing ran. `member` is null for
+ * a refused connection.
+ */
+export function ownerBusy(reason: OwnerBusyReason, member: string | null, limit: number): OperationError {
+  const what = member ?? 'The connection to the brain owner';
+  const messages: Record<OwnerBusyReason, string> = {
+    queue_full: `${what} was refused: the brain owner already has ${limit} calls waiting, so it did not run.`,
+    inflight_bytes: `${what} was refused: the brain owner already holds close to ${limit} bytes of calls, so it did not run.`,
+    connections: `${what} was refused: the brain owner already has ${limit} connections open, so nothing was sent.`,
+  };
+  return opError('owner_busy', messages[reason],
+    'Retry after the calls in flight finish. If it keeps happening, fewer processes or smaller calls on this brain at once help.',
+    { reason, retryable: true,
+      detail: `${member === null ? '' : `member=${member} `}via=owner_ipc reason=${reason} limit=${limit}` });
+}
+
+export type OwnerPeerRefusedReason = 'peer_uid' | 'socket_owner' | 'socket_mode';
+
+/**
+ * The owner socket's other end is not this OS user (`owner_ipc_peer_refused`, not retryable): the owner read another
+ * uid from the kernel (`peer_uid`, on either side), or the client found the socket owned by another user
+ * (`socket_owner`) or open to group or other users (`socket_mode`). Nothing was sent or run.
+ */
+export function ownerPeerRefused(reason: OwnerPeerRefusedReason, detail: string): OperationError {
+  const messages: Record<OwnerPeerRefusedReason, string> = {
+    peer_uid: 'The other end of the brain owner socket is not this OS user, so the connection was refused and nothing ran.',
+    socket_owner: 'The brain owner socket belongs to another OS user, so this process did not connect to it and nothing was sent.',
+    socket_mode: 'The brain owner socket can be opened by other OS users, so this process did not connect to it and nothing was sent.',
+  };
+  return opError('owner_ipc_peer_refused', messages[reason],
+    reason === 'peer_uid'
+      ? 'Run every gbrain process on this brain as the same OS user.'
+      : 'Stop the process that made the socket (gbrain doctor names the owner pid), check the brain directory belongs to you, then run the command again.',
+    { reason, retryable: false, detail: `via=owner_ipc reason=${reason} ${detail}`.trim() });
 }

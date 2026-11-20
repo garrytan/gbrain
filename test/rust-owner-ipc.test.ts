@@ -7,9 +7,11 @@
  *    byte-identical to the same calls made in-process; calls end with `timeout` / `cancelled` within the caller's
  *    deadline or signal and never leak a permit (a request already past its deadline never runs); closing the owner
  *    waits for running engine calls; members outside the cut refuse at once; a dead owner gives
- *    `owner_unavailable`.
+ *    `owner_unavailable` to the calls in flight, and a Rust engine's next call reaches the new owner or makes it the
+ *    owner, with no restart.
  * 2. Fails on: a codec that drops a type (Date, Float32Array, error codes), a server that frees a permit before the
- *    engine call settles, a client that hangs on an owner that died, or a route table that forwards transaction().
+ *    engine call settles, a client that hangs on an owner that died, a client that stays stuck on a dead owner, or a
+ *    route table that forwards transaction().
  * 3. Existing coverage: none; the owner socket is new. rust-engine-shell.test.ts covers only the lifecycle.
  * 4. Seam: none beyond the public `serveOwnerEngine` / `connectOwner` / `installOwnerClient` and the OpenRustEngine
  *    `ownerWaitMs` option the CLI path also reads.
@@ -26,7 +28,7 @@ import { electOwner, type OwnerRole } from '../src/core/rust-engine/owner-ipc/el
 import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-ops.ts';
 import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-op.ts';
 import { importFromContent, type ImportResult } from '../src/core/import-file.ts';
-import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
+import { connectOwner, installOwnerClient, ownerConnectionFor } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { OWNER_IPC_VERSION, ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { EventEmitter } from 'node:events';
@@ -42,6 +44,7 @@ import { persistenceSocketPathForConfig, startPersistenceIpcServer, type Persist
 import { withEnv } from './helpers/with-env.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
+import { servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { bindResolveIpcForServe } from '../src/mcp/resolve-ipc-binding.ts';
 import { once } from 'node:events';
 import { createPersistenceIpcProvider } from '../src/core/persistence/provider.ts';
@@ -172,7 +175,7 @@ describe('two or more client processes on one owner', () => {
     // The owner sees each client's socket close a moment after the client process exits.
     const stats = () => role.role === 'owner' ? role.server.stats() : null;
     for (let i = 0; i < 100 && stats()?.connections !== 0; i++) await Bun.sleep(10);
-    expect(stats()).toEqual({ active: 0, queued: 0, connections: 0 });
+    expect(stats()).toEqual({ active: 0, queued: 0, connections: 0, inflightBytes: 0 });
   }, 120_000);
 
   // Skipped in this slice: needs the shared-TS wiring (import-file, persistence/local-client, the transaction member) that lands in the next slice.
@@ -434,20 +437,29 @@ describe('closing the owner server', () => {
 });
 
 describe('an owner that exits', () => {
-  test('pending calls end with owner_unavailable and later calls fail fast without hanging', async () => {
+  /** Starts a PGLite owner child on `db` and resolves with its ready line. */
+  async function ownerChild(db: string): Promise<{ child: ReturnType<typeof spawn>; pid: number }> {
+    const child = spawn(process.execPath, [CHILD, 'owner', db, '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      let buf = '';
+      child.stdout!.on('data', chunk => {
+        buf += chunk;
+        if (buf.includes('\n')) resolve(JSON.parse(buf.split('\n')[0]!));
+      });
+      child.on('close', code => reject(new Error(`owner exited ${code}`)));
+    });
+    expect(ready.role).toBe('owner');
+    return { child, pid: ready.pid as number };
+  }
+  /** A store with one config key, so a call this process serves itself is told apart from one the owner served. */
+  class ConfigBrain { async open() {} async close() {} async getConfig(key: string) { return key === 'who' ? 'this-process' : null; } }
+  const configAddon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: ConfigBrain } as never;
+
+  test('a client installed without rejoin: calls in flight end outcome_unknown and later calls fail fast with not_sent', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-exit-'));
     const db = join(dir, 'brain.rust');
-    const child = spawn(process.execPath, [CHILD, 'owner', db, '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const { child } = await ownerChild(db);
     try {
-      const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
-        let buf = '';
-        child.stdout.on('data', chunk => {
-          buf += chunk;
-          if (buf.includes('\n')) resolve(JSON.parse(buf.split('\n')[0]!));
-        });
-        child.on('close', code => reject(new Error(`owner exited ${code}`)));
-      });
-      expect(ready.role).toBe('owner');
       const { engine, close } = await clientOf(ownerSocketPath(db));
       try {
         const pending = engine.getHealth().then(() => null, e => e);
@@ -463,6 +475,70 @@ describe('an owner that exits', () => {
         expect(Date.now() - started).toBeLessThan(500);
       } finally { close(); }
     } finally {
+      child.kill('SIGKILL');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('a Rust engine client reaches the new owner on its next call, with no restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-handoff-'));
+    const db = join(dir, 'brain.rust');
+    const first = await ownerChild(db);
+    let second: Awaited<ReturnType<typeof ownerChild>> | undefined;
+    const rust = openRustEngine({ addon: configAddon, databasePath: db, ownerWaitMs: 5_000 });
+    try {
+      await rust.connect({});
+      expect(rust.ownerRole).toBe('client');
+      const brain = rust as unknown as BrainEngine;
+      const pending = brain.getHealth().then(() => null, e => e);
+      await Bun.sleep(100);
+      first.child.kill('SIGKILL');
+      const error = (await pending) as OperationError;
+      expect(error.code).toBe('owner_unavailable');
+      expect(error.reason).toBe('outcome_unknown');
+      second = await ownerChild(db);
+      // A whole operation runs the election too, and goes to the new owner.
+      const imported = await forwardWholeOperation<ImportResult>(rust, 'importFromContent',
+        ['handoff/page', '---\ntitle: Handoff\ntype: note\n---\nWritten through the new owner.\n', { noEmbed: true }]);
+      expect(imported?.slug).toBe('handoff/page');
+      expect(await brain.getConfig('who')).toBeNull();
+      expect(rust.ownerRole).toBe('client');
+      expect(rust.connected).toBe(true);
+    } finally {
+      await rust.disconnect();
+      first.child.kill('SIGKILL');
+      second?.child.kill('SIGKILL');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('with no other owner, a Rust engine client becomes the owner on its next call and serves it from its store', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-takeover-'));
+    const db = join(dir, 'brain.rust');
+    const { child } = await ownerChild(db);
+    const rust = openRustEngine({ addon: configAddon, databasePath: db, ownerWaitMs: 5_000 });
+    try {
+      await rust.connect({});
+      expect(rust.ownerRole).toBe('client');
+      const brain = rust as unknown as BrainEngine;
+      child.kill('SIGKILL');
+      await once(child, 'close');
+      for (let i = 0; i < 200 && !ownerConnectionFor(rust)?.closed; i++) await Bun.sleep(10);
+      // A whole operation that finds this process became the owner is not sent; the caller's retry runs it in process.
+      const notSent = (await forwardWholeOperation(rust, 'importFromContent', ['x', 'y'])!.then(() => null, e => e)) as OperationError;
+      expect(notSent.code).toBe('owner_unavailable');
+      expect(notSent.reason).toBe('not_sent');
+      expect(forwardWholeOperation(rust, 'importFromContent', ['x', 'y'])).toBeUndefined();
+      // Two calls at once share one election.
+      expect(await Promise.all([brain.getConfig('who'), brain.getConfig('who')])).toEqual(['this-process', 'this-process']);
+      expect(rust.ownerRole).toBe('owner');
+      expect(rust.ownerStats()).not.toBeNull();
+      expect([...rust.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+      // A process that opens the brain now is a client of this one.
+      const { engine, close } = await clientOf(ownerSocketPath(db));
+      try { expect(await engine.getConfig('who')).toBe('this-process'); } finally { close(); }
+    } finally {
+      await rust.disconnect();
       child.kill('SIGKILL');
       rmSync(dir, { recursive: true, force: true });
     }

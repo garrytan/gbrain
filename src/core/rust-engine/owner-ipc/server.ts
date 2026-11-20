@@ -19,6 +19,15 @@
  *   then the connection closes, before any later frame runs; a call before the hello is `hello_missing`; a call that
  *   reuses an id still open on its connection is `duplicate_id` (the first call keeps its id, its cancel and its
  *   abort on close); arguments that are not a list are `args_not_array`. None of them runs.
+ * - Bounds on the owner's memory across every client, each refused with `owner_busy` (retryable) before anything
+ *   runs: more than `maxQueued` calls waiting for a permit (`queue_full`), call frames past `maxInflightBytes` held at
+ *   once, waiting or running (`inflight_bytes`), or more than `maxConnections` open connections (`connections`, a
+ *   `refused` frame, then the connection closes). A call's bytes and its queue slot come back exactly once: when its
+ *   engine call settles, or when it leaves the queue without running (cancel, deadline, closed connection, close()).
+ * - Peer identity: the owner reads each connecting process's uid from the kernel (cli-socket/peer-cred.ts) and refuses
+ *   any other uid, or one it cannot read, with a `refused` frame carrying `owner_ipc_peer_refused` (`peer_uid`); no
+ *   frame of that connection is read. Where the platform cannot read peer uids (Windows, other Unixes), the private
+ *   0700 directory and the 0600 socket are the only guard.
  * - `close()` aborts every call and resolves only after all engine work that started has settled, so the owner lock
  *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call.
  */
@@ -29,11 +38,15 @@ import { withRequestSignal } from '../../request-signal.ts';
 import { withReadDeadline } from '../../read-deadline.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe } from '../../context/ipc-path.ts';
+import { peerCredSupport, peerUid, type PeerCredSupport } from '../../cli-socket/peer-cred.ts';
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
-  OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, readFrames, type OwnerHello,
+  OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_CONNECTIONS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_MAX_INFLIGHT_BYTES, OWNER_IPC_MAX_QUEUED,
+  OWNER_IPC_VERSION, frameLine, readFrames, type OwnerHello,
 } from './protocol.ts';
-import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcProtocol, ownerIpcRefusal, ownerResponseTooLarge } from './routes.ts';
+import {
+  OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerIpcProtocol, ownerIpcRefusal, ownerPeerRefused, ownerResponseTooLarge,
+} from './routes.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
@@ -47,9 +60,16 @@ export interface OwnerServerOptions {
   wholeOperations?: Readonly<Record<string, OwnerWholeOperation>>;
   /** The frame cap; tests lower it to reach `response_too_large`. */
   maxFrameBytes?: number;
+  /** Bounds on the owner's memory (OWNER_IPC_MAX_QUEUED and friends); tests lower them to reach `owner_busy`. */
+  maxQueued?: number;
+  maxInflightBytes?: number;
+  maxConnections?: number;
+  /** The peer-uid reader (default: the platform's) and this process's uid; tests inject another user. */
+  peerCred?: PeerCredSupport;
+  uid?: () => number | undefined;
 }
 
-export interface OwnerServerStats { active: number; queued: number; connections: number }
+export interface OwnerServerStats { active: number; queued: number; connections: number; inflightBytes: number }
 
 export interface OwnerEngineServer {
   socketPath: string;
@@ -64,6 +84,9 @@ interface PendingCall {
   controller: AbortController;
   done: boolean;
   queued: boolean;
+  /** Size of the call's frame, held against the in-flight byte budget until `released`. */
+  bytes: number;
+  released: boolean;
   timer?: DeadlineTimer;
   /** Epoch ms after which the call must not start; a call past it ends with `timeout` and never runs. */
   deadlineAt?: number;
@@ -120,14 +143,37 @@ export async function serveOwnerEngine(
 
   const permits = Math.max(1, opts.permits ?? OWNER_IPC_DEFAULT_PERMITS);
   const maxFrameBytes = opts.maxFrameBytes ?? OWNER_IPC_MAX_FRAME_BYTES;
+  const maxQueued = Math.max(0, opts.maxQueued ?? OWNER_IPC_MAX_QUEUED);
+  const maxInflightBytes = opts.maxInflightBytes ?? OWNER_IPC_MAX_INFLIGHT_BYTES;
+  const maxConnections = Math.max(1, opts.maxConnections ?? OWNER_IPC_MAX_CONNECTIONS);
+  const uid = process.platform === 'win32' ? undefined : (opts.uid ?? (() => process.getuid?.()))();
+  const peerCred = uid === undefined ? undefined : (opts.peerCred ?? peerCredSupport());
   const wholeOperations = opts.wholeOperations ?? {};
+  // Calls waiting for a permit. A call leaves it when it starts or as soon as it ends without running (leaveQueue).
   const queue: PendingCall[] = [];
   const sockets = new Set<Socket>();
+  // Connections refused before their hello, kept only until they close.
+  const refused = new Set<Socket>();
   let active = 0;
+  let inflightBytes = 0;
   let closing = false;
   let closed: Promise<void> | undefined;
   // Engine work that has started and not settled. close() waits for all of it before the owner lock can be released.
   const running = new Set<Promise<unknown>>();
+
+  const releaseBytes = (call: PendingCall) => {
+    if (call.released) return;
+    call.released = true;
+    inflightBytes -= call.bytes;
+  };
+  // A call that ends while it still waits gives back its queue slot and its bytes at once, never at its turn.
+  const leaveQueue = (call: PendingCall) => {
+    if (!call.queued) return;
+    call.queued = false;
+    const at = queue.indexOf(call);
+    if (at !== -1) queue.splice(at, 1);
+    releaseBytes(call);
+  };
 
   const expire = (call: PendingCall, queued: boolean) => {
     call.timer?.clear();
@@ -137,11 +183,12 @@ export async function serveOwnerEngine(
 
   const pump = () => {
     while (active < permits && queue.length) {
-      const call = queue.shift()!;
-      if (call.done) continue;
-      if (closing) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
+      const call = queue[0]!;
+      if (call.done) { leaveQueue(call); continue; }
+      if (closing) { call.done = true; leaveQueue(call); call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
       // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
-      if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) { expire(call, true); continue; }
+      if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) { expire(call, true); leaveQueue(call); continue; }
+      queue.shift();
       call.queued = false;
       active++;
       let settled: Promise<unknown>;
@@ -162,6 +209,7 @@ export async function serveOwnerEngine(
         active--;
         call.done = true;
         call.timer?.clear();
+        releaseBytes(call);
         running.delete(tracked);
         pump();
       });
@@ -178,6 +226,21 @@ export async function serveOwnerEngine(
   const onConnection = (socket: Socket) => {
     socket.on('error', () => { /* a lost client only ends its own calls */ });
     if (closing) { socket.destroy(); return; }
+    // A refused connection gets one frame naming why, then closes; nothing it sends is read.
+    const refuseConnection = (error: unknown) => {
+      // Half-closed so the client reads the frame before the socket goes; close() destroys any still open.
+      refused.add(socket);
+      socket.once('close', () => refused.delete(socket));
+      socket.end(frameLine({ t: 'refused', error: encodeError(error) })!);
+    };
+    if (peerCred?.ok) {
+      const peer = peerUid(socket, peerCred.read);
+      if (peer !== uid) {
+        refuseConnection(ownerPeerRefused('peer_uid', `peer_uid=${peer ?? 'unreadable'} owner_uid=${uid}`));
+        return;
+      }
+    }
+    if (sockets.size >= maxConnections) { refuseConnection(ownerBusy('connections', null, maxConnections)); return; }
     sockets.add(socket);
     const calls = new Map<number, PendingCall>();
     // `helloed` turns on with a hello of this version. `refused` turns on with a hello of another version: the owner
@@ -196,10 +259,15 @@ export async function serveOwnerEngine(
     };
     socket.once('close', () => {
       sockets.delete(socket);
-      for (const call of calls.values()) { call.done = true; call.controller.abort(new DOMException('The client closed its connection.', 'AbortError')); }
+      for (const call of calls.values()) {
+        call.done = true;
+        call.timer?.clear();
+        leaveQueue(call);
+        call.controller.abort(new DOMException('The client closed its connection.', 'AbortError'));
+      }
       calls.clear();
     });
-    readFrames(socket, frame => {
+    readFrames(socket, (frame, bytes) => {
       if (conn.refused) return;
       switch (frame.t) {
         case 'hello':
@@ -218,17 +286,19 @@ export async function serveOwnerEngine(
           calls.delete(call.id);
           call.done = true;
           call.timer?.clear();
+          leaveQueue(call);
           call.controller.abort(new DOMException('The caller cancelled the call.', 'AbortError'));
           return;
         }
-        case 'call': case 'fn': admit(frame, calls, send, conn.helloed); return;
+        case 'call': case 'fn': admit(frame, bytes, calls, send, conn.helloed); return;
         default: socket.destroy();
       }
     }, () => { /* the close handler ends this connection's calls */ }, maxFrameBytes);
   };
 
   const admit = (
-    frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void, helloed: boolean,
+    frame: Record<string, unknown>, bytes: number, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void,
+    helloed: boolean,
   ) => {
     const id = Number(frame.id);
     const member = String(frame.t === 'fn' ? frame.name : frame.member);
@@ -238,9 +308,14 @@ export async function serveOwnerEngine(
     if (!helloed) { protocolRefusal('hello_missing', 'the call came before a hello of this protocol version'); return; }
     if (calls.has(id)) { protocolRefusal('duplicate_id', `id=${id} is still open on this connection`); return; }
     if (frame.args === undefined) { protocolRefusal('args_not_array', 'the call has no argument list'); return; }
+    // The bounds are checked before the arguments are decoded, so a refused call costs the owner nothing more.
+    const busy = (reason: 'queue_full' | 'inflight_bytes', limit: number) =>
+      send({ t: 'result', id, ok: false, error: encodeError(ownerBusy(reason, member, limit)) }, member);
+    if (inflightBytes + bytes > maxInflightBytes) { busy('inflight_bytes', maxInflightBytes); return; }
+    if (active >= permits && queue.length >= maxQueued) { busy('queue_full', maxQueued); return; }
     const controller = new AbortController();
     const call: PendingCall = {
-      id, member, controller, done: false, queued: true, run: () => Promise.resolve(),
+      id, member, controller, done: false, queued: false, bytes, released: true, run: () => Promise.resolve(),
       reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
     };
     calls.set(id, call);
@@ -285,9 +360,13 @@ export async function serveOwnerEngine(
         if (call.done) return;
         const queued = call.queued;
         call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
+        leaveQueue(call);
         controller.abort(timeoutReason());
       }, ms, { unref: true });
     }
+    call.queued = true;
+    call.released = false;
+    inflightBytes += bytes;
     queue.push(call);
     pump();
   };
@@ -313,18 +392,18 @@ export async function serveOwnerEngine(
 
   return {
     socketPath,
-    stats: () => ({ active, queued: queue.filter(call => !call.done).length, connections: sockets.size }),
+    stats: () => ({ active, queued: queue.filter(call => !call.done).length, connections: sockets.size, inflightBytes }),
     // Stops new work, aborts every queued and running call, and resolves only when the server is closed AND every
     // engine call that started has settled, so the caller cannot release the owner lock while old work still runs.
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
       const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
-      for (const call of queue) {
+      for (const call of [...queue]) {
+        leaveQueue(call);
         if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
       }
-      queue.length = 0;
-      for (const socket of sockets) socket.destroy();
+      for (const socket of [...sockets, ...refused]) socket.destroy();
       while (running.size) await Promise.allSettled([...running]);
       await serverClosed;
     })()),

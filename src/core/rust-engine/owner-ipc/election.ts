@@ -5,8 +5,9 @@
  * there as a client instead of failing with `store_locked`.
  *
  * Election retries for a bounded time: an owner that holds the lock but has not bound its socket yet, or one that just
- * exited, is waited for; once the lock is free this process takes it. Handing the brain over while calls are in
- * flight is not part of this release (routes.ts `ownerGone`).
+ * exited, is waited for; once the lock is free this process takes it. A client whose owner exits runs the election
+ * again on its next call (client.ts `rejoin`, RustEngine `_takeOver`); its calls in flight end `owner_unavailable`
+ * (routes.ts `ownerGone`), since the owner may have started them.
  */
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

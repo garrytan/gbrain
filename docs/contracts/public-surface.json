@@ -2800,6 +2800,8 @@
     "openclaw_not_found": 1,
     "origin_twin_mass_merge_refused": 1,
     "overlapping_path": 1,
+    "owner_busy": 1,
+    "owner_ipc_peer_refused": 1,
     "owner_ipc_protocol": 1,
     "owner_marker_missing": 1,
     "owner_unavailable": 1,

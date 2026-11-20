@@ -30,45 +30,9 @@ import { withReadDeadline } from '../src/core/read-deadline.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { CODES } from '../src/core/error-registry.ts';
+import { rawSession } from './helpers/owner-ipc-raw.ts';
 
 type Frame = Record<string, unknown>;
-
-/** A raw connection: sends frames as given and collects every frame the other side sends. */
-function rawSession(socketPath: string) {
-  const socket = net.connect(socketPath);
-  const frames: Frame[] = [];
-  const waiters: Array<() => void> = [];
-  let buf = '';
-  let closed = false;
-  socket.on('error', () => {});
-  socket.on('data', chunk => {
-    buf += chunk;
-    const lines = buf.split('\n');
-    buf = lines.pop() ?? '';
-    for (const line of lines) if (line) frames.push(JSON.parse(line) as Frame);
-    for (const wake of waiters.splice(0)) wake();
-  });
-  socket.on('close', () => { closed = true; for (const wake of waiters.splice(0)) wake(); });
-  const connected = new Promise<void>(resolve => socket.once('connect', () => resolve()));
-  return {
-    frames,
-    get closed() { return closed; },
-    send: async (frame: Frame) => { await connected; socket.write(JSON.stringify(frame) + '\n'); },
-    /** The first frame that matches, or null when the socket closes or 2 s pass first. */
-    next: async (match: (frame: Frame) => boolean): Promise<Frame | null> => {
-      const deadline = Date.now() + 2_000;
-      for (;;) {
-        const found = frames.find(match);
-        if (found) return found;
-        if (closed || Date.now() >= deadline) return null;
-        await Promise.race([new Promise<void>(resolve => waiters.push(resolve)), Bun.sleep(50)]);
-      }
-    },
-    /** True when the other side closed the socket within 2 s. */
-    closes: async () => { for (let i = 0; i < 40 && !closed; i++) await Bun.sleep(50); return closed; },
-    destroy: () => socket.destroy(),
-  };
-}
 
 const errorOf = (frame: Frame | null) => decodeError(frame?.error as Wire) as OperationError;
 const hello = (version = OWNER_IPC_VERSION) => ({ t: 'hello', version });
@@ -145,7 +109,7 @@ describe('frame rules on the owner', () => {
       expect(ran).toEqual(['getHealth']);
       expect(server.stats().active).toBe(1);
       await raw.send({ t: 'cancel', id: 7 });
-      expect(await idle()).toMatchObject({ active: 0, queued: 0 });
+      expect(await idle()).toMatchObject({ active: 0, queued: 0, inflightBytes: 0 });
       expect(aborted).toBe(before + 1);
     } finally { raw.destroy(); }
   });
@@ -159,7 +123,7 @@ describe('frame rules on the owner', () => {
     await raw.send({ t: 'call', id: 3, member: 'getConfig', args: encodeValue(['duplicate']) });
     expect(await raw.next(f => f.t === 'result')).not.toBeNull();
     raw.destroy();
-    expect(await idle()).toMatchObject({ active: 0, queued: 0 });
+    expect(await idle()).toMatchObject({ active: 0, queued: 0, inflightBytes: 0 });
     expect(aborted).toBe(before + 1);
   });
 

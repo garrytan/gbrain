@@ -97,13 +97,26 @@ export class RustEngine {
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
     if (this._connected) return;
+    await this._electOnce();
+  }
+
+  /** The one open in progress, started if there is none: connects that overlap, and takeovers, share it. */
+  private _electOnce(): Promise<void> {
     if (!this._opening) {
       const generation = this._generation;
       const opening: Promise<void> = this._open(generation)
         .finally(() => { if (this._opening === opening) this._opening = null; });
       this._opening = opening;
     }
-    await this._opening;
+    return this._opening;
+  }
+
+  /**
+   * A client whose owner has gone runs the election again on its next call (client.ts `rejoin`): it becomes the owner
+   * and opens the store, or a client of the process that did. A disconnected engine does nothing.
+   */
+  private _takeOver(): Promise<void> {
+    return this._connected ? this._electOnce() : Promise.resolve();
   }
 
   private async _open(generation: number): Promise<void> {
@@ -112,9 +125,13 @@ export class RustEngine {
       wholeOperations: ownerWholeOperations(), ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
     });
     if (generation !== this._generation) { await leaveRole(role); throw abandoned(); }
+    // A takeover keeps the members of the owner that went away until this election is decided, then replaces them.
+    const prior = this._leaveOwner;
+    this._leaveOwner = null;
     if (role.role === 'client') {
       this._owner = role;
-      this._leaveOwner = installOwnerClient(this, role.connection);
+      prior?.();
+      this._leaveOwner = installOwnerClient(this, role.connection, { rejoin: () => this._takeOver() });
       this._connected = true;
       return;
     }
@@ -123,12 +140,18 @@ export class RustEngine {
     const storeReady = new Promise<void>(resolve => { storeSettled = resolve; });
     this._storeReady = storeReady;
     this._owner = role;
+    if (prior) {
+      // The members of the owner that went away give way to this engine's own, which wait for the store (`storeFor`).
+      prior();
+      for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+    }
     try {
       let store: RustStore;
       try {
         store = await openRustStore(this.addon, this.databasePath);
       } catch (error) {
         if (this._owner === role) this._owner = null;
+        this._connected = false;
         storeSettled();
         await leaveRole(role);
         throw error;

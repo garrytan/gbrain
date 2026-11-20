@@ -16,12 +16,16 @@
  *   owner -> client  { t: 'hello', version, pid, kind, capabilities, serve }
  *   owner -> client  { t: 'cb', id, key, args }                     a void notification callback of call `id`
  *   owner -> client  { t: 'result', id, ok, value | error }         the call's end; exactly one per call
+ *   owner -> client  { t: 'refused', error }                        the connection is refused before its hello
+ *                                                                    (another OS user, or too many connections); it closes
  *
  * Each call needs a hello of OWNER_IPC_VERSION first, an id not open on its connection, and a list as `args`; the owner
  * refuses anything else with `owner_ipc_protocol` and runs nothing. A hello of another version gets the owner's hello
  * (so the client can name both versions) and then the connection closes.
  * A closed connection ends every call on it: the owner aborts them, and the client rejects them with
  * `owner_unavailable`. Frames over OWNER_IPC_MAX_FRAME_BYTES are refused (`response_too_large` for a reply).
+ * The owner bounds its memory across every client: past OWNER_IPC_MAX_QUEUED waiting calls, OWNER_IPC_MAX_INFLIGHT_BYTES
+ * of held call frames, or OWNER_IPC_MAX_CONNECTIONS connections it refuses with `owner_busy` (retryable) and runs nothing.
  */
 import type { Socket } from 'node:net';
 import { realpathSync } from 'node:fs';
@@ -33,6 +37,12 @@ export const OWNER_IPC_VERSION = 1;
 export const OWNER_IPC_MAX_FRAME_BYTES = 128 * 1024 * 1024;
 /** Calls the owner runs at once across every client; more wait in a FIFO queue within their own deadline. */
 export const OWNER_IPC_DEFAULT_PERMITS = 32;
+/** Calls that may wait in the owner queue at once, across every client; one more is refused with `owner_busy`. */
+export const OWNER_IPC_MAX_QUEUED = 1024;
+/** Bytes of call frames the owner holds at once (queued and running calls); a frame past it is refused with `owner_busy`. */
+export const OWNER_IPC_MAX_INFLIGHT_BYTES = 256 * 1024 * 1024;
+/** Client connections the owner keeps open at once; one more gets a `refused` frame and is closed. */
+export const OWNER_IPC_MAX_CONNECTIONS = 256;
 
 /**
  * The store directory with symlinks resolved, so every alias of one brain names one owner lock and one socket. A
@@ -80,7 +90,8 @@ export type OwnerFrame =
   | OwnerHello
   | { t: 'cb'; id: number; key: string; args: Wire }
   | { t: 'result'; id: number; ok: true; value: Wire }
-  | { t: 'result'; id: number; ok: false; error: Wire };
+  | { t: 'result'; id: number; ok: false; error: Wire }
+  | { t: 'refused'; error: Wire };
 
 /** Serializes a frame; null when it is over the frame cap. */
 export function frameLine(frame: object, maxBytes = OWNER_IPC_MAX_FRAME_BYTES): string | null {
@@ -90,9 +101,10 @@ export function frameLine(frame: object, maxBytes = OWNER_IPC_MAX_FRAME_BYTES): 
 
 /**
  * Reads newline-delimited frames from a socket. A frame over the cap (partial or finished), or a line that is not JSON, calls
- * `onBad` once and the socket is destroyed: the peer is a different release or not a gbrain process.
+ * `onBad` once and the socket is destroyed: the peer is a different release or not a gbrain process. `onFrame` gets each
+ * frame with its size in bytes, newline included, so the owner can bound the bytes it holds.
  */
-export function readFrames(socket: Socket, onFrame: (frame: Record<string, unknown>) => void, onBad: (why: string) => void,
+export function readFrames(socket: Socket, onFrame: (frame: Record<string, unknown>, bytes: number) => void, onBad: (why: string) => void,
   maxBytes = OWNER_IPC_MAX_FRAME_BYTES): void {
   let chunks: Buffer[] = [];
   let bytes = 0;
@@ -119,13 +131,14 @@ export function readFrames(socket: Socket, onFrame: (frame: Record<string, unkno
       if (bytes > maxBytes) { fail('frame_too_large'); return; }
       chunks.push(chunk.subarray(0, newline));
       const line = Buffer.concat(chunks).toString('utf8');
+      const size = bytes;
       chunks = [];
       bytes = 0;
       chunk = chunk.subarray(newline + 1);
       let frame: unknown;
       try { frame = JSON.parse(line); } catch { fail('malformed_frame'); return; }
       if (!frame || typeof frame !== 'object' || Array.isArray(frame)) { fail('malformed_frame'); return; }
-      onFrame(frame as Record<string, unknown>);
+      onFrame(frame as Record<string, unknown>, size);
       if (bad || socket.destroyed) return;
     }
   });
