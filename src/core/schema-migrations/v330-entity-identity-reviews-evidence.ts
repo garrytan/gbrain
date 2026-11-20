@@ -8,8 +8,8 @@ import type { Migration } from './types.ts';
 // themselves), so a rejected pair stays apart after one page is renamed or moved to another source. On a brain with a
 // repository the list is also in the decision file (`evidence:`), so a database rebuilt from git keeps it. NULL on
 // decisions recorded before this migration until the next sync or gbrain dedupe reconcile fills it from their pages.
-export const v329: Migration = {
-  version: 329,
+export const v330: Migration = {
+  version: 330,
   name: 'entity_identity_reviews_evidence',
   idempotent: true,
   sql: `ALTER TABLE entity_identity_reviews ADD COLUMN IF NOT EXISTS evidence JSONB;`,
