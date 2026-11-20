@@ -27,6 +27,8 @@ import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
 import type { WorktreeBinding } from '../engine-sql/write-misc.ts';
+import { claimWorktreeBinding } from '../engine-sql/worktree-claim.ts';
+import { writerAdminTransaction } from '../engine-sql/writer-admin.ts';
 
 const writerStatusFix = (sourceId: string): Action => readFix(
   `Shows source ${sourceId}'s owner host, epoch, worktree state, admin_state and any publication still recovering, read-only.`,
@@ -109,7 +111,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
     `Another gbrain process holds the coordination lock for this checkout, so source ${sourceId} was not claimed. Check writer status and run the claim again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   await probe.release();
-  await engine.claimWorktreeBinding(async (store, tx) => {
+  await claimWorktreeBinding(engine, async (store, tx) => {
     await store.assertAdminState(expectedAdminState);
     if (!options.automatic) await store.assertAdminUnlocked();
     const source = await store.lockSource(sourceId);
@@ -333,11 +335,10 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
     // The native lock already excludes writers, so hash before checking out a
     // connection. A hashing failure surfaces after the root checks below, as before.
     const hashed = (() => { try { return worktreeManifest(binding.local_path!, { progress: humanManifestProgress() }); } catch (error) { return error as Error; } })();
-    return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-      await assertWriterAdminState(tx, expectedAdminState);
-      await assertWriterAdminUnlocked(tx);
-      const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string; state: string }>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
+    return await writerAdminTransaction(engine, async (store, tx) => {
+      await store.assertAdminState(expectedAdminState);
+      await store.assertAdminUnlocked();
+      const owner = await store.lockWorktree(binding.worktree_id);
       const current = await getWorktreeBinding(tx, sourceId, hostId);
       if (!owner || owner.owner_host_id !== hostId || JSON.stringify(current) !== JSON.stringify(binding)) throw opError('owner_unavailable', 'Ownership changed during transfer.',
         `Source ${sourceId}'s owner or binding changed while the transfer was being prepared, so nothing was recorded. Inspect writer status again before deciding on any transfer.`,
@@ -345,20 +346,16 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
       if (owner.state !== 'active' && owner.state !== 'draining') throw opError('writer_transfer_conflict', 'Finish publication recovery before preparing a transfer.',
         `Source ${sourceId}'s worktree is in state ${owner.state}, not active, so no transfer was prepared. Let the owner finish publication recovery (writer status shows it), then prepare again.`,
         { fix: writerStatusFix(sourceId) });
-      const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND
-        (state IN ('running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [binding.worktree_id]);
-      const mirrors = await tx.executeRaw('SELECT id FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [binding.worktree_id]);
-      if (pending.length || mirrors.length) throw opError('recovery_required', 'Resolve outstanding publication before transfer.',
+      if (await store.publicationPending(binding.worktree_id)) throw opError('recovery_required', 'Resolve outstanding publication before transfer.',
         `Source ${sourceId}'s worktree still has a write or mirror effect publishing or recovering, so no transfer was prepared. Inspect writer status and wait for it to settle on the owner before preparing again.`,
         { fix: writerStatusFix(sourceId) });
-      const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-      const recovery = opts.selfTransfer ? inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id,
+      const brainId = opts.selfTransfer ? await store.brainId() : null;
+      const recovery = opts.selfTransfer ? inspectPhysicalRootRecovery(binding.local_path!, { brainId: brainId!,
         worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! }, { relocated: opts.relocated === true }) : undefined;
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;
       const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}) };
-      if (!opts.dryRun) await tx.executeRaw(`UPDATE persistence_worktrees SET state='draining',manifest=$2::text::jsonb||jsonb_build_object('prepared_at',now()) WHERE id=$1::uuid`,
-        [binding.worktree_id, JSON.stringify(manifest)]);
+      if (!opts.dryRun) await store.markWorktreeDraining(binding.worktree_id, manifest);
       return { worktree_id: binding.worktree_id, owner_epoch: String(owner.owner_epoch), manifest };
     });
   } finally { await lock.release(); }
@@ -390,14 +387,13 @@ export async function cancelWriterTransfer(engine: BrainEngine, sourceId: string
     `Another gbrain process holds source ${sourceId}'s coordination lock, so the transfer was not cancelled. Run the cancel again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   try {
-    return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-      await assertWriterAdminState(tx, expectedAdminState);
-      await assertWriterAdminUnlocked(tx);
-      const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string; state: string }>('SELECT owner_host_id,owner_epoch::text AS owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
+    return await writerAdminTransaction(engine, async store => {
+      await store.assertAdminState(expectedAdminState);
+      await store.assertAdminUnlocked();
+      const owner = await store.lockWorktree(binding.worktree_id);
       if (!owner || owner.owner_host_id !== hostId) throw notOwner();
       if (owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch) throw conflict(owner.state, String(owner.owner_epoch));
-      await tx.executeRaw(`UPDATE persistence_worktrees SET state='active',manifest=NULL WHERE id=$1::uuid`, [binding.worktree_id]);
+      await store.reactivateWorktree(binding.worktree_id);
       return { worktree_id: binding.worktree_id, owner_epoch: String(owner.owner_epoch), state: 'active', prepared_at: binding.prepared_at ?? null, cancellable: true };
     });
   } finally { await lock.release(); }

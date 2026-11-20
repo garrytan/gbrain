@@ -8,11 +8,11 @@
 //! `sources.rs`, and judges each page by the parent's read scope (`passes_read_scope`).
 
 use super::{PageReadScope, PageRef, passes_read_scope, sources_by_id};
-use crate::facts::OwnerOnlyCache;
 use crate::Store;
 use crate::cli_reads::pg_text::pg_lower;
 use crate::cli_reads::reads::retired;
 use crate::error::Result;
+use crate::facts::OwnerOnlyCache;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::trust::TrustPolicy;
 use serde_json::{Value, json};

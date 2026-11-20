@@ -109,7 +109,7 @@ describe('engine parity: import path guards', () => {
   });
 
   parityTest('readTransactionSettings and applyTransactionSettings read and set settings inside the transaction only', { methods: ['readTransactionSettings', 'applyTransactionSettings', 'transaction'] }, async (engine) => {
-    const names = ['gbrain.parity_first', 'gbrain.parity_second'];
+    const names = ['gbrain.git_protocol', 'gbrain.persistence_protocol'];
     // A setting that was never set reads null, or an empty string once an earlier transaction on the connection set it.
     const blank = (values: Array<string | null>) => values.map(value => value ?? '');
     const before = blank(await engine.readTransactionSettings(names));

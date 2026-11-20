@@ -226,22 +226,21 @@ describe('engine parity: transaction-local settings', () => {
     return { code: refusal?.code ?? null, message: String(refusal?.message ?? '').replace(/^cannot execute .+ in a read-only transaction$/, 'cannot execute <statement> in a read-only transaction'), page: await engine.getPage('snap/ro') };
   });
 
-  // The Rust engine keeps only the settings its writers read (the six trust settings in the store, the attribution
-  // and source scope on the transaction); any other name refuses as a capability it lacks. PGLite answers it.
-  parityTest('a setting name the Rust engine does not keep refuses on Rust', {
-    methods: ['transaction', 'readTransactionSettings'],
-  }, async (engine, backend) => {
-    const read = (tx: BrainEngine) => tx.readTransactionSettings([TIER, 'gbrain.writer_quiesced']);
-    return engine.transaction(async (tx) => {
-      if (backend !== 'rust') return unset(await read(tx));
-      const refusal = await read(tx).then(() => null, (error: unknown) => error);
-      expect(refusal).toMatchObject({
-        code: 'engine_capability_missing',
-        reason: 'transactions',
-        detail: 'member=readTransactionSettings capability=transactions setting=gbrain.writer_quiesced outcome=none written=nothing',
-      });
-      throw refusal;
+  // gbrain.writer_quiesced is the quiescence declaration skill activation sets before it raises the protocol floor;
+  // it reads back inside the transaction and ends with it on every arm. The Rust engine keeps only the settings its
+  // writers or callers read; any other name refuses there before any work (test/rust-engine-store.test.ts).
+  parityTest('gbrain.writer_quiesced is kept for the transaction and ends with it', {
+    methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings'],
+  }, async (engine) => {
+    const QUIESCED = 'gbrain.writer_quiesced';
+    const before = unset(await engine.transaction((tx) => tx.readTransactionSettings([QUIESCED])));
+    const inside = await engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings([QUIESCED], ['true']);
+      return tx.readTransactionSettings([TIER, QUIESCED]);
     });
+    const after = unset(await engine.transaction((tx) => tx.readTransactionSettings([QUIESCED])));
+    expect(unset(inside)).toEqual(['', 'true']);
+    return { before, inside: unset(inside), after };
   });
 });
 

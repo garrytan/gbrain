@@ -32,11 +32,6 @@ pub(crate) struct SourceRecord {
     /// `None` before the first stamp. Records written before the field existed read as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunker_version: Option<String>,
-    /// The source's contextual-retrieval override (`sources.contextual_retrieval_mode`), or `None`
-    /// when the source falls through to the global mode. Records written before the field existed
-    /// read as `None`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub contextual_retrieval_mode: Option<String>,
     /// When the source was archived (`sources.archived_at`), or `None` when it is active or was
     /// archived without a time. Records written before the field existed read as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,10 +74,9 @@ impl From<SourceRecord> for SourceRow {
 }
 
 /// One source as `getSource` returns it: `SourceDetailRow` of `src/core/engine.ts`, dates as ISO
-/// strings. The store keeps no `trust_frontmatter_overrides`: only source admin SQL writes that
-/// column, and it does not run on a Rust brain, so it reads as the column default (false).
-/// `contextual_retrieval_mode` is what `setSourceContextualRetrievalMode` stored and `last_commit` the
-/// one `advance_source_commit` stored.
+/// strings. The store keeps no `contextual_retrieval_mode` or `trust_frontmatter_overrides`: only
+/// source admin SQL writes those columns, and it does not run on a Rust brain, so they read as the
+/// column defaults (null, false). `last_commit` is the one `advance_source_commit` stored.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceDetailRow {
     pub id: String,
@@ -106,7 +100,7 @@ impl From<SourceRecord> for SourceDetailRow {
             last_sync_at: r.last_sync_at_us.map(iso),
             config: r.config,
             created_at: iso(r.created_at_us),
-            contextual_retrieval_mode: r.contextual_retrieval_mode,
+            contextual_retrieval_mode: None,
             trust_frontmatter_overrides: false,
         }
     }
@@ -169,7 +163,6 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         archived: false,
         created_at_us: env.now_micros(),
         chunker_version: None,
-        contextual_retrieval_mode: None,
         archived_at_us: None,
         archive_expires_at_us: None,
         last_commit: None,
@@ -247,7 +240,6 @@ impl Store {
                     archived: false,
                     created_at_us: self.env.now_micros(),
                     chunker_version: None,
-                    contextual_retrieval_mode: None,
                     archived_at_us: None,
                     archive_expires_at_us: None,
                     last_commit: None,
@@ -329,24 +321,6 @@ impl Store {
                 record.archived_at_us = None;
                 record.archive_expires_at_us = None;
             }
-            put_json(tx, &source_key(id), &record)?;
-            Ok(true)
-        })
-    }
-
-    /// `setSourceContextualRetrievalMode(id, mode)`: sets the source's contextual-retrieval
-    /// override, or clears it with `None`. The mode is stored as given; the caller validates it.
-    /// Returns whether the source exists; an unknown source changes nothing.
-    pub fn set_source_contextual_retrieval_mode(
-        &self,
-        id: &str,
-        mode: Option<&str>,
-    ) -> Result<bool> {
-        self.write(|tx| {
-            let Some(mut record) = read_source(&*tx, id)? else {
-                return Ok(false);
-            };
-            record.contextual_retrieval_mode = mode.map(str::to_owned);
             put_json(tx, &source_key(id), &record)?;
             Ok(true)
         })

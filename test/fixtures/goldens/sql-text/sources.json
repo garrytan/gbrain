@@ -392,30 +392,6 @@
           }
         ]
       },
-      "setSourceContextualRetrievalMode": {
-        "clear": [
-          {
-            "lane": "pool",
-            "params": [
-              "null",
-              "string"
-            ],
-            "sql": "UPDATE sources SET contextual_retrieval_mode = $1 WHERE id = $2 RETURNING id",
-            "textSha256": "a73bd8a01ed108761678cc7d87256fe1367313f639c00441167622fe60e82ed0"
-          }
-        ],
-        "set": [
-          {
-            "lane": "pool",
-            "params": [
-              "string",
-              "string"
-            ],
-            "sql": "UPDATE sources SET contextual_retrieval_mode = $1 WHERE id = $2 RETURNING id",
-            "textSha256": "a73bd8a01ed108761678cc7d87256fe1367313f639c00441167622fe60e82ed0"
-          }
-        ]
-      },
       "updateSourceConfig": {
         "default": [
           {

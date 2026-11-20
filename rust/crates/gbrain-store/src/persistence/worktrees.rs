@@ -17,13 +17,23 @@
 //!
 //! Ids are lower-case UUID text. A source binding has no foreign key to its source, as on
 //! Postgres: a removed or re-created source leaves its binding, and the readers compare the
-//! binding's incarnation with the source's. Rows are not deleted on this engine yet (no writer
-//! transfer, rebind or source purge runs here).
+//! binding's incarnation with the source's. Rows are not deleted on this engine yet (no rebind or
+//! source purge runs here).
+//!
+//! The writer admin members (`src/core/engine-sql/writer-admin.ts`) read and change the same rows:
+//! `writer_admin_state_text` is the topology document `--expected-state` hashes, and a writer
+//! transfer's prepare and cancel move one worktree between `active` and `draining`.
 
-use super::{uuid_param, violation};
+use super::effects::all_effects;
+use super::{all_requests, extra_is_null, uuid_param, violation};
+use crate::cli_reads::pg_text::jsonb_text;
+use crate::config::read_config;
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
+use crate::facts::jsonb_time;
+use crate::jobs::legacy_lock_rows;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::sources::all_sources;
 use crate::sources::read_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -460,7 +470,212 @@ pub(crate) fn worktree_heartbeat_in(read: &dyn KvRead, id: &str) -> Result<Optio
         .map(iso))
 }
 
+/// `config->>'kind'`: a string as itself, another JSON value as its jsonb text, null as null.
+fn kind_text(config: &serde_json::Map<String, Value>) -> Value {
+    match config.get("kind") {
+        None | Some(Value::Null) => Value::Null,
+        Some(Value::String(s)) => json!(s),
+        Some(other) => json!(jsonb_text(other)),
+    }
+}
+
+/// `jsonb_agg` over no rows is null.
+fn agg(rows: Vec<Value>) -> Value {
+    if rows.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(rows)
+    }
+}
+
+/// `WRITER_ADMIN_STATE_SQL` (`engine-sql/writer-admin.ts`): the writer topology as jsonb text,
+/// read in one snapshot. This engine keeps no `persistence_brain` columns besides the brain id,
+/// so `enabled`, `skill_bundles_enabled`, `writer_protocol_floor` and `mode_epoch` hold their
+/// column defaults; a store with no brain id has no brain row (null).
+pub(crate) fn writer_admin_state_text_in(read: &dyn KvRead, brain_id: &str) -> Result<String> {
+    let brain = if brain_id.is_empty() {
+        Value::Null
+    } else {
+        json!({
+            "id": brain_id,
+            "enabled": false,
+            "skill_bundles_enabled": false,
+            "writer_protocol_floor": 1,
+            "mode_epoch": 1,
+        })
+    };
+    let mut sources = all_sources(read)?;
+    sources.sort_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
+    let sources = sources
+        .iter()
+        .map(|s| {
+            json!([
+                s.id,
+                s.incarnation,
+                s.archived,
+                s.local_path,
+                kind_text(&s.config)
+            ])
+        })
+        .collect();
+    let worktrees = scan_records::<WorktreeRecord>(read, WORKTREE, "worktree")?
+        .into_iter()
+        .map(|w| {
+            json!([
+                w.id,
+                w.owner_host_id,
+                w.owner_epoch.to_string(),
+                w.topology_generation.to_string(),
+                w.state,
+                w.manifest
+            ])
+        })
+        .collect();
+    let bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
+        .into_iter()
+        .map(|b| {
+            json!([
+                b.source_id,
+                b.source_incarnation,
+                b.worktree_id,
+                b.relative_path,
+                b.topology_generation.to_string()
+            ])
+        })
+        .collect();
+    let hosts = scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")?
+        .into_iter()
+        .map(|h| {
+            json!([
+                h.worktree_id,
+                h.host_id,
+                h.local_path,
+                h.coordination_path,
+                h.git_durability
+            ])
+        })
+        .collect();
+    let state = json!({
+        "brain": brain,
+        "sources": agg(sources),
+        "fallback": read_config(read, "sync.repo_path")?,
+        "worktrees": agg(worktrees),
+        "bindings": agg(bindings),
+        "hosts": agg(hosts),
+        "legacy_locks": agg(legacy_lock_rows(read)?),
+    });
+    Ok(jsonb_text(&state))
+}
+
+/// The `preparedTransferWorktree()` read: the first worktree by id that is `draining` with a
+/// manifest, or None.
+pub(crate) fn prepared_transfer_worktree_in(read: &dyn KvRead) -> Result<Option<String>> {
+    Ok(scan_records::<WorktreeRecord>(read, WORKTREE, "worktree")?
+        .into_iter()
+        .find(|w| w.state == "draining" && w.manifest.is_some())
+        .map(|w| w.id))
+}
+
+/// The `lockWorktree(id)` read: `{ owner_host_id, owner_epoch (text), state }`, or None.
+pub(crate) fn worktree_owner_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
+    let id = uuid_param(id, "worktreeId")?;
+    Ok(read_worktree_record(read, &id)?.map(|w| {
+        json!({
+            "owner_host_id": w.owner_host_id,
+            "owner_epoch": w.owner_epoch.to_string(),
+            "state": w.state,
+        })
+    }))
+}
+
+/// `publicationPending(worktreeId)`: a request on the worktree that is running, recovering or
+/// holds a recovery record, or an effect on it that holds one.
+pub(crate) fn worktree_publication_pending_in(read: &dyn KvRead, id: &str) -> Result<bool> {
+    let id = uuid_param(id, "worktreeId")?;
+    let on_worktree = |v: Option<&Value>| {
+        v.and_then(Value::as_str)
+            .is_some_and(|w| w.eq_ignore_ascii_case(&id))
+    };
+    for r in all_requests(read)? {
+        if on_worktree(r.extra.get("worktree_id"))
+            && (r.state == "running" || r.state == "recovering" || !extra_is_null(&r, "recovery"))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(all_effects(read)?.iter().any(|e| {
+        e.worktree_id
+            .as_deref()
+            .is_some_and(|w| w.eq_ignore_ascii_case(&id))
+            && e.recovery.as_ref().is_some_and(|v| !v.is_null())
+    }))
+}
+
+/// `markWorktreeDraining(id, manifest)`: `state = 'draining'` and the manifest with
+/// `prepared_at = now()` (jsonb `timestamptz` text). A missing worktree changes nothing.
+pub(crate) fn mark_worktree_draining_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    id: &str,
+    manifest: &Value,
+) -> Result<()> {
+    let id = uuid_param(id, "worktreeId")?;
+    let Value::Object(map) = manifest else {
+        return Err(StoreError::invalid("a transfer manifest is a JSON object"));
+    };
+    let Some(mut w) = read_worktree_record(&*tx, &id)? else {
+        return Ok(());
+    };
+    let mut map = map.clone();
+    map.insert("prepared_at".into(), json!(jsonb_time(env.now_micros())));
+    w.state = "draining".into();
+    w.manifest = Some(Value::Object(map));
+    put_json(tx, &worktree_key(&id), &w)
+}
+
+/// `reactivateWorktree(id)`: `state = 'active'`, `manifest = NULL`. A missing worktree changes
+/// nothing.
+pub(crate) fn reactivate_worktree_in(tx: &mut dyn KvWrite, id: &str) -> Result<()> {
+    let id = uuid_param(id, "worktreeId")?;
+    let Some(mut w) = read_worktree_record(&*tx, &id)? else {
+        return Ok(());
+    };
+    w.state = "active".into();
+    w.manifest = None;
+    put_json(tx, &worktree_key(&id), &w)
+}
+
 impl Store {
+    /// `readWriterAdminState()`: the writer topology as jsonb text.
+    pub fn writer_admin_state_text(&self) -> Result<String> {
+        writer_admin_state_text_in(&*self.read()?, self.brain_id())
+    }
+
+    /// The id of the worktree a prepared transfer holds, or None.
+    pub fn prepared_transfer_worktree(&self) -> Result<Option<String>> {
+        prepared_transfer_worktree_in(&*self.read()?)
+    }
+
+    /// One worktree's `{ owner_host_id, owner_epoch, state }`, or None.
+    pub fn read_worktree_owner(&self, id: &str) -> Result<Option<Value>> {
+        worktree_owner_in(&*self.read()?, id)
+    }
+
+    /// Whether a publication on the worktree is still running or recovering.
+    pub fn worktree_publication_pending(&self, id: &str) -> Result<bool> {
+        worktree_publication_pending_in(&*self.read()?, id)
+    }
+
+    /// Marks a worktree draining with the prepared transfer's manifest.
+    pub fn mark_worktree_draining(&self, id: &str, manifest: &Value) -> Result<()> {
+        self.write(|tx| mark_worktree_draining_in(tx, &*self.env, id, manifest))
+    }
+
+    /// Returns a draining worktree to active and clears its manifest.
+    pub fn reactivate_worktree(&self, id: &str) -> Result<()> {
+        self.write(|tx| reactivate_worktree_in(tx, id))
+    }
+
     /// `getWorktreeBinding(sourceId, hostId)`.
     pub fn get_worktree_binding(
         &self,

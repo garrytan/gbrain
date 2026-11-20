@@ -2,6 +2,7 @@ import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawal
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
+import type * as SynopsisTierSql from './engine-sql/synopsis-tier.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as LoopMutesSql from './engine-sql/loop-mutes.ts';
 import type * as SourceArchiveSql from './engine-sql/source-archive.ts';
@@ -52,7 +53,8 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from './engine-sql/persistence-admission.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { EmbeddingCandidate, GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
@@ -98,7 +100,8 @@ import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
 } from './engine-sql/write-misc.ts';
-import type { WorktreeClaimBody } from './engine-sql/worktree-claim.ts';
+import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
+import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1544,8 +1547,6 @@ export interface BrainEngine {
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
   /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
-  /** Sets the source's contextual-retrieval override, or clears it with null; false for an unknown source (engine-sql/sources.ts). */
-  setSourceContextualRetrievalMode(sourceId: string, mode: string | null): Promise<boolean>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -1608,10 +1609,22 @@ export interface BrainEngine {
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   /**
-   * The unmanaged writer claim's store work in one transaction (engine-sql/worktree-claim.ts): `body` gets the claim
-   * store and the transaction-bound engine. A Rust brain refuses a reviewed `--expected-state` check.
+   * The unmanaged writer claim's store (engine-sql/worktree-claim.ts). Call it on a transaction engine: it turns on
+   * durable commit, locks the brain row, and every store call runs in that transaction. `claimWorktreeBinding(engine,
+   * body)` opens the transaction and the store.
    */
-  claimWorktreeBinding<T>(body: WorktreeClaimBody<T>): Promise<T>;
+  worktreeClaimStore(): Promise<WorktreeClaimStore>;
+  /**
+   * The writer topology a reviewed `--expected-state` binds to, as jsonb text (engine-sql/writer-admin.ts); the digest
+   * is its SHA-256 (persistence/admin-intent.ts). `lock` holds the topology until the transaction commits.
+   */
+  readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string>;
+  /**
+   * The writer-admin store for writer lock and unlock and transfer prepare and cancel (engine-sql/writer-admin.ts).
+   * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.
+   * `writerAdminTransaction(engine, body)` opens the transaction and the store.
+   */
+  writerAdminStore(): Promise<WriterAdminStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
@@ -1759,6 +1772,10 @@ export interface BrainEngine {
   readHealthMemoClock(): Promise<string>;
   /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
   listSynopsisSourceIds(): Promise<string[]>;
+  /** The synopsis tier's sources and whether trusted page frontmatter picks the tier (synopsis-sweep.ts); skips the page check when asked. */
+  readSynopsisTierSources(skipFrontmatter: boolean): Promise<SynopsisTierSql.SynopsisTierSources>;
+  /** Sets a source's own contextual-retrieval mode, or clears it (null); false when the source does not exist (sources set-cr-mode). */
+  setSourceContextualMode(sourceId: string, mode: string | null): Promise<boolean>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
@@ -3963,6 +3980,8 @@ export interface BrainEngine {
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
+  /** The requests a principal admitted under any of `requestIds` (uuids), in no order (a grouped admission's replays). */
+  readWriteRequestsByRequestIds(principalKind: string, principalId: string, requestIds: readonly string[]): Promise<WriteRequest[]>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
   /** The requests admitted under any of the client request ids `requestIds` (uuids), any principal. */
@@ -3973,6 +3992,16 @@ export interface BrainEngine {
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequestProgress | null>;
   /** The sources holding outstanding (queued, deferred, running, recovering) requests of one principal, as `{ source_id, n }`: the most first, a tie in byte order of the source id. */
   countOutstandingBySource(principalKind: string, principalId: string): Promise<OutstandingBySource[]>;
+  /** Inside the admission transaction: the managed worktree row (share-locked), its active refresh (locked with `lockRefresh`) and whether the source binding holds (engine-sql/persistence-admission.ts). */
+  readWorktreeAdmission(key: WorktreeAdmissionKey, opts?: { lockRefresh?: boolean }): Promise<WorktreeAdmission>;
+  /** Completes a `syncing` refresh whose member sources all reached its target head; true when it did. */
+  completeSyncedRefresh(refreshId: string): Promise<boolean>;
+  /** Whether every consumer renewed within `liveMs` on the worktree's owner host advertises `capability`. */
+  hasDeferralRoom(worktreeId: string, capability: string, liveMs: number): Promise<boolean>;
+  /** How long refresh `refreshId` has run and its worktree's typical refresh duration, or null when it does not exist. */
+  readRefreshTiming(refreshId: string): Promise<RefreshTiming | null>;
+  /** The deferred writes (of one principal, or all) held behind a source's managed sync, and their intent bytes. */
+  countHeldBehindImport(sourceId: string, principal: { kind: string; id: string } | null): Promise<{ count: number; bytes: number }>;
   /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
   ownsSchemaTables(): Promise<boolean>;
   /** The live grant row of the OAuth client that owns a write, or null; `lock` holds it FOR SHARE so a revocation waits. */
@@ -3989,6 +4018,10 @@ export interface BrainEngine {
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
   insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
+  /** Inserts a grouped admission's page requests in item order and charges their (already locked) counters; returns the stored rows. */
+  insertWriteRequestGroup(group: WriteRequestGroupInsert): Promise<WriteRequest[]>;
+  /** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null without an owner or a binding. */
+  readOwnerHostBinding(worktreeId: string): Promise<string | null>;
   /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null>;
   /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
@@ -4006,6 +4039,8 @@ export interface BrainEngine {
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
+  /** The topology changes with a recovery whose worktree host `hostId` owns, after change id `after`, in id order, at most `limit`. */
+  listTopologyRecoveries(hostId: string, after: string | null, limit: number): Promise<TopologyChange[]>;
   readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;
   insertTopologyChange(row: TopologyChangeInsert): Promise<TopologyChange>;
   /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
@@ -4205,8 +4240,8 @@ export interface BrainEngine {
   listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
   /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
   recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
-  /** The segmented-storage gate's evidence: every admitter, consumer, importer and resident writer seen in the last `days`, newest first. */
-  segmentedGateEvidence(days: number): Promise<SegmentedGateEvidenceRow[]>;
+  /** Every writer the segmented-storage gate saw in the last `days` (requests, ingest log, consumers), grouped with its mark, newest first. */
+  readSegmentedGateEvidence(days: number): Promise<SegmentedGateEvidenceRow[]>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */
@@ -4423,6 +4458,15 @@ export interface BrainEngine {
    * no statement timeout, as for its keyword statements.
    */
   keywordBoundedRead<T>(read: (db: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T>;
+
+  /**
+   * The segmented-region read of search dedup (`segmentRegions`, search/dedup.ts) for an engine with no SQL dialect:
+   * `[{ chunk_id, byte_start }]`, one row per hit chunk of a served segmented page whose occurrence has a live
+   * manifest offset (the rows the SQL engines' statement under keywordBoundedRead returns). Each hit names the page
+   * the search returned it on. Only the Rust engine defines it; the SQL engines run the statement through
+   * keywordBoundedRead.
+   */
+  readSegmentRegions?(hits: ReadonlyArray<{ pageId: number; chunkId: number }>): Promise<Array<{ chunk_id: number; byte_start: number }>>;
 
   // ============================================================
   // Cycle locks: TTL lease rows in `gbrain_cycle_locks` (db-lock.ts owns the policy)

@@ -62,9 +62,6 @@ export async function recentWriterVersions(engine: Pick<BrainEngine, 'recentWrit
   return (await engine.recentWriterVersions(days)).map(row => labelled(row));
 }
 
-/** The engine member the segmented-storage gate reads (engine-sql/writer-versions.ts). */
-export type GateEngine = Pick<BrainEngine, 'segmentedGateEvidence'>;
-
 /** A writer the segmented-storage gate saw in its window, by the evidence it left. */
 export interface SegmentedGateWriter {
   /**
@@ -94,11 +91,11 @@ export interface SegmentedGateWriter {
  * ingest-log row (a single-page put on a brain without managed persistence, a run that dies before logging), and
  * one-shot readers and exporters, which write nothing.
  */
-export async function segmentedGateWriters(engine: GateEngine, days: number, floor: string): Promise<SegmentedGateWriter[]> {
+export async function segmentedGateWriters(engine: Pick<BrainEngine, 'readSegmentedGateEvidence'>, days: number, floor: string): Promise<SegmentedGateWriter[]> {
   return (await segmentedGateEvidence(engine, days)).filter(row => !row.segment_reader || writerVersionBelowFloor(row.version, floor));
 }
 
 /** Every writer the gate read in the last `days`, passing or not, grouped as `segmentedGateWriters` groups them. */
-export async function segmentedGateEvidence(engine: GateEngine, days: number): Promise<SegmentedGateWriter[]> {
-  return (await engine.segmentedGateEvidence(days)).map(row => labelled(row));
+export async function segmentedGateEvidence(engine: Pick<BrainEngine, 'readSegmentedGateEvidence'>, days: number): Promise<SegmentedGateWriter[]> {
+  return (await engine.readSegmentedGateEvidence(days)).map(row => labelled(row));
 }

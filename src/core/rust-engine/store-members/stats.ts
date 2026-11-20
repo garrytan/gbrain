@@ -200,7 +200,7 @@ function boundText(value: unknown): string | null {
   return String(value);
 }
 
-/** The row carries this binary's writer stamp and segment-reader mark, as both SQL engines write it (v254). */
+/** One ingest-log row, stamped as PGLite stamps it: the binary's version, the engine's host id and the segment-reader mark. */
 export const logIngest = async function logIngest(this: RustEngine, brain: StoreBrain, entry: IngestLogInput): Promise<void> {
   const sourceId = entry.source_id ?? 'default';
   const stamp = writerStamp({ mint: false, engine: this });
@@ -212,6 +212,7 @@ export const logIngest = async function logIngest(this: RustEngine, brain: Store
     summary: boundText(entry.summary),
     writer_version: stamp.version,
     writer_host_id: stamp.hostId,
+    writer_segment_reader: true,
   }));
 };
 

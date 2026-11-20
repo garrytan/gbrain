@@ -916,13 +916,14 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   // Loud-rejection on missing source. Closes the idempotent-pebble Failure
   // Modes "critical gap": pre-v0.40.3.0 there was no surface that wrote to
   // sources.contextual_retrieval_mode, so the silent-no-op via SQL UPDATE
-  // matching 0 rows was the failure mode the gap warning called out.
-  // One engine call checks and writes: false means no source has this id and nothing changed.
-  if (!(await engine.setSourceContextualRetrievalMode(id, clearing ? null : mode))) {
+  // matching 0 rows was the failure mode the gap warning called out. The
+  // typed member checks and writes in one statement, on every engine.
+  if (!(await engine.setSourceContextualMode(id, clearing ? null : mode))) {
     console.error(`Error: source "${id}" not found.`);
     console.error(`  Run 'gbrain sources list' to see registered sources.`);
     process.exit(4);
   }
+
   if (clearing) {
     console.log(`Cleared contextual_retrieval_mode for source "${id}" (NULL falls through to global mode).`);
   } else {

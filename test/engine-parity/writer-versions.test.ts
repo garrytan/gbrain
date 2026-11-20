@@ -1,14 +1,14 @@
 /**
  * BrainEngine parity — the writer-version reads (engine-sql/writer-versions.ts): `readWriterVersionCutoff` (doctor
  * writer_version check), `listWriterVersions` (persistence/administration.ts writer status) and `recentWriterVersions`
- * (doctor writer_version check, repair/extractor-facts.ts mixed-version warnings), and `segmentedGateEvidence` (the
+ * (doctor writer_version check, repair/extractor-facts.ts mixed-version warnings), and `readSegmentedGateEvidence` (the
  * segmented-storage gate, page-body/limits.ts and persistence/segmented-gate-hold.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the cutoff is an ISO time no later than the first request admitted after it. listWriterVersions names,
  *    per role, the latest version each host and principal stamped (a consumer only for a committed request), newest
  *    first, at most `limit`. recentWriterVersions groups the committed requests published in the window per role, host,
- *    principal and version, with a count, newest first; an empty window reads no row. segmentedGateEvidence groups
+ *    principal and version, with a count, newest first; an empty window reads no row. readSegmentedGateEvidence groups
  *    every admitted request (any state), every published request and every ingest-log row in the window per role,
  *    host, principal, version and segment-reader mark, newest first; an ingest row carries this binary's version and
  *    the mark. On every engine arm (PGLite
@@ -144,15 +144,15 @@ describe('engine parity: writer-version reads', () => {
     return answers;
   });
 
-  parityTest('segmentedGateEvidence groups admitters, consumers and importers with their segment-reader mark', {
-    methods: ['segmentedGateEvidence', 'logIngest', 'insertWriteRequest', 'lockPersistenceCounters', 'stampWriteClaim', 'completeWriteRow', 'readSourceMembership'],
+  parityTest('readSegmentedGateEvidence groups admitters, consumers and importers with their segment-reader mark', {
+    methods: ['readSegmentedGateEvidence', 'logIngest', 'insertWriteRequest', 'lockPersistenceCounters', 'stampWriteClaim', 'completeWriteRow', 'readSourceMembership'],
     timeout: 60_000,
   }, async (engine) => {
-    const empty = await engine.segmentedGateEvidence(7);
+    const empty = await engine.readSegmentedGateEvidence(7);
     await seed(engine);
     await engine.logIngest({ source_type: 'parity-import', source_ref: 'parity', pages_updated: ['notes/a'], summary: 'one' });
     await engine.logIngest({ source_type: 'parity-import', source_ref: 'parity', pages_updated: ['notes/b'], summary: 'two' });
-    const rows = await engine.segmentedGateEvidence(7);
+    const rows = await engine.readSegmentedGateEvidence(7);
     for (const row of rows) {
       expect(row.first_seen).toMatch(ISO);
       expect(Date.parse(row.first_seen!)).toBeLessThanOrEqual(Date.parse(row.last_seen!));
@@ -161,7 +161,7 @@ describe('engine parity: writer-version reads', () => {
     const importer = rows.find(row => row.role === 'importer');
     expect(importer?.host_id === null || /^[0-9a-f-]{36}$/.test(importer?.host_id ?? '')).toBe(true);
     const week = untimed(rows.map(({ first_seen: _, ...row }) => row.role === 'importer' ? { ...row, host_id: 'this-host' } : row));
-    const window = await engine.segmentedGateEvidence(0);
+    const window = await engine.readSegmentedGateEvidence(0);
     const answers = { empty, week: [...week].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))), window };
     const writerA = 'local_cli:parity-writer-a', writerB = 'local_cli:parity-writer-b';
     expect(answers).toEqual({

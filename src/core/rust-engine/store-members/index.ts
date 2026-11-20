@@ -78,6 +78,7 @@ import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as worktreeClaim from './worktree-claim.ts';
+import * as writerAdmin from './writer-admin.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as accessPolicy from './access-policy.ts';
@@ -113,6 +114,8 @@ import * as repairPageScans from './repair-page-scans.ts';
 import * as repairFenceScans from './repair-fence-scans.ts';
 import * as repairPlanScans from './repair-plan-scans.ts';
 import * as gitHolds from './git-holds.ts';
+import * as synopsisTier from './synopsis-tier.ts';
+import * as sourceCrMode from './source-cr-mode.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -169,6 +172,8 @@ export const STORE_MEMBERS = {
   ...writeMisc,
   // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").
   ...worktreeClaim,
+  // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
+  ...writerAdmin,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
@@ -205,6 +210,10 @@ export const STORE_MEMBERS = {
   ...decideStore,
   // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).
   ...engineMigration,
+  // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).
+  ...synopsisTier,
+  // A source's own contextual-retrieval mode (rust/docs/store/source-cr-mode.md).
+  ...sourceCrMode,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

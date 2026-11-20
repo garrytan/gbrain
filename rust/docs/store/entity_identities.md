@@ -52,3 +52,23 @@ Differences from PGLite:
 - Owner-only sources: `page_hidden` does not read them yet. While the brain has an owner-only source (an
   `owner_only` flag or an `imessage` kind), the TypeScript list member refuses a policy read typed rather than show a
   page of that source.
+
+## Identity decisions
+
+The owner's "same person" and "different people" verdicts on a group of pages (migration v325,
+`entity_identity_reviews`; `gbrain dedupe`, `src/core/entities/identity-decisions.ts`) and the duplicate finder's read
+(`src/core/entities/duplicates.ts`). The TypeScript statements are in `src/core/engine-sql/entity-keys.ts` and
+`src/core/engine-sql/identity-decisions.ts`; the store module is `rust/crates/gbrain-store/src/identity_reviews.rs`.
+
+Keys: `i 0x03 <decision_id>` holds one decision as JSON (`verdict`, `members` as given, `group_id`, `entity_id`,
+`canonical_source_id`, `canonical_slug`, `decided_by`, `decided_at_us`, `origin`, `home_source_id`, `git_blob`). A
+decision names its pages by `(source_id, slug)`, so a page delete or rename leaves it alone, as the table has no
+foreign key. An apply runs in one `Store::write`: the decision rows and the `dedupe:confirm` memberships change together
+or not at all, and applies run one at a time (the advisory lock of the SQL).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listEntityKeyRows({ types, keys, after, limit })` | `{ source_id, slug, title, type, keys }` for live, unretired (`retiredPageSql`, `cli_reads::entities::is_retired`) pages of `types` in sources that exist and are not archived, strictly after `after` by `(source_id, slug)` in byte order, at most `limit`. `keys` holds the named frontmatter keys the page carries, a JSON null value included | `listEntityKeyRows` |
+| `brain.listIdentityDecisions()` | `{ decisions, pending, revision }`: decisions by id, `decided_at` as `timestamptz::text`, `canonical` null unless both parts are non-empty; pending names each member of a "same" decision whose page is missing (`page_missing`), sits in no group (`unlinked`, when the decision has a group) or in another group (`other_group`), by decision id, source, then slug. `revision` is `decisionsRevision` | `listIdentityDecisions` |
+| `brain.listRestrictedIdentityMembers(members, policy)` | the members whose page, live or soft-deleted, the page policy hides, once per matching input pair, in input order. The TypeScript member sends the no-caller policy of `privatePagesFilterFragment` | `listRestrictedIdentityMembers` |
+| `brain.applyIdentityDecisions({ upsert, remove, expect_revision })` | `{ upserted, removed, linked, unlinked }`, or `stale: true` with nothing written when `expect_revision` is not the revision now. It removes, then upserts (`decided_at` null takes now), deletes every `dedupe:confirm` membership no "same" decision's live member backs, links each live member page that sits in no group (per group the first, canonical first then decision id, source and page id, is canonical when it is the decision's canonical member and the group had none), then marks the first decision's canonical member canonical when its group still has none. Memberships any other actor wrote are never touched. A verdict other than same or different, an origin other than database or git, or a `decided_at` that is not a timestamp is `invalid_argument` | `applyIdentityDecisions` |

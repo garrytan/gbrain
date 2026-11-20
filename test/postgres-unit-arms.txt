@@ -213,6 +213,7 @@ test/engine-parity/jobs-status.test.ts
 test/engine-parity/jobs-subagent.test.ts
 test/engine-parity/jobs-wake.test.ts
 test/engine-parity/jobs.test.ts
+test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
@@ -270,6 +271,7 @@ test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
+test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts
@@ -313,6 +315,7 @@ test/engine-parity/write-misc.test.ts
 test/engine-parity/write-outcome-order.test.ts
 test/engine-parity/write-request-cancel.test.ts
 test/engine-parity/write-request-reads.test.ts
+test/engine-parity/writer-admin.test.ts
 test/engine-parity/writer-registration.test.ts
 test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts

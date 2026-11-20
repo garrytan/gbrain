@@ -140,6 +140,8 @@ import { deadlineReadSettings, isPipelinableSearchRead, SEARCH_JIT_OFF, withSear
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
+import * as synopsisTierImpl from './engine-sql/synopsis-tier.ts';
+import * as sourceCrModeImpl from './engine-sql/source-cr-mode.ts';
 import * as trustWithdrawalsImpl from './engine-sql/trust-withdrawals.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
 import * as loopMutesImpl from './engine-sql/loop-mutes.ts';
@@ -181,7 +183,9 @@ import type { AttributionTable } from './engine-sql/repair-plan-scans.ts';
 import * as gitHoldsImpl from './engine-sql/git-holds.ts';
 import * as repairBusyImpl from './engine-sql/repair-busy.ts';
 import * as worktreeClaimImpl from './engine-sql/worktree-claim.ts';
-import type { WorktreeClaimBody } from './engine-sql/worktree-claim.ts';
+import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
+import * as writerAdminImpl from './engine-sql/writer-admin.ts';
+import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import type { RowAttributionTarget, VersionRef, WriteAttributionNameIds } from './engine-sql/write-attribution.ts';
@@ -189,6 +193,7 @@ import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as persistenceAdmissionImpl from './engine-sql/persistence-admission.ts';
 import * as syncHoldReadsImpl from './engine-sql/sync-hold-reads.ts';
 import * as syncHoldStoreImpl from './engine-sql/sync-hold-store.ts';
 import * as syncStatusReadsImpl from './engine-sql/sync-status-reads.ts';
@@ -1396,6 +1401,7 @@ export class PostgresEngine implements BrainEngine {
   readUnembeddedPageSummary(sourceId: string, column: string) { return appliedWatermarkReadsImpl.readUnembeddedPageSummary(this, sourceId, column); }
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string) { return fenceHoldsImpl.listFenceHoldRows(this.executeRaw.bind(this), sourceIds, kinds, ownerKey); }
   readWriteRequest(principalKind: string, principalId: string, requestId: string) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequest(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), principalKind, principalId, requestId)); }
+  readWriteRequestsByRequestIds(principalKind: string, principalId: string, requestIds: readonly string[]) { return persistenceJournalImpl.readWriteRequestsByRequestIds(unscopedExecutor(this.engineSql, 'persistence: grouped request read ran unscoped through the transaction executeRaw'), principalKind, principalId, requestIds); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return this.preparationRead(exec => persistenceJournalImpl.readWriteRequestById(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), id, opts)); }
   listWriteRequestsByRequestIds(requestIds: readonly string[]) { return this.preparationRead(exec => persistenceJournalImpl.listWriteRequestsByRequestIds(unscopedExecutor(exec, 'persistence: request read ran unscoped through executeRaw'), requestIds)); }
   listWriteRequestRows(principalKind: string, principalId: string, sourceId: string, filter: persistenceJournalImpl.WriteRequestListFilter) { return persistenceJournalImpl.listWriteRequestRows(unscopedExecutor(this.engineSql, 'persistence: receipt list ran unscoped through executeRaw'), principalKind, principalId, sourceId, filter); }
@@ -1407,8 +1413,16 @@ export class PostgresEngine implements BrainEngine {
   shareLockWriteCredential(kind: 'oauth_client' | 'legacy_token', id: string) { return this.preparationRead(exec => persistenceJournalImpl.shareLockWriteCredential(unscopedExecutor(exec, 'persistence: credential lock ran unscoped through executeRaw'), kind, id), true); }
   readAdmissionRate(principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) { return this.preparationRead(exec => persistenceJournalImpl.readAdmissionRate(unscopedExecutor(exec, 'persistence: admission rate read ran unscoped through executeRaw'), principal, opts)); }
   countOutstandingBySource(principalKind: string, principalId: string) { return this.preparationRead(exec => persistenceJournalImpl.countOutstandingBySource(unscopedExecutor(exec, 'persistence: outstanding-by-source read ran unscoped through executeRaw'), principalKind, principalId)); }
+  // The admission statements run on this engine's executeRaw, as journal.ts sent them (a fault a test injects still reaches them).
+  readWorktreeAdmission(key: persistenceAdmissionImpl.WorktreeAdmissionKey, opts?: { lockRefresh?: boolean }) { return persistenceAdmissionImpl.readWorktreeAdmission(this, key, opts); }
+  completeSyncedRefresh(refreshId: string) { return persistenceAdmissionImpl.completeSyncedRefresh(this, refreshId); }
+  hasDeferralRoom(worktreeId: string, capability: string, liveMs: number) { return this.ownRawRead(exec => persistenceAdmissionImpl.hasDeferralRoom(exec, worktreeId, capability, liveMs)); }
+  readRefreshTiming(refreshId: string) { return this.ownRawRead(exec => persistenceAdmissionImpl.readRefreshTiming(exec, refreshId)); }
+  countHeldBehindImport(sourceId: string, principal: { kind: string; id: string } | null) { return this.ownRawRead(exec => persistenceAdmissionImpl.countHeldBehindImport(exec, sourceId, principal)); }
   lockPersistenceCounters(keys: readonly string[]): Promise<persistenceJournalImpl.CounterRow[]> { return this._pageTransaction ? persistenceJournalImpl.lockPersistenceCounters(this.autocommitSql, keys) : this.transaction(tx => tx.lockPersistenceCounters(keys)); } // pipelined: one connection only, so open a transaction
   insertWriteRequest(row: persistenceJournalImpl.WriteRequestInsert) { return persistenceJournalImpl.insertWriteRequest(this.autocommitSql, row); }
+  insertWriteRequestGroup(group: persistenceJournalImpl.WriteRequestGroupInsert) { return persistenceJournalImpl.insertWriteRequestGroup(this.autocommitSql, group); }
+  readOwnerHostBinding(worktreeId: string) { return persistenceJournalImpl.readOwnerHostBinding(unscopedExecutor(this.engineSql, 'persistence: owner binding read ran unscoped through the transaction executeRaw'), worktreeId); }
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string) { return persistenceJournalImpl.stampWriteClaim(this.autocommitSql, id, token, leaseMs, phaseJson); }
   lockWriteRequest(id: string) { return persistenceJournalImpl.lockWriteRequest(this.autocommitSql, id); }
   completeWriteRow(completion: persistenceJournalImpl.WriteCompletion) { return persistenceJournalImpl.completeWriteRow(this.autocommitSql, completion); }
@@ -1417,6 +1431,7 @@ export class PostgresEngine implements BrainEngine {
   cancelWriteRow(cancel: persistenceJournalImpl.WriteCancellation) { return persistenceJournalImpl.cancelWriteRow(this.autocommitSql, cancel); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), opts?.lock); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through the transaction executeRaw'), principalId, requestIds); }
+  listTopologyRecoveries(hostId: string, after: string | null, limit: number) { return this.preparationRead(exec => persistenceClaimsImpl.listTopologyRecoveries(unscopedExecutor(exec, 'persistence: topology recovery scan ran unscoped through executeRaw'), hostId, after, limit)); }
   readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through the transaction executeRaw'), principalId, requestId); }
   insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.autocommitSql, row); }
   // The renewal ran on executeRawDirect (consumer.ts); the expiry on the consumer's statement engine, direct while its route is.
@@ -1489,7 +1504,7 @@ export class PostgresEngine implements BrainEngine {
   readWriterVersionCutoff() { return writerVersionsImpl.readWriterVersionCutoff(unscopedExecutor(this.autocommitSql, 'writer versions: cutoff read ran unscoped through executeRaw')); }
   listWriterVersions(limit: number) { return writerVersionsImpl.listWriterVersions(unscopedExecutor(this.autocommitSql, 'writer versions: list ran unscoped through executeRaw'), limit); }
   recentWriterVersions(days: number) { return writerVersionsImpl.recentWriterVersions(unscopedExecutor(this.autocommitSql, 'writer versions: window read ran unscoped through executeRaw'), days); }
-  segmentedGateEvidence(days: number) { return writerVersionsImpl.segmentedGateEvidence(unscopedExecutor(this.autocommitSql, 'writer versions: segmented gate read ran unscoped through executeRaw'), days); }
+  readSegmentedGateEvidence(days: number) { return writerVersionsImpl.readSegmentedGateEvidence(unscopedExecutor(this.autocommitSql, 'writer versions: segmented gate read ran unscoped through executeRaw'), days); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   beginSnapshotRead(opts?: { readOnly?: boolean }) { return transactionSettingsImpl.beginSnapshotRead(this, opts); }
   setLocalStatementTimeout(ms: number) { return transactionSettingsImpl.setLocalStatementTimeout(this, ms); }
@@ -1595,7 +1610,6 @@ export class PostgresEngine implements BrainEngine {
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }
   readSourceChunkerVersion(sourceId: string) { return sourcesImpl.readSourceChunkerVersion(unscopedExecutor(this.engineSql, 'sources: sync preflight read it unscoped through executeRaw'), sourceId); }
   setSourceChunkerVersion(sourceId: string, version: string) { return sourcesImpl.setSourceChunkerVersion(this.engineSql, sourceId, version); }
-  setSourceContextualRetrievalMode(sourceId: string, mode: string | null) { return sourcesImpl.setSourceContextualRetrievalMode(this.engineSql, sourceId, mode); }
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }) { return sourcesImpl.countSourcePages(unscopedExecutor(this.engineSql, 'sources: source commands counted pages unscoped through executeRaw'), sourceId, opts); }
   insertSource(row: sourcesImpl.SourceInsert) { return sourcesImpl.insertSource(this.engineSql, row); }
   deleteSourceRecord(sourceId: string, opts?: { expiredArchiveOnly?: boolean }) { return sourcesImpl.deleteSourceRecord(this.autocommitSql, sourceId, opts); }
@@ -1718,7 +1732,9 @@ export class PostgresEngine implements BrainEngine {
   sharedSkillPackTablePresent() { return this.writeMiscRead(exec => writeMiscImpl.sharedSkillPackTablePresent(exec)); }
   listSharedSkillPackRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listSharedSkillPackRoots(exec, hostId)); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return this.writeMiscRead(exec => writeMiscImpl.getWorktreeBinding(exec, sourceId, hostId)); }
-  claimWorktreeBinding<T>(body: WorktreeClaimBody<T>): Promise<T> { return worktreeClaimImpl.claimWorktreeBinding(this, body); }
+  worktreeClaimStore(): Promise<WorktreeClaimStore> { return worktreeClaimImpl.worktreeClaimStore(this); }
+  readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string> { return writerAdminImpl.readWriterAdminState(this, opts); }
+  writerAdminStore(): Promise<WriterAdminStore> { return writerAdminImpl.writerAdminStore(this); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
@@ -1801,6 +1817,8 @@ export class PostgresEngine implements BrainEngine {
   readRowAttribution(target: RowAttributionTarget) { return writeAttributionImpl.readRowAttribution(this.attributionReads, target); }
   readHealthMemoClock() { return writeMiscImpl.readHealthMemoClock(this.writeMiscReads); }
   listSynopsisSourceIds() { return writeMiscImpl.listSynopsisSourceIds(this.writeMiscReads); }
+  readSynopsisTierSources(skipFrontmatter: boolean) { return synopsisTierImpl.readSynopsisTierSources(this, skipFrontmatter); }
+  setSourceContextualMode(sourceId: string, mode: string | null) { return sourceCrModeImpl.setSourceContextualMode(this, sourceId, mode); }
   expireMemoryProposals(reason: string) { return writeMiscImpl.expireMemoryProposals(this.engineSql, reason); }
   listAwaitingMemoryProposals(limit: number) { return writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit); }
   readMemoryProposal(principalKind: string, principalId: string, requestId: string) { return writeMiscImpl.readMemoryProposal(this.writeMiscReads, principalKind, principalId, requestId); }

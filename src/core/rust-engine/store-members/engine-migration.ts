@@ -18,13 +18,13 @@ export const readEngineMigrationHistory: StoreMember<[], EngineMigrationHistory>
 export const readMigrationRows: StoreMember<[table: MigrationTable], MigrationRows | null> = async (brain, table) => {
   if (table === 'sources') {
     // `default` first, then by id, as the store lists them. The store keeps no commit or frontmatter-trust columns:
-    // each reads as a fresh source row has it. The retrieval mode comes from `getSource`, the archive times from the
+    // each reads as a fresh source row has it. The retrieval mode is the source's own (source_cr_mode.rs), the archive times from the
     // archive list (an archive with no times stays unverified after the move).
     const sources: SourceRecordRow[] = await storeCall({ member: 'readMigrationRows' }, () => brain.listSourceRecords());
     const modes = new Map<string, string | null>();
     for (const s of sources) {
-      const detail = await storeCall({ member: 'readMigrationRows' }, () => brain.getSource(s.id)) as { contextual_retrieval_mode?: string | null } | null;
-      modes.set(s.id, detail?.contextual_retrieval_mode ?? null);
+      const mode: string | null = await storeCall({ member: 'readMigrationRows' }, () => brain.readSourceContextualMode(s.id));
+      modes.set(s.id, mode ?? null);
     }
     const archives = new Map<string, { archived_at: string | Date | null; archive_expires_at: string | Date | null }>();
     const archived = await storeCall<Array<{ id: string; archived_at: string | null; archive_expires_at: string | null }>>(

@@ -85,4 +85,58 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_canonical_twin(&source_id, &slug))
     }
+
+    /// `listEntityKeyRows(opts)`: resolves `{ source_id, slug, title, type, keys }` rows by source
+    /// then slug (`EntityKeyRowsOpts`).
+    #[napi]
+    pub fn list_entity_key_rows<'env>(
+        &self,
+        env: &'env Env,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: gbrain_store::identity_reviews::EntityKeyRowsOpts =
+                required(opts, "listEntityKeyRows opts")?;
+            s.list_entity_key_rows(&opts)
+        })
+    }
+
+    /// `listIdentityDecisions()`: resolves `{ decisions, pending, revision }`.
+    #[napi]
+    pub fn list_identity_decisions<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_identity_decisions())
+    }
+
+    /// `listRestrictedIdentityMembers(members, policy)`: resolves the `{ source_id, slug }` members
+    /// whose page the page policy hides.
+    #[napi]
+    pub fn list_restricted_identity_members<'env>(
+        &self,
+        env: &'env Env,
+        members: Value,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let members: Vec<gbrain_store::identity_reviews::MemberRef> =
+                required(members, "listRestrictedIdentityMembers members")?;
+            let policy: gbrain_store::facts::PrivacyPolicy =
+                required(policy, "listRestrictedIdentityMembers policy")?;
+            s.list_restricted_identity_members(&members, &policy)
+        })
+    }
+
+    /// `applyIdentityDecisions(input)`: resolves `{ upserted, removed, linked, unlinked, stale? }`
+    /// (`ApplyDecisions`).
+    #[napi]
+    pub fn apply_identity_decisions<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::identity_reviews::ApplyDecisions =
+                required(input, "applyIdentityDecisions input")?;
+            s.apply_identity_decisions(&input)
+        })
+    }
 }

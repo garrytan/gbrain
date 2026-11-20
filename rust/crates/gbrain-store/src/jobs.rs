@@ -1664,6 +1664,23 @@ fn held_by(read: &dyn KvRead, key: &[u8], opts: &LockHolder) -> Result<Option<Lo
     }))
 }
 
+/// `CLAIM_HEAD_LEASE_HELD`'s lock test: lock `id` is live (`ttl_expires_at>now()`) and held by a
+/// process other than `pid` on `host` (`holder_host IS NOT DISTINCT FROM host`).
+pub(crate) fn lock_held_by_other(
+    read: &dyn KvRead,
+    id: &str,
+    pid: i64,
+    host: &str,
+    now: i64,
+) -> Result<bool> {
+    Ok(
+        get_json::<LockRecord>(read, &lock_key(id))?.is_some_and(|l| {
+            l.ttl_expires_at > now
+                && !(l.holder_pid == pid && l.holder_host.as_deref() == Some(host))
+        }),
+    )
+}
+
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
     let mut out = Vec::new();
     let mut bad = None;
@@ -1685,6 +1702,29 @@ fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
         return Err(e.into());
     }
     Ok(out)
+}
+
+/// The `legacy_locks` part of the writer admin state (`engine-sql/writer-admin.ts`): each cycle
+/// lock that is not a page embedding lease as `[id, holder_pid, holder_host, acquisition_token,
+/// acquired_at]`, by id in byte order. `acquired_at` has the jsonb `timestamptz` text.
+pub(crate) fn legacy_lock_rows(read: &dyn KvRead) -> Result<Vec<Value>> {
+    let mut rows: Vec<(String, LockRecord)> = all_locks(read)?
+        .into_iter()
+        .filter(|(id, _)| !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(rows
+        .into_iter()
+        .map(|(id, l)| {
+            json!([
+                id,
+                l.holder_pid,
+                l.holder_host,
+                l.acquisition_token,
+                crate::facts::jsonb_time(l.acquired_at)
+            ])
+        })
+        .collect())
 }
 
 /// `LEGACY_SPEND_PREDICATE_SQL`: the NULL-record rows of the consent-gated producers

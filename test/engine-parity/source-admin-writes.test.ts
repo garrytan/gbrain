@@ -47,7 +47,7 @@ async function cli(engine: BrainEngine, args: string[]): Promise<number | null> 
 
 describe('engine parity: source admin writes', () => {
   parityTest('sources set-cr-mode sets, clears and refuses an unknown source; getSource and the migration read see it', {
-    methods: ['setSourceContextualRetrievalMode', 'getSource', 'readMigrationRows'],
+    methods: ['setSourceContextualMode', 'getSource', 'readMigrationRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'wiki');
     await createSource(engine, backend, 'side');

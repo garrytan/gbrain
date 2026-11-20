@@ -14,6 +14,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { ENGINE_CAPABILITIES, lacksRawSql, type Capability } from '../src/core/engine-capabilities.ts';
 import { cleanupRetiredManagedMarkers } from '../src/core/persistence/deactivation.ts';
+import { segmentedGateEvidence } from '../src/core/persistence/writer-versions.ts';
 import { readGraduationConnectRow } from '../src/core/persistence/graduation-schema.ts';
 import { analyzePlannerTables, beginFullAnalyze, maybeRefreshPlannerStats, readPlannerStatsState } from '../src/core/planner-stats.ts';
 import { canAnalyzePages, refreshProjectionStatistics } from '../src/core/search/projection-statistics.ts';
@@ -81,10 +82,20 @@ describe('startup persistence reads on an engine without raw SQL', () => {
     expect(rust.calls()).toBe(0);
   });
 
+  // segmentedGateEvidence reads through the typed engine member readSegmentedGateEvidence now (the journal flip), so it
+  // sends no raw SQL on any engine; the zero-call assertion below pins that, and the control counts other raw reads.
+  test('the segmented-gate writer evidence is empty', async () => {
+    const rust = counted(false);
+    expect(await segmentedGateEvidence(rust.engine, 7)).toEqual([]);
+    expect(rust.calls()).toBe(0);
+  });
+
   test('control: PGLite runs the same reads through executeRaw', async () => {
     const pglite = counted(true);
     expect(await cleanupRetiredManagedMarkers(pglite.engine)).toEqual({ state: 'cleared', removed: [], pending: [] });
-    expect(pglite.calls()).toBeGreaterThanOrEqual(1);
+    await readPlannerStatsState(pglite.engine);
+    expect(Array.isArray(await segmentedGateEvidence(pglite.engine, 7))).toBe(true);
+    expect(pglite.calls()).toBeGreaterThanOrEqual(2);
   });
 });
 

@@ -24,10 +24,15 @@ import { testBackends } from './helpers/test-backends.ts';
 /** The real engine, recording each executeRaw statement; `rustShape` drops managed_persistence and raw_sql and refuses raw SQL. */
 function recording(engine: BrainEngine, rustShape: boolean) {
   const statements: string[] = [];
+  const scans: unknown[][] = [];
   const capabilities = new Set([...engine.capabilities].filter(c => !rustShape || (c !== 'managed_persistence' && c !== 'raw_sql')));
   const proxy = new Proxy(engine, {
     get(target, key) {
       if (key === 'capabilities') return capabilities;
+      if (key === 'listTopologyRecoveries') return async (...args: unknown[]) => {
+        scans.push(args);
+        return (target.listTopologyRecoveries as (...a: unknown[]) => unknown).apply(target, args);
+      };
       if (key === 'executeRaw') return async (sql: string, ...rest: unknown[]) => {
         statements.push(sql);
         if (rustShape) throw capabilityMissing('raw_sql', 'executeRaw');
@@ -37,7 +42,7 @@ function recording(engine: BrainEngine, rustShape: boolean) {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  return { engine: proxy as BrainEngine, statements };
+  return { engine: proxy as BrainEngine, statements, scans };
 }
 
 for (const kind of testBackends()) {
@@ -51,16 +56,20 @@ for (const kind of testBackends()) {
     }, 120_000);
     afterAll(async () => { await close(); });
 
+    // The scan of persistence_topology_changes is the typed member listTopologyRecoveries now (the journal flip), so it
+    // reaches the table through the engine, not through executeRaw.
     test('the engine itself still reads persistence_topology_changes and finds nothing to recover', async () => {
-      const { engine: seen, statements } = recording(engine, false);
+      const { engine: seen, statements, scans } = recording(engine, false);
       expect(await recoverSourceTopologies(seen, { hostId: randomUUID() })).toBe(0);
-      expect(statements.some(sql => sql.includes('persistence_topology_changes'))).toBe(true);
+      expect(scans.length).toBeGreaterThanOrEqual(1);
+      expect(statements.some(sql => sql.includes('persistence_topology_changes'))).toBe(false);
     });
 
     test('without managed_persistence the scan returns 0 and sends no raw SQL', async () => {
-      const { engine: seen, statements } = recording(engine, true);
+      const { engine: seen, statements, scans } = recording(engine, true);
       expect(await recoverSourceTopologies(seen, { hostId: randomUUID() })).toBe(0);
       expect(statements).toEqual([]);
+      expect(scans).toEqual([]);
     });
   });
 }

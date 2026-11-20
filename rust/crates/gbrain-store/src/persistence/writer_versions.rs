@@ -4,10 +4,13 @@
 //!
 //! The cutoff (`persistence_brain.writer_version_cutoff`, the moment migration 178 started stamping
 //! requests on Postgres) is the brain's creation time here: a Rust brain stamps every request it
-//! admits from birth. No request is bound to a worktree on this engine (`persistence.rs`), so an
-//! unstamped consumer has no owner host to fall back to.
+//! admits from birth. An unstamped consumer falls back to the owner host of its request's
+//! worktree (`persistence_worktrees`, `worktree_rows.rs`), as `COALESCE(consumer_host_id,
+//! w.owner_host_id)` does.
 //!
-//! The segmented-storage gate evidence also reads the ingest log's writer stamps (`stats.rs`).
+//! The segmented-storage gate's evidence (`readSegmentedGateEvidence`) also reads the ingest
+//! log's writer stamps (`stats.rs`). No `persistence_consumers` row exists here, so the resident
+//! arm reads no rows.
 
 use super::all_requests;
 use crate::env::{Env, iso, parse_iso};
@@ -143,7 +146,7 @@ pub(crate) fn recent_writer_versions_in(
     let Some(cutoff) = format.map(|f| f.created_at_us) else {
         return Ok(Vec::new());
     };
-    let since = env.now_micros() - (days * DAY_US) as i64;
+    let since = window_start(env, days)?;
     type Group = (&'static str, Option<String>, String, Option<String>);
     let mut groups: BTreeMap<Group, Seen> = BTreeMap::new();
     let mut add = |seen: Seen| {
@@ -195,28 +198,56 @@ pub(crate) fn recent_writer_versions_in(
     Ok(rows.iter().map(|s| s.row(true)).collect())
 }
 
-/// One writer of the segmented-storage gate: (role, host, principal, version, mark) and its rows.
-struct GateWriter {
+/// The earliest time Postgres stores, 4714-11-24 BC 00:00 UTC, in microseconds since 1970.
+const MIN_TIMESTAMP_US: i128 = -210_866_803_200_000_000;
+
+/// `now() - (days::double precision * interval '1 day')`, refused as Postgres refuses it: a day
+/// count that is not finite or does not fit the interval's 32-bit day field is `interval out of
+/// range`, and a start before the earliest stored time, or past the latest this store's clock
+/// holds, is `timestamp out of range`. Nothing wraps or saturates.
+fn window_start(env: &dyn Env, days: f64) -> Result<i64> {
+    let out_of_range = |what: &str| {
+        crate::error::StoreError::new(
+            crate::error::INVALID_ARGUMENT,
+            format!("{what} out of range: {days} days"),
+        )
+    };
+    if !days.is_finite() || days.trunc() > f64::from(i32::MAX) || days.trunc() < f64::from(i32::MIN)
+    {
+        return Err(out_of_range("interval"));
+    }
+    // |days| < 2^31, so the span is under 2^31 * 8.64e10 < 2^68 microseconds: exact in i128.
+    let since = i128::from(env.now_micros()) - (days * DAY_US) as i128;
+    if since < MIN_TIMESTAMP_US {
+        return Err(out_of_range("timestamp"));
+    }
+    i64::try_from(since).map_err(|_| out_of_range("timestamp"))
+}
+
+/// One gate group: (role, host, principal, version, segment reader).
+type GateGroup = (&'static str, Option<String>, String, Option<String>, bool);
+
+/// One gate group's window aggregates: `MAX` and `MIN` of its time and `COUNT(*)`.
+struct GateSeen {
     last_seen: i64,
     first_seen: i64,
     requests: i64,
 }
 
-/// `SEGMENTED_GATE_EVIDENCE_SQL`: every writer seen in the last `days`, grouped per role, host,
-/// principal, version and segment-reader mark, newest first. Admitters count in any state by
-/// admission, consumers when committed by publication, importers by the ingest log row. No request
-/// is bound to a worktree here, so an unstamped consumer has no owner host to fall back to, and the
-/// store runs no resident persistence consumer, so the resident arm reads no row.
+/// `READ_SEGMENTED_GATE_EVIDENCE_SQL`: every writer seen at or after `now - days`, grouped per
+/// role, host, principal, version and segment-reader mark, newest first. Admitters count in any
+/// state; consumers when committed and published in the window, with the worktree owner for an
+/// unstamped host; importers per ingest log row. `days` must be finite, as the
+/// `double precision` interval needs.
 pub(crate) fn segmented_gate_evidence_in(
     read: &dyn KvRead,
     env: &dyn Env,
     days: f64,
 ) -> Result<Vec<Value>> {
-    let since = env.now_micros() - (days * DAY_US) as i64;
-    type Group = (&'static str, Option<String>, String, Option<String>, bool);
-    let mut groups: BTreeMap<Group, GateWriter> = BTreeMap::new();
-    let mut add = |key: Group, at: i64| {
-        let g = groups.entry(key).or_insert(GateWriter {
+    let since = window_start(env, days)?;
+    let mut groups: BTreeMap<GateGroup, GateSeen> = BTreeMap::new();
+    let mut add = |key: GateGroup, at: i64| {
+        let g = groups.entry(key).or_insert(GateSeen {
             last_seen: at,
             first_seen: at,
             requests: 0,
@@ -225,44 +256,58 @@ pub(crate) fn segmented_gate_evidence_in(
         g.last_seen = g.last_seen.max(at);
         g.first_seen = g.first_seen.min(at);
     };
-    let mark = |r: &RequestRecord, column: &str| {
-        r.extra.get(column).and_then(Value::as_bool) == Some(true)
-    };
+    let flag = |r: &RequestRecord, column: &str| r.extra.get(column) == Some(&Value::Bool(true));
     for r in all_requests(read)? {
         if r.created_at_us >= since {
-            let key = (
-                "admitter",
-                text(&r, "admitter_host_id"),
-                principal(&r),
-                text(&r, "admitter_version"),
-                mark(&r, "admitter_segment_reader"),
+            add(
+                (
+                    "admitter",
+                    text(&r, "admitter_host_id"),
+                    principal(&r),
+                    text(&r, "admitter_version"),
+                    flag(&r, "admitter_segment_reader"),
+                ),
+                r.created_at_us,
             );
-            add(key, r.created_at_us);
         }
-        if r.state == "committed"
-            && let Some(published) = publication(&r).filter(|p| *p >= since)
-        {
-            let key = (
+        let Some(published) = publication(&r) else {
+            continue;
+        };
+        if r.state != "committed" || published < since {
+            continue;
+        }
+        let host = match text(&r, "consumer_host_id") {
+            Some(h) => Some(h),
+            None => match super::write_claim_terms::worktree_of(&r) {
+                Some(w) => super::worktree_rows::read_worktree_row(read, &w)?
+                    .and_then(|row| row.owner_host_id),
+                None => None,
+            },
+        };
+        add(
+            (
                 "consumer",
-                text(&r, "consumer_host_id"),
+                host,
                 principal(&r),
                 text(&r, "consumer_version"),
-                mark(&r, "consumer_segment_reader"),
-            );
-            add(key, published);
-        }
-    }
-    for row in crate::stats::ingest_writers_since(read, since)? {
-        let key = (
-            "importer",
-            row.host_id,
-            format!("ingest:{}", row.source_type),
-            row.version,
-            row.segment_reader,
+                flag(&r, "consumer_segment_reader"),
+            ),
+            published,
         );
-        add(key, row.created_at_us);
     }
-    let mut rows: Vec<(Group, GateWriter)> = groups.into_iter().collect();
+    for l in crate::stats::ingest_writers_since(read, since)? {
+        add(
+            (
+                "importer",
+                l.writer_host_id,
+                format!("ingest:{}", l.source_type),
+                l.writer_version,
+                l.segment_reader,
+            ),
+            l.created_at_us,
+        );
+    }
+    let mut rows: Vec<(GateGroup, GateSeen)> = groups.into_iter().collect();
     // `ORDER BY last_seen DESC`; ties fall back to the group key so every read answers the same.
     rows.sort_by(|(ka, a), (kb, b)| b.last_seen.cmp(&a.last_seen).then_with(|| ka.cmp(kb)));
     Ok(rows
@@ -283,6 +328,11 @@ pub(crate) fn segmented_gate_evidence_in(
 }
 
 impl Store {
+    /// `readSegmentedGateEvidence(days)`.
+    pub fn read_segmented_gate_evidence(&self, days: f64) -> Result<Vec<Value>> {
+        segmented_gate_evidence_in(&*self.read()?, &*self.env, days)
+    }
+
     /// `readWriterVersionCutoff()`.
     pub fn read_writer_version_cutoff(&self) -> Result<Option<String>> {
         read_writer_version_cutoff_in(&*self.read()?)
@@ -297,9 +347,69 @@ impl Store {
     pub fn recent_writer_versions(&self, days: f64) -> Result<Vec<Value>> {
         recent_writer_versions_in(&*self.read()?, &*self.env, days)
     }
+}
 
-    /// `segmentedGateEvidence(days)`.
-    pub fn segmented_gate_evidence(&self, days: f64) -> Result<Vec<Value>> {
-        segmented_gate_evidence_in(&*self.read()?, &*self.env, days)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct At(i64);
+    impl Env for At {
+        fn now_micros(&self) -> i64 {
+            self.0
+        }
+        fn new_uuid(&self) -> String {
+            String::new()
+        }
+    }
+
+    /// 2026-01-01 00:00 UTC.
+    const NOW: i64 = 1_767_225_600_000_000;
+
+    fn refusal(days: f64) -> String {
+        window_start(&At(NOW), days).unwrap_err().message
+    }
+
+    #[test]
+    fn the_window_start_refuses_a_day_count_as_postgres_does() {
+        assert_eq!(
+            window_start(&At(NOW), 7.0).unwrap(),
+            NOW - 7 * 86_400_000_000
+        );
+        assert_eq!(window_start(&At(NOW), -1.5).unwrap(), NOW + 129_600_000_000);
+        // A million days back is 712 BC and a hundred million ahead is year 275,000: both stored.
+        assert!(window_start(&At(NOW), 1e6).is_ok());
+        assert!(window_start(&At(NOW), -1e8).is_ok());
+        for days in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e10,
+            -1e10,
+            1e100,
+            -1e100,
+            2.5e9,
+        ] {
+            assert!(
+                refusal(days).starts_with("interval out of range"),
+                "{days}: {}",
+                refusal(days)
+            );
+        }
+        for days in [3e6, 1e8, -1e9] {
+            assert!(
+                refusal(days).starts_with("timestamp out of range"),
+                "{days}: {}",
+                refusal(days)
+            );
+        }
+        assert_eq!(
+            window_start(&At(NOW), 1e6).map(|_| ()).map_err(|e| e.code),
+            Ok(())
+        );
+        assert_eq!(
+            window_start(&At(NOW), 1e100).unwrap_err().code,
+            crate::error::INVALID_ARGUMENT
+        );
     }
 }

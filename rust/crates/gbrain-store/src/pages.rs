@@ -1841,10 +1841,9 @@ impl Store {
         })
     }
 
-    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page (NULL body)
-    /// is refused with `invalid_state` before anything is written: PGLite versions it as a reference
-    /// to its live body generation, which pins that generation's manifest rows against the segment
-    /// sweep, and this store keeps no such reference.
+    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page's snapshot
+    /// references its live body generation (`snapshot_in`), as PGLite's `insertSegmentedVersion`
+    /// does, which pins that generation's manifest rows against the segment sweep.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
         self.create_version_with(slug, source_id, None)
     }
@@ -1919,12 +1918,12 @@ impl Store {
     }
 
     /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
-    /// and version policies keep.
+    /// and version policies keep, each reason withheld when its successor is hidden or pruned.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
         let include_body = options.include_body.unwrap_or(true);
-        let mut rows: Vec<VersionRecord> = Vec::new();
+        let mut rows: Vec<(VersionRecord, Option<String>)> = Vec::new();
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
@@ -1934,38 +1933,64 @@ impl Store {
                 {
                     continue;
                 }
+                let mut versions: Vec<VersionRecord> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
-                            && !policy.is_some_and(|policy| {
-                                crate::facts::caller_version_hidden(
-                                    &page,
-                                    &row.page_type,
-                                    &row.frontmatter,
-                                    policy,
-                                )
-                            })
-                        {
-                            rows.push(row);
+                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
+                            versions.push(row);
                         }
                         true
                     },
                 )?;
+                versions.sort_by_key(|v| v.id);
+                // `replacedBecauseSql`: a reader held to world-visible pages sees a reason only when
+                // the next version (over every version, never only the visible ones) is visible too
+                // and was not pruned; the last version's successor is the page, which the page
+                // check above already let through. `pickValidTimeEdition` judges it the same way.
+                let reasons: Vec<Option<String>> = (0..versions.len())
+                    .map(|i| {
+                        let v = &versions[i];
+                        v.change_reason.clone().filter(|_| {
+                            policy.is_none_or(|policy| {
+                                !v.successor_pruned
+                                    && versions.get(i + 1).is_none_or(|n| {
+                                        !crate::facts::version_hidden(
+                                            &page,
+                                            &n.page_type,
+                                            &n.frontmatter,
+                                            policy,
+                                        )
+                                    })
+                            })
+                        })
+                    })
+                    .collect();
+                for (row, reason) in versions.into_iter().zip(reasons) {
+                    if !policy.is_some_and(|policy| {
+                        crate::facts::caller_version_hidden(
+                            &page,
+                            &row.page_type,
+                            &row.frontmatter,
+                            policy,
+                        )
+                    }) {
+                        rows.push((row, reason));
+                    }
+                }
             }
         }
-        rows.sort_by_key(|a| std::cmp::Reverse(a.id));
+        rows.sort_by_key(|(a, _)| std::cmp::Reverse(a.id));
         if let Some(limit) = options.limit {
             rows.truncate(limit);
         }
         Ok(rows
             .iter()
-            .map(|r| {
+            .map(|(r, reason)| {
                 let mut v = r.to_json(include_body);
-                // The trusted read's `replaced_because` is the stored reason (`replacedBecauseSql`).
-                v["replaced_because"] = json!(r.change_reason);
+                v["replaced_because"] = json!(reason);
                 v
             })
             .collect())
@@ -2456,15 +2481,16 @@ mod tests {
     }
 
     #[test]
-    fn update_slug_refuses_a_segmented_page_and_moves_nothing() {
+    fn update_slug_refuses_a_null_body_with_no_segmented_generation_and_moves_nothing() {
         let store = crate::test_support::store();
         put(&store, "big");
+        // A NULL body with no body state behind it: PGLite's CHECK makes this row impossible.
         make_shell(&store, "big");
         let err = store.update_slug("big", "big-2", None).unwrap_err();
         assert_eq!(err.code, crate::error::INVALID_STATE);
         assert_eq!(
             err.message,
-            "updateSlug refuses segmented page big (source=default)"
+            "updateSlug refuses page big (source=default): its body is NULL and no segmented body generation holds it"
         );
         let scope = ReadScope::default();
         assert!(store.read_page_snapshot("big", &scope).unwrap().is_some());

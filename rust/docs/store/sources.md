@@ -7,8 +7,8 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 `incarnation` (a UUID that changes when a source is deleted and created again), with
 `last_sync_at` as an ISO string. The record also keeps the source's `chunker_version` stamp, absent
 until the first stamp; the import members read and write it ([import-members.md](import-members.md)).
-It also keeps the source's `contextual_retrieval_mode` override, absent when the source falls through
-to the global mode; `getSource` returns it.
+The source's own contextual-retrieval mode sits beside the record ([source-cr-mode.md](source-cr-mode.md));
+the `getSource` member and the engine migration's `sources` read add it.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -16,7 +16,6 @@ to the global mode; `getSource` returns it.
 | `brain.getSourceById(id)` | `SourceRow \| null`, archived rows included | `sources-ops` read by id |
 | `brain.upsertSource({ id, name?, local_path?, last_sync_at?, config? })` | the `SourceRow`; only the fields given change; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `sources add` |
 | `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; `patch` is merged one level deep, and a `null` value is kept as JSON `null` (it does not remove the key) | `updateSourceConfig` |
-| `brain.setSourceContextualRetrievalMode(id, mode)` | `boolean`, whether the source exists; `mode` is stored as given and `null` clears it; an unknown source changes nothing | `setSourceContextualRetrievalMode` (`sources set-cr-mode`) |
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists; archiving sets no archive time (an unverified archive the purge sweep never deletes), un-archiving clears both times | test fixtures |
 | `brain.archiveSource(id, ttlHours)` | `{ id, name, archived_at, archive_expires_at } \| null`; an active source is archived now with its expiry `ttlHours` later and `config.federated` false; a missing or archived source changes nothing | `archiveSource` (`sources archive`) |
 | `brain.restoreArchivedSource(id, federated)` | `boolean`, whether an archived source was restored; both archive times are cleared and `config.federated` is set | `restoreArchivedSource` (`sources restore`) |

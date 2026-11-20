@@ -28,6 +28,8 @@ import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { readSourceFreshness } from '../src/core/notifier/status.ts';
 import { startResidentNotifier } from '../src/core/notifier/resident.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { segmentRegions } from '../src/core/search/dedup.ts';
+import { OWNER_IPC_ROUTES } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
 import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 
@@ -143,6 +145,37 @@ describe('Rust engine on the store', () => {
     const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
     expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
+  });
+
+  withAddon('a write naming a worktree with no persistence_worktrees row refuses as the foreign key does and writes nothing', async () => {
+    const { engine } = await open();
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const row = {
+      principalKind: 'local_cli', principalId: 'store-writer', requestId: 'b0000000-0000-4000-8000-0000000000b1', operation: 'put_page',
+      sourceId: 'default', sourceIncarnation: incarnation, pageId: null, slug: 'notes/a', worktreeId: 'f0000000-0000-4000-8000-0000000000a1',
+      topologyGeneration: null, digest: 'd'.repeat(64), intent: { kind: 'put_page' }, authority: {}, intentBytes: 10, terminalReservation: 4096,
+      targetKind: 'page', protocolVersion: 1, admitterVersion: 'store-test', admitterHostId: null, counterKeys: [], clientRequestId: null,
+      state: 'queued' as const, deferredRefreshId: null,
+    };
+    // The store reads the worktree row the binding wrote; with none, the insert refuses like Postgres's foreign key.
+    const refusal = await engine.insertWriteRequest(row as never).then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as OperationError).code).toBe('constraint_violation');
+    expect((refusal as Error).message).toContain('worktree_id f0000000-0000-4000-8000-0000000000a1 names no persistence_worktrees row');
+    expect(await engine.readWriteRequest('local_cli', 'store-writer', 'b0000000-0000-4000-8000-0000000000b1')).toBeNull();
+  });
+
+  withAddon('a transaction setting the engine does not keep refuses before any work', async () => {
+    const { engine } = await open();
+    // gbrain.topology_change is read by a PGLite guard trigger the store does not run: setting it would be a guard
+    // nobody enforces, so both setting members refuse it (transaction-settings parity covers the kept names).
+    for (const run of [
+      (tx: RustEngine): Promise<unknown> => tx.readTransactionSettings(['gbrain.topology_change']),
+      (tx: RustEngine): Promise<unknown> => tx.applyTransactionSettings(['gbrain.topology_change'], ['true']),
+    ]) {
+      const refusal = await engine.transaction((tx) => run(tx as RustEngine)).then(() => null, (error: unknown) => error);
+      expect(refusal).toMatchObject({ code: 'engine_capability_missing', reason: 'transactions' });
+    }
   });
 
   withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
@@ -609,5 +642,51 @@ describe('Rust store page codec', () => {
     expect(page.compiled_truth).toBe('body');
     expect(page.timeline).toBe('');
     expect(page.content_hash).toBe('abc');
+  });
+});
+
+// Raw SQL by design (D18): the session and migration seams refuse raw_sql before they run anything, and no
+// agent-facing path silently falls back on the refusal. test/rust-raw-sql-inventory.test.ts pins the call sites.
+describe('raw SQL by design on a Rust brain', () => {
+  withAddon('each raw seam refuses raw_sql before its callback or statement runs', async () => {
+    const { engine } = await open();
+    let ran = 0;
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ['executeRaw', () => engine.executeRaw('SELECT 1')],
+      ['executeRawDirect', () => engine.executeRawDirect('SELECT 1')],
+      ['runMigration', () => engine.runMigration(0, 'SELECT 1')],
+      ['withReservedConnection', () => engine.withReservedConnection(async () => { ran++; })],
+      ['keywordBoundedRead', () => engine.keywordBoundedRead(async () => { ran++; })],
+    ];
+    for (const [member, call] of calls) {
+      const refusal = await call().then(() => null, (error: unknown) => error);
+      expect({ member, refusal }).toMatchObject({ member, refusal: { code: 'engine_capability_missing', reason: 'raw_sql' } });
+    }
+    expect(ran).toBe(0);
+    // A client engine never forwards the reserved-session seams to the owner: it refuses them locally.
+    expect({ withReservedConnection: OWNER_IPC_ROUTES.withReservedConnection, keywordBoundedRead: OWNER_IPC_ROUTES.keywordBoundedRead })
+      .toEqual({ withReservedConnection: 'refuse', keywordBoundedRead: 'refuse' });
+  });
+
+  withAddon('search dedup reads segment regions through the typed member, never the keyword-bounded read', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const pageId = Number((await engine.getPage('notes/a') as { id: number }).id);
+    const seen: string[] = [];
+    const spy = new Proxy(engine, {
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        if ((key === 'readSegmentRegions' || key === 'keywordBoundedRead' || key === 'executeRaw') && typeof value === 'function') {
+          return (...args: unknown[]) => { seen.push(String(key)); return (value as (...a: unknown[]) => unknown).apply(target, args); };
+        }
+        return value;
+      },
+    });
+    // Three hits on one page pass MAX_PER_PAGE, so dedup asks for regions. An inline page and a page id the brain
+    // does not hold have none: the answer is an empty map, not a refusal swallowed into one.
+    const hit = (page_id: number, chunk_id: number) => ({ slug: 'notes/a', source_id: 'default', page_id, chunk_id }) as never;
+    const chunkId = 1;
+    expect(await segmentRegions(spy, [hit(pageId, chunkId), hit(pageId, chunkId + 1), hit(pageId + 99, chunkId + 2)])).toEqual(new Map());
+    expect(seen).toEqual(['readSegmentRegions']);
   });
 });

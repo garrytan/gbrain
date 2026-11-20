@@ -209,8 +209,8 @@ for (const kind of testBackends()) {
 
     test('B4: an unreadable gate keeps the switch off, and doctor reports the gate as unreadable', async () => {
       await engine.setConfig('pages.segmented_storage', 'on');
-      // The gate's one read is the typed segmentedGateEvidence member; a role without SELECT on the journal fails it.
-      const denied = Object.create(engine, { segmentedGateEvidence: { value: () =>
+      // The gate's one read is the typed readSegmentedGateEvidence member; a role without SELECT on the journal fails it.
+      const denied = Object.create(engine, { readSegmentedGateEvidence: { value: () =>
         Promise.reject(Object.assign(new Error('permission denied for table persistence_requests'), { code: '42501' })) } }) as BrainEngine;
       expect(await readPageBodyPolicy(engine)).toMatchObject({ segmented: true });
       expect(await segmentedNow(denied)).toBe(false);

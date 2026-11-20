@@ -71,7 +71,7 @@ impl Brain {
         self.run(env, move |s| s.read_brain_maturity())
     }
 
-    /// `logIngest({ source_id?, source_type, source_ref, pages_updated_json, summary })`.
+    /// `logIngest({ source_id?, source_type, source_ref, pages_updated_json, summary, writer_version?, writer_host_id?, writer_segment_reader? })`.
     #[napi]
     pub fn log_ingest<'env>(&self, env: &'env Env, entry: Value) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {

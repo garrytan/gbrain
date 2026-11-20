@@ -280,41 +280,6 @@ fn sources_survive_a_reopen() {
 }
 
 #[test]
-fn the_contextual_retrieval_mode_is_set_cleared_and_survives_a_reopen() {
-    let dir = TempDir::new("src-cr-mode");
-    let store = open(&dir);
-    store.upsert_source(&input("wiki", None)).unwrap();
-    let mode = |s: &Store| {
-        s.get_source("wiki")
-            .unwrap()
-            .unwrap()
-            .contextual_retrieval_mode
-    };
-    assert_eq!(mode(&store), None);
-    assert!(
-        store
-            .set_source_contextual_retrieval_mode("wiki", Some("title"))
-            .unwrap()
-    );
-    assert_eq!(mode(&store).as_deref(), Some("title"));
-    store.close();
-    let store = open(&dir);
-    assert_eq!(mode(&store).as_deref(), Some("title"));
-    assert!(
-        store
-            .set_source_contextual_retrieval_mode("wiki", None)
-            .unwrap()
-    );
-    assert_eq!(mode(&store), None);
-    assert!(
-        !store
-            .set_source_contextual_retrieval_mode("missing", Some("title"))
-            .unwrap()
-    );
-    assert!(store.get_source("missing").unwrap().is_none());
-}
-
-#[test]
 fn a_fresh_brain_records_the_callers_initial_config_and_a_reopen_keeps_its_own() {
     let dir = TempDir::new("cfg-initial");
     let path = dir.path().join("brain");

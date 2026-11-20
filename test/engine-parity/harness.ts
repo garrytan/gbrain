@@ -358,32 +358,6 @@ export async function recordPagePurge(engine: BrainEngine, backend: ParityBacken
 }
 
 /**
- * Fixture: a `page_facts_reconcile` watermark row in any state, including ones the typed `settleFactsReconcile` cannot
- * reach (a reconciled revision older than the page, an attempt older than the reconcile). Harness-only SQL behind the
- * backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
- * `knowledge_revision`, an `older` one, or null.
- */
-export async function recordFactsReconcile(
-  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string,
-  outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
-): Promise<void> {
-  switch (backend) {
-    // The Rust store writes the watermark only through settle and drain: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
-    case 'pglite':
-    case 'postgres':
-      await engine.executeRaw(`INSERT INTO page_facts_reconcile (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
-        SELECT p.id, CASE $3 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now(), $5,
-               CASE $4 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now()
-          FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
-        [sourceId, slug, reconciled, attempted, outcome, '00000000-0000-4000-8000-000000000000']);
-      return;
-    default:
-      return assertNever(backend);
-  }
-}
-
-/**
  * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, as `publishFenceGeneration`
  * (generations/fence.ts) writes it. The fence writer has no typed member, so this is harness-only SQL behind the
  * backend switch; the Rust store reads the ledger but no member writes it, and the same SQL stops on the engine's typed
