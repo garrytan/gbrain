@@ -4047,6 +4047,9 @@ export class PGLiteEngine implements BrainEngine {
   async readChronicleLedger() { return collateStoreReads.readChronicleLedger(this); }
   async listSharedSkillMigrationRows(sourceId: string) { return collateStoreReads.listSharedSkillMigrationRows(this, sourceId); }
   async normalizeDerivationClaims(claims: string[]) { return collateStoreReads.normalizeDerivationClaims(this, claims); }
+  async upsertFenceCandidatePart(spec: collateStoreReads.FenceCandidatePartWrite) { return collateStoreReads.upsertFenceCandidatePart(this, spec); }
+  async readFenceCandidateRecords(op: string, sourceIds: readonly string[] | null) { return collateStoreReads.readFenceCandidateRecords(this, op, sourceIds); }
+  async readOpCheckpointRecords(op: string, sourceIds: readonly string[] | null) { return collateStoreReads.readOpCheckpointRecords(this, op, sourceIds); }
   async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }

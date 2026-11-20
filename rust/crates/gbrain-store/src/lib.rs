@@ -23,6 +23,7 @@ pub mod config;
 pub mod cycle_window;
 pub mod env;
 pub mod error;
+pub mod fence_checkpoints;
 pub mod format;
 pub mod identity_downgrades;
 pub mod journal;

@@ -54,3 +54,12 @@ export const listSharedSkillMigrationRows: Member<'listSharedSkillMigrationRows'
 
 export const normalizeDerivationClaims: Member<'normalizeDerivationClaims'> = (brain, claims) =>
   storeCall({ member: 'normalizeDerivationClaims' }, () => brain.normalizeDerivationClaims(claims)) as Promise<Awaited<ReturnType<BrainEngine['normalizeDerivationClaims']>>>;
+
+export const upsertFenceCandidatePart: Member<'upsertFenceCandidatePart'> = (brain, spec) =>
+  storeCall({ member: 'upsertFenceCandidatePart' }, () => brain.upsertFenceCandidatePart(spec)) as Promise<Awaited<ReturnType<BrainEngine['upsertFenceCandidatePart']>>>;
+
+export const readFenceCandidateRecords: Member<'readFenceCandidateRecords'> = (brain, op, sourceIds) =>
+  storeCall({ member: 'readFenceCandidateRecords' }, () => brain.readFenceCandidateRecords(op, sourceIds)) as Promise<Awaited<ReturnType<BrainEngine['readFenceCandidateRecords']>>>;
+
+export const readOpCheckpointRecords: Member<'readOpCheckpointRecords'> = (brain, op, sourceIds) =>
+  storeCall({ member: 'readOpCheckpointRecords' }, () => brain.readOpCheckpointRecords(op, sourceIds)) as Promise<Awaited<ReturnType<BrainEngine['readOpCheckpointRecords']>>>;

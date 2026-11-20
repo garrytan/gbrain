@@ -20,7 +20,7 @@ import type { FenceRepairReceipt } from './receipt.ts';
 import { fenceRepairCommitSubject } from './receipt.ts';
 import { gitChildEnv } from '../git-env.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'writeOpCheckpointValues' | 'readOpCheckpointRecords' | 'deleteOpCheckpoint'>;
 
 export const FENCE_UNCOMMITTED_OP = 'fence-repair-uncommitted';
 
@@ -44,9 +44,7 @@ export function legacyCommitStep(root: string, path: string, classes: readonly s
 }
 
 export async function recordUncommittedFenceRepair(engine: Exec, notice: UncommittedFenceRepair): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [FENCE_UNCOMMITTED_OP, fingerprint(notice.source_id, notice.incarnation, notice.path), JSON.stringify([notice])]);
+  await engine.writeOpCheckpointValues(FENCE_UNCOMMITTED_OP, fingerprint(notice.source_id, notice.incarnation, notice.path), [notice]);
 }
 
 /** True when the path has no uncommitted change in its checkout (a path outside Git is never "committed"). */
@@ -64,15 +62,15 @@ function committed(root: string, path: string): boolean {
 
 /** Outstanding notices of the scoped sources (all when unscoped); a notice whose path is now committed is dropped on read. */
 export async function readUncommittedFenceRepairs(engine: Exec, sourceIds?: readonly string[]): Promise<UncommittedFenceRepair[]> {
-  const rows = await engine.executeRaw<{ fingerprint: string; record: UncommittedFenceRepair }>(`SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
-    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`, [FENCE_UNCOMMITTED_OP, sourceIds ? [...sourceIds] : null]);
+  const rows = await engine.readOpCheckpointRecords(FENCE_UNCOMMITTED_OP, sourceIds ?? null);
   const out: UncommittedFenceRepair[] = [];
   for (const row of rows) {
-    if (committed(row.record.root, row.record.path)) {
-      await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [FENCE_UNCOMMITTED_OP, row.fingerprint]);
+    const record = row.record as UncommittedFenceRepair;
+    if (committed(record.root, record.path)) {
+      await engine.deleteOpCheckpoint(FENCE_UNCOMMITTED_OP, row.fingerprint);
       continue;
     }
-    out.push(row.record);
+    out.push(record);
   }
   return out;
 }

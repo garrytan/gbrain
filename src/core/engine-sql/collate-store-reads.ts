@@ -540,3 +540,47 @@ export async function normalizeDerivationClaims(tx: Raw, claims: string[]): Prom
   const rows = await tx.executeRaw<{ f: string }>(DERIVATION_NEEDLES_SQL, [claims]);
   return rows.map(row => row.f);
 }
+
+/** One judged part of a fence-repair candidate: the checkpoint row it lives in and the finding it stores. */
+export interface FenceCandidatePartWrite {
+  op: string;
+  fingerprint: string;
+  sourceId: string;
+  incarnation: string;
+  key: string;
+  part: 'page' | 'file';
+  finding: unknown;
+}
+
+/** One checkpoint row of an op: its fingerprint and the single record its `completed_keys` array holds. */
+export interface OpCheckpointRecordRow { fingerprint: string; record: unknown }
+
+/** The statement fence-repair/census-store.ts upsertCandidatePart ran: a part stored beside the part already there. */
+export const FENCE_CANDIDATE_PART_SQL = `INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$4::text,'key',$5::text,$6::text,$7::text::jsonb)),now())
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object($6::text,$7::text::jsonb)),updated_at=now()`;
+
+/** The statement census-store.ts readCandidateRecords ran: candidates of live source incarnations, by byte of fingerprint. */
+export const FENCE_CANDIDATE_RECORDS_SQL = `SELECT c.completed_keys->0 AS record FROM op_checkpoints c
+    JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
+    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint COLLATE "C"`;
+
+/** The statement uncommitted.ts readUncommittedFenceRepairs ran: an op's records of the scoped sources, by byte of fingerprint. */
+export const OP_CHECKPOINT_RECORDS_SQL = `SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
+    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`;
+
+/** A candidate part stored: a new row holds this part alone, an existing row keeps its other part. */
+export async function upsertFenceCandidatePart(tx: Raw, w: FenceCandidatePartWrite): Promise<void> {
+  await tx.executeRaw(FENCE_CANDIDATE_PART_SQL, [w.op, w.fingerprint, w.sourceId, w.incarnation, w.key, w.part, JSON.stringify(w.finding)]);
+}
+
+/** The candidate records of live source incarnations (every source when `sourceIds` is null), by byte of fingerprint. */
+export async function readFenceCandidateRecords(tx: Raw, op: string, sourceIds: readonly string[] | null): Promise<unknown[]> {
+  const rows = await tx.executeRaw<{ record: unknown }>(FENCE_CANDIDATE_RECORDS_SQL, [op, sourceIds ? [...sourceIds] : null]);
+  return rows.map(row => row.record);
+}
+
+/** An op's checkpoint records whose source is in `sourceIds` (every source when null), by byte of fingerprint. */
+export async function readOpCheckpointRecords(tx: Raw, op: string, sourceIds: readonly string[] | null): Promise<OpCheckpointRecordRow[]> {
+  return tx.executeRaw<OpCheckpointRecordRow>(OP_CHECKPOINT_RECORDS_SQL, [op, sourceIds ? [...sourceIds] : null]);
+}

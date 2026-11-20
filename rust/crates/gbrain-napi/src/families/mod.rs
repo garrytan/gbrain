@@ -22,6 +22,7 @@ mod collate_take_proposals;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;
+mod fence_checkpoints;
 mod field_usage;
 mod generations;
 mod graph;

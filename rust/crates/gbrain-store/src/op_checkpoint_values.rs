@@ -15,12 +15,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CheckpointRow {
-    completed_keys: Value,
-    updated_at_us: i64,
+pub(crate) struct CheckpointRow {
+    pub(crate) completed_keys: Value,
+    pub(crate) updated_at_us: i64,
 }
 
-fn parent_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
+pub(crate) fn parent_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     if op.contains('\0') || fingerprint.contains('\0') {
         return Err(StoreError::invalid(
             "an op checkpoint op and fingerprint cannot contain NUL",

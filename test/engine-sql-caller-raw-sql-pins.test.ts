@@ -2392,6 +2392,26 @@ SELECT source_id, type FROM pairs`],
     case: { method: 'listSourceWantedMarkers', variant: 'default', run: e => e.listSourceWantedMarkers('source-a') },
     texts: ['SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent'],
   },
+  {
+    from: 'src/core/fence-repair/census-store.ts upsertCandidatePart, at 746062e471',
+    case: { method: 'upsertFenceCandidatePart', variant: 'default', run: e => e.upsertFenceCandidatePart({ op: 'fence-candidate', fingerprint: 'src:1:k', sourceId: 'src', incarnation: '1', key: 'k', part: 'page', finding: { findings: ['k'] } }) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$4::text,'key',$5::text,$6::text,$7::text::jsonb)),now())
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object($6::text,$7::text::jsonb)),updated_at=now()`],
+  },
+  {
+    from: 'src/core/fence-repair/census-store.ts readCandidateRecords, at 746062e471',
+    case: { method: 'readFenceCandidateRecords', variant: 'default', run: e => e.readFenceCandidateRecords('fence-candidate', ['src']) },
+    texts: [`SELECT c.completed_keys->0 AS record FROM op_checkpoints c
+    JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
+    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint COLLATE "C"`],
+  },
+  {
+    from: 'src/core/fence-repair/uncommitted.ts readUncommittedFenceRepairs, at 746062e471',
+    case: { method: 'readOpCheckpointRecords', variant: 'default', run: e => e.readOpCheckpointRecords('fence-repair-uncommitted', ['src']) },
+    texts: [`SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
+    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */

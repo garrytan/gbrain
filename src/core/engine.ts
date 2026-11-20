@@ -98,7 +98,7 @@ import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
-import type { AppliedRatingRow, FeedbackStatusData, OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch, SourceClientReferentRow, ChronicleJudgeKey, ChronicleLedgerSections, ChronicleRowUpsert, SharedSkillMigrationRow, VolunteerArmUsage, VolunteerEventInsert } from './engine-sql/collate-store-reads.ts';
+import type { AppliedRatingRow, FeedbackStatusData, OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch, SourceClientReferentRow, ChronicleJudgeKey, ChronicleLedgerSections, ChronicleRowUpsert, SharedSkillMigrationRow, FenceCandidatePartWrite, OpCheckpointRecordRow, VolunteerArmUsage, VolunteerEventInsert } from './engine-sql/collate-store-reads.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
@@ -4694,6 +4694,12 @@ export interface BrainEngine {
   listSharedSkillMigrationRows(sourceId: string): Promise<SharedSkillMigrationRow[]>;
   /** The claims as the derivation predicates match them: normalized by the database, folded, distinct and non-empty, by byte. */
   normalizeDerivationClaims(claims: string[]): Promise<string[]>;
+  /** One judged part (`page` or `file`) of a fence-repair candidate stored in its checkpoint row, the other part kept. */
+  upsertFenceCandidatePart(spec: FenceCandidatePartWrite): Promise<void>;
+  /** The fence-repair candidate records of live source incarnations (every source when sourceIds is null), by byte of fingerprint. */
+  readFenceCandidateRecords(op: string, sourceIds: readonly string[] | null): Promise<unknown[]>;
+  /** An op's checkpoint records (fingerprint and the single record each holds) whose source is in sourceIds (every source when null), by byte of fingerprint. */
+  readOpCheckpointRecords(op: string, sourceIds: readonly string[] | null): Promise<OpCheckpointRecordRow[]>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

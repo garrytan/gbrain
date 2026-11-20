@@ -17,8 +17,8 @@
  *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an
  *    en_US Postgres to see it fail.
  *  - Seam: rows are written through typed engine members where one exists (insertPinnedQuestion, insertOauthClient,
- *    insertAccessMember, insertDecideCalibration, insertDecideReceipts, putPage) and harness-only SQL otherwise (weights,
- *    event links, fence-repair and chronicle rows, held pages). A case that still seeds or reads through raw SQL stops on
+ *    insertAccessMember, insertDecideCalibration, insertDecideReceipts, putPage, upsertFenceCandidatePart,
+ *    writeOpCheckpointValues) and harness-only SQL otherwise (weights, event links, chronicle rows, held pages). A case that still seeds or reads through raw SQL stops on
  *    the Rust arm's raw_sql refusal.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -170,15 +170,14 @@ describe('store listings come out by byte', () => {
     expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('readCandidateRecords lists candidates by byte of fingerprint', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readCandidateRecords lists candidates by byte of fingerprint', { methods: ['readSourceIncarnation', 'upsertFenceCandidatePart', 'readFenceCandidateRecords'] }, async (engine, backend) => {
     await createSource(engine, backend, 'census-src');
-    const [source] = await engine.executeRaw<{ incarnation: string | number }>(`SELECT incarnation::text AS incarnation FROM sources WHERE id = 'census-src'`);
-    const incarnation = String(source!.incarnation);
+    const incarnation = String((await engine.readSourceIncarnation('census-src'))!.incarnation);
     for (const key of MIXED_SLUGS) await upsertCandidatePart(engine, { sourceId: 'census-src', incarnation, key }, 'page', { findings: [key] } as never);
     expect((await readCandidateRecords(engine, ['census-src'])).map(r => r.key)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('readUncommittedFenceRepairs lists notices by byte of fingerprint', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readUncommittedFenceRepairs lists notices by byte of fingerprint', { methods: ['writeOpCheckpointValues', 'readOpCheckpointRecords'] }, async (engine) => {
     const root = mkdtempSync(join(tmpdir(), 'collate-uncommitted-'));
     try {
       for (const path of MIXED_SLUGS) {

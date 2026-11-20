@@ -101,12 +101,10 @@ export async function writeScanRecord(engine: Exec, record: ScanRecord): Promise
 }
 
 /** Stores one judged part (`page` or `file`) of a candidate, keeping the other part. */
-export async function upsertCandidatePart(engine: Exec, ids: { sourceId: string; incarnation: string; key: string },
+export async function upsertCandidatePart(engine: Pick<BrainEngine, 'upsertFenceCandidatePart'>, ids: { sourceId: string; incarnation: string; key: string },
   part: 'page' | 'file', finding: PageFinding | FileFinding): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$4::text,'key',$5::text,$6::text,$7::text::jsonb)),now())
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object($6::text,$7::text::jsonb)),updated_at=now()`,
-  [FENCE_CANDIDATE_OP, candidateFingerprint(ids.sourceId, ids.incarnation, ids.key), ids.sourceId, ids.incarnation, ids.key, part, JSON.stringify(finding)]);
+  await engine.upsertFenceCandidatePart({ op: FENCE_CANDIDATE_OP, fingerprint: candidateFingerprint(ids.sourceId, ids.incarnation, ids.key), sourceId: ids.sourceId,
+    incarnation: ids.incarnation, key: ids.key, part, finding });
 }
 
 /** Drops the `part` of these candidates (they judged clean); a candidate with no part left is deleted. */
@@ -121,11 +119,8 @@ export async function clearCandidateParts(engine: Exec, ids: { sourceId: string;
 }
 
 /** Candidate records of live source incarnations (optionally one source). */
-export async function readCandidateRecords(engine: Exec, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
-  const rows = await engine.executeRaw<{ record: CandidateRecord }>(`SELECT c.completed_keys->0 AS record FROM op_checkpoints c
-    JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
-    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint COLLATE "C"`, [FENCE_CANDIDATE_OP, sourceIds ? [...sourceIds] : null]);
-  return rows.map(row => row.record);
+export async function readCandidateRecords(engine: Pick<BrainEngine, 'readFenceCandidateRecords'>, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
+  return await engine.readFenceCandidateRecords(FENCE_CANDIDATE_OP, sourceIds ?? null) as CandidateRecord[];
 }
 
 /** One trend row: files or pages Tier 1 normalized, by fix class and by writer. */
