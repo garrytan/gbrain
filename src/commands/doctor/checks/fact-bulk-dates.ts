@@ -24,10 +24,10 @@ export async function factBulkDatesCheck(engine: BrainEngine, sourceIds?: string
       + `${d.top_sources.length ? ` (source tags: ${d.top_sources.map(top => `${top.source} ${top.facts}`).join(', ')})` : ''}, ${d.dated_claims} state one earlier date in the claim`);
     return { name, status: 'warn', details,
       message: `${days.length} calendar day(s) hold a bulk-loaded share of a source's facts as their valid_from: ${lines.join('; ')}. `
-        + 'These dates record when the facts were loaded, not when they happened, so timelines and as-of reads put every such fact on that day. '
+        + 'Timelines and as-of reads place these facts on that day. Compare the source records to distinguish an import date from events that happened together. '
         + `Preview moving the facts whose claim states its own date on the brain host: gbrain repair fact-claim-dates --source ${first.source_id}`
         + `${source_ids.length > 1 ? ` (one source at a time: ${source_ids.map(id => `--source ${id}`).join(', ')})` : ''} — it changes nothing until the user agrees `
-        + 'to the apply command it prints; facts without a date in the claim keep the load day.',
+        + 'to the apply command it prints; facts without a supported date candidate keep their recorded date.',
       fix: agentFix(['gbrain', 'repair', 'fact-claim-dates', '--source', first.source_id, '--json'],
         'Read-only preview: lists the facts whose claim states an earlier date, saves the set under a hash and prints the apply command.', name, { docs }) };
   } catch (error) {

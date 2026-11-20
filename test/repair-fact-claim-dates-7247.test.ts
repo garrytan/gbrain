@@ -57,7 +57,10 @@ async function putPage(ctx: OperationContext, slug: string, content: string) {
 async function seedBulk(engine: BrainEngine) {
   await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from)
     SELECT 'default', 'companies/filler-' || (g % 24),
-           CASE WHEN g % 20 = 0 THEN 'Filler example ' || g || ' was registered on 2024-03-15' ELSE 'Filler example ' || g || ' is a loaded claim' END,
+           CASE WHEN g % 20 = 0 THEN 'Filler example ' || g || ' was registered on 2024-03-15' WHEN g = 1 THEN 'See [[records/2024-03-14]] for the previous session'
+                WHEN g = 2 THEN 'See [previous session](records/2024-03-14)'
+                WHEN g = 3 THEN '这次活动兑现了 2024-03-14「示例记录」所述的安排'
+                ELSE 'Filler example ' || g || ' is a loaded claim' END,
            'fact', 'world', 'bulk-import', $1::timestamptz
       FROM generate_series(1, 240) AS g`, [`${DAY}T00:00:00Z`]);
   for (const fact of ['Filler example dated 2023-02-30', 'Filler example dated 1899-12-31']) {
@@ -94,7 +97,7 @@ async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
 async function expectFinding(engine: BrainEngine, dated: number) {
   const finding = await factBulkDatesCheck(engine);
   expect(finding.status).toBe('warn');
-  expect(finding.message).toContain('record when the facts were loaded, not when they happened');
+  expect(finding.message).toContain('distinguish an import date from events that happened together');
   expect(finding.fix).toMatchObject({ argv: ['gbrain', 'repair', 'fact-claim-dates', '--source', 'default', '--json'] });
   const [day] = finding.details!.days as Array<Record<string, any>>;
   expect(day).toMatchObject({ source_id: 'default', day: DAY, facts: 248, dated_claims: dated });
@@ -127,7 +130,7 @@ for (const backend of testBackends()) {
         const otherFile = readFileSync(join(root, `${OTHER}.md`), 'utf8');
         const dry = await preview(engine);
         expect(dry.affected).toBe(2);
-        expect(dry.residuals).toEqual({ no_date: 229, several_dates: 1, date_not_earlier: 4, database_only_managed: 12 });
+        expect(dry.residuals).toEqual({ no_date: 226, referenced_date: 3, several_dates: 1, date_not_earlier: 4, database_only_managed: 12 });
         expect(dry.listing!.map(entry => [entry.class, entry.item.split(' ')[0]])).toEqual([['rewrite', `default:${ACME}`], ['rewrite', `default:${ALICE}`]]);
         expect(dry.listing![0]!.detail).toContain(`#1 ${DAY} -> 2025-03-14`);
         expect(dry.warnings!.join('\n')).toContain('These dates record when the facts were loaded, not when they happened.');
@@ -204,7 +207,7 @@ for (const backend of testBackends()) {
       const revisions = { other: await revision(engine, OTHER), later: await revision(engine, 'companies/later-example') };
       const dry = await preview(engine);
       expect(dry.affected).toBe(8);
-      expect(dry.residuals).toEqual({ no_date: 229, several_dates: 1, date_not_earlier: 4 });
+      expect(dry.residuals).toEqual({ no_date: 226, referenced_date: 3, several_dates: 1, date_not_earlier: 4 });
       expect(dry.listing!.filter(entry => entry.class === 'update').map(entry => entry.detail!.split(':')[0])).toEqual(Array(6).fill('2 database-only fact(s) take the date their claim states'));
 
       const applied = await apply(engine, dry.preview_hash!);
