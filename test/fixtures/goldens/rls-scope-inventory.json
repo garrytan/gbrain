@@ -6635,6 +6635,7 @@
         "readPageTrustRows": "none",
         "readPageVersionEdition": "none",
         "readPendingProposalSummary": "none",
+        "readPendingWriteHealth": "none",
         "readPersistenceBrainId": "none",
         "readPlainSyncSource": "none",
         "readPrivateQueueState": "none",

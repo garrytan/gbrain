@@ -511,6 +511,7 @@ export const RUST_ENGINE_MEMBERS = {
   readMcpRollupPrunedBefore: 'telemetry',
   readMcpLifetimeUsage: 'telemetry',
   countMcpRequestsLastDay: 'telemetry',
+  readPendingWriteHealth: 'telemetry',
   countMcpRequestsLastDayByToken: 'telemetry',
   logMcpRequest: 'telemetry',
   readMcpLogPruneCutoff: 'telemetry',

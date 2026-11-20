@@ -1322,3 +1322,62 @@ fn release_requeues_only_under_the_claim_token() {
     assert_eq!(charged["preparation_attempts"], 1);
     assert_eq!(charged["claim_phase"], json!({"phase": "preparing"}));
 }
+
+#[test]
+fn pending_write_health_counts_in_flight_writes_and_the_named_pending_writes_that_later_failed() {
+    use gbrain_store::telemetry::McpRequestLogInput;
+    let dir = TempDir::new("persist-health");
+    let store = open(&dir);
+    let empty = store.read_pending_write_health().unwrap();
+    assert_eq!(
+        empty,
+        json!({ "pending_writes": 0, "oldest_pending_write_age_seconds": 0, "pending_writes_later_failed": 0 })
+    );
+    store.lock_persistence_counters(&keys()).unwrap();
+    store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let failed = store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/b", json!({})))
+        .unwrap();
+    let id = failed["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id, "failed", 0))
+        .unwrap()
+        .unwrap();
+    let log = |status: &str, params: Option<Value>| McpRequestLogInput {
+        operation: Some("put_page".into()),
+        status: Some(status.into()),
+        params,
+        ..McpRequestLogInput::default()
+    };
+    for (status, params) in [
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_1 })),
+        ),
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_2 })),
+        ),
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_2 })),
+        ),
+        ("success", Some(json!({ "write_request_id": REQ_2 }))),
+        ("accepted_pending", None),
+    ] {
+        store.log_mcp_request(&log(status, params)).unwrap();
+    }
+    let health = store.read_pending_write_health().unwrap();
+    assert_eq!(
+        health["pending_writes"], 1,
+        "the queued request is in flight"
+    );
+    assert_eq!(
+        health["pending_writes_later_failed"], 1,
+        "the failed request counts once, however many rows name it"
+    );
+    assert!(health["oldest_pending_write_age_seconds"].as_i64().unwrap() >= 0);
+}

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 868/868
+# covered: 869/869
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -62,7 +62,7 @@
 # wanted_links: 2/2
 # write_misc: 38/38
 # write_attribution: 5/5
-# telemetry: 12/12
+# telemetry: 13/13
 # field_usage: 1/1
 # session_state: 7/7
 # alias_fanout_reads: 5/5
@@ -425,12 +425,12 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	34	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	39	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	35	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	40	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	19	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	14	no	yes	yes	serves
-cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
+cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	1	no	yes	yes	serves
 readSourceMembership	persistence_journal	yes	41	no	yes	yes	serves
@@ -543,7 +543,7 @@ readActiveAccessTokenByHash	minion_queue	yes	6	no	yes	yes	serves
 touchAccessTokenLastUsed	minion_queue	yes	2	no	yes	yes	serves
 deleteExpiredOauthCredentials	minion_queue	yes	3	no	yes	yes	serves
 expireAllOauthCredentials	minion_queue	yes	1	no	yes	yes	serves
-countOauthAccessTokens	minion_queue	yes	1	no	yes	yes	serves
+countOauthAccessTokens	minion_queue	yes	2	no	yes	yes	serves
 convertLegacyAccessTokenGrant	minion_queue	yes	1	no	yes	yes	serves
 insertOauthToken	minion_queue	yes	15	no	yes	yes	serves
 insertOauthCode	minion_queue	yes	7	no	yes	yes	serves
@@ -873,11 +873,12 @@ recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	4	no	yes	yes	serves
 readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
-logMcpRequest	telemetry	yes	5	no	yes	yes	serves
+logMcpRequest	telemetry	yes	6	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
-countMcpRequestsLastDay	telemetry	yes	1	no	yes	yes	serves
+countMcpRequestsLastDay	telemetry	yes	2	no	yes	yes	serves
+readPendingWriteHealth	telemetry	yes	1	no	yes	yes	serves
 countMcpRequestsLastDayByToken	telemetry	yes	1	no	yes	yes	serves
 logChatUsage	telemetry	yes	2	no	yes	yes	serves
 readChatUsage	telemetry	yes	2	no	yes	yes	serves

@@ -21,6 +21,7 @@ import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
 import { CREDENTIAL_SQL, OAUTH_CODE_SQL, OAUTH_EXPIRE_ALL_SQL, OAUTH_REFRESH_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
+import { PENDING_WRITE_HEALTH_SQL } from '../src/core/engine-sql/telemetry.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
@@ -1011,6 +1012,19 @@ describe('the OAuth code flow and the token grant send the same statements throu
     expect(capture.error).toBeUndefined();
     expect(OAUTH_EXPIRE_ALL_SQL).toEqual({ tokens: 'UPDATE oauth_tokens SET expires_at=0', codes: 'UPDATE oauth_codes SET expires_at=0' });
     expect(capture.trace.flatMap(t => (t.kind === 'query' ? [t.text] : []))).toEqual([OAUTH_EXPIRE_ALL_SQL.tokens, OAUTH_EXPIRE_ALL_SQL.codes]);
+  });
+  test('the pending-write health member sends the two statements serve-http-admin-api.ts sent, in flight first, with no params', async () => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'readPendingWriteHealth', variant: 'member', run: e => e.readPendingWriteHealth() }));
+    expect(capture.error).toBeUndefined();
+    // The texts at 982540fd6e src/commands/serve-http-admin-api.ts:90-96, byte for byte.
+    expect(PENDING_WRITE_HEALTH_SQL.pending).toBe(`SELECT count(*)::int AS count,
+    COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
+    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`);
+    expect(PENDING_WRITE_HEALTH_SQL.later_failed).toBe(`SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
+    JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
+    WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
+      AND r.state IN ('conflict', 'failed', 'cancelled')`);
+    expect(capture.trace.flatMap(t => (t.kind === 'query' ? [t.text] : []))).toEqual([PENDING_WRITE_HEALTH_SQL.pending, PENDING_WRITE_HEALTH_SQL.later_failed]);
   });
   test('issueOauthTokens runs on the transaction handle, never on the pool', async () => {
     // The client row is locked by the grant's transaction: a token INSERT on another connection waits on its foreign key.

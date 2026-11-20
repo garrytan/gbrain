@@ -676,6 +676,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertOauthGrantAudit': OOS.callerRawSql,
   'countOauthAccessTokens': OOS.callerRawSql,
   'countMcpRequestsLastDay': OOS.telemetry,
+  'readPendingWriteHealth': OOS.telemetry,
   'countMcpRequestsLastDayByToken': OOS.telemetry,
   'listAudienceAccessMembers': OOS.callerRawSql,
   'readAccessGroups': OOS.callerRawSql,

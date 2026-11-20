@@ -45,6 +45,9 @@ const OP_COUNT: &str = "countMcpRequestsLastDay";
 const OP_COUNT_BY_TOKEN: &str = "countMcpRequestsLastDayByToken";
 const LOG_ID_COUNTER: &str = "next_mcp_request_id";
 const DAY_US: i128 = 86_400_000_000;
+/// The write states still in flight, and the states of a write that ended without committing (`readPendingWriteHealth`).
+const PENDING_STATES: &[&str] = &["queued", "deferred", "running", "recovering"];
+const ENDED_UNCOMMITTED: &[&str] = &["conflict", "failed", "cancelled"];
 /// The `timestamptz` range in Unix microseconds: 4714-11-24 BC 00:00:00 UTC up to (not including)
 /// 294277-01-01 UTC, Postgres's `MIN_TIMESTAMP` and `END_TIMESTAMP` moved from the 2000 epoch.
 const TIMESTAMP_MIN_US: i128 = -212_760_172_800_000_000;
@@ -724,6 +727,54 @@ impl Store {
             count += 1;
         }
         Ok(count)
+    }
+
+    /// `readPendingWriteHealth()`: `{ pending_writes, oldest_pending_write_age_seconds, pending_writes_later_failed }`.
+    /// The writes in `queued`, `deferred`, `running` or `recovering`, and the whole seconds since the oldest of them was
+    /// created (0 with none, Postgres's `floor(extract(epoch FROM now() - min(created_at)))`); then the distinct
+    /// requests in `conflict`, `failed` or `cancelled` whose request id an `accepted_pending` log row created after
+    /// `now - 24 hours` names in `params.write_request_id`.
+    pub fn read_pending_write_health(&self) -> Result<Value> {
+        let now = self.env.now_micros();
+        let cutoff = now - DAY_US as i64;
+        let read = self.read()?;
+        let requests = crate::persistence::all_requests(&*read)?;
+        let mut pending = 0_i64;
+        let mut oldest: Option<i64> = None;
+        for r in &requests {
+            if PENDING_STATES.contains(&r.state.as_str()) {
+                pending += 1;
+                oldest = Some(oldest.map_or(r.created_at_us, |o| o.min(r.created_at_us)));
+            }
+        }
+        let mut named: BTreeSet<String> = BTreeSet::new();
+        for (_, row) in read_log(&*read)? {
+            if row.created_us <= cutoff || row.status != "accepted_pending" {
+                continue;
+            }
+            if let Some(id) = row
+                .params
+                .as_ref()
+                .and_then(|p| p.get("write_request_id"))
+                .and_then(Value::as_str)
+            {
+                named.insert(id.to_string());
+            }
+        }
+        let later_failed = requests
+            .iter()
+            .filter(|r| {
+                ENDED_UNCOMMITTED.contains(&r.state.as_str()) && named.contains(&r.request_id)
+            })
+            .map(|r| r.id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len();
+        let age = oldest.map_or(0, |o| (now - o).div_euclid(1_000_000));
+        Ok(json!({
+            "pending_writes": pending,
+            "oldest_pending_write_age_seconds": age,
+            "pending_writes_later_failed": later_failed,
+        }))
     }
 
     /// `countMcpRequestsLastDayByToken(tokenNames)`: `{ token_name, requests }` per asked token that has a request
