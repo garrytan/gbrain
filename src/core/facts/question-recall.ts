@@ -28,6 +28,7 @@ import {
   FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
   type FactPoolFilters, type FactPoolScope, type QuestionAdmissionRule,
 } from '../search/fact-relevance.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 import { confidenceFactor, recallConfidence } from './decay.ts';
 import { readRecallSwitches } from './recall-config.ts';
 
@@ -264,6 +265,8 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     if (weighting) ids = weighting.order;
     let rows: CollapsedFactRead<FactRow>[] = await collapseFactReads(ctx.engine, ids.flatMap(id => byId.get(id) ?? []));
     if (weighting) rows = rows.map(r => weightedRepresentative(r, byId, weighting.rank));
+    // GST-3170: read-time slot ends before the limit cut, so an ended slot value never shortens the answer.
+    rows = await applySlotEnds(ctx.engine, scope, rows, { activeOnly: !input.includeExpired, entities: input.entity ? input.factSources.map(src => ({ source_id: src, slugs: [...new Set(rows.flatMap(r => (r.source_id === src && r.entity_slug ? [r.entity_slug] : [])))] })) : undefined });
     return {
       rows: rows.slice(0, input.limit),
       relevance: new Map(ranked.map(s => [s.candidate.id, Math.round(s.score * 1e4) / 1e4])),

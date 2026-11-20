@@ -90,6 +90,7 @@ test/concept-rename-history-gst2687.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
 test/contact-rows-drift-8109.test.ts
+test/conversation-facts-keep-quiet-gst3170.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
@@ -278,6 +279,7 @@ test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/keyword-timeout-rerun-7082.test.ts
+test/known-as-of-owner-r94.test.ts
 test/label-only-repairs.test.ts
 test/label-repair-derived-stamps-gst2603.test.ts
 test/lane-apply-pipelining.test.ts
@@ -732,6 +734,7 @@ test/secret-store.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
+test/serve-http-member-handover.test.ts
 test/serve-http-memory-proposals.test.ts
 test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
@@ -749,6 +752,9 @@ test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts
 test/sources-resolve-path.test.ts
+test/speaker-owner-connectors.test.ts
+test/speaker-owner-transcripts.test.ts
+test/speaker-owner-trust.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts

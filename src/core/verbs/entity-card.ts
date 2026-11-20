@@ -47,6 +47,7 @@ import { readRowReferences, referencesUnavailableNotice, type RecordGroupView, t
 import type { Notice } from '../agent-output.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
 
 const EDGE_CAP = 10;
@@ -615,6 +616,7 @@ async function assembleCard(
   // applies, so a private or derived page never surfaces its slug, its
   // links.context sentence, or a count. An edge whose origin page is deleted
   // (or, for an untrusted caller, in another source) is left out the same way.
+  let endedFacts = 0;
   const [aka, outLinks, inEdges, backlinkCount, timeline, facts, activeFactCount] = await Promise.all([
     readAka(engine, sourceId, pageSlug),
     engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
@@ -653,6 +655,13 @@ async function assembleCard(
       eligibility,
     })))
       .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
+      // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+      .then(async rows => {
+        const current = await applySlotEnds(engine, { sourceId, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged }, rows,
+          { activeOnly: true, entities: [{ source_id: sourceId, slugs: factSlugs }] });
+        endedFacts = rows.length - current.length;
+        return current;
+      })
       .catch(() => [] as FactRow[]),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger
@@ -789,7 +798,7 @@ async function assembleCard(
     open_threads: openThreads,
     edges,
     backlink_count: backlinkCount,
-    active_fact_count: activeFactCount ?? facts.length,
+    active_fact_count: activeFactCount === null ? facts.length : Math.max(0, activeFactCount - endedFacts),
     ...(relationshipNote ? { relationship_note: relationshipNote } : {}),
     ...(facts.length ? { recent_facts: facts.slice(0, RECENT_FACTS_CAP).map(f => ({
       id: String(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from ? toIso(f.valid_from as Date | string) : null,

@@ -38,6 +38,7 @@ import { slugifyPath } from '../sync.ts';
 import { nextSlackDay, slackAlignToDay, slackDayKey, slackDayStartMs } from '../slack/render.ts';
 import { IMESSAGE_THREADS_LIMIT, helperNotRunning, imessageHelper, type IMessageHelper } from '../apple/helper-client.ts';
 import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessageDay, shownMessages } from './render.ts';
+import { connectorSpeakerOwnerStamp, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
 import { git } from '../git/git-run.ts';
@@ -110,11 +111,11 @@ function staleHolds(recorded: Record<string, string>, paths: string[], detail: s
 
 export async function runIMessageSync(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts, deps: IMessageSyncDeps = {}): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'imessage', cfg, opts,
-    async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps, await connectorSpeakerOwnerStamp(engine, sourceId)), pendingConnectorResult);
 }
 
 async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts,
-  managed: ManagedConnectorSync | null, deps: IMessageSyncDeps): Promise<SyncResult> {
+  managed: ManagedConnectorSync | null, deps: IMessageSyncDeps, ownerStamp: SpeakerOwnerStamp | null): Promise<SyncResult> {
   const now = deps.now ?? Date.now;
   const runStart = now();
   const runId = randomUUID();
@@ -220,7 +221,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   const publishDay = (thread: IMessageThread, chatKey: string, day: string, messages: IMessageMessage[], fp: string) => {
     const relPath = imessagePagePath(chatKey, day);
     ops.push({ op: 'write', key: `${chatKey}/${day}`, chatKey, day, relPath, fp,
-      markdown: connectorRender(renderIMessageDay({ thread, chatKey, day, timezone: cfg.timezone, messages }), { path: relPath, imessage_chat: chatKey }) });
+      markdown: connectorRender(renderIMessageDay({ thread, chatKey, day, timezone: cfg.timezone, messages, ...(ownerStamp ? { owner: ownerStamp } : {}) }), { path: relPath, imessage_chat: chatKey }) });
   };
 
   /** `positive`: the helper reported the day empty inside a window it read (a listed chat), not a guess from an unlisted one. */

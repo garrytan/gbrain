@@ -9,20 +9,25 @@ public struct RouterSettings {
     public let listener: Listener
     public let grants: () -> [TokenGrant]
     public let sources: [SourceModule]
-    public let enabled: Set<String>
+    public let enabled: () -> Set<String>
     public let version: String
     public let send: SendService?
 
     public init(listener: Listener, grants: [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String, send: SendService? = nil) {
-        self.init(listener: listener, liveGrants: { grants }, sources: sources, enabled: enabled, version: version, send: send)
+        self.init(listener: listener, liveGrants: { grants }, liveEnabled: { enabled }, sources: sources, version: version, send: send)
     }
 
     public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String,
                 send: SendService? = nil) {
+        self.init(listener: listener, liveGrants: liveGrants, liveEnabled: { enabled }, sources: sources, version: version, send: send)
+    }
+
+    public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], liveEnabled: @escaping () -> Set<String>, sources: [SourceModule],
+                version: String, send: SendService? = nil) {
         self.listener = listener
         self.grants = liveGrants
         self.sources = sources
-        self.enabled = enabled
+        self.enabled = liveEnabled
         self.version = version
         self.send = send
     }
@@ -44,6 +49,8 @@ public struct Routed {
 }
 
 public final class Router {
+    static let tailnetReads: Set<String> = [ContactsSource.route]
+
     public let settings: RouterSettings
     let localAddresses: () -> Set<UInt32>
 
@@ -64,14 +71,14 @@ public final class Router {
     public func bodyLimit(path: String) -> Int? {
         switch path {
         case SendSignature.route: return 32 * 1024
-        case SendService.adminRoute: return 8 * 1024
+        case SendService.adminRoute, ContactsSource.adminRoute: return 8 * 1024
         default: return nil
         }
     }
 
     public func handle(_ request: HTTPRequest, peer: UInt32, port: UInt16, requestId: String) -> Routed {
         let source = settings.sources.first { $0.routes.contains(request.path) }
-        let posts = [SendSignature.route, SendService.adminRoute]
+        let posts = [SendSignature.route, SendService.adminRoute, ContactsSource.adminRoute]
         let known = request.path == "/health" || request.path == "/v1/sources" || source != nil || posts.contains(request.path)
         let route = known ? request.path : "unknown"
         func fail(_ problem: Problem) -> Routed {
@@ -85,9 +92,15 @@ public final class Router {
         }
         guard admits(peer) else { return fail(.forbiddenSource) }
         if case .tailnet = settings.listener {
-            guard request.path == SendSignature.route, let send = settings.send else { return fail(.notFound) }
-            guard request.method == "POST" else { return fail(.methodNotAllowed) }
-            return reply(send.handle(request, peer: peer))
+            if request.path == SendSignature.route, let send = settings.send {
+                guard request.method == "POST" else { return fail(.methodNotAllowed) }
+                return reply(send.handle(request, peer: peer))
+            }
+            guard let source, Self.tailnetReads.contains(request.path) else { return fail(.notFound) }
+            guard request.headers["origin"] == nil else { return fail(.forbiddenOrigin) }
+            guard request.method == "GET" else { return fail(.methodNotAllowed) }
+            guard let grant = Token.grant(authorization: request.headers["authorization"], grants: settings.grants()) else { return fail(.unauthorized) }
+            return read(request, from: source, grant: grant, route: route, requestId: requestId)
         }
         guard request.headers["origin"] == nil else { return fail(.forbiddenOrigin) }
         guard request.headers["host"] == "127.0.0.1:\(port)" else { return fail(.forbiddenHost) }
@@ -96,6 +109,11 @@ public final class Router {
             guard let send = settings.send else { return fail(.notFound) }
             guard request.method == "POST" else { return fail(.methodNotAllowed) }
             return reply(send.admin(request))
+        }
+        if request.path == ContactsSource.adminRoute {
+            guard let contacts = settings.sources.lazy.compactMap({ $0 as? ContactsSource }).first else { return fail(.notFound) }
+            guard request.method == "POST" else { return fail(.methodNotAllowed) }
+            return reply(contacts.admin(request))
         }
         guard request.method == "GET" else { return fail(.methodNotAllowed) }
         if request.path == "/health" {
@@ -107,7 +125,14 @@ public final class Router {
             return Routed(response: .json(200, Envelope(data: statuses, meta: SourcesMeta(count: statuses.count))), route: route, rows: 0)
         }
         guard let source else { return fail(.notFound) }
-        guard settings.enabled.contains(source.id) else { return fail(.sourceDisabled(source.id)) }
+        return read(request, from: source, grant: grant, route: route, requestId: requestId)
+    }
+
+    func read(_ request: HTTPRequest, from source: SourceModule, grant: TokenGrant, route: String, requestId: String) -> Routed {
+        func fail(_ problem: Problem) -> Routed {
+            Routed(response: .problem(problem, requestId: requestId), route: route, rows: 0)
+        }
+        guard settings.enabled().contains(source.id) else { return fail(.sourceDisabled(source.id)) }
         let scope = SourceCatalog.readScope(source.id)
         guard grant.scopes.contains(scope) else { return fail(.insufficientScope(scope)) }
         do {
@@ -121,7 +146,7 @@ public final class Router {
     }
 
     func status(_ source: SourceModule) -> SourceStatus {
-        let enabled = settings.enabled.contains(source.id)
+        let enabled = settings.enabled().contains(source.id)
         return SourceStatus(id: source.id, enabled: enabled, permission: source.permission, state: enabled ? source.state() : "disabled",
                             scopes: [SourceCatalog.readScope(source.id)], routes: source.routes)
     }

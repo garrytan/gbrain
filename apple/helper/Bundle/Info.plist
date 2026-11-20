@@ -26,5 +26,7 @@
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>GBrain Helper sends iMessages your agent sends for you, only when you turn sending on.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>GBrain Helper lets your agent read your contacts' names, emails, phones, company, title and groups. It never changes your contacts.</string>
 </dict>
 </plist>
