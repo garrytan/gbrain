@@ -834,6 +834,13 @@ const PINS: Pin[] = [
        ORDER BY mj.id DESC
        LIMIT 5`],
   },
+  {
+    from: 'src/core/access/actor.ts:171 linkedMember, the attested-actor link (at 3f7de41dd9)',
+    case: { method: 'readLinkedMember', variant: 'default', run: e => e.readLinkedMember('qm', 'person-1') },
+    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+       FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
+       WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

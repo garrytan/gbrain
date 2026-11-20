@@ -728,6 +728,7 @@ export const RUST_ENGINE_MEMBERS = {
   listAccessMemberLinks: 'access_control',
   readCredentialBindingForUpdate: 'access_control',
   readCredentialMemberId: 'access_control',
+  readLinkedMember: 'access_control',
   writeCredentialBinding: 'access_control',
   writeCredentialReadsUnscoped: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
@@ -753,6 +754,7 @@ export const RUST_ENGINE_MEMBERS = {
   admitJob: 'minion_queue',
   getJob: 'minion_queue',
   readJobDataByIdempotencyKey: 'minion_queue',
+  coalesceOnIdempotencyKey: 'minion_queue',
   listJobs: 'minion_queue',
   claimNextJob: 'minion_queue',
   renewJobLease: 'minion_queue',
