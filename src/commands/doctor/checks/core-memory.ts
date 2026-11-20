@@ -66,7 +66,7 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
   if (withheld.length) problems.push(`${withheld.length} core page(s) withheld from delivery for sensitive content: ${withheld.map(w => `${w.source_id}:${w.slug}`).join(', ')}`);
   if (notices.length) problems.push(`${notices.length} remote edit(s) to core pages await the user's review (gbrain core diff, then gbrain core ack)`);
   // An engine that keeps no notices refuses the read: the pending count is unknown, not zero.
-  if (noticesUnknown) problems.push(`remote edits to core pages are unknown on this brain (${noticesUnknown})`);
+  if (noticesUnknown) problems.push(`remote edits to core pages are unknown on this brain (${noticesUnknown.message})`);
   let delivered: boolean | null = null;
   if (settings.enabled) {
     try {
@@ -81,7 +81,7 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
   const details = {
     enabled: settings.enabled, pages: usage.pages.length, chars_used: usage.chars, chars_limit: settings.maxChars, remote_edit: settings.remoteEdit,
     revision: block.revision, withheld, pending_notices: noticesUnknown ? null : notices.length,
-    ...(noticesUnknown ? { pending_notices_unknown: { code: 'engine_capability_missing', message: noticesUnknown } } : {}), delivered_last_7d: delivered, bad_config: badConfig, compiled, docs: CORE_DOCS,
+    ...(noticesUnknown ? { pending_notices_unknown: noticesUnknown } : {}), delivered_last_7d: delivered, bad_config: badConfig, compiled, docs: CORE_DOCS,
   };
   if (!problems.length) {
     return withSkippedSegmented({ status: 'ok', message: `Core memory ${settings.enabled ? 'on' : 'off'}: ${usage.pages.length} page(s), ${usage.chars}/${settings.maxChars} chars.`, details }, skipped);

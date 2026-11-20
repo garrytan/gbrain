@@ -23,7 +23,8 @@ import { proactiveEligibility } from './eligibility/registry.ts';
 import { compactTrustLabel, needsDataEnvelope, renderTrustedText, trustFields } from './eligibility/labels.ts';
 import { PAGE_MAX_BYTES } from './page-size-policy.ts';
 import { heldRowsForCaller } from './eligibility/fence-overlay.ts';
-import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
+import { rethrowCapabilityRefusal, unknownReadReason, type UnknownReadReason } from './engine-capability-refusal.ts';
+import { isMissingSchemaObject } from './utils.ts';
 import type { PendingCoreNotice } from './engine-sql/core-notices.ts';
 
 export const CORE_DEFAULT_MAX_CHARS = 4000;
@@ -335,27 +336,30 @@ export async function applyCoreSensitivity(pages: readonly CorePage[]): Promise<
 
 /**
  * Pending remote-edit notices for the given sources, newest first (notify policy). A brain from before the notices
- * table reads none; an engine that keeps no notices refuses by name (`engine_capability_missing`), never "none".
+ * table reads none; an engine that keeps no notices refuses by name (`engine_capability_missing`), never "none"; any
+ * other read error throws.
  */
 export async function pendingCoreNotices(exec: Pick<BrainEngine, 'listPendingCoreNotices'>, sourceIds?: readonly string[]): Promise<PendingCoreNotice[]> {
   try {
     return await exec.listPendingCoreNotices(sourceIds ?? null);
   } catch (err) {
     rethrowCapabilityRefusal(err);
-    return [];
+    // Only the missing table means "no notices yet"; any other read error is not "none", so it throws.
+    if (isMissingSchemaObject(err, 'table', 'core_edit_notices')) return [];
+    throw err;
   }
 }
 
 /**
- * The pending notices, or why they are unknown: on an engine that refuses the read, `unknown` carries the refusal's
- * message and `notices` is empty, so a caller says the notices are unknown instead of reporting none.
+ * The pending notices, or why they are unknown: when the read refuses or fails, `unknown` carries the error's code
+ * and message and `notices` is empty, so a caller says the notices are unknown instead of reporting none. Session
+ * delivery keeps the core block when only the notices read fails.
  */
-export async function readPendingCoreNotices(exec: Pick<BrainEngine, 'listPendingCoreNotices'>, sourceIds?: readonly string[]): Promise<{ notices: PendingCoreNotice[]; unknown: string | null }> {
+export async function readPendingCoreNotices(exec: Pick<BrainEngine, 'listPendingCoreNotices'>, sourceIds?: readonly string[]): Promise<{ notices: PendingCoreNotice[]; unknown: UnknownReadReason | null }> {
   try {
     return { notices: await pendingCoreNotices(exec, sourceIds), unknown: null };
   } catch (err) {
-    if (!isEngineCapabilityRefusal(err)) throw err;
-    return { notices: [], unknown: err instanceof Error ? err.message : String(err) };
+    return { notices: [], unknown: unknownReadReason(err) };
   }
 }
 
@@ -383,7 +387,7 @@ export async function loadCoreBlock(engine: BrainEngine, opts: LoadCoreBlockOpts
   let notices = opts.notices;
   if (!notices) {
     const pending = listed.length ? await readPendingCoreNotices(engine, sourceIds) : { notices: [], unknown: null };
-    notices = pending.unknown ? [coreNoticesUnknownLine(pending.unknown)] : pending.notices.map(coreNoticeLine);
+    notices = pending.unknown ? [coreNoticesUnknownLine(pending.unknown.message)] : pending.notices.map(coreNoticeLine);
   }
   return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices, withheld: [...withheld, ...suppressed] }), enabled: true,
     ...(suppressed.length ? { activation_withheld: suppressed.length } : {}) };

@@ -30,7 +30,7 @@ import type { BrainEngine } from './engine.ts';
 import { cliRenderContext, renderAction, type Action, type RenderContext, type RenderedAction } from './agent-output.ts';
 import { parseConsentFlags } from './consent.ts';
 import { opError } from './ops/contract.ts';
-import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
+import { isEngineCapabilityRefusal, unknownReadReason, type UnknownReadReason } from './engine-capability-refusal.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
 import { readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX, type OversizedFact } from './facts/embedding-identity.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
@@ -128,13 +128,16 @@ export async function noteBudgetLimited(engine: BrainEngine, args: readonly stri
   else console.log(`[embed] ${found.line}`);
 }
 
-/** The embed-backfill job result field (one source); never throws: it is bookkeeping, not a failure. */
-export async function budgetLimitedField(engine: BrainEngine, sourceId: string, signature: string | null): Promise<{ budget_limited?: BudgetLimitedReport }> {
+/**
+ * The embed-backfill job result field (one source). It never fails the job (it is bookkeeping), but a count it cannot
+ * read is `budget_limited_unknown`, never an empty field that reads as "nothing held".
+ */
+export async function budgetLimitedField(engine: BrainEngine, sourceId: string, signature: string | null): Promise<{ budget_limited?: BudgetLimitedReport; budget_limited_unknown?: UnknownReadReason }> {
   try {
     const found = await budgetLimitedReport(engine, { sourceId, signature });
     return found ? { budget_limited: found.report } : {};
-  } catch {
-    return {};
+  } catch (err) {
+    return { budget_limited_unknown: unknownReadReason(err) };
   }
 }
 

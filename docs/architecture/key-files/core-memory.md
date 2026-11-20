@@ -60,8 +60,10 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - `src/core/engine-sql/core-notices.ts`: `listPendingCoreNotices`, the pending
   `core_edit_notices` read (one per page, newest wins, source then slug in
-  byte order, `COLLATE "C"`). `readPendingCoreNotices` in `core-memory.ts`
-  turns the Rust engine's named refusal into `unknown`: the core block prints
+  byte order, `COLLATE "C"`). A brain from before the notices table reads
+  no notices. `readPendingCoreNotices` in `core-memory.ts` turns any other
+  read error, the Rust engine's named refusal included, into `unknown` with
+  the error's code (`read_failed` when it has none): the core block prints
   one "unknown" line, `core status` sets `pending_notices: null` with
   `pending_notices_unknown`, doctor `core_memory` warns. Rust contract:
   `rust/docs/store/core-notices.md`.

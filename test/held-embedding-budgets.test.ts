@@ -9,13 +9,15 @@
  * --held`); doctor `partial_embedding` is its own registry entry, so a slow
  * full `pages` scan in the content-sanity entry no longer turns it unknown;
  * its fix is a per-source approve with a concrete N; the embed-backfill job
- * reports `budget_limited` without counting it as a failure; a local model's
+ * reports `budget_limited` without counting it as a failure, and a held count
+ * it cannot read as `budget_limited_unknown` (never an empty field); a local model's
  * per-page ledger charges $0 (#6847); the printed N is a ceiling with the
  * `derivedCapUsd` floor.
  * Fails when: any surface goes silent again, truncates at 1,000 rows, or
  * prints a placeholder or a command that does not exist.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
@@ -214,6 +216,45 @@ for (const backend of testBackends()) {
       const handler = makeEmbedBackfillHandler(engine, { runStale: async () => ({ embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, lastCursor: null, done: true, aborted: false,
         remaining: 2, blocked: 1, complete: false }) });
       await expect(handler(job)).rejects.toThrow('embed-backfill: incomplete; 5 chunks remain (3 of them on 1 large page(s) held for approval or at their spend cap; gbrain embed --held --dry-run --source default lists them) and 1 projections are blocked.');
+    }, 60_000);
+
+    /** A job context for the embed-backfill handler on the default source. */
+    function backfillJob(): MinionJobContext {
+      const controller = new AbortController();
+      return { id: 1, name: 'embed-backfill', data: { sourceId: 'default' }, attempts_made: 0, signal: controller.signal, deadlineAtMs: null,
+        shutdownSignal: controller.signal, updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] } as unknown as MinionJobContext;
+    }
+
+    test('a held count that cannot be read is budget_limited_unknown with its code, never an empty field', async () => {
+      await holdPageEmbedding(engine, await largePage('chats/unread', 'default', 3), 'upgrade_backfill');
+      const spy = spyOn(engine, 'listBudgetLimitedRows').mockImplementation(async () => { throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }); });
+      try {
+        expect(await budgetLimitedField(engine, 'default', null)).toEqual({ budget_limited_unknown: { code: 'ECONNRESET', message: 'connection reset' } });
+        const handler = makeEmbedBackfillHandler(engine, { runStale: async () => ({ embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, lastCursor: null, done: true, aborted: false }) });
+        const result = await handler(backfillJob());
+        expect(result.status).toBe('success');
+        expect(result.budget_limited).toBeUndefined();
+        expect(result.budget_limited_unknown).toEqual({ code: 'ECONNRESET', message: 'connection reset' });
+      } finally {
+        spy.mockRestore();
+      }
+      const refused = spyOn(engine, 'listBudgetLimitedRows').mockImplementation(async () => { throw capabilityMissing('pages', 'listBudgetLimitedRows'); });
+      try {
+        expect((await budgetLimitedField(engine, 'default', null)).budget_limited_unknown).toMatchObject({ code: 'engine_capability_missing' });
+      } finally {
+        refused.mockRestore();
+      }
+    }, 60_000);
+
+    test('an incomplete embed-backfill whose held count cannot be read says so in "N chunks remain"', async () => {
+      const spy = spyOn(engine, 'listBudgetLimitedRows').mockImplementation(async () => { throw new Error('connection reset'); });
+      try {
+        const handler = makeEmbedBackfillHandler(engine, { runStale: async () => ({ embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, lastCursor: null, done: true, aborted: false,
+          remaining: 2, blocked: 0, complete: false }) });
+        await expect(handler(backfillJob())).rejects.toThrow('embed-backfill: incomplete; 2 chunks remain (plus an unknown number on large pages held for approval or at their spend cap: connection reset)');
+      } finally {
+        spy.mockRestore();
+      }
     }, 60_000);
   });
 }

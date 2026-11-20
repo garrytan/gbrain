@@ -167,7 +167,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
         withheld: block.omitted.filter(o => o.reason === 'withheld'),
         // null with pending_notices_unknown when the engine cannot list notices (never an empty list in its place).
         pending_notices: noticesUnknown ? null : notices.map(n => ({ ...n, next: coreNoticeLine(n) })),
-        ...(noticesUnknown ? { pending_notices_unknown: { code: 'engine_capability_missing', message: noticesUnknown } } : {}),
+        ...(noticesUnknown ? { pending_notices_unknown: noticesUnknown } : {}),
         delivery: {
           'claude-code': 'session-start hook (core printed first)', openclaw: 'context engine, every turn',
           mcp: 'context_pack core field', 'static files': 'gbrain compile-context --include-core',
@@ -180,7 +180,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
         ...status.largest.map(p => `  ${p.source_id}:${p.slug}  ${p.chars} chars`),
         ...status.withheld.map(w => `  withheld from delivery: ${w.source_id}:${w.slug} (sensitive content)`),
         ...notices.map(n => `  notice: ${coreNoticeLine(n)}`),
-        ...(noticesUnknown ? [`  notices: ${coreNoticesUnknownLine(noticesUnknown)}`] : []),
+        ...(noticesUnknown ? [`  notices: ${coreNoticesUnknownLine(noticesUnknown.message)}`] : []),
       ].join('\n'));
       return;
     }

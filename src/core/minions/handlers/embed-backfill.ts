@@ -50,6 +50,7 @@ import { createEmbedStallWatchdog, resolveEmbedStallAbortSeconds } from '../../e
 import { currentEmbeddingSignature } from '../../embedding.ts';
 import { readEmbedBackfillBlockers } from '../../embed-backfill-stall.ts';
 import { budgetLimitedField, readBudgetLimited, type BudgetLimitedReport } from '../../held-embedding.ts';
+import { unknownReadReason, type UnknownReadReason } from '../../engine-capability-refusal.ts';
 import { UnrecoverableError } from '../errors.ts';
 import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../../pace-mode.ts';
@@ -98,6 +99,8 @@ export interface EmbedBackfillResult {
   budgetCapUsd?: number;
   /** #6803: large pages of this source waiting for embedding approval (informational; never a failure or a stall). */
   budget_limited?: BudgetLimitedReport;
+  /** Set instead of `budget_limited` when the held count could not be read: the read's error code and message, never an empty field. */
+  budget_limited_unknown?: UnknownReadReason;
 }
 
 /**
@@ -371,9 +374,12 @@ export function makeEmbedBackfillHandler(
       // for the next (fixed-config) run to pick up.
       if ((result.remaining ?? 0) > 0 || (result.blocked ?? 0) > 0) {
         // #7193: the stale count leaves out large pages held for approval or at their cap; the remainder names them too.
-        const held = await readBudgetLimited(engine, { sourceId, signature: currentEmbeddingSignature() }).catch(() => null);
+        // A held count it cannot read is named in the message, never left out as if nothing were held.
+        const { held, heldUnknown } = await readBudgetLimited(engine, { sourceId, signature: currentEmbeddingSignature() })
+          .then(b => ({ held: b, heldUnknown: null }), (err: unknown) => ({ held: null, heldUnknown: unknownReadReason(err) }));
         const heldNote = held && held.pending_chunks > 0
-          ? ` (${held.pending_chunks} of them on ${held.held + held.capped} large page(s) held for approval or at their spend cap; gbrain embed --held --dry-run --source ${sourceId} lists them)` : '';
+          ? ` (${held.pending_chunks} of them on ${held.held + held.capped} large page(s) held for approval or at their spend cap; gbrain embed --held --dry-run --source ${sourceId} lists them)`
+          : heldUnknown ? ` (plus an unknown number on large pages held for approval or at their spend cap: ${heldUnknown.message})` : '';
         const message = `embed-backfill: incomplete; ${(result.remaining ?? 0) + (held?.pending_chunks ?? 0)} chunks remain${heldNote} and ${result.blocked ?? 0} projections are blocked. Durable progress is retained; inspect provider and projection readiness before retrying.`;
         // #6803: a run that embedded nothing records its blocker fingerprint, so
         // automatic submission backs off and stops after identical failures

@@ -12,12 +12,13 @@ The store keeps no core-edit notices: no store writer runs the core-page guard t
 no store member for this read, so it refuses by name (`engine_capability_missing`, capability `pages`,
 `member=listPendingCoreNotices`). It never answers an empty list, which a caller would read as "no remote edits".
 
-The callers turn the refusal into "unknown" (`readPendingCoreNotices` in `src/core/core-memory.ts`):
+The callers turn the refusal, and any other read error, into "unknown" (`readPendingCoreNotices` in
+`src/core/core-memory.ts`); only a brain from before the notices table reads no notices:
 
 | Caller | On the refusal |
 | --- | --- |
 | core block (`loadCoreBlock`) | one line, `Remote edits to core pages are unknown on this brain: <message>`, in place of the notices; the block revision is unchanged |
-| `gbrain core status` | `pending_notices: null` and `pending_notices_unknown: {code: 'engine_capability_missing', message}`; the text output prints a `notices:` line |
+| `gbrain core status` | `pending_notices: null` and `pending_notices_unknown: {code, message}` (`engine_capability_missing` here; another error's own code, or `read_failed`); the text output prints a `notices:` line |
 | doctor `core_memory` | warn, `remote edits to core pages are unknown on this brain (<message>)`, with the same two details |
 
 Parity: `test/engine-parity/core-notices.test.ts`. Callers: `test/core-notices-capability-refusal.test.ts`.
