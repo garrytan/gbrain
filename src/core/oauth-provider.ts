@@ -333,10 +333,14 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     private allowClientCredentialsDcr: boolean,
     private dcrTtlMin: number,
     private dcrTtlMax: number,
+    private engine?: BrainEngine,
   ) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
-    const rows = await this.sql`
+    // An engine reads the whole row through its member; a soft-deleted client is no client, as the SQL filter has it.
+    const rows: Record<string, unknown>[] = this.engine
+      ? await this.engine.readOauthClient(clientId).then(row => row && row.deleted_at == null ? [{ ...row }] : [])
+      : await this.sql`
       SELECT client_id, client_secret_hash, client_name, redirect_uris,
              grant_types, scope, token_endpoint_auth_method,
              client_id_issued_at, client_secret_expires_at
@@ -691,6 +695,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       options.allowClientCredentialsDcr === true,
       dcrTtlMin,
       dcrTtlMax,
+      options.engine,
     );
   }
 

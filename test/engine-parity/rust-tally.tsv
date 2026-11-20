@@ -62,6 +62,7 @@ test/engine-parity/link-temporal.test.ts	15	0
 test/engine-parity/links.test.ts	36	0
 test/engine-parity/memory-proposal-reads.test.ts	3	0
 test/engine-parity/oauth-clients.test.ts	17	0
+test/engine-parity/oauth-http.test.ts	2	0
 test/engine-parity/oauth-lifecycle.test.ts	4	0
 test/engine-parity/oauth-revocation.test.ts	4	0
 test/engine-parity/open-loops.test.ts	6	0

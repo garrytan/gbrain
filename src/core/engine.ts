@@ -11,7 +11,7 @@ import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { OauthClientGrantPersist, OauthGrantAuditRow } from './engine-sql/client-grants.ts';
 import type { OauthGrantAuditInsert } from './engine-sql/oauth-revocation.ts';
-import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthCodeRow, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
+import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthCodeRow, OauthTokenInsert, OauthTokenRow, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -3916,6 +3916,10 @@ export interface BrainEngine {
   readOauthCodeForUpdate(codeHash: string, clientId: string): Promise<OauthCodeRow | null>;
   /** Delete the code of this hash and client. */
   deleteOauthCode(codeHash: string, clientId: string): Promise<void>;
+  /** The refresh token of this hash and client taken FOR UPDATE, or null (the caller checks expiry). */
+  readOauthRefreshTokenForUpdate(tokenHash: string, clientId: string): Promise<OauthTokenRow | null>;
+  /** Delete the refresh token of this hash and client. */
+  deleteOauthRefreshToken(tokenHash: string, clientId: string): Promise<void>;
   /** The PKCE challenge of an unexpired code of this client (its client not soft-deleted), or null. */
   readOauthCodeChallenge(codeHash: string, clientId: string, nowEpochSeconds: number): Promise<string | null>;
   /** Insert the tokens of one grant on the grant transaction, all or none, after the client lock (OAuthGrants.issue); run it on the transaction handle, never the pool. */

@@ -886,6 +886,8 @@ export const RUST_ENGINE_MEMBERS = {
   insertOauthCode: 'minion_queue',
   readOauthCodeForUpdate: 'minion_queue',
   deleteOauthCode: 'minion_queue',
+  readOauthRefreshTokenForUpdate: 'minion_queue',
+  deleteOauthRefreshToken: 'minion_queue',
   readOauthCodeChallenge: 'minion_queue',
   issueOauthTokens: 'minion_queue',
   insertLeasePressure: 'minion_queue',

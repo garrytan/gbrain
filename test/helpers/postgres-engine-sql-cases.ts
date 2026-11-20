@@ -648,6 +648,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertOauthCode': OOS.callerRawSql,
   'readOauthCodeForUpdate': OOS.callerRawSql,
   'deleteOauthCode': OOS.callerRawSql,
+  'readOauthRefreshTokenForUpdate': OOS.callerRawSql,
+  'deleteOauthRefreshToken': OOS.callerRawSql,
   'readOauthCodeChallenge': OOS.callerRawSql,
   'issueOauthTokens': OOS.callerRawSql,
   'readActiveAccessTokenByHash': OOS.callerRawSql,

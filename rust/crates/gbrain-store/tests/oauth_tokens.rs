@@ -234,3 +234,63 @@ fn the_sweep_deletes_the_tokens_that_expired_and_counts_them() {
     }
     assert_eq!(b.delete_expired_oauth_tokens(200).unwrap(), 0);
 }
+
+#[test]
+fn a_refresh_token_is_read_by_its_own_client_only_and_deleted_once() {
+    let b = brain("otok-refresh");
+    client(
+        &b,
+        json!({ "client_id": "c1", "client_name": "c1", "scope": "read" }),
+    );
+    client(
+        &b,
+        json!({ "client_id": "c2", "client_name": "c2", "scope": "read" }),
+    );
+    let mut refresh = access("r1", "c1");
+    refresh["token_type"] = json!("refresh");
+    refresh["grant_type"] = json!("authorization_code");
+    token(&b, refresh).unwrap();
+    token(&b, access("a1", "c1")).unwrap();
+    let row = b.read_oauth_refresh_token_for_update("r1", "c1").unwrap();
+    assert_eq!(row["token_hash"], "r1");
+    assert_eq!(row["token_type"], "refresh");
+    assert_eq!(row["client_id"], "c1");
+    assert_eq!(row["scopes"], json!(["read", "write"]));
+    assert_eq!(row["expires_at"], 1_900_000_000);
+    assert_eq!(row["resource"], "https://brain.example/mcp");
+    assert_eq!(row["grant_type"], "authorization_code");
+    assert!(
+        row["created_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2027-01-15T")
+    );
+    assert_eq!(
+        b.read_oauth_refresh_token_for_update("r1", "c2").unwrap(),
+        Value::Null,
+        "another client's refresh token reads null"
+    );
+    assert_eq!(
+        b.read_oauth_refresh_token_for_update("a1", "c1").unwrap(),
+        Value::Null,
+        "an access token is not a refresh token"
+    );
+    b.delete_oauth_refresh_token("a1", "c1").unwrap();
+    assert_eq!(
+        rows(&b, "a1", 0).len(),
+        1,
+        "the refresh delete keeps an access token"
+    );
+    b.delete_oauth_refresh_token("r1", "c2").unwrap();
+    assert_ne!(
+        b.read_oauth_refresh_token_for_update("r1", "c1").unwrap(),
+        Value::Null,
+        "another client's delete keeps it"
+    );
+    b.delete_oauth_refresh_token("r1", "c1").unwrap();
+    assert_eq!(
+        b.read_oauth_refresh_token_for_update("r1", "c1").unwrap(),
+        Value::Null
+    );
+    b.delete_oauth_refresh_token("r1", "c1").unwrap();
+}

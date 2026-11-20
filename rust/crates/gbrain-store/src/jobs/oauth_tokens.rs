@@ -1,6 +1,7 @@
 //! Jobs: the `oauth_tokens` table, every column of it, as the members of `src/core/engine-sql/access-credentials.ts`
 //! run them (rust/docs/store/oauth-tokens.md): insertOauthToken (the two INSERTs of `OAuthGrants.issue`) and
-//! readOauthAccessTokenRows (the bearer check's OAuth token read, `BEARER_SQL.oauth_rungs`).
+//! readOauthAccessTokenRows (the bearer check's OAuth token read, `BEARER_SQL.oauth_rungs`), and the refresh-token read
+//! and delete of `OAuthGrants.refresh` (readOauthRefreshTokenForUpdate, deleteOauthRefreshToken, `OAUTH_REFRESH_SQL`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2C (this file only):
 //! - `m 0x2C token_hash -> OauthTokenRecord`: one token row, keyed by its primary key (the SHA-256 of the token).
@@ -324,6 +325,42 @@ impl Store {
             Some(e) => Err(e),
             None => Ok(count),
         }
+    }
+
+    /// `readOauthRefreshTokenForUpdate(hash, clientId)`: the whole row of the refresh token with this hash held by this
+    /// client, or null (an access token, or another client's token, reads null). `created_at` is ISO text. An expired
+    /// token is returned too: the caller refuses it from `expires_at`. The single write transaction is the lock
+    /// `FOR UPDATE` takes elsewhere.
+    pub fn read_oauth_refresh_token_for_update(
+        &self,
+        hash: &str,
+        client_id: &str,
+    ) -> Result<Value> {
+        let read = self.read()?;
+        Ok(
+            match get_json::<OauthTokenRecord>(&*read, &token_key(hash))? {
+                Some(r) if r.token_type == "refresh" && r.client_id == client_id => json!({
+                    "token_hash": r.token_hash, "token_type": r.token_type, "client_id": r.client_id,
+                    "scopes": r.scopes, "expires_at": r.expires_at, "resource": r.resource,
+                    "created_at": iso(r.created_at), "grant_type": r.grant_type,
+                }),
+                _ => Value::Null,
+            },
+        )
+    }
+
+    /// `deleteOauthRefreshToken(hash, clientId)`: removes the refresh token of this hash held by this client (one write);
+    /// an access token of that hash, or another client's token, stays.
+    pub fn delete_oauth_refresh_token(&self, hash: &str, client_id: &str) -> Result<()> {
+        self.write(|tx| {
+            let key = token_key(hash);
+            if get_json::<OauthTokenRecord>(&*tx, &key)?
+                .is_some_and(|r| r.token_type == "refresh" && r.client_id == client_id)
+            {
+                tx.delete(&key)?;
+            }
+            Ok(())
+        })
     }
 
     /// `DELETE FROM oauth_tokens WHERE expires_at < $1 RETURNING 1`: removes every token (of any type) whose `expires_at`
