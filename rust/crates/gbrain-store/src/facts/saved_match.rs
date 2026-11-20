@@ -231,6 +231,41 @@ impl Store {
         }
         Ok(out)
     }
+
+    /// `matchHeadStems(heads, terms)`: one row per head in `heads` order, each with the 1-based
+    /// indexes of the terms whose `plainto_tsquery` the head's `to_tsvector` matches, in `terms`
+    /// order. A term that stems to nothing (a stopword) matches no head. English only; the
+    /// TypeScript member refuses another language.
+    pub fn match_head_stems(&self, heads: &[String], terms: &[String]) -> Result<Vec<HeadStemRow>> {
+        const OP: &str = "matchHeadStems";
+        let mut texts: Vec<(&str, &str)> = heads.iter().map(|h| ("heads", h.as_str())).collect();
+        texts.extend(terms.iter().map(|t| ("terms", t.as_str())));
+        no_nul(OP, &texts)?;
+        let queries = terms
+            .iter()
+            .map(|t| plainto_tsquery(t))
+            .collect::<Result<Vec<TsQuery>>>()?;
+        heads
+            .iter()
+            .map(|h| {
+                let vector = to_tsvector(h)?;
+                let i = queries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, q)| ts_matches(&vector, q))
+                    .map(|(at, _)| at as u64 + 1)
+                    .collect();
+                Ok(HeadStemRow { h: h.clone(), i })
+            })
+            .collect()
+    }
+}
+
+/// One `matchHeadStems` row: a name head and the 1-based indexes of the terms it matches.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct HeadStemRow {
+    pub h: String,
+    pub i: Vec<u64>,
 }
 
 /// One row as the SQL returns it: the match columns, `savedFactCollapseColumns`, then the scores.

@@ -6,13 +6,13 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 948/951
+# covered: 950/953
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
-# link_temporal: 21/21
+# link_temporal: 22/22
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 47/47
@@ -49,7 +49,7 @@
 # facts_cycle: 11/11
 # facts_purge: 14/14
 # facts_repair: 10/10
-# facts_trust: 14/14
+# facts_trust: 15/15
 # facts_recall: 4/4
 # trust_tier_reads: 15/15
 # raw_sql: 4/4
@@ -85,17 +85,17 @@ transaction	lifecycle	yes	97	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	116	yes	yes	yes	serves
+getPage	pages	yes	117	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	527	yes	yes	yes	serves
+putPage	pages	yes	529	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	157	yes	yes	yes	serves
+softDeletePage	pages	yes	158	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -174,6 +174,7 @@ listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
 readReferrerGroupRows	link_temporal	yes	2	no	yes	yes	serves
 readReferrerPageDetails	link_temporal	yes	2	no	yes	yes	serves
+readPageReferenceDate	link_temporal	yes	2	no	yes	yes	serves
 readReferrerTargetCounts	link_temporal	yes	3	no	yes	yes	serves
 listReferrerTargetSources	link_temporal	yes	3	no	yes	yes	serves
 countReferrerRows	link_temporal	yes	5	no	yes	yes	serves
@@ -244,7 +245,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	116	yes	yes	yes	serves
+addLink	links	yes	117	yes	yes	yes	serves
 addLinksBatch	links	yes	28	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	15	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -335,7 +336,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	54	yes	yes	yes	serves
+insertFact	facts	yes	56	yes	yes	yes	serves
 insertFacts	facts	yes	84	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	29	no	yes	yes	serves
@@ -776,7 +777,8 @@ listUnwithdrawnFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 listWorldFactsFromPrivateSources	facts_repair	yes	2	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	6	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	4	no	yes	yes	serves
-matchSavedFacts	facts_trust	yes	4	no	yes	yes	serves
+matchSavedFacts	facts_trust	yes	6	no	yes	yes	serves
+matchHeadStems	facts_trust	yes	2	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
 listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts
 listLexicalContestCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts

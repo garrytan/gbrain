@@ -209,6 +209,17 @@ impl Brain {
         })
     }
 
+    /// `readPageReferenceDate`: the live page's reference date as UTC microsecond text, or null.
+    #[napi]
+    pub fn read_page_reference_date<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_reference_date(&source_id, &slug))
+    }
+
     /// `readReferrerPageDetails`: `{ ids }`: the card details of each page id that exists.
     #[napi]
     pub fn read_referrer_page_details<'env>(

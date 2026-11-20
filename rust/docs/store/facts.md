@@ -394,6 +394,7 @@ Parity: `test/engine-parity/facts-quoted.test.ts`.
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
 | `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member refuses another correction cue, a non-`english` FTS language and a `worldOnly` read a private-facts grant widens. |
+| `matchHeadStems` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | One row per name head, in input order, with the 1-based indexes of the terms its `to_tsvector` matches by `plainto_tsquery`; a stopword term matches nothing. The member refuses a non-`english` FTS language, and the caller rethrows that refusal instead of reading it as no match. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | refused | `trust_tier` is hashed into the owner binding. |
 | `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | refused | Filters on the trust-tier rank. |

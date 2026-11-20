@@ -1653,6 +1653,19 @@ const PINS: Pin[] = [
     texts: [`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`],
   },
+  {
+    from: 'src/core/mentions/newer-mentions.ts:77 readNewerMentions (the entity page date; at d1ec6f64c1)',
+    case: { method: 'readPageReferenceDate', variant: 'default', run: e => e.readPageReferenceDate('default', 'people/alice-example') },
+    texts: [`SELECT to_char(COALESCE(effective_date, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
+         FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/search/saved-facts-match.ts:58 headStems (the english configuration; at d1ec6f64c1)',
+    case: { method: 'matchHeadStems', variant: 'default', run: e => e.matchHeadStems(['widget'], ['widgets']) },
+    texts: [`SELECT h, ARRAY(SELECT t.i FROM unnest($2::text[]) WITH ORDINALITY AS t(term, i)
+       WHERE to_tsvector('english'::regconfig, h) @@ plainto_tsquery('english'::regconfig, t.term)) AS i
+     FROM unnest($1::text[]) AS h`],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */

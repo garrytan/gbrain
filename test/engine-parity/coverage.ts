@@ -61,7 +61,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readLinkContextMatches', 'readLinkContextOriginPages'],
   link_temporal: ['readLinkRelationshipEvidence', 'writeLinkRelationshipState', 'linkRelationshipKeysForPages', 'staleLinkRelationshipKeys',
     'linkRelationshipKeysForOrigin', 'applyLinkTemporalRows', 'writeManualLinkTransitions', 'removeManualLinkTransitions',
-    'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readReferrerTargetCounts',
+    'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readPageReferenceDate', 'readReferrerTargetCounts',
     'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readReferrerTypes'],
   search_vector: ['countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors', 'ensureFactsKeywordIndex'],
   retrieval_coverage: ['countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
@@ -190,7 +190,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listWorldFactsFromPrivateSources'],
 
   // facts_trust: search relevance and trust reads
-  facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
+  facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts', 'matchHeadStems',
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint',
     'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival', 'listFactIdsAtTrustRank', 'listBeliefStreamSlugs', 'recordDerivationEdges'],
 

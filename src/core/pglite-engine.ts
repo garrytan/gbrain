@@ -1611,6 +1611,7 @@ export class PGLiteEngine implements BrainEngine {
   listFactsForRelevance(q: factsTrustImpl.FactRelevanceQuery) { return factsTrustImpl.listFactsForRelevance(this.rawRead, this.rawTransaction, q); }
   countUncomparableFacts(q: factsTrustImpl.UncomparableFactsQuery) { return factsTrustImpl.countUncomparableFacts(this.rawRead, this.rawTransaction, q); }
   matchSavedFacts(q: factsTrustImpl.SavedFactsMatchQuery) { return factsTrustImpl.matchSavedFacts(this.rawRead, q); }
+  matchHeadStems(heads: readonly string[], terms: readonly string[]) { return factsTrustImpl.matchHeadStems(this.rawRead, heads, terms); }
   readFactForOwnerAction(id: number) { return factsTrustImpl.readFactForOwnerAction(this.rawRead, id); }
   listStandingPreferences(opts: { sourceId?: string; since?: Date }) { return factsTrustImpl.listStandingPreferences(this.rawRead, opts); }
   listLexicalContestCandidates(opts: Parameters<typeof factsTrustImpl.listLexicalContestCandidates>[1]) { return factsTrustImpl.listLexicalContestCandidates(this.rawRead, opts); }
@@ -2432,6 +2433,7 @@ export class PGLiteEngine implements BrainEngine {
   listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }) { return linkTemporalImpl.listRecordMetadataRows(this.linkTemporal, pageIds, scope); }
   readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: linkTemporalImpl.ReferrerGroupScope) { return linkTemporalImpl.readReferrerGroupRows(this.linkTemporal, target, scope); }
   readReferrerPageDetails(ids: readonly number[]) { return linkTemporalImpl.readReferrerPageDetails(this.linkTemporal, ids); }
+  readPageReferenceDate(sourceId: string, slug: string) { return linkTemporalImpl.readPageReferenceDate(this.linkTemporal, sourceId, slug); }
   readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] }, scope: linkTemporalImpl.ReferrerTargetCountScope) { return linkTemporalImpl.readReferrerTargetCounts(this.linkTemporal, target, scope); }
   listReferrerTargetSources(slug: string, sources: readonly string[]) { return linkTemporalImpl.listReferrerTargetSources(this.linkTemporal, slug, sources); }
   countReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: linkTemporalImpl.ReferrerRowScope) { return linkTemporalImpl.countReferrerRows(this.linkTemporal, target, scope); }

@@ -13,6 +13,8 @@
  * `matchSavedFacts` is served under the same rules, for the one correction cue saved-facts-match.ts sends; a widened
  * `worldOnly` visibility (a private-facts grant) refuses.
  *
+ * `matchHeadStems` stems with the store's `english` configuration; another FTS language refuses.
+ *
  * Refused (not exported): `readFactForOwnerAction`, `listStandingPreferences`,
  * `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns
  * they read (`trust_tier`, `write_origin`, the write-gate receipts), but no store read for them is built yet. The
@@ -99,4 +101,12 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
     minTrust: q.minTrust || null,
   }));
   return rows.map(row => withDates(row, ['at', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['matchSavedFacts']>>[number]);
+};
+
+export const matchHeadStems: Member<'matchHeadStems'> = async (brain, heads, terms) => {
+  const member = 'matchHeadStems';
+  if (getFtsLanguage() !== 'english') refuseMember(member, `FTS language ${getFtsLanguage()}`);
+  if (heads.length === 0) return [];
+  const rows: Array<{ h: string; i: Array<number | string> }> = await storeCall({ member }, () => brain.matchHeadStems([...heads], [...terms]));
+  return rows.map(row => ({ h: row.h, i: row.i.map(Number) }));
 };

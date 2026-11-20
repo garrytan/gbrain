@@ -9,7 +9,7 @@ import { TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
-import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
+import { factsFtsDocument, getFtsLanguage, headStemsSql } from '../fts-language.ts';
 import { privateFactFilterForReader, privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
@@ -265,6 +265,19 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
        WHERE p.pool_rank <= 200
        ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`);
   return raw<SavedFactMatchRow>(text, params);
+}
+
+/** One name head and the 1-based indexes of the query terms it matches (`matchHeadStems`). */
+export interface HeadStemRow { h: string; i: number[] }
+
+/**
+ * Which query terms each name head matches after stemming with the brain's full-text language, as the keyword scan
+ * matches words: one row per head, in `heads` order, each with the 1-based indexes of the matching terms in `terms`
+ * order. A term the language drops as a stopword matches nothing.
+ */
+export async function matchHeadStems(raw: EngineRawRead, heads: readonly string[], terms: readonly string[]): Promise<HeadStemRow[]> {
+  const rows = await raw<{ h: string; i: unknown[] }>(headStemsSql(), [[...heads], [...terms]]);
+  return rows.map(r => ({ h: r.h, i: r.i.map(Number) }));
 }
 
 /** One fact row as the owner-action preview binds it: the 16 columns the binding hashes, with its stored tier. */

@@ -104,7 +104,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readLinkContextMatches', 'readLinkContextOriginPages',
   // Link temporal state, search-vector maintenance and retrieval coverage (engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts).
   'readLinkRelationshipEvidence', 'writeLinkRelationshipState', 'linkRelationshipKeysForPages', 'staleLinkRelationshipKeys', 'linkRelationshipKeysForOrigin', 'applyLinkTemporalRows',
-  'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readReferrerTargetCounts',
+  'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readPageReferenceDate', 'readReferrerTargetCounts',
   'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readReferrerTypes',
   'countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors', 'ensureFactsKeywordIndex', 'countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
   'readProjectionReadinessGeneration', 'readProjectionReadiness',
@@ -136,7 +136,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'loopFactDrift', 'closedLoopWithActiveFact',
   'listSessionFactsForClassification', 'listSessionFactTwins', 'listCapturedFactsForClassification', 'countLabelFacts',
   'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listFactsForRelevance',
-  'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
+  'countUncomparableFacts', 'matchSavedFacts', 'matchHeadStems', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
   'listRestatedPrivateCopies', 'countDerivedFactTaint', 'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival',
   'listFactIdsAtTrustRank', 'listBeliefStreamSlugs', 'recordDerivationEdges',
   // Quote and slot-history reads (engine-sql/facts-recall.ts; test/engine-parity/facts-quoted.test.ts)

@@ -1737,6 +1737,8 @@ export interface BrainEngine {
   listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
   readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerGroupScope): Promise<LinkTemporalSql.ReferrerGroupRow[]>;
   readReferrerPageDetails(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerPageDetailRow[]>;
+  /** A live page's `COALESCE(effective_date, updated_at)` as UTC microsecond text, or null (the newer-mentions cutoff). */
+  readPageReferenceDate(sourceId: string, slug: string): Promise<string | null>;
   readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
     scope: LinkTemporalSql.ReferrerTargetCountScope): Promise<LinkTemporalSql.ReferrerTargetCountRow[]>;
   /** The referrer page (get_backlinks group "page") and the card's record rows (mentions/referrers.ts). */
@@ -3609,6 +3611,8 @@ export interface BrainEngine {
   countUncomparableFacts(q: FactsTrustSql.UncomparableFactsQuery): Promise<Array<{ source_id: string; n: number }>>;
   /** The keyword scan behind a search's saved-facts block: active facts sharing the query's words, with match counts and trust ranks. */
   matchSavedFacts(q: FactsTrustSql.SavedFactsMatchQuery): Promise<FactsTrustSql.SavedFactMatchRow[]>;
+  /** The query terms each name head matches after stemming with the brain's full-text language, one row per head. */
+  matchHeadStems(heads: readonly string[], terms: readonly string[]): Promise<FactsTrustSql.HeadStemRow[]>;
   /** The fact an owner action targets, with its stored trust tier, or null when no fact has the id. */
   readFactForOwnerAction(id: number): Promise<FactsTrustSql.OwnerActionFactRow | null>;
   /** Unconfirmed standing preferences and commitments the write gate flagged (needs write_gate_receipts; the caller probes it). */

@@ -396,3 +396,28 @@ fn saved_facts_match_counts_kept_words_and_lowers_the_bar_for_a_correction() {
     // No kept word matches nothing.
     assert!(saved(&b, &["the", "a"], json!([null, null]), true).is_empty());
 }
+
+#[test]
+fn head_stems_name_the_terms_each_head_matches_by_stem() {
+    let b = brain("facts-trust-head-stems");
+    let heads = ["widget", "running", "acme", "widgets"].map(String::from);
+    let terms = ["widgets", "runs", "zebra", "the"].map(String::from);
+    let rows = b.match_head_stems(&heads, &terms).unwrap();
+    let got: Vec<(String, Vec<u64>)> = rows.into_iter().map(|r| (r.h, r.i)).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("widget".into(), vec![1]),
+            ("running".into(), vec![2]),
+            ("acme".into(), vec![]),
+            ("widgets".into(), vec![1]),
+        ]
+    );
+    assert!(b.match_head_stems(&[], &terms).unwrap().is_empty());
+    assert_eq!(
+        b.match_head_stems(&["a\0b".to_string()], &terms)
+            .unwrap_err()
+            .code,
+        "invalid_argument"
+    );
+}
