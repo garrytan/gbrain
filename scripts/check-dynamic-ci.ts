@@ -11,14 +11,15 @@
  *
  *   - a filter job (any job with a trunk-io/dynamic-ci step) runs only with
  *     `if: github.event_name == 'pull_request'`, in a workflow that has a
- *     pull_request trigger, with the action pinned to a commit SHA, the token
+ *     pull_request trigger or is a reusable workflow (workflow_call, where
+ *     github.event_name is the caller's), with the action pinned to a commit SHA, the token
  *     from secrets.TRUNK_API_TOKEN, and `job-keys` naming exactly the jobs
  *     its `outputs` re-export as `steps.<id>.outputs.<key>`, and
  *     `continue-on-error: true` plus a step timeout below the job's on that
  *     step, so a failed or hung step reads as "run";
  *   - a gated job (one whose key is a filter output and that needs the filter)
- *     has an `if` that starts `!cancelled() && needs.<filter>.outputs.<key>
- *     != 'false' &&`, requires `needs.<other>.result == 'success'` for each
+ *     has an `if` that is `!cancelled() && needs.<filter>.outputs.<key> !=
+ *     'false'` or starts with it followed by ` && `, requires `needs.<other>.result == 'success'` for each
  *     other job it needs (what the implicit success() checked before), uses
  *     no other status function, and has no top-level || after the prefix;
  *   - every other job that needs a filter only reads its outputs: its `if`
@@ -44,8 +45,8 @@ const NEVER_GATED = new Set(['full-suite', 'e2e-full-suite', 'test-status', 'e2e
 
 const expr = (value: unknown) => String(value ?? '').trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').replace(/\s+/g, ' ');
 const needsOf = (job: Job) => (job.needs === undefined ? [] : Array.isArray(job.needs) ? job.needs : [job.needs]);
-const hasPullRequest = (on: unknown) =>
-  on === 'pull_request' || (Array.isArray(on) && on.includes('pull_request')) || (typeof on === 'object' && on !== null && 'pull_request' in on);
+const hasTrigger = (on: unknown, trigger: string) =>
+  on === trigger || (Array.isArray(on) && on.includes(trigger)) || (typeof on === 'object' && on !== null && trigger in on);
 
 function topLevelOr(expression: string): boolean {
   let depth = 0;
@@ -70,7 +71,7 @@ export function checkWorkflow(file: string, doc: Workflow): string[] {
     if (!step) continue;
     const at = `${file} › ${key}`;
     if (expr(job.if) !== "github.event_name == 'pull_request'") problems.push(`${at}: the filter job must have if: github.event_name == 'pull_request' (got ${JSON.stringify(expr(job.if))}); on any other event it must be skipped so every gated job runs`);
-    if (!hasPullRequest(doc.on)) problems.push(`${at}: the workflow has no pull_request trigger, so it carries merge or release evidence and must not filter jobs`);
+    if (!hasTrigger(doc.on, 'pull_request') && !hasTrigger(doc.on, 'workflow_call')) problems.push(`${at}: the workflow has no pull_request trigger and is not a reusable workflow, so it carries merge or release evidence and must not filter jobs`);
     if (!/^trunk-io\/dynamic-ci@[0-9a-f]{40}$/.test(step.uses!)) problems.push(`${at}: pin ${step.uses} to a full commit SHA`);
     if (String(step.with?.token ?? '').trim() !== '${{ secrets.TRUNK_API_TOKEN }}') problems.push(`${at}: the token must be \${{ secrets.TRUNK_API_TOKEN }}`);
     if (step['continue-on-error'] !== true) problems.push(`${at}: the dynamic-ci step needs continue-on-error: true, so a failed step leaves the outputs empty (run) instead of a red check on the head`);
@@ -101,12 +102,13 @@ export function checkWorkflow(file: string, doc: Workflow): string[] {
         if (!condition.startsWith('always()')) problems.push(`${at}: needs ${filter} but is not one of its outputs; only an aggregate whose if starts with always() may read the verdicts`);
         continue;
       }
-      const prefix = `!cancelled() && needs.${filter}.outputs.${key} != 'false' && `;
-      if (!condition.startsWith(prefix)) {
+      const gate = `!cancelled() && needs.${filter}.outputs.${key} != 'false'`;
+      const prefix = `${gate} && `;
+      if (condition !== gate && !condition.startsWith(prefix)) {
         problems.push(`${at}: a gated job's if must start with "${prefix}" (got ${JSON.stringify(condition)}); without !cancelled() a skipped or failed filter skips the job, and only an exact 'false' verdict may skip it`);
         continue;
       }
-      const rest = condition.slice(prefix.length);
+      const rest = condition === gate ? '' : condition.slice(prefix.length);
       if (/\b(?:always|success|failure|cancelled)\(\)/.test(rest)) problems.push(`${at}: no other status function may follow the gate prefix`);
       if (topLevelOr(rest)) problems.push(`${at}: wrap the condition after the gate prefix in parentheses; a top-level || would run the job past a 'false' verdict or a failed need`);
       for (const other of needs.filter(n => n !== filter)) {

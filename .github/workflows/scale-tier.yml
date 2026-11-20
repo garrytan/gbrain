@@ -64,7 +64,7 @@ jobs:
       scale: ${{ steps.dynamic-ci.outputs.scale }}
     steps:
       - id: dynamic-ci
-        uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8  # v1 (v0.1.7)
+        uses: trunk-io/dynamic-ci@0230cfdab54caa85231f74f7a5204dd2e078954b  # v1 (v0.1.10)
         continue-on-error: true
         timeout-minutes: 3
         with:
