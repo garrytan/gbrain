@@ -398,3 +398,35 @@ impl Store {
         })
     }
 }
+
+/// The `eval_contradictions_cache` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_cache_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(
+        read_records::<CacheRecord>(read, &[keys::CONTRADICTIONS, CACHE])?
+            .into_iter()
+            .map(|(_, r)| ProbeRow {
+                source_id: None,
+                cells: vec![("verdict", ProbeCell::jsonb(&r.verdict))],
+            })
+            .collect(),
+    )
+}
+
+/// The `eval_contradictions_runs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_run_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(
+        read_records::<RunRecord>(read, &[keys::CONTRADICTIONS, RUN])?
+            .into_iter()
+            .map(|(_, r)| ProbeRow {
+                source_id: None,
+                cells: vec![("report_json", ProbeCell::jsonb(&r.report_json))],
+            })
+            .collect(),
+    )
+}

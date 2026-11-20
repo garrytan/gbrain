@@ -39,6 +39,7 @@ mod calibrations;
 mod receipts;
 pub use calibrations::{DecideCalibrationInput, DecideQualificationInput};
 pub use receipts::DecideReceiptInput;
+pub(crate) use receipts::purge_probe_rows as purge_probe_receipt_rows;
 
 const STATE: u8 = 0x10;
 const SPEND: u8 = 0x11;

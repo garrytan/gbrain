@@ -23,7 +23,7 @@
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
-//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`), read only.
+//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`).
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
 //! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
 //!   (`facts/generations.rs`), read only.
@@ -54,10 +54,13 @@ pub mod generations;
 mod held_cells;
 pub mod holding_purges;
 pub mod loops;
-mod page_purges;
+pub(crate) mod page_purges;
+pub use page_purges::PagePurgeUpsert;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
+pub mod purge_plan;
+pub(crate) mod purge_probe;
 pub mod quote;
 pub mod reconcile;
 pub mod relink;
@@ -759,7 +762,8 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
 /// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
-/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]) and take
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]), page
+/// purge tombstones (`page_purges_source_id_fkey`, [`page_purges::remove_source_rows`]) and take
 /// purge tombstones (`take_purges_source_id_fkey`, [`take_purges::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
@@ -772,6 +776,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         delete_fact(tx, trust, &row)?;
     }
     purge_ledger::remove_source_rows(tx, source_id)?;
+    page_purges::remove_source_rows(tx, source_id)?;
     take_purges::remove_source_rows(tx, source_id)
 }
 

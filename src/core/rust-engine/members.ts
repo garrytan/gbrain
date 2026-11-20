@@ -507,6 +507,12 @@ export const RUST_ENGINE_MEMBERS = {
   insertFactPurge: 'facts',
   insertTakePurge: 'facts',
   listDerivedRows: 'facts',
+  upsertPagePurges: 'facts',
+  // A fact purge's plan, dry run and --match (engine-sql/facts-purge-plan.ts; rust/docs/store/purge-plan.md)
+  listRequestsCarryingClaim: 'facts',
+  listRequestsHoldingStagings: 'facts',
+  countPurgeProbe: 'facts',
+  listPurgeProbeItems: 'facts',
   expireFactsOfGonePages: 'facts',
   readPurgeSourceLocalPath: 'facts',
   insertReasonPurgeTombstones: 'facts',
@@ -876,6 +882,7 @@ export const RUST_ENGINE_MEMBERS = {
   readFactCacheWatermark: 'facts',
   readTrustGeneration: 'facts',
   readSourcePurgeFlags: 'facts',
+  listPurgedTakeRows: 'facts',
   // trust: the forget commit and the fact_withdrawn refusal (engine-sql/trust-withdrawals.ts)
   lockFactForWithdrawal: 'facts',
   queueWithdrawalReview: 'facts',
@@ -1025,6 +1032,12 @@ export const RUST_ENGINE_MEMBERS = {
   releaseSegmentedProjectionClaim: 'persistence_journal',
   deleteProjectionJob: 'persistence_journal',
   markProjectionRebuildFailed: 'persistence_journal',
+  listQueuedPageProjections: 'persistence_journal',
+  readProjectionJobReason: 'persistence_journal',
+  readChunkKeepState: 'persistence_journal',
+  clearUnkeptChunkVectors: 'persistence_journal',
+  setProjectionChunkerVersion: 'persistence_journal',
+  hasDrainableProjectionJob: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
   listAppliedPolicyRevisions: 'access_control',

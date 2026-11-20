@@ -290,6 +290,15 @@ export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert):
   return rows.length > 0;
 }
 
+/** A page purge's content-hash tombstones, the rows the page purge sweep writes into `page_purges`. */
+export interface PagePurgeUpsert { sourceId: string; contentHashes: string[]; slug: string; requestId: string | null }
+
+/** tombstonePage: records each content hash under the slug; a hash already tombstoned takes the new slug, request and time. */
+export async function upsertPagePurges(raw: EngineRawRead, row: PagePurgeUpsert): Promise<void> {
+  await raw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
+    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [row.sourceId, row.contentHashes, row.slug, row.requestId]);
+}
+
 /** A take purge tombstone, the row purge_fact and the page purge write into `take_purges`. */
 export interface TakePurgeInsert { sourceId: string; subject: string; claimHash: string; requestId: string | null }
 

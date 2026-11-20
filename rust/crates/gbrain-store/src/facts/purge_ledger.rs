@@ -77,6 +77,39 @@ fn exists(read: &dyn KvRead, parts: &[&str]) -> Result<bool> {
     Ok(read.get(&key(parts))?.is_some())
 }
 
+/// The tombstones of `[source, visibility, subject]`: each fact_hash with its purge time (micros),
+/// in fact_hash order (the snapshot ledger, `page_withdrawals.rs`).
+pub(crate) fn purges_under_subject(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+) -> Result<Vec<(String, i64)>> {
+    let prefix = key(&[source_id, visibility, subject]);
+    let len = prefix.len();
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        // The rest of the key is `fact_hash \0`.
+        let rest = &k[len..];
+        let hash = String::from_utf8_lossy(rest.strip_suffix(&[0]).unwrap_or(rest)).into_owned();
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(r) => rows.push((hash, r.purged_at_us)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = failed {
+        return Err(StoreError::invalid(format!(
+            "fact_purges: corrupt record: {e}"
+        )));
+    }
+    Ok(rows)
+}
+
 /// Whether the source has any tombstone (`EXISTS (SELECT 1 FROM fact_purges WHERE source_id = $1)`).
 pub(crate) fn has_fact_purges(read: &dyn KvRead, source_id: &str) -> Result<bool> {
     let mut found = false;

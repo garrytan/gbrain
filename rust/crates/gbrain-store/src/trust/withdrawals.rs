@@ -206,6 +206,38 @@ pub(crate) fn withdrawal_hash_under(
     Ok(found)
 }
 
+/// The withdrawals of `[source, visibility, subject]`: each fact_hash with its withdrawal time
+/// (micros), in fact_hash order (the snapshot ledger, `page_withdrawals.rs`).
+pub(crate) fn under_subject(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+) -> Result<Vec<(String, i64)>> {
+    let mut prefix = key(&[source_id, visibility, subject]);
+    prefix.push(0);
+    let len = prefix.len();
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let hash = String::from_utf8_lossy(&k[len..]).into_owned();
+        match serde_json::from_slice::<WithdrawalRecord>(v) {
+            Ok(r) => rows.push((hash, r.withdrawn_at_us)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = failed {
+        return Err(StoreError::invalid(format!(
+            "fact_withdrawals: corrupt record: {e}"
+        )));
+    }
+    Ok(rows)
+}
+
 /// Removes every withdrawal of a source, for the source delete.
 /// Whether a withdrawal of `source_id` covers the page `slug`: its subject is `*` or the slug (the
 /// `withdrawn` column of `listCorePageRows`, src/core/engine-sql/trust-tier-reads.ts).
