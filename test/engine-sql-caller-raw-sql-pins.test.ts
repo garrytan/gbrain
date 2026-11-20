@@ -841,6 +841,42 @@ const PINS: Pin[] = [
        FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
        WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`],
   },
+  // Personal sources (Rust engine lane member-sources-rust), each text copied from access/member-sources.ts at 8e72de1bb6.
+  {
+    from: 'src/core/access/member-sources.ts:47 bindMemberSource, and :59 unbindMemberSource, the binding read (at 8e72de1bb6)',
+    case: { method: 'readAccessMemberSource', variant: 'default', run: e => e.readAccessMemberSource('alice-example', 'dm-alice') },
+    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2'],
+  },
+  {
+    from: 'src/core/access/member-sources.ts:45 bindMemberSource (at 8e72de1bb6)',
+    case: { method: 'insertAccessMemberSource', variant: 'default', run: e => e.insertAccessMemberSource('alice-example', 'dm-alice') },
+    texts: ['INSERT INTO access_member_sources (member_id, source_id) VALUES ($1, $2) ON CONFLICT DO NOTHING'],
+  },
+  {
+    from: 'src/core/access/member-sources.ts:63 unbindMemberSource (at 8e72de1bb6)',
+    case: { method: 'deleteAccessMemberSource', variant: 'default', run: e => e.deleteAccessMemberSource('alice-example', 'dm-alice') },
+    texts: ['DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2'],
+  },
+  {
+    from: 'src/core/access/member-sources.ts:70 listMemberSources, every member (at 8e72de1bb6)',
+    case: { method: 'listAccessMemberSources', variant: 'all', run: e => e.listAccessMemberSources(null) },
+    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources ORDER BY member_id, source_id'],
+  },
+  {
+    from: 'src/core/access/member-sources.ts:70 listMemberSources, one member (at 8e72de1bb6)',
+    case: { method: 'listAccessMemberSources', variant: 'member', run: e => e.listAccessMemberSources('alice-example') },
+    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 ORDER BY member_id, source_id'],
+  },
+  {
+    from: 'src/core/access/member-sources.ts:76 sourceOwners (at 8e72de1bb6)',
+    case: { method: 'listAccessMemberSourceOwners', variant: 'default', run: e => e.listAccessMemberSourceOwners('dm-alice') },
+    texts: ['SELECT member_id FROM access_member_sources WHERE source_id = $1 ORDER BY member_id'],
+  },
+  {
+    from: 'src/core/access/member-sources.ts:89 hiddenPersonalSources (at 8e72de1bb6)',
+    case: { method: 'readMemberSourceBindings', variant: 'default', run: e => e.readMemberSourceBindings(['dm-alice']) },
+    texts: ['SELECT source_id, member_id FROM access_member_sources WHERE source_id = ANY($1::text[])'],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

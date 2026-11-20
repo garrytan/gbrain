@@ -73,6 +73,9 @@ const INTERFACE_METHODS: readonly string[] = [
   // engine-sql/access-members.ts, client-grants.ts, health.ts, jobs.ts and jobs-status.ts).
   'listAccessTokenRows', 'lockOauthClientName', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink',
   'listAccessMemberLinks', 'readCredentialMemberId', 'pingStore', 'readJobDataByIdempotencyKey', 'coalesceOnIdempotencyKey', 'listBudgetOwners', 'readLinkedMember',
+  // Personal sources (Rust engine lane member-sources-rust; caller raw SQL moved to engine-sql/access-member-sources.ts).
+  'readAccessMemberSource', 'insertAccessMemberSource', 'deleteAccessMemberSource', 'listAccessMemberSources',
+  'listAccessMemberSourceOwners', 'readMemberSourceBindings',
   // doctor job checks
   'listStalledEmbedBackfillSources', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
   'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',

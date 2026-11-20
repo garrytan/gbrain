@@ -126,6 +126,7 @@ test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/access-flag.test.ts
 test/engine-parity/access-grants.test.ts
+test/engine-parity/access-member-sources.test.ts
 test/engine-parity/access-members.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/admin-counts.test.ts

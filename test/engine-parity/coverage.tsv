@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 884/884
+# covered: 890/890
 # lifecycle: 9/9
 # pages: 40/40
 # search: 7/7
@@ -33,7 +33,7 @@
 # config: 6/6
 # import_guards: 12/12
 # access_grants: 6/6
-# access_members: 17/17
+# access_members: 23/23
 # persistence_journal: 86/86
 # entity_reads: 8/8
 # cycle_locks: 10/10
@@ -114,7 +114,7 @@ readOwnerOnlySourceConfig	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	1	no	yes	yes	serves
+readSourceRow	pages	yes	2	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	3	no	yes	yes	serves
@@ -404,6 +404,12 @@ readAccessMemberLink	access_members	yes	1	no	yes	yes	serves
 insertAccessMemberLink	access_members	yes	2	no	yes	yes	serves
 deleteAccessMemberLink	access_members	yes	1	no	yes	yes	serves
 listAccessMemberLinks	access_members	yes	1	no	yes	yes	serves
+readAccessMemberSource	access_members	yes	1	no	yes	yes	serves
+insertAccessMemberSource	access_members	yes	1	no	yes	yes	serves
+deleteAccessMemberSource	access_members	yes	1	no	yes	yes	serves
+listAccessMemberSources	access_members	yes	1	no	yes	yes	serves
+listAccessMemberSourceOwners	access_members	yes	1	no	yes	yes	serves
+readMemberSourceBindings	access_members	yes	1	no	yes	yes	serves
 readCredentialBindingForUpdate	access_members	yes	3	no	yes	yes	serves
 readCredentialMemberId	access_members	yes	1	no	yes	yes	serves
 readLinkedMember	access_members	yes	1	no	yes	yes	serves
