@@ -30,6 +30,8 @@ const EXEMPT: Record<string, string> = {
     'column 1 is a hold code, not a source id.',
   'src/core/sync-attempt.ts|ORDER BY created_at DESC, id DESC LIMIT':
     'sorts minion_jobs ids; sources is only a subquery.',
+  'src/core/persistence/sync-movement.ts|ORDER BY started_at, id LIMIT 1':
+    'sorts minion_jobs ids; sources is only a subquery.',
   'src/core/belief/state.ts|ORDER BY 1) = ARRAY(SELECT unnest($6::te':
     'sorts page keys on both sides of an equality; the order is never output.',
   'src/core/belief/state.ts|ORDER BY 1) AS ok), known_fp AS (SELECT':
