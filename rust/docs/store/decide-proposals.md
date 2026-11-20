@@ -6,7 +6,7 @@ Four tables the decide loop keeps: `decide_proposals` (supersede proposals the c
 
 ## Capability
 
-All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served; in this landing only the five eval-capture members are registered, so these 16 join them when their TypeScript members land.
+All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served. All of them are registered: these 16, the 20 decide-store members (`decide-store.md`) and the five eval-capture members, so the capability is reported.
 
 ## Members
 

@@ -1764,7 +1764,11 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `findCandidateDuplicates`, `consolidateFact`, `findTrajectory`, `getFactsHealth`, `pageCollapseFacts` and
   `migrateFactsToCanonical` (the `facts` capability); `mergeOntologyFact`, `getOntology`, `discoverOntologyDimensions`
   and `findOntologyConflicts` (`ontology`); `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`,
-  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`). A caller policy these members cannot honour
+  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`); the 36 decide members (`eval_capture`: the 20 decide-store
+  members `readDecideState`, `upsertDecideState`, `insertDecideReceipts`, `listDecideCalibrations`, ... and the 16 decide-proposal
+  members `insertDecideProposal`, `transitionDecideReviewProposal`, `applyDecideSweepDeferred`, ...; `rust/docs/store/decide-store.md`,
+  `decide-proposals.md`) and the four open-loop members `upsertOpenLoop`, `closeOpenLoop`, `listOpenLoops` and `readEntityOpenLoops`
+  (`facts`; `rust/docs/store/facts.md`). A caller policy these members cannot honour
   refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
   `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,

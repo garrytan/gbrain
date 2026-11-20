@@ -1,9 +1,12 @@
 /**
  * loops-store — SQL accessors for the open_loops + loop_suppressions tables.
  *
- * One shared module over engine.executeRaw with IDENTICAL SQL text on both
- * engines — parity by construction (the pattern sources-ops.ts uses), no
- * per-engine method twins to keep in lockstep.
+ * Three accessors (`upsertOpenLoop`, `listOpenLoops`, `closeOpenLoop`) call the
+ * engine's typed open-loop members (SQL once in engine-sql/open-loops.ts for
+ * PGLite and Postgres, native in the Rust store; the fourth member,
+ * `readEntityOpenLoops`, serves the entity card). The rest (dedup and thread
+ * lookups, staleness, suppressions) is shared SQL over engine.executeRaw with
+ * IDENTICAL text on both engines (a Rust brain does not serve raw SQL).
  *
  * JSONB discipline: evidence binds through `$N::text::jsonb` (the sanctioned
  * positional pattern) — never a bare `::jsonb` cast over JSON.stringify.

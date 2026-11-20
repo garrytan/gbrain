@@ -67,5 +67,5 @@ call loudly. `review-lane.ts` and `proposals-store.ts` read `decision_receipts` 
 ## Tests
 
 `gbrain-store/tests/decide_store.rs` (28 cases) covers the native store. The cross-engine parity file
-(`test/engine-parity/decide-store.test.ts`) arrives with the TypeScript member, so the clock-window edges and the
-insertion-order sum have cargo coverage only in this landing.
+`test/engine-parity/decide-store.test.ts` runs the members on PGLite, Postgres and the Rust store; the clock-window
+edges and the insertion-order sum have cargo coverage only (see above).
