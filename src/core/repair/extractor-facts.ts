@@ -170,7 +170,7 @@ function detail(fact: ExtractorFactCandidate): string {
 
 /** The preview command for this scope: `--source` only when the scope is one source of several (what the operator passed). */
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
   return `gbrain repair extractor-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
@@ -204,8 +204,7 @@ async function mixedVersionWarnings(engine: BrainEngine): Promise<string[]> {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean, facts: ExtractorFactCandidate[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'extractor-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous }, facts };
 }
 

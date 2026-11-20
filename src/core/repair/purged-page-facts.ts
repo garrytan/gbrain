@@ -115,7 +115,7 @@ const DETAILS: Record<string, string> = {
 };
 
 async function previewCommand(engine: BrainEngine, sourceIds: string[], includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   return `gbrain repair ${COMMAND}${sourceIds.length === 1 && Number(n) > 1 ? ` --source ${sourceIds[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
@@ -129,8 +129,7 @@ function batchItems(batches: Approved[], hash: string): BatchItem[] {
     action: `retire ${batch.facts.length} fact(s) left by purged page(s)`, batch, request_id: requestIdFor(hash, batch, 0), hash, last: index === batches.length - 1 }));
 }
 
-const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [ids]);
+const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.listSourceIncarnations(ids);
 
 export const purgedPageFactsRepair: RepairHandler = {
   kind: COMMAND,

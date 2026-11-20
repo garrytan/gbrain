@@ -60,8 +60,7 @@ function previewCommand(scope: RepairScope, slugs: string[]): string {
   return `gbrain repair timeline-order${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${slugs.map(slug => ` --slug ${slug}`).join('')}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) =>
   previewHash({ kind: 'timeline-order-v1', brain_id: scope.brain_id, sources: await sourcesOf(engine, scope), selection, pages });

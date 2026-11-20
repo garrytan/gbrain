@@ -164,7 +164,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
     listing.push({ item: `${sourceId}:${group.entity_slug ?? '(no entity)'}`, class: 'update',
       detail: `${group.rows.length} database-only fact(s) take the date their claim states: ${group.rows.slice(0, LISTED_ROWS).map(row => `fact ${row.id} -> ${row.date}`).join(', ')}` });
   }
-  const [brain] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id = $1', [sourceId]);
+  const brain = await engine.readSourceIncarnation(sourceId);
   const hash = previewHash({ kind: 'fact-claim-dates-v1', brain_id: scope.brain_id, source: { id: sourceId, incarnation: brain?.incarnation ?? null }, selection,
     days: dayList, pages: pages.map(({ slug, revision, section, rows }) => ({ slug, revision, section, rows })), facts });
   return { hash, days, pages, facts, residuals, listing };

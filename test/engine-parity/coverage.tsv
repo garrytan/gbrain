@@ -115,7 +115,7 @@ listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
-listAllSources	pages	yes	8	no	yes	yes	serves
+listAllSources	pages	yes	9	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	7	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -398,7 +398,7 @@ getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	6	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	14	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	15	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
@@ -830,7 +830,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	8	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	9	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
@@ -844,7 +844,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
-readSourceState	write_misc	yes	2	no	yes	yes	serves
+readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
@@ -879,7 +879,7 @@ readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
 readFolderAccess	write_misc	yes	4	no	yes	yes	serves
-listSourceIncarnations	repair_bookkeeping	yes	2	no	yes	yes	serves
+listSourceIncarnations	repair_bookkeeping	yes	3	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	3	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
 readLoopFactState	repair_bookkeeping	yes	2	no	yes	yes	serves

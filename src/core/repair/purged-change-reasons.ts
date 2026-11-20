@@ -49,8 +49,7 @@ interface Details { brain_total: number; by_source: Record<string, number>; samp
 
 /** The source's checkout, found the way the purge's trailer scan finds it; null for a repo-less source. */
 async function checkoutRoot(engine: BrainEngine, sourceId: string): Promise<string | null> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
-  const root = source?.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
+  const root = (await engine.readSourceLocalPath(sourceId)) || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   return root && isAbsolute(root) ? root : null;
 }
 
@@ -96,7 +95,7 @@ export async function findLeakedChangeReasons(engine: BrainEngine, sourceId: str
 }
 
 async function previewCommand(engine: BrainEngine, sourceIds: string[], includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   return `gbrain repair ${COMMAND}${sourceIds.length === 1 && Number(n) > 1 ? ` --source ${sourceIds[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
@@ -105,8 +104,7 @@ function batchItems(batches: Approved[], hash: string): BatchItem[] {
     action: `set ${batch.rows.length} leaked change reason(s) to '${PURGED_REASON}'`, batch, hash, last: index === batches.length - 1 }));
 }
 
-const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [ids]);
+const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.listSourceIncarnations(ids);
 
 const itemName = (row: LeakedReason) => `${row.source_id}:${row.slug}@v${row.id}`;
 
@@ -187,7 +185,7 @@ export const purgedChangeReasonsRepair: RepairHandler = {
  * text it found) to '[purged]' only while it holds exactly that text. Nothing outside the approved ids is written.
  */
 async function clearBatch(tx: BrainEngine, batch: Approved, still: Array<{ id: number; text: string }>): Promise<{ cleared: number[]; changed: number[] }> {
-  await tx.executeRaw('SELECT id FROM sources WHERE id = $1 FOR UPDATE', [batch.source_id]);
+  await tx.lockSourceRow(batch.source_id);
   const ids = batch.rows.map(row => row.id);
   const cleared = still.length ? (await tx.executeRaw<{ id: number | string }>(
     `UPDATE page_versions v SET change_reason = $1 FROM pages p, unnest($3::bigint[], $4::text[]) AS t(id, reason)

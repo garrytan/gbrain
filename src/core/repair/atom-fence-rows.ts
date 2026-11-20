@@ -133,8 +133,7 @@ function item(atom: AtomFenceRow, hash: string, last: boolean): AtomFenceRowItem
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, atoms: AtomFenceRow[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'atom-fence-rows-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, atoms };
 }
 

@@ -76,7 +76,7 @@ function previewCommand(scope: RepairScope): string {
 }
 
 async function sourcesOf(engine: BrainEngine, scope: RepairScope) {
-  return engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  return engine.listSourceIncarnations(scope.source_ids);
 }
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, pages: ApprovedPage[]) =>

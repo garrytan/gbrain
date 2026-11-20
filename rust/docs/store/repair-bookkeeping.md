@@ -99,3 +99,98 @@ the binding behind a content receipt and a config value under `FOR UPDATE`. A Ru
 writer bindings, so it owns no content: `listOwnedContentRows` answers `[]` and
 `readContentReceiptBinding` answers `null`. `readConfigForUpdate` is `getConfig`, as the store
 serializes writes.
+
+## Source reads
+
+The repair kinds read `sources` through the engine members, not `executeRaw`:
+`listSourceIncarnations(ids)` for the incarnation lists in the preview hashes,
+`readSourceIncarnation`, `readSourceLocalPath`, `readSourceState` and `getSource` for one source,
+`listAllSources` for the live-source count and id list, `lockSourceRow` for the row locks, and
+`readSourceStates(engine, ids)` (`src/core/source-rows.ts`) for the rows of the named sources,
+archived ones included, by id. The brain id in the captured-facts, redacted-facts,
+agent-session-facts and rotation hashes is `readPersistenceBrainId`. Two results differ from the
+raw reads they replace: an incarnation list is in `id COLLATE "C"` order on every engine (a Postgres
+brain with an `en_US` collation hashed the old list in that collation's order, so a preview hash
+taken before the change can differ once), and `readSourceStates` parses a config stored as a JSON
+string. Still raw SQL: `attendance-repair.ts` (needs `archived_at`; its apply transaction is raw
+SQL), `fence-repair/census.ts`, `doctor/checks/orphan-bindings.ts` (a union with the writer
+bindings) and the statements that join `sources` into a wider query. Pinned by
+`test/engine-parity/repair-source-reads.test.ts`.
+
+## Repair kinds by batch
+
+The plan of record for moving the 67 `gbrain repair` kinds onto the engine contract. Flags are the
+kind's spec flags (E explicit only, P preview bound, D destructive consent, L spends LLM, A approval
+unbound, U unlisted). Doctor is how doctor reaches the kind (RUN: `--remediate --include-repairs`
+runs it; FIX: a doctor check or fix command names it; LIST: a notice names its preview). Batch is
+the batch whose seeded runRepair case proves it on all three arms.
+
+| Kind | Flags | Doctor | Batch |
+| --- | --- | --- | --- |
+| `connector-checkpoints` | - | RUN | B1 |
+| `contextual-mode` | - | RUN | B1 |
+| `embedding-effects` | - | RUN | B1 |
+| `facts-home` | EP | FIX | B1 |
+| `frontmatter-keys` | EP | FIX | B1 |
+| `google-file-modes` | E | FIX | B1 |
+| `missing-tables` | EP | FIX | B1 |
+| `planner-stats` | A | RUN | B1 |
+| `stuck-recovery` | EPD | LIST | B1 |
+| `content-receipt-root` | EP | FIX | B2 |
+| `loop-facts` | E | FIX | B2 |
+| `managed-sync-orphans` | EP | FIX | B2 |
+| `orphan-bindings` | - | RUN | B2 |
+| `access` | - | RUN | B3 |
+| `aliases` | E | FIX | B3 |
+| `frontmatter` | ED | FIX | B3 |
+| `ghost-pages` | EPD | FIX | B3 |
+| `legacy-twins` | EPD | LIST | B3 |
+| `origin-twins` | EPD | FIX | B3 |
+| `orphan-children` | E | FIX | B3 |
+| `provenance` | EPD | FIX | B3 |
+| `rows-behind` | EP | FIX | B3 |
+| `safe-chunks` | - | RUN | B3 |
+| `segmented-tiling` | EP | FIX | B3 |
+| `captured-facts` | E | FIX | B4 |
+| `consolidate-ties` | EP | LIST | B4 |
+| `duplicate-facts` | EPD | FIX | B4 |
+| `extractor-facts` | E | FIX | B4 |
+| `fact-claim-dates` | EPD | FIX | B4 |
+| `facts-rehome` | EP | LIST | B4 |
+| `ontology-facts` | E | FIX | B4 |
+| `open-facts` | EPU | - | B4 |
+| `purged-page-facts` | EPD | FIX | B4 |
+| `rename-identity` | EPD | FIX | B4 |
+| `unwithdrawn-facts` | EP | FIX | B4 |
+| `url-clone-fences` | EPD | LIST | B4 |
+| `visibility` | P | RUN | B4 |
+| `agent-session-facts` | EPD | FIX | B5 |
+| `connector-fences` | - | RUN | B5 |
+| `conversation-labels` | ED | FIX | B5 |
+| `take-supersession` | - | RUN | B5 |
+| `timeline` | - | RUN | B5 |
+| `timeline-comments` | E | LIST | B5 |
+| `timeline-order` | EPD | LIST | B5 |
+| `accepted-takes` | EP | LIST | B6 |
+| `atoms-restore` | EP | FIX | B6 |
+| `moved-pages` | EPD | FIX | B6 |
+| `overwritten-edits` | EP | FIX | B6 |
+| `private-labels` | EP | LIST | B6 |
+| `purged-change-reasons` | EPD | LIST | B6 |
+| `redacted-facts` | E | FIX | B6 |
+| `secret-spans` | EP | LIST | B6 |
+| `generations` | EPD | FIX | B7 |
+| `lost-fence-rows` | EPD | LIST | B7 |
+| `stale-atoms` | E | FIX | B7 |
+| `atom-fence-rows` | EP | FIX | B8 |
+| `attribution-backfill` | - | RUN | B8 |
+| `contact-rows` | EPD | LIST | B8 |
+| `failed-writes` | E | FIX | B8 |
+| `file-drift` | EPD | FIX | B8 |
+| `receipt-compaction` | EPD | FIX | B8 |
+| `request-indexes` | - | RUN | B8 |
+| `segmented-mirror` | EPD | LIST | B8 |
+| `split-facts` | E | LIST | B8 |
+| `uncommitted-deletions` | EPD | FIX | B8 |
+| `fences` | PL | RUN | B9 |
+| `slug-conflicts` | PL | RUN | B9 |

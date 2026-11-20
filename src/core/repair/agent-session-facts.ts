@@ -65,6 +65,7 @@ import { parseCorpusTurns } from '../context/corpus-turns.ts';
 import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote, type SpeakerSidecar } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
 import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
+import { sortSourcesById } from '../source-rows.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { pruneDir } from '../sync.ts';
 import { CAPTURE_LANES, captureSessionId } from './captured-facts.ts';
@@ -331,12 +332,11 @@ function previewCommand(scope: RepairScope, all: string[], opts: AgentSessionOpt
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 async function brainId(engine: BrainEngine): Promise<string> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  return brain?.brain_id ?? 'host';
+  return (await engine.readPersistenceBrainId().catch(() => null)) ?? 'host';
 }
 
 /**

@@ -66,8 +66,7 @@ function previewCommand(scope: RepairScope): string {
   return `gbrain repair consolidate-ties${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, sources: unknown, ties: ClosedTie[]) =>
   previewHash({ kind: 'consolidate-ties-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, ties });

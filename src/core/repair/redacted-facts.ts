@@ -66,6 +66,7 @@ import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { readBodyRange } from '../page-body/read-range.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export const REDACTED_FACTS_INTENT = 'managed_maintenance_restore_redacted_facts';
 const RESTORE_PATTERNS = [...INJECTION_PATTERNS, LEGACY_EVAL_SHELL];
@@ -221,12 +222,11 @@ function previewCommand(scope: RepairScope, all: string[]): string {
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, facts: RedactedFactCandidate[]) {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  return ['redacted-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, facts.map(f => [f.id, f.class, f.reason, f.fact_hash, f.restored, f.route])];
+    return ['redacted-facts-v1', (await engine.readPersistenceBrainId().catch(() => null)) ?? 'host', scope.source_ids, facts.map(f => [f.id, f.class, f.reason, f.fact_hash, f.restored, f.route])];
 }
 
 function pageItem(page: RedactedFactsPage, hash: string, index: number, last: boolean): PageItem {

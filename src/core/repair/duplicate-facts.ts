@@ -117,8 +117,7 @@ function previewCommand(scope: RepairScope, includeCrossEntity: boolean): string
   return `gbrain repair duplicate-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${includeCrossEntity ? ' --include-cross-entity' : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, includeCrossEntity: boolean, sources: unknown, groups: DuplicateGroup[]) =>
   previewHash({ kind: 'duplicate-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_cross_entity: includeCrossEntity },

@@ -168,7 +168,7 @@ function detail(fact: UnwithdrawnFactCandidate): string {
 }
 
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
   return `gbrain repair unwithdrawn-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
@@ -179,8 +179,7 @@ function requestIdFor(hash: string, page: Pick<UnwithdrawnFactsPage, 'source_id'
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean, facts: UnwithdrawnFactCandidate[], revisions: Record<string, string>) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'unwithdrawn-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous },
     facts: facts.map(({ preimage: _preimage, ...fact }) => fact), revisions };
 }
