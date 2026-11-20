@@ -11,6 +11,8 @@
  *  - Regression: an en_US Postgres sorted these keys by its locale, which skips `-` and `/` (`ab, a/z, a-z` instead of
  *    `a-z, a/z, ab`), so the same rows listed in another order than a PGLite brain did: the status tables, the
  *    pinned-question refresh order and the credential preview all moved with the host's locale.
+ *    The held-embedding source list broke equal pending counts with JS localeCompare, which puts `a_b` before `a-z`
+ *    and `B` last on every database.
  *  - Why existing coverage misses it: the tests of these readers use keys that sort the same in every locale, and
  *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an
  *    en_US Postgres to see it fail.
@@ -44,7 +46,7 @@ import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { BYTE_SLUGS, byteOrder, MIXED_SLUGS } from '../helpers/byte-order.ts';
+import { BYTE_IDS, BYTE_SLUGS, byteOrder, MIXED_IDS, MIXED_SLUGS } from '../helpers/byte-order.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -243,6 +245,17 @@ describe('store listings come out by byte', () => {
   parityTest('readBudgetLimited lists the held reasons of one source by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
     for (const reason of MIXED_SLUGS) await heldPage(engine, 'default', `big-${reason}`, reason);
     expect(Object.keys((await readBudgetLimited(engine)).held_reasons)).toEqual([...BYTE_SLUGS]);
+  });
+
+  parityTest('readBudgetLimited lists sources with equal pending chunks by byte of source id', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+    // Ids with punctuation and an upper-case letter, as rows that predate the source id check can hold: localeCompare
+    // puts `a_b` before `a-z` and `B` last; bytes put `B` first and `a-z` before `a_b`. (Valid ids, a-z 0-9 and `-`,
+    // sort the same both ways.) The Rust store refuses such ids, so they go in by harness SQL.
+    for (const id of MIXED_IDS) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, [id]);
+    for (const id of MIXED_IDS) await heldPage(engine, id, 'big', 'r');
+    const bySource = (await readBudgetLimited(engine)).by_source;
+    expect(bySource.map(s => s.pending_chunks)).toEqual(MIXED_IDS.map(() => 1));
+    expect(bySource.map(s => s.source_id)).toEqual([...BYTE_IDS]);
   });
 
   parityTest('inspectSharedMemberMigration lists installations by byte of adapter', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
