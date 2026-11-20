@@ -84,6 +84,7 @@
       "out-of-scope:write-attribution (born in engine-sql/write-attribution.ts; pinned by test/engine-parity/write-attribution.test.ts)": 5,
       "out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)": 10,
       "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)": 25,
+      "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)": 2,
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 3,
       "pages": 41,
       "salience": 5,
@@ -146,7 +147,6 @@
       "claimSegmentedProjection": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
       "claimWakeForgets": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "claimWakeWatch": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
-      "claimWorktreeBinding": "out-of-scope:worktree-claim (born in engine-sql/worktree-claim.ts; pinned by test/engine-parity/write-misc.test.ts)",
       "clearCodeTraversalCache": "code-edges",
       "clearWantedMarker": "out-of-scope:notifier (born in engine-sql/notifier.ts; pinned by test/engine-parity/notifier.test.ts and test/engine-sql-caller-raw-sql-pins.test.ts)",
       "cliReads": "out-of-scope:internal-helper (private; exercised through public callers)",
@@ -963,6 +963,7 @@
       "readWriteRequestProgress": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
       "readWriteVisibilityProbe": "out-of-scope:page-visibility (born in engine-sql/page-visibility.ts; pinned by test/engine-parity/page-visibility.test.ts and test/page-visibility-sql-pin.test.ts)",
       "readWriteWatermarkRow": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
+      "readWriterAdminState": "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)",
       "readWriterSlugFence": "out-of-scope:page-visibility (born in engine-sql/page-visibility.ts; pinned by test/engine-parity/page-visibility.test.ts and test/page-visibility-sql-pin.test.ts)",
       "readWriterVersionCutoff": "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)",
       "recentWriterVersions": "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)",
@@ -1143,6 +1144,7 @@
       "withReservedConnection": "out-of-scope:lifecycle (connection, pool, transaction, raw seams)",
       "withScopedReadTransaction": "out-of-scope:internal-helper (private; exercised through public callers)",
       "wordLexemes": "out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)",
+      "worktreeClaimStore": "out-of-scope:worktree-claim (born in engine-sql/worktree-claim.ts; pinned by test/engine-parity/write-misc.test.ts)",
       "writeAccessStoreConfig": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "writeContradictionsRun": "takes",
       "writeGitHoldRow": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
@@ -1155,7 +1157,8 @@
       "writeOpCheckpointKeys": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",
       "writeReasonPurgeTombstones": "sources",
       "writeSyncPassRow": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
-      "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)"
+      "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)",
+      "writerAdminStore": "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)"
     }
   },
   "normalizer": "sql-text-classification-v1"

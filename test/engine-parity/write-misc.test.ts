@@ -21,7 +21,7 @@
  *    themselves are compared in access-policy.test.ts). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, source
  *    synopsis modes or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
  *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). Writer bindings are seeded through the claim's store
- *    (claimWorktreeBinding), which every arm serves (rust/docs/store/persistence.md, "Worktree bindings"). The store keeps op checkpoints
+ *    (worktreeClaimStore), which every arm serves (rust/docs/store/persistence.md, "Worktree bindings"). The store keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
  *    since the store lists them in path order and the SQL engines in no stated order.
  */
@@ -36,6 +36,7 @@ import { appliedAccessSummary, folderAccessFor, folderAccessForAll, memberIdenti
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
 import { clearHealthMemo, memoizedHealth } from '../../src/core/health-memo.ts';
 import {
   appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, purgeStaleCheckpoints, recordCompleted, resumeFilter,
@@ -80,11 +81,11 @@ const HOST_B = '00000000-0000-4000-8000-00000000000b';
 
 /**
  * A claimed writer binding for `sourceId`: its worktree owned by HOST_A at epoch 7, with HOST_A's paths, written
- * through the claim's store (claimWorktreeBinding) so every arm seeds it the same way. `incarnation` binds the source at
+ * through the claim's store (worktreeClaimStore) so every arm seeds it the same way. `incarnation` binds the source at
  * another incarnation than its current one (a claim the source has since moved past).
  */
 async function bindWorktree(engine: BrainEngine, sourceId: string, incarnation?: string): Promise<void> {
-  await engine.claimWorktreeBinding(async store => {
+  await claimWorktreeBinding(engine, async store => {
     const source = await store.lockSource(sourceId);
     const id = randomUUID();
     await store.insertWorktree({ id, ownerHostId: HOST_A, ownerEpoch: 7, topologyGeneration: 3, state: 'draining', manifest: { prepared_at: '2026-01-02T03:04:05Z' } });
@@ -852,7 +853,7 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding', 'claimWorktreeBinding'] }, async (engine, backend) => {
+  parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding', 'worktreeClaimStore'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
     await createSource(engine, backend, 'loose');
     await bindWorktree(engine, 'work');
@@ -883,7 +884,7 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false for one claimed at another', { methods: ['isSourceClaimed', 'claimWorktreeBinding'] }, async (engine, backend) => {
+  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false for one claimed at another', { methods: ['isSourceClaimed', 'worktreeClaimStore'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
     await createSource(engine, backend, 'stale', { canonical: 'git' });
     await createSource(engine, backend, 'loose');
@@ -895,11 +896,11 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // The unmanaged claim itself (persistence/ownership.ts claimWorktree) runs through claimWorktreeBinding on every arm:
+  // The unmanaged claim itself (persistence/ownership.ts claimWorktree) runs through worktreeClaimStore on every arm:
   // the first claim records the worktree, its host binding and the source binding; a repeat claim returns it; a source
   // inside the root joins the same worktree. Each arm claims its own scratch root, compared by shape.
   parityTest('claimWorktree binds a source, keeps the binding on a repeat claim, and joins a nested source to it', {
-    methods: ['claimWorktreeBinding', 'getWorktreeBinding', 'isSourceClaimed'],
+    methods: ['worktreeClaimStore', 'getWorktreeBinding', 'isSourceClaimed'],
   }, async (engine, backend) => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-claim-parity-')));
     try {

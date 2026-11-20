@@ -17,7 +17,7 @@ import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
 import { assertWriterAdminState, requireWriterAdminIntent, writerAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
-import { assertWriterAdminUnlocked, readWriterAdminLock, setWriterAdminLock } from './admin-lock.ts';
+import { assertWriterAdminLockValue, readWriterAdminLock, setWriterAdminLock, WRITER_ADMIN_LOCK_KEY } from './admin-lock.ts';
 import { listBlockingEffects } from './blocking-effects.ts';
 import { listWriterVersions } from './writer-versions.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -179,7 +179,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
   }
   // Early refusal before any native lock or preview; the checks inside each transaction stay authoritative.
-  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) await assertWriterAdminUnlocked(engine);
+  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) assertWriterAdminLockValue(await engine.getConfig(WRITER_ADMIN_LOCK_KEY));
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
   if (operation === 'writer_refresh') {
     keys(params, ['source_id', 'dry_run', 'resume', 'abandon', 'wait_drain_ms', 'fetch_timeout_ms']);

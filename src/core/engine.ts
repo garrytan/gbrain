@@ -86,7 +86,8 @@ import type {
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
-import type { WorktreeClaimBody } from './engine-sql/worktree-claim.ts';
+import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
+import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1584,10 +1585,22 @@ export interface BrainEngine {
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   /**
-   * The unmanaged writer claim's store work in one transaction (engine-sql/worktree-claim.ts): `body` gets the claim
-   * store and the transaction-bound engine. A Rust brain refuses a reviewed `--expected-state` check.
+   * The unmanaged writer claim's store (engine-sql/worktree-claim.ts). Call it on a transaction engine: it turns on
+   * durable commit, locks the brain row, and every store call runs in that transaction. `claimWorktreeBinding(engine,
+   * body)` opens the transaction and the store.
    */
-  claimWorktreeBinding<T>(body: WorktreeClaimBody<T>): Promise<T>;
+  worktreeClaimStore(): Promise<WorktreeClaimStore>;
+  /**
+   * The writer topology a reviewed `--expected-state` binds to, as jsonb text (engine-sql/writer-admin.ts); the digest
+   * is its SHA-256 (persistence/admin-intent.ts). `lock` holds the topology until the transaction commits.
+   */
+  readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string>;
+  /**
+   * The writer-admin store for writer lock and unlock and transfer prepare and cancel (engine-sql/writer-admin.ts).
+   * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.
+   * `writerAdminTransaction(engine, body)` opens the transaction and the store.
+   */
+  writerAdminStore(): Promise<WriterAdminStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
