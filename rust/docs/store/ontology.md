@@ -29,7 +29,9 @@ microsecond ISO text.
 `sourceIds` scopes every read to a list of sources; with neither `sourceIds` nor `sourceId`
 every source is read. An empty `visibility` list matches no rows.
 
-`ONTOLOGY_SUPERSEDE_GUARD` always passes: rows in the Rust store carry trust tier `unknown`.
+`ONTOLOGY_SUPERSEDE_GUARD` is evaluated: `mergeOntologyFact` closes the current observation only when its trust rank is no higher than
+the writer's (an undeclared writer ranks as `unknown`). A lower-trust writer still inserts its observation, but it does not close the
+higher-trust row, and the call returns `action: inserted` with `supersededId: null`.
 
 ## Known divergences
 
@@ -47,5 +49,5 @@ These do not show in the parity cases. Each is a documented edge, not a normalis
   does at `src/core/pglite-engine.ts:2225` and `:2269`. A caller with only a reader identity and a
   private-readable grant is served (`callerReaders`): the entity gate reads both; this form has no
   member-page CASE. Any other caller whose policy differs refuses. `requireSafeChunks`, `minTrust`, `suppressFlagged` and
-  `takesHoldersAllowList` are ignored, as no Rust row carries those signals.
+  `takesHoldersAllowList` are ignored: the member does not yet route the trust and suppression reads to this lookup.
 - The Rust `now()` is one value per member call. PGLite takes one value per statement.

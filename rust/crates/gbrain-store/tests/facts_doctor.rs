@@ -765,3 +765,47 @@ fn embedding_coverage_counts_missing_stale_and_partial_rows() {
         .is_err()
     );
 }
+
+#[test]
+fn embedding_coverage_leaves_out_a_claim_withdrawn_after_it_was_saved() {
+    let b = brain("doctor-coverage-withdrawal");
+    let cov = || {
+        let rows = b
+            .count_fact_embedding_coverage(&CoverageQuery {
+                source_id: Some("default".into()),
+                model: "m1".into(),
+                dims: 1536.0,
+            })
+            .unwrap();
+        rows.first().map_or(0, |r| r["missing"].as_u64().unwrap())
+    };
+    fact(
+        &b,
+        "default",
+        json!({ "fact": "x", "entity_slug": "people/a", "visibility": "world" }),
+    );
+    fact(
+        &b,
+        "default",
+        json!({ "fact": "x", "entity_slug": "people/b", "visibility": "world" }),
+    );
+    fact(
+        &b,
+        "default",
+        json!({ "fact": "x", "entity_slug": "people/a", "visibility": "private" }),
+    );
+    fact(
+        &b,
+        "default",
+        json!({ "fact": "keep", "entity_slug": "people/a", "visibility": "world" }),
+    );
+    assert_eq!(cov(), 4);
+    // a withdrawal under people/a: only the world `x` about people/a leaves the count
+    b.insert_fact_withdrawal("default", "world", "x", "people/a", None)
+        .unwrap();
+    assert_eq!(cov(), 3);
+    // subject `*` reaches every entity at that visibility
+    b.insert_fact_withdrawal("default", "world", "x", "*", None)
+        .unwrap();
+    assert_eq!(cov(), 2);
+}

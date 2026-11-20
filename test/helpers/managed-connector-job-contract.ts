@@ -241,6 +241,12 @@ export async function setupContractBrain(engine: BrainEngine): Promise<ContractB
     // publications queue facts-absorb work into a later case.
     await engine.setConfig('facts.extraction_enabled', 'false');
     await engine.setConfig('models.chat', CHAT_MODEL);
+    // The transcript archive reads the real home folder's agent logs
+    // (~/.codex, ~/.claude, ...). Bun reads HOME once at start, so a temp HOME
+    // set here cannot redirect it; with the archive on, a machine with logs
+    // from today writes pages outside the case source. The contract is about
+    // connector jobs, so the case brain turns the archive off.
+    await engine.setConfig('transcripts.archive.enabled', 'off');
     const embedding = { model: await engine.getConfig('embedding_model') ?? 'openai:text-embedding-3-large',
       dimensions: Number(await engine.getConfig('embedding_dimensions') ?? 1536) };
     return { engine, home, env, original, embedding };

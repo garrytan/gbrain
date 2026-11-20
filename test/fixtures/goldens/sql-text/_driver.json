@@ -2229,7 +2229,7 @@
       "listFactsByEntity": {
         "allFilters": [
           {
-            "paramCount": 7,
+            "paramCount": 14,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2240,7 +2240,7 @@
         ],
         "default": [
           {
-            "paramCount": 4,
+            "paramCount": 8,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

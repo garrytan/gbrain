@@ -622,6 +622,13 @@ pub(crate) fn insert_write_request_in(
             "no worktree refresh exists on this engine, so deferred_refresh_id cannot be set",
         ));
     }
+    if input.principal_id.contains('\0') {
+        // Postgres text refuses a NUL byte, and the duplicate lookup below cannot find a key
+        // that holds one, so a repeat would add a second row instead of being refused.
+        return Err(StoreError::invalid(
+            "insertWriteRequest: principal_id contains a NUL byte",
+        ));
+    }
     let principal = Principal {
         kind: input.principal_kind.clone(),
         id: input.principal_id.clone(),
@@ -802,15 +809,22 @@ pub(crate) fn complete_write_row_in(
     }
     let reservation = extra_i64(&record, "terminal_reservation");
     let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
-    if c.result_bytes + effect_bytes > reservation {
+    // SQL sums these as exact numerics, so a sum past i64 is simply too big, never a wrapped small one.
+    if i128::from(c.result_bytes) + i128::from(effect_bytes) > i128::from(reservation) {
         return Ok(None);
     }
     let kept = if unfinished {
         reservation
     } else {
-        reservation.min(c.retained_bytes + effect_bytes)
+        let retained = i128::from(c.retained_bytes) + i128::from(effect_bytes);
+        i64::try_from(i128::from(reservation).min(retained)).unwrap_or(reservation)
     };
-    let released = c.terminal_reservation - kept;
+    let out_of_range =
+        || StoreError::invalid("completeWriteRow: a byte count is out of range for type bigint");
+    let released = c
+        .terminal_reservation
+        .checked_sub(kept)
+        .ok_or_else(out_of_range)?;
     let mut clamped = 0u64;
     for key in distinct_keys(&c.counter_keys) {
         let Some(mut counter) = read_counter(&*tx, &key)? else {
@@ -819,9 +833,18 @@ pub(crate) fn complete_write_row_in(
         if released > counter.terminal_bytes {
             clamped += 1;
         }
-        counter.outstanding_count -= 1;
-        counter.intent_bytes -= c.intent_bytes;
-        counter.terminal_bytes -= released.min(counter.terminal_bytes);
+        counter.outstanding_count = counter
+            .outstanding_count
+            .checked_sub(1)
+            .ok_or_else(out_of_range)?;
+        counter.intent_bytes = counter
+            .intent_bytes
+            .checked_sub(c.intent_bytes)
+            .ok_or_else(out_of_range)?;
+        counter.terminal_bytes = counter
+            .terminal_bytes
+            .checked_sub(released.min(counter.terminal_bytes))
+            .ok_or_else(out_of_range)?;
         write_counter(tx, &key, &counter)?;
     }
     add_true_up_clamped(tx, clamped)?;

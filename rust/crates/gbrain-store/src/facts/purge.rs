@@ -29,6 +29,7 @@ use crate::keys;
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
+use crate::trust::withdrawals::withdrawals_of;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -635,6 +636,38 @@ impl Store {
             Ok(expired.into_iter().map(|id| json!({ "id": id })).collect())
         })
     }
+}
+
+/// The earliest withdrawal `gbrain_preserve_fact_withdrawal` finds for `row`, as the time it was
+/// made: a withdrawal of the same source and visibility, with the claim's fingerprint (or its v1
+/// fingerprint), and a subject that reaches the row. A row on a member page (`memory/members/..`)
+/// matches only that page's own withdrawals (GST-2346); any other row matches subject `*`, its
+/// entity, or, on an unbacked name key, any subject but an owned memory page (GBRA-574).
+pub(crate) fn earliest_withdrawal(read: &dyn KvRead, row: &FactRecord) -> Result<Option<i64>> {
+    let ledger = withdrawals_of(read, &row.source_id, &row.visibility, &row.fact)?;
+    if ledger.is_empty() {
+        return Ok(None);
+    }
+    let member = row
+        .source_markdown_slug
+        .as_deref()
+        .filter(|s| s.starts_with(MEMBER_PAGE_PREFIX));
+    let unbacked = member.is_none() && unbacked(read, row)?;
+    let mut earliest: Option<i64> = None;
+    for (subject, at) in ledger {
+        let covers = match member {
+            Some(slug) => subject == slug,
+            None => {
+                subject == "*"
+                    || row.entity_slug.as_deref() == Some(subject.as_str())
+                    || (unbacked && !owned_memory_subject(&subject))
+            }
+        };
+        if covers {
+            earliest = Some(earliest.map_or(at, |e| e.min(at)));
+        }
+    }
+    Ok(earliest)
 }
 
 /// A withdrawal under `subject` reaches `row`: every subject, the row's entity, an unbacked name

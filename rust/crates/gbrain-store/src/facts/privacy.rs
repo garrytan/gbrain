@@ -26,7 +26,7 @@
 //!
 //! The owner-only rule is the one part of the member-access test the store can answer for a page: a page of an
 //! owner-only source, and a concept or question synthesized from one, is hidden (`OwnerOnlyForm::Fn`), or every page
-//! is while the brain holds an owner-only source (`OwnerOnlyForm::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
+//! is while the brain holds an owner-only source or has held owner-only data (`OwnerOnlyForm::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
 //! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. A fact read applies the rule
 //! to the provenance page, the entity and holding pages, and the fact row itself (`ownerOnlyFactSql`: a fact of an
 //! owner-only source). The store keeps no `derivation_inputs`, so a row derived from an owner-only row by that table alone
@@ -162,9 +162,36 @@ pub(crate) fn hidden_by_private_provenance(
             return Ok(true);
         }
     }
+    // GBRA-574: a bare name key reads as the page later written at `<dir>/<key>`, so that page's
+    // privacy covers the fact too (`privateEntityFilterForCaller`'s `keyed`).
+    if let Some(entity) = row.entity_slug.as_deref()
+        && !entity.contains('/')
+    {
+        for dir in NAME_KEY_PAGE_DIRS {
+            let Some(page) = read_page(read, &row.source_id, &format!("{dir}/{entity}"))? else {
+                continue;
+            };
+            if page_hidden_with(read, &page, policy, owner_only)? {
+                return Ok(true);
+            }
+        }
+    }
     // `sharedHeldRuledSql` hides a held fact only under a folder rule or pending coverage.
     Ok(false)
 }
+
+/// `NAME_KEY_PAGE_DIRS` (src/core/entities/basename-dirs.ts): the directories whose page at
+/// `<dir>/<key>` covers a bare name key's facts for privacy.
+const NAME_KEY_PAGE_DIRS: [&str; 8] = [
+    "people",
+    "companies",
+    "hosts",
+    "projects",
+    "concepts",
+    "funds",
+    "orgs",
+    "organizations",
+];
 
 /// Whether the row's provenance page (`source_markdown_slug`) fails the page policy: the
 /// provenance half of the policy above, and by itself `privateProvenanceFilterFragment` (the
@@ -780,5 +807,11 @@ mod tests {
         assert!(!hidden(OwnerOnlyForm::Fn, &open) && !hidden(OwnerOnlyForm::Fn, &bare));
         // The closed form hides every fact while the brain holds an owner-only source.
         assert!(hidden(OwnerOnlyForm::Closed, &open) && hidden(OwnerOnlyForm::Closed, &bare));
+        // Once the brain has held owner-only data (a mark), the closed form keeps hiding every fact after the source
+        // stops being owner-only, as SQL's held flag does; the lineage form hides only the marked rows.
+        store.delete_page("notes/vault", Some("vault")).unwrap();
+        source("vault", json!({}));
+        assert!(hidden(OwnerOnlyForm::Closed, &open) && hidden(OwnerOnlyForm::Closed, &bare));
+        assert!(!hidden(OwnerOnlyForm::Fn, &open) && !hidden(OwnerOnlyForm::Fn, &in_vault));
     }
 }

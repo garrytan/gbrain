@@ -292,6 +292,7 @@
       "  [INFO] storage_manifest: No storage shelf and no interim storage records on this brain.",
       "  [OK] facts_undated_lines: Every fact line on 0 facts page(s) carries a date.",
       "  [OK] secret_store: The secret store holds no entries.",
+      "  [OK] owner_identity: No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
       "  [OK] fence_integrity: No malformed facts or takes fence is held, stored or waiting in a checkout (2 source(s) scanned).",
       "  [OK] search_mode: Mode: conservative (no per-key overrides — mode bundle is canonical).",
       "  [INFO] synopsis_tier_coverage: Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",

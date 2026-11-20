@@ -335,7 +335,12 @@ fn purge_deleted_pages_respects_the_cutoff_and_excluded_ids() {
         .purge_deleted_pages(0.0, &de(json!({ "excludeIds": [id_of(&b)] })))
         .unwrap();
     assert_eq!(strs(&real["slugs"]), vec!["notes/a"]);
-    assert!(real.get("pages").is_none());
+    assert_eq!(
+        real["pages"].as_array().map(Vec::len),
+        Some(1),
+        "a real run lists what it purged"
+    );
+    assert_eq!(real["pages"][0]["slug"], "notes/a");
     assert_eq!(
         store.get_all_slugs(&de(json!({}))).unwrap(),
         vec!["notes/b", "notes/c"]
