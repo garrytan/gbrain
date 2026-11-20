@@ -9,15 +9,16 @@
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes what the repair commands classify and
  *    repair, which loops_close retires and which world facts the visibility check flags; the Rust engine has no SQL,
- *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves the four that read
- *    only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops, and countLabelFacts;
- *    the other three refuse (rust/docs/store/facts.md).
+ *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves nine of the ten:
+ *    the four that read only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops,
+ *    countLabelFacts, listExtractorFactsForClassification (with the receipt off the write journal) and
+ *    countPurgedPageFacts; listUnwithdrawnFacts stops on the typed refusal (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none. Every fact, page, loop and withdrawal is seeded through the typed members. The tables behind the three
- *    refused members (persistence_requests, page_purges, derived_generations) have no typed writer on the
- *    engine, so those cases seed the facts the statement joins from and assert the answer an empty table gives; the
- *    Rust arm counts each as a typed refusal. Generated values (ids) are compared by relation, never by value.
+ *  - Seam: none. Every fact, page, loop and withdrawal is seeded through the typed members. The tables behind
+ *    persistence_requests receipts, page_purges and derived_generations have no typed writer on the engine, so those
+ *    cases seed the facts the statement joins from and assert the answer an empty table gives. Generated values
+ *    (ids) are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
@@ -345,6 +346,60 @@ describe('engine parity: group 5 facts repair statements', () => {
     expect(elsewhere).toEqual([]);
     const view = (list: typeof rows) => list.map(({ id: _id, page_id: _page, expired_at, ...r }) => { expect(expired_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/); return r; });
     return { rows: view(rows), bySlug: view(bySlug), elsewhere };
+  });
+
+  parityTest('listExtractorFactsForClassification carries the page, withdrawal, duplicate and fence evidence of each fact', {
+    methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'listExtractorFactsForClassification'],
+  }, async (engine) => {
+    await engine.putPage('chats/two', note('Two', 'a chat'));
+    await engine.putPage('chats/deleted', note('Deleted', 'a chat'));
+    const ex = (text: string, slug: string, extra: Record<string, unknown> = {}) =>
+      fenced(engine, text, { source: EXTRACTOR, visibility: 'private', source_markdown_slug: slug, row_num: null, ...extra });
+    const twin = await ex('twin claim', 'chats/two');
+    await ex('twin claim', 'chats/two');
+    const lone = await ex('lone claim', 'chats/two', { entity_slug: 'people/ann' });
+    const retired = await ex('retired claim', 'chats/two', { context: 'retired: conversation-labels' });
+    const held = await fenced(engine, 'fence claim', { source: 'fence', visibility: 'world', source_markdown_slug: 'chats/two' });
+    const deleted = await ex('withdrawn claim', 'chats/deleted');
+    const nowhere = await ex('nowhere claim', 'chats/nowhere');
+    for (const id of [twin, lone, retired, held, deleted, nowhere]) expect(await engine.expireFact(id)).toBe(true);
+    expect(await engine.softDeletePage('chats/deleted')).toBeTruthy();
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn claim', '*', null)).toBe(true);
+    const rows = await engine.listExtractorFactsForClassification(['default'], null);
+    const one = await engine.listExtractorFactsForClassification(['default'], 'chats/two');
+    expect(rows.map(r => Number(r.id))).toEqual([deleted, nowhere, twin, lone]);
+    const view = (list: typeof rows) => list.map(({ id: _id, page_id, expired_at, ...r }) => ({ ...r, has_page: page_id !== null, expired: /^\d{4}-\d{2}-\d{2}T/.test(expired_at) }));
+    return { rows: view(rows), one: view(one) };
+  });
+
+  parityTest('countPurgedPageFacts counts the active page-extraction facts of a page that is gone', {
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'countPurgedPageFacts'],
+  }, async (engine) => {
+    await engine.putPage('notes/soft', note('Soft', 'a page'));
+    expect(await engine.softDeletePage('notes/soft')).toBeTruthy();
+    const at = (text: string, context: string, extra: Record<string, unknown> = {}) => fact(engine, text, { source: 'mcp:put_page', context, ...extra });
+    await at('soft deleted page', 'notes/soft \u2014 a note');
+    await at('no slash', 'gone');
+    await at('whitespace', 'gone/a page');
+    await at('gone page', 'gone/page \u2014 a note');
+    await at('another', 'gone/other');
+    await at('sync import', 'gone/synced', { source: 'sync:import' });
+    await at('other source', 'gone/elsewhere', { source: 'mcp:other' });
+    await fenced(engine, 'on a page', { source: 'mcp:put_page', context: 'gone/held', source_markdown_slug: 'gone/held', visibility: 'private' });
+    await at('withdrawn', 'gone/withdrawn');
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn', '*', null)).toBe(true);
+    expect(await engine.expireFact(await at('expired', 'gone/expired'))).toBe(true);
+    const counted = await engine.countPurgedPageFacts(['default'], 10);
+    const atCap = await engine.countPurgedPageFacts(['default'], 3);
+    const under = await engine.countPurgedPageFacts(['default'], 2);
+    const none = await engine.countPurgedPageFacts(['default'], 0);
+    const elsewhere = await engine.countPurgedPageFacts(['other'], 10);
+    expect({ counted, atCap, under, none, elsewhere }).toEqual({
+      counted: { evidenced: 0, ambiguous: 3, capped: false }, atCap: { evidenced: 0, ambiguous: 3, capped: false },
+      under: { evidenced: 0, ambiguous: 2, capped: true }, none: { evidenced: 0, ambiguous: 0, capped: true },
+      elsewhere: { evidenced: 0, ambiguous: 0, capped: false },
+    });
+    return { counted, atCap, under, none, elsewhere };
   });
 
   parityTest('countPurgedPageFacts counts no fact of a page that was never purged', { methods: ['putPage', 'insertFacts', 'countPurgedPageFacts'] }, async (engine) => {

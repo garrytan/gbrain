@@ -53,7 +53,7 @@ test/engine-parity/fact-visibility-widening.test.ts	4	0
 test/engine-parity/facts-cycle.test.ts	14	0
 test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge.test.ts	16	2
-test/engine-parity/facts-repair.test.ts	10	3
+test/engine-parity/facts-repair.test.ts	14	1
 test/engine-parity/facts-trust.test.ts	9	4
 test/engine-parity/facts.test.ts	36	0
 test/engine-parity/fence-overlay.test.ts	2	0

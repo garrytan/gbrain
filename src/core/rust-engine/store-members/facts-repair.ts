@@ -5,9 +5,11 @@
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
  * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, and countLabelFacts, whose label line this member
  * reads into literal labels (label-line.ts). loopFactDrift and closedLoopWithActiveFact are served from open-loops.ts.
- * Refused, because the store holds no such table: listExtractorFactsForClassification (`persistence_requests`, the
- * write journal), countPurgedPageFacts (`page_purges`) and listUnwithdrawnFacts (`derived_generations`,
- * `derived_generation_items`).
+ * Also served (facts/repair_gone.rs): listExtractorFactsForClassification, whose receipt is read off the write journal's
+ * committed requests, and countPurgedPageFacts, which the store answers as one `purged` flag per counted fact: true when
+ * the source's `page_purges` ledger records a purge of the fact's page at or after the fact was written.
+ * Refused: listUnwithdrawnFacts. The store keeps derived generations and their items (generations.rs writes them), but
+ * no store read lists the facts a facts-fence generation retired, so answering no row could hide one.
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
@@ -74,3 +76,25 @@ export const countLabelFacts: Member<'countLabelFacts'> = (brain, sourceIds, cap
     return { count: Math.min(n, cap), capped: n > cap };
   });
 };
+
+/** `listExtractorFactsForClassification`: by (source, page, id); `slug` null lists every page of the sources. */
+export const listExtractorFactsForClassification: Member<'listExtractorFactsForClassification'> = (brain, sourceIds, slug) =>
+  storeCall({ member: 'listExtractorFactsForClassification' }, () => brain.listExtractorFactsForClassification({ sourceIds, slug }));
+
+/**
+ * `countPurgedPageFacts`: the store lists the `purged` flag of up to `cap + 1` facts and this member counts them as the
+ * SQL does. A cap that is not an integer, or one whose `LIMIT` would be negative, refuses.
+ */
+export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sourceIds, cap) => {
+  const m = 'countPurgedPageFacts';
+  if (!Number.isSafeInteger(cap) || cap + 1 < 0) refuseMember(m, 'a cap that is not an integer of -1 or more');
+  return storeCall({ member: m }, async () => {
+    const rows = (await brain.countPurgedPageFacts({ sourceIds, limit: cap + 1 })) as boolean[];
+    const kept = rows.slice(0, cap);
+    return { evidenced: kept.filter(Boolean).length, ambiguous: kept.filter(r => !r).length, capped: rows.length > cap };
+  });
+};
+
+/** `listUnwithdrawnFacts`: refused; the store keeps generation items but has no read of the facts a fence retired. */
+export const listUnwithdrawnFacts: Member<'listUnwithdrawnFacts'> = async () =>
+  refuseMember('listUnwithdrawnFacts', 'a read of the facts a facts-fence generation retired');

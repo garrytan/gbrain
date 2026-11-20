@@ -12,10 +12,10 @@
 //! regular expression.
 //!
 //! The two loop reads, `closedLoopWithActiveFact` and `loopFactDrift`, are served from
-//! `facts/loops.rs`. The other three members of the file refuse with `engine_capability_missing`:
-//! `listExtractorFactsForClassification` joins the persistence journal, and the other two read a
-//! table the store does not hold (`page_purges`, `derived_generations` and
-//! `derived_generation_items`). rust/docs/store/facts.md names each one.
+//! `facts/loops.rs`. `listExtractorFactsForClassification` and `countPurgedPageFacts` are served from
+//! `facts/repair_gone.rs`. `listUnwithdrawnFacts` reads tables the store does not hold
+//! (`derived_generations` and `derived_generation_items`, no Rust writer), so the TypeScript member
+//! answers it with no row. rust/docs/store/facts.md names each one.
 //!
 //! Shared reading rules. A source's rows come back in id order ([`source_rows`]); the sources are
 //! visited in byte order of their id, which is `ORDER BY f.source_id, f.id` under the C collation
@@ -94,7 +94,7 @@ const EXTRACTOR_PREFIX: &str = "cli:extract-conversation-facts";
 /// `[[:space:]]` as PGLite reads it: `iswspace` of its C library (musl) under `C.UTF-8`. Postgres
 /// on glibc also counts U+1680 (OGHAM SPACE MARK); the parity cases use none of the two
 /// characters on which the two disagree.
-fn posix_space(c: char) -> bool {
+pub(super) fn posix_space(c: char) -> bool {
     matches!(
         c,
         ' ' | '\t'
