@@ -129,7 +129,7 @@ GBrain Helper then appears under System Settings > Privacy & Security > Contacts
 
 `GET /v1/contacts/changes?cursor=<opaque>&limit=<1..500>` answers `{"data": [...], "meta": {"next_cursor", "more", "full"}}`. Each item is `{"op": "upsert", "id", "contact": {given_name, family_name, nickname, organization, job_title, emails: [{label, value}], phones: [{label, value}], groups: [names]}}` or `{"op": "delete", "id"}`. Values are as stored in Contacts; a label is macOS's localized name for it, or an empty string.
 
-- Without a cursor it returns every contact, in identifier order, paged. The last page has `more: false` and `full: true`, and its `next_cursor` is the change cursor.
+- Without a cursor it returns every contact, in identifier order, paged. The last page has `more: false` and `full: true`, and its `next_cursor` is the change cursor. A read without a cursor is the whole set: after its `full: true` page, drop every id you hold that it didn't return. Contacts deleted while your cursor had expired are only removed this way.
 - With a cursor it returns the contacts added, edited or deleted since then, a change of group membership included (as an upsert). `full` is false.
 - Keep reading while `more` is true, and save a cursor only after applying its page. Sending the next cursor is what tells the helper the page was applied; sending an older cursor again gets the same changes again. Upserts are idempotent.
 

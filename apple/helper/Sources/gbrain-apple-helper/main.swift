@@ -150,11 +150,11 @@ case "contacts-setup":
     var config = lockedConfig()
     config.sources["contacts"] = SourceSetting(enabled: true)
     save(config)
-    print("Contacts reading is on in \(configPath). It reads names, emails, phones, company, job title and groups, and never changes your contacts.")
     let access = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["contacts"] as? String
     guard access == ContactsAccess.allowed.rawValue else {
-        fail("macOS hasn't given \(HelperIdentity.appName) access to Contacts (\(access ?? "unknown")). Turn it on in System Settings > Privacy & Security > Contacts.", code: 1)
+        fail("Contacts reading is switched on in \(configPath), but macOS hasn't given \(HelperIdentity.appName) access to Contacts (\(access ?? "unknown")), so reads answer contacts_not_allowed. Turn it on in System Settings > Privacy & Security > Contacts; the helper reads contacts from the next request after that.", code: 1)
     }
+    print("Contacts reading is on in \(configPath). It reads names, emails, phones, company, job title and groups, and never changes your contacts.")
 
 case "send-key":
     guard let keyName = value("--name") else { fail(usage, code: 64) }
