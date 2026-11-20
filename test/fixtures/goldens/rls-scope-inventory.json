@@ -7745,7 +7745,6 @@
         "cosinesByChunkIds": "none",
         "countAtomExtractionBacklog": "none",
         "countAtomFacts": "none",
-        "countBrainLivePages": "none",
         "countChunkColumnCoverage": "none",
         "countChunkVectorCoverage": "none",
         "countChunklessPagesWithContent": "direct",

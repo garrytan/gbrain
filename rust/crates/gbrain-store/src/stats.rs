@@ -470,12 +470,6 @@ impl Store {
         Ok(count)
     }
 
-    /// `countBrainLivePages` (`engine-sql/health.ts`): live pages in every source.
-    pub fn count_brain_live_pages(&self) -> Result<u64> {
-        let read = self.read()?;
-        Ok(all_pages(&*read)?.iter().filter(|p| live(p)).count() as u64)
-    }
-
     /// `readBrainMaturity` (`engine-sql/health.ts`): live pages and unexpired facts in every
     /// source, and `since`, the earliest `created_at` of any source or page (soft-deleted pages
     /// count, as `MIN(created_at) FROM pages` does), or null when there is neither.

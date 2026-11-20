@@ -450,7 +450,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'replaceWantedLinkRows': OOS.wantedLinks,
   'searchRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
-  'countBrainLivePages': OOS.stats,
   'readBrainMaturity': OOS.stats,
   'linkRead': OOS.helper,
   'inboundLinkCoverage': OOS.linkReads,

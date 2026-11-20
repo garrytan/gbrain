@@ -729,7 +729,6 @@ export const RUST_ENGINE_MEMBERS = {
   getRecentSalience: 'salience',
   // health
   countOnboardSignal: 'health',
-  countBrainLivePages: 'health',
   readBrainMaturity: 'health',
   getStats: 'health',
   getHealth: 'health',

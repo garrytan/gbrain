@@ -52,12 +52,6 @@ impl Brain {
         })
     }
 
-    /// `countBrainLivePages()`: resolves the count.
-    #[napi]
-    pub fn count_brain_live_pages<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.count_brain_live_pages())
-    }
-
     /// `readBrainMaturity()`: resolves `{ pages, facts, since }`.
     #[napi]
     pub fn read_brain_maturity<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

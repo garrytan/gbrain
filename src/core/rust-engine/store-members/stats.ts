@@ -1,5 +1,5 @@
 /**
- * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal, countBrainLivePages,
+ * Brain statistics, health and the ingest log (BrainEngine getStats, getHealth, countOnboardSignal,
  * readBrainMaturity, logIngest,
  * getIngestLog, listEnrichCandidates, findAnomalies).
  *
@@ -161,10 +161,6 @@ export const countOnboardSignal: StoreMember<[signal: OnboardSignal, entityTypes
     const input = { signal, entityTypes: { types: [...entityTypes.types], per_source: entityTypes.per_source.map((b) => ({ source_id: b.source_id, types: [...b.types] })) } };
     return storeCall({ member: 'countOnboardSignal' }, () => brain.countOnboardSignal(input));
   };
-
-/** Backup coverage's page count (engine-sql/health.ts countBrainLivePages): live pages in every source. */
-export const countBrainLivePages: StoreMember<[], number | null> = async (brain) =>
-  Number(await storeCall({ member: 'countBrainLivePages' }, () => brain.countBrainLivePages()));
 
 /** Backup coverage's young-brain row (engine-sql/health.ts readBrainMaturity); `since` as a Date, as Postgres returns it. */
 export const readBrainMaturity: StoreMember<[], BrainMaturityRow | null> = async (brain) =>

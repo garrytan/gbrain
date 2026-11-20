@@ -490,7 +490,7 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
-      // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
+      // (countLivePages, readBrainMaturity), so the check answers as it does on PGLite.
       // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
       // trust_scan scans pages, facts, takes and timeline entries, and a new Rust brain records the write gate's
       // scan baseline as v227 does, so it counts what PGLite counts.
