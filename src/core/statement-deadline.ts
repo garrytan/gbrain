@@ -126,9 +126,10 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
       if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !BOUNDED_TYPED_READS.has(key) || !boundsStatements) {
         return Reflect.apply(fn, target, args);
       }
-      // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
+      // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline,
+      // and the signal discards its connection when the deadline passes with the read unanswered (as executeRaw's did).
       const deadlineAt = scope.deadlineAt;
-      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>)
+      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
         .catch((error: unknown) => {
           if (error instanceof ReadDeadlineError) refuse(scope);
           if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;
