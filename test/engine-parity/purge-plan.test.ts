@@ -271,7 +271,7 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     };
   });
 
-  parityTest('listPurgeProbeItems names raw_data rows by id; the Rust store keeps no raw_data id and refuses', {
+  parityTest('listPurgeProbeItems names raw_data rows by id on every engine', {
     methods: ['listPurgeProbeItems', 'putRawData'],
   }, async (engine) => {
     await engine.putPage('acme', note('Acme', 'a'));

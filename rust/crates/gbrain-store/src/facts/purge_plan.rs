@@ -302,8 +302,12 @@ impl PurgeProbeArgs {
                             return Ok(out);
                         }
                         if self.hit(&[("data", Some(jsonb_text(&row.data)))])? {
-                            // `raw_data.id` is a serial this store does not keep, so the item cannot be named.
-                            out.push(ProbeHit { item: None });
+                            // A record written before the store kept `raw_data.id` cannot be named.
+                            out.push(ProbeHit {
+                                item: row.id.map(|id| {
+                                    format!("raw_data:{id} {} {}", page.slug, row.source)
+                                }),
+                            });
                         }
                     }
                 }
@@ -654,7 +658,7 @@ impl Store {
     }
 
     /// `listPurgeProbeItems` of a named probe: the first 20 items in byte order, or `null` when a row
-    /// matched that this store cannot name (a `raw_data` row: its serial id is not kept).
+    /// matched that this store cannot name (a `raw_data` record written before the store kept its id).
     pub fn list_purge_probe_items(&self, q: &PurgeProbeArgs) -> Result<Value> {
         no_nul(
             "listPurgeProbeItems",

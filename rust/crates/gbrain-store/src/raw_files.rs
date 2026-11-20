@@ -12,7 +12,9 @@
 //!   `getFile` checks it.
 //! - `r 0x03 <page id u64 BE> 0x00 <file id u64 BE>` -> the file's storage path. One per file
 //!   whose `page_id` is set, so `listFilesForPage` reads one prefix.
-//! - Id counter: `M next_file_id`. A refused insert takes no id; an update keeps the row's id.
+//! - Id counters: `M next_file_id` and `M next_raw_data_id`. A refused insert takes no id; an update
+//!   keeps the row's id. A raw data record written before `next_raw_data_id` has no id until its
+//!   next update gives it one.
 //!
 //! `data` and `metadata` are JSONB in Postgres, which stores object keys ordered by length, then
 //! bytes. The store keeps that order (`jsonb_order`), so rows come back as Postgres returns them.
@@ -39,6 +41,7 @@ const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
 const FILE_BY_PAGE: u8 = 0x03;
 const NEXT_FILE_ID: &str = "next_file_id";
+const NEXT_RAW_DATA_ID: &str = "next_raw_data_id";
 
 fn raw_page_prefix(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::RAW_FILES, RAW];
@@ -86,9 +89,12 @@ fn file_page_key(page_id: u64, file_id: u64) -> Vec<u8> {
     key
 }
 
-/// One `raw_data` row. The serial `id` is never read by a member, so it is not kept.
+/// One `raw_data` row. `id` is the serial `raw_data.id` a fact purge's probe names a row by
+/// (`raw_data:<id> <slug> <source>`); a record written before the store kept it has none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RawRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub page_id: u64,
     pub source: String,
     pub data: Value,
@@ -386,13 +392,20 @@ impl Store {
             let data = data.clone().ok_or_else(|| not_null("raw_data", "data"))?;
             let now = self.env.now_micros();
             for page in pages {
+                let key = raw_key(page.id, source);
+                let kept = get_json::<RawRecord>(&*tx, &key)?.and_then(|row| row.id);
+                let id = match kept {
+                    Some(id) => id,
+                    None => next_id(tx, NEXT_RAW_DATA_ID)?,
+                };
                 let record = RawRecord {
+                    id: Some(id),
                     page_id: page.id,
                     source: source.to_string(),
                     data: data.clone(),
                     fetched_at_us: now,
                 };
-                put_json(tx, &raw_key(page.id, source), &record)?;
+                put_json(tx, &key, &record)?;
             }
             Ok(())
         })
@@ -645,6 +658,83 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&value).unwrap(),
             r#"{"a":{"b":2,"zz":1},"ab":[{"c":2,"cc":1}],"bb":1}"#
+        );
+    }
+
+    fn record(store: &Store, page_id: u64, source: &str) -> RawRecord {
+        let read = store.read().unwrap();
+        get_json::<RawRecord>(&*read, &raw_key(page_id, source))
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn raw_data_takes_an_id_on_insert_keeps_it_on_update_and_names_the_probe_item() {
+        let store = store();
+        let a = put(&store, "notes/a");
+        let b = put(&store, "notes/b");
+        store
+            .put_raw_data("notes/a", Some("feed"), Some("{\"q\":\"claim\"}"), None)
+            .unwrap();
+        store
+            .put_raw_data("notes/b", Some("feed"), Some("{\"q\":\"claim\"}"), None)
+            .unwrap();
+        let first = record(&store, a, "feed").id.unwrap();
+        let second = record(&store, b, "feed").id.unwrap();
+        assert_ne!(first, second);
+        store
+            .put_raw_data(
+                "notes/a",
+                Some("feed"),
+                Some("{\"q\":\"claim again\"}"),
+                None,
+            )
+            .unwrap();
+        assert_eq!(record(&store, a, "feed").id, Some(first));
+
+        let probe: crate::facts::purge_plan::PurgeProbeArgs = serde_json::from_value(json!({
+            "table": "raw_data",
+            "sourceId": "default",
+            "columns": ["data"],
+            "needles": [{"text": "claim", "lower": "claim", "escaped": "claim"}],
+        }))
+        .unwrap();
+        let mut want = vec![
+            format!("raw_data:{first} notes/a feed"),
+            format!("raw_data:{second} notes/b feed"),
+        ];
+        want.sort();
+        assert_eq!(store.list_purge_probe_items(&probe).unwrap(), json!(want));
+
+        // A record written before the store kept the id cannot be named, so the probe refuses.
+        store
+            .write(|tx| {
+                let mut legacy = get_json::<RawRecord>(&*tx, &raw_key(b, "feed"))?.unwrap();
+                legacy.id = None;
+                put_json(tx, &raw_key(b, "feed"), &legacy)
+            })
+            .unwrap();
+        assert_eq!(store.list_purge_probe_items(&probe).unwrap(), Value::Null);
+        let bounded = crate::facts::purge_plan::PurgeProbeArgs {
+            rows: Some(1000),
+            ..probe.clone()
+        };
+        assert_eq!(store.count_purge_probe(&bounded).unwrap(), 2);
+
+        // Its next update gives it a fresh id, and the probe names it again.
+        store
+            .put_raw_data("notes/b", Some("feed"), Some("{\"q\":\"claim\"}"), None)
+            .unwrap();
+        let renamed = record(&store, b, "feed").id.unwrap();
+        assert!(renamed > first.max(second));
+        assert_eq!(
+            store
+                .list_purge_probe_items(&probe)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
         );
     }
 

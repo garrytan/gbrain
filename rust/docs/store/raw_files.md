@@ -12,15 +12,16 @@ Keys (tag `r`, `keys::RAW_FILES`):
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
-| `r 0x01 <page id u64 BE> 0x00 <source name>` | raw data record: `page_id`, `source`, `data`, `fetched_at` | `raw_data`, `UNIQUE(page_id, source)` |
+| `r 0x01 <page id u64 BE> 0x00 <source name>` | raw data record: `id`, `page_id`, `source`, `data`, `fetched_at` | `raw_data`, `UNIQUE(page_id, source)` |
 | `r 0x02 <storage path>` | file record: every `files` column | `files`, `UNIQUE(storage_path)` |
 | `r 0x03 <page id u64 BE> 0x00 <file id u64 BE>` | the file's storage path | `idx_files_page_id` |
 
-File ids come from the counter `M next_file_id`. A refused insert takes no id and an update keeps the
-row's id. `files` is unique on `storage_path` across every source, so the path alone is the file key and
-`source_id` is a field of the record. (The interfaces plan wrote `r 0x02 <source> 0x00 <storage path>`;
-that key would let two sources hold one path, which Postgres refuses.) The serial `raw_data.id` is never
-read by a member, so the store does not keep it.
+File ids come from the counter `M next_file_id` and raw data ids from `M next_raw_data_id`. A refused
+insert takes no id and an update keeps the row's id. `files` is unique on `storage_path` across every
+source, so the path alone is the file key and `source_id` is a field of the record. (The interfaces plan wrote `r 0x02 <source> 0x00 <storage path>`;
+that key would let two sources hold one path, which Postgres refuses.) A fact purge's probe names a raw data row
+by its `raw_data.id` (`raw_data:<id> <slug> <source>`). A record written before the store kept that id has
+none until its next `putRawData`, which gives it one; until then naming it refuses.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

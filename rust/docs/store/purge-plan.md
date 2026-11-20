@@ -38,7 +38,8 @@ A claim matches as the SQL does: `strpos(lower(text), needle) > 0`, with `lower`
   edges. `setPurgeProbeTimeout` does nothing: a store read has no statement deadline.
 - The probes (`store-members/purge-plan.ts`): the store probes `links` (context of links from or to the source's
   pages, item `link:<id> <from> -> <to>`), `timeline_entries` (summary and detail, item `timeline:<id> <slug> <date>`),
-  `raw_data` (the data's JSON text; no item, so naming its rows refuses) and `wanted_links`. Every other inventory
+  `raw_data` (the data's JSON text, item `raw_data:<id> <slug> <source>`; naming a row written before the store kept
+  its id refuses) and `wanted_links`. Every other inventory
   table the store keeps is probed whole from its own records (`facts/purge_probe.rs` `table_rows`, one row reader per
   store): text columns match lowercased, JSON columns as Postgres prints them, text arrays as an array literal, and the
   bytea `minion_attachments.content` by its raw bytes. A table the store keeps no rows of answers 0 and `[]`.

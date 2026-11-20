@@ -12,8 +12,8 @@
  * The inventory probes (`countPurgeProbe`, `listPurgeProbeItems`) send the probe's shape (purgeProbeShape). The store
  * answers the named probes (`links`, `timeline_entries`, `raw_data`) and the whole-table probes of every inventory
  * table it keeps (facts/purge_probe.rs `table_rows`, plus `wanted_links`); a table the store does not keep at all
- * holds no row (0, or no item). A named `raw_data` probe that matches refuses its item list, because the store keeps
- * no `raw_data.id` to name a row by.
+ * holds no row (0, or no item). A named `raw_data` probe names its rows by the `raw_data.id` the store keeps; it refuses
+ * its item list only when a matching record was written before the store kept that id (its next putRawData adds one).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { escapeFenceCell } from '../../fence-shared.ts';
