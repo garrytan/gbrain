@@ -70,6 +70,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPageBodySizes',
   'readStoredBodyBytes',
   // The large-page write guard's stored body size read (engine-sql/large-page.ts).
+  // Wanted-link, timeline-write, take-fence and code-traversal-cache members (engine-sql/wanted-links.ts, timeline.ts, takes.ts, code-traversal-cache.ts)
+  'lockRegisteredSourceIds', 'replaceWantedLinkRows', 'removeTimelineRows', 'updateTimelineDetails', 'matchTakeRows', 'deleteTakeRows',
+  'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks

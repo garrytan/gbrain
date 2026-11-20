@@ -334,6 +334,86 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
 
+### apple_contacts_config
+
+<a id="apple_contacts_config"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An apple-contacts source has no helper host, or a proxy that is not socks5h://host:port, so nothing was imported. | The source reaches GBrain Helper only at the host and port its config names, directly or through a socks5h proxy that resolves the host name; a proxy URL may not carry credentials, and a bad one is refused rather than skipped. | Re-add the source: gbrain sources add <id> --kind apple-contacts --helper-host <host> [--proxy socks5h://<host>:<port>] --token-file <path>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_config](../../docs/guides/apple-contacts.md#apple_contacts_config)
+
+### apple_contacts_delete_floor
+
+<a id="apple_contacts_delete_floor"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An Apple Contacts run would have deleted more than 20% of the contacts the source owns, or all of them, so no contact was deleted: a full read wrote nothing and kept its cursor, an incremental run kept the deletions pending. | A revoked Contacts grant or a half-synced Contacts store looks like mass deletion; the run refuses the deletions whole instead of retiring pages. Pending deletions cancel when the contacts come back. GBRAIN_ALLOW_MASS_RECONCILE=1 lets a real large deletion through; deleting every contact never passes. | Check Contacts on the Mac and that GBrain Helper can read it, then run gbrain sync --source <id> again; if the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_delete_floor](../../docs/guides/apple-contacts.md#apple_contacts_delete_floor)
+
+### apple_contacts_disabled
+
+<a id="apple_contacts_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper has its Contacts source turned off, so nothing was imported. | The helper serves a source only while its config enables it; only the Mac owner changes that config. | On the Mac, set sources.contacts.enabled to true in GBrain Helper's config.json, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_disabled](../../docs/guides/apple-contacts.md#apple_contacts_disabled)
+
+### apple_contacts_helper_error
+
+<a id="apple_contacts_helper_error"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper answered the Contacts route with a status gbrain does not expect (or kept returning snapshot pages), so the run stopped with its cursor unchanged. | Only 200, 401, 403, 410 and 503 have a defined meaning on the route; anything else may be a helper bug or a version gap, so nothing more is written. | Check that GBrain Helper and the GBrain CLI are both up to date, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_helper_error](../../docs/guides/apple-contacts.md#apple_contacts_helper_error)
+
+### apple_contacts_not_allowed
+
+<a id="apple_contacts_not_allowed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper cannot read Contacts because the owner has not allowed it on the Mac, so nothing was imported. | macOS lets an app read Contacts only after the user clicks OK on its prompt or switches it on in System Settings; only the user can do that. | Ask the user to click OK on the "GBrain Helper would like to access your contacts" prompt, or switch GBrain Helper on in System Settings > Privacy & Security > Contacts, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_not_allowed](../../docs/guides/apple-contacts.md#apple_contacts_not_allowed)
+
+### apple_contacts_token_file
+
+<a id="apple_contacts_token_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The token file an apple-contacts source names is missing, unreadable, not a regular file, readable by group or others, or does not hold an accessToken, so nothing was imported. | The read:contacts token is read only from that 0600 file, never from the environment, a flag or a URL, so a symlink or a loose mode is refused before the file is read. | Write {"accessToken":"<token>"} to the file the source names, owned by the user that runs gbrain, chmod 600, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_token_file](../../docs/guides/apple-contacts.md#apple_contacts_token_file)
+
+### apple_contacts_unauthorized
+
+<a id="apple_contacts_unauthorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper refused the Apple Contacts token (401, or 403 insufficient_scope), so nothing was imported. | The Contacts route answers only a token the helper issued with the read:contacts scope. | Put a token the helper issued with the read:contacts scope in the source's token file (chmod 600), then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_unauthorized](../../docs/guides/apple-contacts.md#apple_contacts_unauthorized)
+
+### apple_contacts_unreachable
+
+<a id="apple_contacts_unreachable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper did not answer the Contacts route (503, a timeout or no connection) after retries at 1, 4 and 15 seconds, so the run stopped with its cursor unchanged. | The helper runs on the owner's Mac, which may be asleep or off the network; the next scheduled pull picks up where this one stopped. | Check that the Mac is awake, GBrain Helper is running and any proxy is up, then run gbrain sync --source <id>. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_unreachable](../../docs/guides/apple-contacts.md#apple_contacts_unreachable)
+
 ### apple_full_disk_access_pending
 
 <a id="apple_full_disk_access_pending"></a>

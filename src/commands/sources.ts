@@ -148,18 +148,19 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
 
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
-  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
+  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage' || apiKind === 'apple-contacts')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage|apple-contacts] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
-        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
+        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
   }
@@ -802,8 +803,10 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 
   // v0.26.5: Impact preview + destructive guard
   const impact = await assessDestructiveImpact(engine, id);
+  const appleContacts = parseConfig(src.config).kind === 'apple-contacts';
   if (impact) {
     console.log(formatImpact(impact));
+    if (appleContacts) console.log(`  ${await (await import('../core/apple-contacts/person-facts.ts')).countPersonFacts(engine, id)} company, job title and group row(s) on person pages are retired first.`);
     const ownedFiles = await (await import('../core/owned-folder/remove.ts')).previewOwnedRemoval(engine, id);
     if (ownedFiles) console.log(`  ${ownedFiles} chat-day file(s) in .gbrain-owned/${id}/ ${keepStorage ? 'stay (--keep-storage)' : 'are removed in one commit; the remote history still holds what was pushed'}.`);
 

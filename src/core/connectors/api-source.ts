@@ -170,8 +170,11 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
   return 'modified';
 }
 
-/** Deletes one page whose item was deleted upstream, after retiring its facts. */
-export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: string, commitMessage: string, retireReason: string): Promise<void> {
+/**
+ * Deletes one page whose item was deleted upstream, after retiring its facts. `soft` (apple-contacts) soft-deletes the
+ * database row, so `gbrain restore` brings it back within the purge window; the default removes it.
+ */
+export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: string, commitMessage: string, retireReason: string, opts: { soft?: boolean } = {}): Promise<void> {
   const { engine, sourceId, managed, summary } = ctx;
   const slug = slugifyPath(relPath);
   const retired = await retireFactsFromPage(engine, { sourceId, slug, reason: retireReason, managed: !!managed });
@@ -191,7 +194,14 @@ export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: str
     }
   }
   const rows = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
-  if (rows.length) { await engine.deletePages([slug], { sourceId }); summary.deleted++; }
+  if (rows.length) {
+    if (opts.soft) {
+      const { maintenanceTransaction } = await import('../persistence/attribution.ts');
+      await maintenanceTransaction(engine, tx => tx.softDeletePages([slug], { sourceId }));
+    }
+    else await engine.deletePages([slug], { sourceId });
+    summary.deleted++;
+  }
 }
 
 /** A connector run queues fact extraction for at most this many pages; the cycle's backfill covers the rest. */

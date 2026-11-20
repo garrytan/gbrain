@@ -177,6 +177,8 @@ export const RUST_ENGINE_MEMBERS = {
   addLinksBatch: 'links',
   replaceDerivedLinks: 'links',
   replaceDerivedLinksBatch: 'links',
+  lockRegisteredSourceIds: 'links',
+  replaceWantedLinkRows: 'links',
   removeLink: 'links',
   removeLinksByPagesAndSource: 'links',
   getLinks: 'links',
@@ -193,6 +195,8 @@ export const RUST_ENGINE_MEMBERS = {
   getOnThisDay: 'timeline',
   getLastSeen: 'timeline',
   upsertEventProjection: 'timeline',
+  removeTimelineRows: 'timeline',
+  updateTimelineDetails: 'timeline',
   // graph
   traverseGraph: 'graph',
   traversePaths: 'graph',
@@ -234,6 +238,8 @@ export const RUST_ENGINE_MEMBERS = {
   getCalibrationCurve: 'takes',
   addSynthesisEvidence: 'takes',
   listActiveTakesForPages: 'takes',
+  matchTakeRows: 'takes',
+  deleteTakeRows: 'takes',
   // files
   upsertFile: 'files',
   getFile: 'files',
@@ -246,6 +252,9 @@ export const RUST_ENGINE_MEMBERS = {
   getCallersOf: 'code_edges',
   getCalleesOf: 'code_edges',
   getEdgesByChunk: 'code_edges',
+  getCodeTraversalCache: 'code_edges',
+  putCodeTraversalCache: 'code_edges',
+  clearCodeTraversalCache: 'code_edges',
   // salience
   getSalienceScores: 'salience',
   batchLoadEmotionalInputs: 'salience',
