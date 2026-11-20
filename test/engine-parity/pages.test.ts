@@ -56,6 +56,18 @@ describe('engine parity: pages', () => {
     return { written: view(written), read: view(read), missing };
   });
 
+  parityTest('putPage keeps a Date in frontmatter as its ISO string, nested ones too', { methods: ['putPage', 'getPage'] }, async (engine) => {
+    // A YAML date (`valid_from: 2024-01-01`) parses to a Date. PGLite and Postgres store frontmatter as JSON text, so the
+    // Date reads back as its ISO string; an engine that drops it stores `{}` and the page loses its valid-time date.
+    const frontmatter = { valid_from: new Date('2024-01-01T00:00:00.000Z'), seen: [new Date('2025-02-03T04:05:06.000Z')],
+      nested: { at: new Date('2026-03-04T00:00:00.000Z') }, role: 'pm' };
+    const written = await engine.putPage('people/date-example', { ...ALICE, frontmatter });
+    const read = await engine.getPage('people/date-example');
+    expect(read?.frontmatter).toEqual({ valid_from: '2024-01-01T00:00:00.000Z', seen: ['2025-02-03T04:05:06.000Z'],
+      nested: { at: '2026-03-04T00:00:00.000Z' }, role: 'pm' });
+    return { written: view(written), read: view(read) };
+  });
+
   parityTest('putPage on an existing slug updates in place', { methods: ['putPage', 'getPage', 'listPages'] }, async (engine) => {
     const first = await engine.putPage('companies/acme-example', ACME);
     const second = await engine.putPage('companies/acme-example', { ...ACME, compiled_truth: 'Acme builds better widgets.' });

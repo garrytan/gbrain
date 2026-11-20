@@ -56,12 +56,22 @@ export const putPage: StoreMember<[slug: string, page: PageInput, opts?: PageWri
   if (page.source_path) await refuseLegacyOriginScope(brain, sourceId ?? 'default');
   // takeOptions drops an undefined `expectedRevision` (no check) and keeps `null` (the page must not exist); the store tells them apart.
   try {
-    return toPutPage(await brain.putPage(slug, withIsoDates(page), { ...options, index: false }));
+    return toPutPage(await brain.putPage(slug, withJsonFrontmatter(withIsoDates(page)), { ...options, index: false }));
   } catch (error) {
     const current = isRevisionRejection(error) ? await currentRevision(brain, slug.toLowerCase(), sourceId) : null;
     throw mapStoreError(error, { member: 'putPage', slug, sourceId, expectedRevision: opts?.expectedRevision, currentRevision: current });
   }
 };
+
+/**
+ * The page with its frontmatter as JSON text reads it back, as PGLite and Postgres store it (`JSON.stringify`): a YAML
+ * date (`valid_from: 2024-01-01`) is a `Date`, which becomes its ISO string. Sent as is, the addon would read a `Date`
+ * as an empty object, and the page would lose the date.
+ */
+function withJsonFrontmatter(page: PageInput): PageInput {
+  return page.frontmatter === undefined || page.frontmatter === null ? page
+    : { ...page, frontmatter: JSON.parse(JSON.stringify(page.frontmatter)) as PageInput['frontmatter'] };
+}
 
 async function refuseLegacyOriginScope(brain: StoreBrain, sourceId: string): Promise<void> {
   const sources: Array<{ id: string; local_path: string | null; config: Record<string, unknown> }> =
