@@ -12,7 +12,8 @@
  *   revision triggers queue the page's projection rebuild in the same transaction.
  *
  * Neither filters soft-deleted pages, as neither statement did. The withdrawal reads a segmented page's new revision
- * after its rewrite through `readWithdrawalDiscovery` (`target_pages`).
+ * after its rewrite with a plain `SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY(...)` in
+ * src/core/facts/withdrawal.ts.
  */
 import type { BrainEngine } from '../engine.ts';
 
