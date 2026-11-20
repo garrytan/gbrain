@@ -62,6 +62,10 @@ export const setAccessMemberKind: StoreMember<[id: string, kind: AccessMemberKin
   await write('setAccessMemberKind', () => brain.setAccessMemberKind(id, kind));
 };
 
+export const setAccessMemberLabelledOnly: StoreMember<[id: string, labelledOnly: boolean], void> = async (brain, id, labelledOnly) => {
+  await write('setAccessMemberLabelledOnly', () => brain.setAccessMemberLabelledOnly(id, labelledOnly));
+};
+
 export const tombstoneAccessMember: StoreMember<[id: string], void> = async (brain, id) => {
   await write('tombstoneAccessMember', () => brain.tombstoneAccessMember(id));
 };

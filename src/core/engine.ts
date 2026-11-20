@@ -6,6 +6,8 @@ import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writ
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import type * as SharedSkillMembersSql from './engine-sql/shared-skill-members.ts';
+import type { StoredSkillRevision } from './shared-skills/model.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -64,7 +66,13 @@ import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCache
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget, HeldTakeRow, HeldTakeRowsSpec, HeldTimelineRow, HeldTimelineRowsSpec } from './engine-sql/trust-fence.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from './engine-sql/fence-holds.ts';
-import type { GenerationActivationRow, GenerationLedgerRow, GenerationRowKey, HeldGenerationRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
+import type { GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow, HeldInputRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
+import type { LedgerScrubCounts } from './engine-sql/generation-ledger.ts';
+import type { GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow } from './engine-sql/generation-activations.ts';
+import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow,
+  UnmatchedGenerationRow } from './engine-sql/generation-repair.ts';
+import type { FenceVersionBodyRow } from './engine-sql/generation-fence-evidence.ts';
+import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from './engine-sql/generation-fence-restore.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -1589,6 +1597,8 @@ export interface BrainEngine {
   setAccessMemberEmail(id: string, email: string | null): Promise<boolean>;
   /** Sets the kind of a member that is not removed. */
   setAccessMemberKind(id: string, kind: AccessMembersSql.AccessMemberKind): Promise<void>;
+  /** Sets or clears the labelled-only grant of a member that is not removed. */
+  setAccessMemberLabelledOnly(id: string, labelledOnly: boolean): Promise<void>;
   /** Marks a member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
   tombstoneAccessMember(id: string): Promise<void>;
   /** Creates the group when missing and adds each member, in one transaction; true when the group was created. */
@@ -3667,14 +3677,48 @@ export interface BrainEngine {
   readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptClientGrant | undefined>;
   /** An access token's receipt grant row, revoked or not, or undefined; `lock` reads it `FOR SHARE`. */
   readAccessTokenReceiptGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptTokenGrant | undefined>;
-  /** A live (not deleted) OAuth client's membership grant row read `FOR SHARE`, or undefined. */
-  readOAuthClientMemberGrant(clientId: string): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
-  /** A live (not revoked) access token's grant columns read `FOR SHARE`, or undefined. */
-  readAccessTokenMemberGrant(tokenId: string): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
+  /** A live (not deleted) OAuth client's membership grant row read `FOR SHARE` (unless `lock` is false), or undefined. */
+  readOAuthClientMemberGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
+  /** A live (not revoked) access token's grant columns read `FOR SHARE` (unless `lock` is false), or undefined. */
+  readAccessTokenMemberGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
   /** A local writer's grant ceiling and revoked_at read `FOR SHARE`, revoked or not, or undefined. */
   readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
   /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */
   readSharedSkillServingEpoch(): Promise<string | null>;
+
+  // Shared-skill membership (engine-sql/shared-skill-members.ts): the rows join_brain, sync_brain_skills, leave_brain and the catalog read.
+  /** The brain id, the catalog token secret and the serving epoch, or undefined without the brain or shared-skill state row. */
+  readSharedSkillCatalogIdentity(): Promise<SharedSkillMembersSql.SharedSkillCatalogIdentity | undefined>;
+  /** The live shared-skill heads of live sources that match the query, in key order, at most `limit` rows. */
+  listSharedSkillCatalogHeads(query: SharedSkillMembersSql.SharedSkillHeadQuery): Promise<SharedSkillMembersSql.SharedSkillHeadRow[]>;
+  /** A source incarnation's stored publication policy and epoch, or undefined; `lock` reads it `FOR SHARE`. */
+  readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean): Promise<{ epoch: string; policy: unknown } | undefined>;
+  /** Upserts a source incarnation's publication policy under a new epoch and appends its audit row. */
+  writeSharedSkillPolicy(write: SharedSkillMembersSql.SharedSkillPolicyWrite): Promise<void>;
+  /** Inserts a published revision and moves its head; the SQL engines' publication guard refuses it outside a coordinated write. */
+  writeSharedSkillRevision(write: SharedSkillMembersSql.SharedSkillRevisionWrite): Promise<void>;
+  /** One stored shared-skill revision that is not deleted, or undefined. */
+  readSharedSkillRevision(key: SharedSkillMembersSql.SharedSkillRevisionKey): Promise<StoredSkillRevision | undefined>;
+  /** The live sources in both id lists (null matches all), by id, at most 65 rows. */
+  listSharedSkillFollowSources(allowed: string[] | null, sourceIds: string[] | null): Promise<Array<{ id: string; incarnation: string }>>;
+  /** The persistent brain id locked `FOR UPDATE`, or undefined without the row. */
+  lockSharedSkillBrainId(): Promise<string | undefined>;
+  /** One shared-skill member locked `FOR UPDATE`, or undefined; by installation id it matches only under its own principal. */
+  readSharedSkillMember(by: SharedSkillMembersSql.SharedSkillMemberLookup): Promise<SharedSkillMembersSql.SharedSkillMemberRow | undefined>;
+  /** The number of shared-skill members, active or not. */
+  countSharedSkillMembers(): Promise<number>;
+  /** Inserts a shared-skill member or re-activates the one with its installation id at the next epoch. */
+  enrollSharedSkillMember(spec: SharedSkillMembersSql.SharedSkillMemberEnroll): Promise<void>;
+  /** Sets an active member's narrowed follow policy and epoch, and resets its sequences and views. */
+  rebindSharedSkillMember(installationId: string, followPolicy: unknown, epoch: number): Promise<void>;
+  /** Marks a shared-skill member inactive. */
+  leaveSharedSkillMember(installationId: string): Promise<void>;
+  /** Issues a delivery batch for a member: prune, reuse or insert, retention trim and the seen mark, in order. */
+  issueSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchIssue): Promise<SharedSkillMembersSql.SharedSkillBatchIssued>;
+  /** A member's batch under this epoch issued within 24 hours, locked `FOR UPDATE`, or undefined. */
+  readSharedSkillDeliveryBatch(token: string, installationId: string, epoch: number): Promise<SharedSkillMembersSql.SharedSkillBatchRow | undefined>;
+  /** Records a batch's acknowledgment evidence and, with `advance`, the member's acknowledged sequence and view. */
+  acknowledgeSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchAcknowledge): Promise<void>;
 
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
@@ -3729,6 +3773,41 @@ export interface BrainEngine {
   readSourceCheckoutRoot(sourceId: string, hostId: string | null): Promise<SourceCheckoutRoot | null>;
   /** The source's pages still waiting for an embedding in `column`: count, oldest edit, budget-held count. */
   readUnembeddedPageSummary(sourceId: string, column: string): Promise<UnembeddedPageSummary>;
+  /** publishGeneration's producer-path statements: held rows of one input, a held row's context, the identical replay, the attempt counter and the valve. */
+  heldGenerationRowsForInput(key: GenerationRowKey, pin: string): Promise<HeldInputRow[]>;
+  readHeldGenerationContext(key: GenerationRowKey, holdId: string): Promise<{ held_context: Record<string, unknown> | null } | null>;
+  liveGenerationForOperation(operationId: string): Promise<number | null>;
+  countGenerationAttempt(key: GenerationRowKey, holdId: string, code: string): Promise<GenerationAttemptCount>;
+  clearGenerationAttempts(holdId: string): Promise<void>;
+  readGenerationValve(key: GenerationRowKey, windowKey: string): Promise<GenerationValveRow>;
+  bumpGenerationValve(key: GenerationRowKey, windowKey: string, retired: number): Promise<void>;
+  /** The purge scrub of the generation ledger (generations/ledger-scrub.ts, engine-sql/generation-ledger.ts): one page's rows, or every row whose text carries a needle. */
+  scrubGenerationPageRows(sourceId: string, fenceKinds: readonly string[], slug: string): Promise<LedgerScrubCounts>;
+  scrubGenerationTextRows(sourceId: string, needles: readonly string[]): Promise<LedgerScrubCounts>;
+  /** The managed activation rows of generations/managed.ts (engine-sql/generation-activations.ts): record, flip, member gate, settle and the two operator lists. */
+  recordGenerationActivation(key: GenerationRowKey, row: GenerationActivationRecord): Promise<void>;
+  markGenerationActivated(activationId: string, generationId: number): Promise<void>;
+  readGenerationActivationState(activationId: string, slug: string, sourceId: string): Promise<GenerationActivationState | null>;
+  settleGenerationMember(activationId: string, slug: string): Promise<void>;
+  listPendingGenerationMembers(sourceIds: readonly string[], kind: string | null): Promise<PendingGenerationMemberRow[]>;
+  listGenerationOrphanCandidates(sourceIds: readonly string[], kind: string | null): Promise<GenerationOrphanRow[]>;
+  /** The reads of gbrain repair generations (engine-sql/generation-repair.ts); the three lists take the typed selector filter. */
+  readGenerationItemsByIds(generationIds: readonly number[]): Promise<GenerationRepairItemRow[]>;
+  listUnmatchedGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<UnmatchedGenerationRow[]>;
+  listRestorableGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<RestorableGenerationRow[]>;
+  listHeldGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<HeldGenerationListRow[]>;
+  readHeldGenerationProposal(id: number): Promise<HeldGenerationProposalRow | null>;
+  /** The incarnation of each known source of `sourceIds` as text, in id order (the preview hash of a repair binds it). */
+  listSourceIncarnations(sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]>;
+  /** The fence evidence statements of generations/fence-evidence.ts (engine-sql/generation-fence-evidence.ts, #8819). */
+  listRecordedFenceItemKeys(key: GenerationRowKey, itemKeys: readonly string[]): Promise<Array<{ item_key: string }>>;
+  hasBodylessPageVersion(sourceId: string, slug: string): Promise<boolean>;
+  listFenceVersionBodies(sourceId: string, slug: string, before: number | null, limit: number): Promise<FenceVersionBodyRow[]>;
+  moveKeptFactRows(sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]): Promise<void>;
+  /** The fence restore reads of generations/fence-restore.ts (engine-sql/generation-fence-restore.ts). */
+  readGenerationFenceBlocks(generationIds: readonly number[]): Promise<GenerationFenceBlockRow[]>;
+  listOwnedGenerationItems(generationIds: readonly number[]): Promise<GenerationOwnedItemRow[]>;
+  readLiveGenerationId(key: GenerationRowKey): Promise<{ id: number | string } | null>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** At most two requests with this request_id (a uuid), from any principal, in no set order. */
@@ -3770,8 +3849,8 @@ export interface BrainEngine {
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
-  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
-  readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
+  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE (`'update'`: FOR UPDATE) until the transaction ends. */
+  readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
   readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;

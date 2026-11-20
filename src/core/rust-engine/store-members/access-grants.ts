@@ -5,10 +5,10 @@
  * The store keeps OAuth clients and access tokens, but these grant reads do not read them yet, so they refuse with engine_capability_missing
  * rather than answer "no row": a caller never mistakes an engine that cannot read a grant for a grant that is gone.
  * The local writer grant comes from the writer registration the store keeps; the store runs one write transaction at
- * a time, so the FOR SHARE the SQL engines take changes nothing here. The store keeps no shared-skill state table:
- * its serving epoch is a UUID derived from the brain id, fixed for the life of the brain (the store has no restore
- * that would rotate it), and null when the brain has no id, so membership denies. The trust generation read is
- * trust-withdrawals.ts's readTrustGeneration.
+ * a time, so the FOR SHARE the SQL engines take changes nothing here. The store's shared-skill state keeps only the
+ * catalog token secret (shared-skill-members.ts); its serving epoch is a UUID derived from the brain id, fixed for the
+ * life of the brain (the store has no restore that would rotate it), and null when the brain has no id, so membership
+ * denies. The trust generation read is trust-withdrawals.ts's readTrustGeneration.
  */
 import { createHash } from 'node:crypto';
 import type { MemberClientGrant, MemberLocalWriterGrant, MemberTokenGrant, ReceiptClientGrant, ReceiptTokenGrant } from '../../engine-sql/access-grants.ts';
@@ -27,10 +27,10 @@ export const readOAuthClientReceiptGrant: StoreMember<[clientId: string, opts?: 
 export const readAccessTokenReceiptGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], ReceiptTokenGrant | undefined> =
   async () => refuseMember('readAccessTokenReceiptGrant', NO_TOKENS);
 
-export const readOAuthClientMemberGrant: StoreMember<[clientId: string], MemberClientGrant | undefined> =
+export const readOAuthClientMemberGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], MemberClientGrant | undefined> =
   async () => refuseMember('readOAuthClientMemberGrant', NO_CLIENTS);
 
-export const readAccessTokenMemberGrant: StoreMember<[tokenId: string], MemberTokenGrant | undefined> =
+export const readAccessTokenMemberGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], MemberTokenGrant | undefined> =
   async () => refuseMember('readAccessTokenMemberGrant', NO_TOKENS);
 
 /** The local writer's grant ceiling and revoked_at, revoked or not (the caller refuses a revoked writer). */

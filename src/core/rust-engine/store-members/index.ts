@@ -94,6 +94,7 @@ import * as writeContext from './write-context.ts';
 import { initSchema } from './init-schema.ts';
 import * as accessGrants from './access-grants.ts';
 import * as accessMembers from './access-members.ts';
+import * as sharedSkillMembers from './shared-skill-members.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -159,6 +160,8 @@ export const STORE_MEMBERS = {
   ...sessionState,
   // The access member and group writes and the active-member read (rust/docs/store/access-members.md).
   ...accessMembers,
+  // The shared-skill members and delivery batches join_brain, sync_brain_skills and leave_brain use (rust/docs/store/shared-skill-members.md).
+  ...sharedSkillMembers,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

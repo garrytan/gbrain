@@ -123,9 +123,13 @@ export interface ClaimRelease { id: string; token: string | null; reason: string
 /** An expired-claim release: this consumer's host id, whether a claim that expired while preparing counts an attempt, and the dead owners. */
 export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[] }
 
-/** Source `sourceId`'s membership, or null; `lock` reads it FOR SHARE (admission holds it until the transaction ends). */
-export async function readSourceMembership(exec: SqlExecutor, sourceId: string, opts: { lock?: boolean } = {}): Promise<SourceMembership | null> {
-  const sql = opts.lock ? 'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE' : 'SELECT incarnation,archived FROM sources WHERE id=$1';
+/**
+ * Source `sourceId`'s membership, or null; `lock` reads it FOR SHARE (admission holds it until the transaction ends),
+ * and `'update'` FOR UPDATE (a policy change that compares and replaces the source's policy epoch).
+ */
+export async function readSourceMembership(exec: SqlExecutor, sourceId: string, opts: { lock?: boolean | 'update' } = {}): Promise<SourceMembership | null> {
+  const sql = opts.lock === 'update' ? 'SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE'
+    : opts.lock ? 'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE' : 'SELECT incarnation,archived FROM sources WHERE id=$1';
   const [row] = await exec.executeRaw<SourceMembership>(sql, [sourceId]);
   return row ?? null;
 }

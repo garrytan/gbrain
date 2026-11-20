@@ -217,7 +217,7 @@ src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/core/access/labelled-only.ts	execute_raw	3
+src/core/access/labelled-only.ts	execute_raw	2
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	sql_template	1
@@ -441,12 +441,6 @@ src/core/generations/adapters/page.ts	execute_raw	2
 src/core/generations/adapters/single-page.ts	execute_raw	1
 src/core/generations/adapters/synthesis.ts	execute_raw	1
 src/core/generations/adapters/take-rows.ts	execute_raw	2
-src/core/generations/fence-evidence.ts	execute_raw	4
-src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/ledger-scrub.ts	execute_raw	7
-src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	7
-src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3
@@ -929,18 +923,15 @@ src/core/search/two-pass.ts	execute_raw	5
 src/core/serve-sync-runner.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3
 src/core/shared-skills/adopted-packs.ts	execute_raw	1
-src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
-src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7
 src/core/shared-skills/migration-members.ts	execute_raw	1
 src/core/shared-skills/migration-projection.ts	execute_raw	2
 src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1
-src/core/shared-skills/policy.ts	execute_raw	10
-src/core/shared-skills/publication.ts	execute_raw	14
+src/core/shared-skills/publication.ts	execute_raw	11
 src/core/shared-skills/receipt-root.ts	execute_raw	2
 src/core/shared-skills/restore.ts	execute_raw	27
 src/core/shared-skills/retention.ts	execute_raw	12
