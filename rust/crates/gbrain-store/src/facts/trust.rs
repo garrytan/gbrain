@@ -20,8 +20,10 @@
 //!
 //! `matchSavedFacts` is served by `facts/saved_match.rs`.
 //!
+//! `countDerivedFactTaint` is served by `trust::derivation`.
+//!
 //! Refused (no store member): `readFactForOwnerAction`, `listStandingPreferences`,
-//! `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`, `write_origin`,
+//! `listLexicalContestCandidates` and `listRestatedPrivateCopies`. The store keeps the columns they read (`trust_tier`, `write_origin`,
 //! the write-gate receipts), but no store read for them is built yet. The `entity_ended` history
 //! arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
 //!

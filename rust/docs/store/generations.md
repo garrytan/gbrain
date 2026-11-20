@@ -42,6 +42,8 @@ The key layout is in the module header of `rust/crates/gbrain-store/src/generati
 | `brain.readLiveGenerationId(key)` | `{ id }` of the key's live row, or `null` | `readLiveGenerationId` |
 | `brain.listFenceHoldRows(sourceIds, kinds, ownerKey?)` | the held rows of those sources and kinds (one owner when given), `{ source_id, kind, owner_key, held_reason, held_context, created_at }`, oldest first; `created_at` is Postgres `timestamptz` text | `listFenceHoldRows` |
 | `brain.clearFenceHoldRows(key)` | `null`. Deletes the key's held row when its reason is `fence_absent` or `no_proof` | `clearFenceHoldRows` |
+| `brain.readGenerationRestored(key)` | `true` when the key's live row restores another (`restore_of` set), else `false`, also with no live row | `readGenerationRestored` (for `generations/adapters/fact-rows.ts` `consolidationRestored`) |
+| `brain.clearTieHeldGenerationRows(sourceId, kind, ownerPrefix)` | `null`. Deletes the held rows of `sourceId` and `kind` whose reason is `tie` and whose owner key starts with `ownerPrefix`. As Postgres `left(owner_key, length)` counts code points and JavaScript sends the UTF-16 length, a prefix with a character past U+FFFF compares one character too many there, and the store does the same | `clearTieHeldGenerationRows` (for `clearConsolidationTies`) |
 
 `key` is `{ sourceId, kind, ownerKey }`. Errors, and nothing is written:
 
@@ -62,8 +64,10 @@ C.UTF-8 ctype. A ledger row keeps that text for `held_context`, `proposal` and `
 (`held_context_text`, `proposal_text`, `fence_text`), read from the written JSON text by `cli_reads::pg_jsonb`: a number
 keeps the digits and scale `numeric` keeps (`1.0`, `1.50`, `100e-2` reads `1.00`, `1e2` reads `100`, `-0.0` reads
 `0.0`), and a JSON `null` stays a value apart from SQL NULL (`proposal IS NOT NULL` holds, `jsonb_array_length` of it
-is a scalar error). A row written before these fields renders its text from the value. One difference stays: a number
-`serde_json` does not parse (`1e400`, which `numeric` takes) is `invalid_argument` at write.
+is a scalar error). A row written before these fields renders its text from the value. A number past the double range
+(`1e400`, which `numeric` takes) never reaches the store: every engine's member refuses it first
+(`engine-sql/derived-generations.ts` `checkGenerationJsonNumbers`), and the store's own parse refuses it with
+`invalid_argument` as a backstop.
 
 The activation rows live under `h 0x08 id` with a reverse index `h 0x09 generation_id id`, so a deleted generation
 row sets its activations' `generation_id` to null (`ON DELETE SET NULL`). The orphan list reads the write journal and
@@ -82,6 +86,35 @@ move (`facts/kept_rows.rs`) add no keys: they read the ledger rows and items, th
 fact records. Ids read back as integers. Every ledger read's statement orders its rows totally, text by bytes
 (`COLLATE "C"`), and the store answers in the same order (key order, id order). As in the statement, the move does not name the page for the moving rows: a claimed row of another page of the
 source moves too (fence-evidence.ts passes the page's own rows).
+
+The page row read (`generations/page_rows.rs`, `readGenerationPageRows`) adds no keys: it scans the page records of one
+source (`P source \0 slug`), deleted pages included, and keeps those the query's `match` selects. `frontmatter->>'k'`
+reads as Postgres reads it: a string is itself, JSON null or a missing key is NULL, any other value is its jsonb text,
+so `dream_generated: true` matches `'true'`. Rows come in slug byte order and tags sort by bytes, as the statements
+order both with `COLLATE "C"` on every engine and locale. `segmented` is true when both body columns are
+NULL, as `body_storage = 'segmented'` is on PGLite.
+
+The atom reads (`generations/atom_reads.rs`) add no keys either. `readAtomOriginInput` reads one live page record; its
+size is the segmented body's byte count, or the byte length of `compiled_truth` and `timeline` (NULL counts 0).
+`listProducerVersionRows` reads each listed page (deleted or not) and its `page_versions` rows, and keeps a version whose
+`compiled_truth` is set and whose `frontmatter.extracted_by` starts with `extract_atoms`; any other producer refuses
+`INVALID_ARGUMENT`. `listAtomWriteReceipts` scans the write request records for committed `managed_atom_page` intents
+that hold `content`, and keeps one whose `activationId` is absent or names an activated activation. Rows come in slug
+byte order; the SQL has no `ORDER BY`, and the callers fold the rows into a set.
+
+The Life Chronicle reads (`generations/chronicle_events.rs`, the members of `engine-sql/chronicle-events.ts`) add no
+keys. `readChronicleDepthRow` reads the page record of one slug (`{ id, live }`, or null when no record has the slug);
+`pageSlugExists` is true for a deleted page too. `listRetiredGenerationItemKeys` reads the ledger rows of the source and
+kind and keeps the listed item keys any of them recorded as `retired`, once each. `listLiveGenerationItems` reads the
+live row of one key and its items, retired items left out, as `{ item_key, identity_hash }` in key order.
+`listPageContentHashes` reads `ids` (deleted pages included, other sources left out) or `live_slugs` (deleted pages
+left out). `listOrphanedChronicleOwners` keeps the live rows of the kind whose depth page (the owner key past
+`depth:`) has no live record and that hold at least one live item page, oldest `updated_at` first, then id, up to the
+limit; a negative limit refuses `INVALID_ARGUMENT` as Postgres refuses `LIMIT -1`. `listChronicleEventSlotRows` reads
+`frontmatter.event` `when`, `where` and `kind` as text (deleted pages included) in slug byte order; the SQL has no
+`ORDER BY`, and the caller folds the rows into a map. The chronicle ledger (`chronicle_page_state`) has no store yet:
+`listChronicleOwnedHashes` answers no hash and `hasChronicleSkipDecision` false, which is what a SQL brain answers for a
+page the ledger holds nothing for. The four projection members are in `timeline_queries.md`.
 
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).

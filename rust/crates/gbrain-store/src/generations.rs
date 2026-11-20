@@ -63,10 +63,18 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 mod activations;
+mod atom_reads;
+mod chronicle_events;
 mod fence_evidence;
 mod fence_restore;
+mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
+pub use chronicle_events::{
+    ChronicleSlugSpec, ChronicleSlugsSpec, OrphanedOwnersSpec, PageContentHashQuery,
+    RetiredItemKeysSpec,
+};
+pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 
 const RECORD: u8 = 0x01;
@@ -889,6 +897,54 @@ impl Store {
         })
     }
 
+    /// `readGenerationRestored(key)`: whether the key's live row is a restore (`restore_of` set);
+    /// false when the key has no live row.
+    pub fn read_generation_restored(&self, key: &GenerationKey) -> Result<bool> {
+        check_key("readGenerationRestored", key)?;
+        let read = self.read()?;
+        Ok(pointed_record(&*read, key, "live")?.is_some_and(|record| record.restore_of.is_some()))
+    }
+
+    /// `clearTieHeldGenerationRows(sourceId, kind, ownerPrefix)`: deletes the held rows of `kind`
+    /// in `source_id` held `tie` whose owner key starts with `owner_prefix`, with their items. The
+    /// prefix is compared as `left(owner_key, <UTF-16 length of the prefix>)`, as the caller sends
+    /// Postgres its JavaScript length.
+    pub fn clear_tie_held_generation_rows(
+        &self,
+        source_id: &str,
+        kind: &str,
+        owner_prefix: &str,
+    ) -> Result<()> {
+        no_nul(
+            "clearTieHeldGenerationRows",
+            &[
+                ("sourceId", source_id),
+                ("kind", kind),
+                ("ownerPrefix", owner_prefix),
+            ],
+        )?;
+        let width = owner_prefix.encode_utf16().count();
+        self.write(|tx| {
+            let mut held = Vec::new();
+            for (k, v) in
+                collect_prefix(&*tx, &pointer_prefix(&[source_id, kind]), false, usize::MAX)?
+            {
+                if k.ends_with(b"\0held") {
+                    held.push(keys::be8(&v).ok_or_else(|| corrupt("pointer"))?);
+                }
+            }
+            for id in held {
+                let record = read_record(&*tx, id)?.ok_or_else(|| corrupt("pointer target"))?;
+                if record.held_reason.as_deref() == Some("tie")
+                    && record.owner_key.chars().take(width).collect::<String>() == owner_prefix
+                {
+                    delete_row(tx, &record)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// `heldGenerationRowsForInput(key, pin)`: the held rows of `key` whose `input_pin` is `pin`
     /// (at most one: a key holds one held row).
     pub fn held_generation_rows_for_input(&self, key: &GenerationKey, pin: &str) -> Result<Value> {
@@ -1703,5 +1759,60 @@ mod tests {
             (None, None)
         );
         assert_eq!(scrub("null"), json!(0));
+    }
+
+    fn consolidation(source: &str, kind: &str, owner: &str) -> GenerationKey {
+        GenerationKey {
+            source_id: source.into(),
+            kind: kind.into(),
+            owner_key: owner.into(),
+        }
+    }
+
+    #[test]
+    fn a_live_row_reads_restored_only_when_it_restores_another() {
+        let store = store();
+        let k = consolidation("default", "consolidation", "entity:a:cluster:1");
+        assert!(!store.read_generation_restored(&k).unwrap());
+        let first = store
+            .activate_generation_rows(&k, None, &activation("op-1", 1.0), &[])
+            .unwrap();
+        assert!(!store.read_generation_restored(&k).unwrap());
+        let mut again = activation("op-2", 2.0);
+        again.restore_of = Some(first as f64);
+        store
+            .activate_generation_rows(&k, Some(first as f64), &again, &[])
+            .unwrap();
+        assert!(store.read_generation_restored(&k).unwrap());
+    }
+
+    #[test]
+    fn clearing_ties_deletes_only_the_tie_holds_of_one_owner_prefix() {
+        let store = store();
+        let keys = [
+            consolidation("default", "consolidation", "entity:a:cluster:1"),
+            consolidation("default", "consolidation", "entity:a:cluster:2"),
+            consolidation("default", "consolidation", "entity:ab:cluster:1"),
+            consolidation("default", "facts_fence", "entity:a:cluster:3"),
+        ];
+        for (n, k) in keys.iter().enumerate() {
+            store
+                .record_held_generation_row(k, &held(&format!("h{n}"), "tie"))
+                .unwrap();
+        }
+        let proof = consolidation("default", "consolidation", "entity:a:cluster:4");
+        store
+            .record_held_generation_row(&proof, &held("h9", "no_proof"))
+            .unwrap();
+        store
+            .clear_tie_held_generation_rows("default", "consolidation", "entity:a:cluster:")
+            .unwrap();
+        let read = store.read().unwrap();
+        let kept = |k: &GenerationKey| pointed_record(&*read, k, "held").unwrap().is_some();
+        assert_eq!(
+            keys.iter().map(kept).collect::<Vec<_>>(),
+            vec![false, false, true, true]
+        );
+        assert!(kept(&proof));
     }
 }

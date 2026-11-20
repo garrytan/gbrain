@@ -59,7 +59,7 @@ mod widen;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use embedding::md5_hex;
-pub use fence::{FenceContext, FenceTarget};
+pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;

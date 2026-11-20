@@ -587,8 +587,20 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_setting_trust(tx, record, None)
+}
+
+/// [`write_page`] for a write that also sets the page's `trust_tier` and `write_origin` columns
+/// (`UPDATE pages SET trust_tier=…, write_origin=…`, the derived-tier lowering of
+/// `lowerTrustTier`): the stamp reads the set tier as the write's new tier and keeps the set
+/// origin, as PGLite's `trust_tier_stamp` trigger does for an UPDATE that names both columns.
+pub(crate) fn write_page_setting_trust(
+    tx: &mut dyn KvWrite,
+    record: &PageRecord,
+    set: Option<(crate::trust::TrustTier, Option<Value>)>,
+) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    let mut stamped = stamp_page_trust(before.as_ref(), record)?;
+    let mut stamped = stamp_page_trust(before.as_ref(), record, set)?;
     // `gbrain_stamp_revision_attribution`: the actor of the write that set the live revision.
     stamped.revision_receipt = crate::write_receipt::stamp_revision(
         before
@@ -624,7 +636,14 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
 /// carries: a record built before an earlier write in the same transaction restamped the page
 /// cannot lower or replace them. The content columns are `TrustTable::Pages.content_columns`, with
 /// the frontmatter compared without the trust-ephemeral keys.
-fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<PageRecord> {
+///
+/// `set` is the tier and origin an UPDATE names itself (`write_page_setting_trust`); on an insert
+/// it is ignored, because no store insert names them.
+fn stamp_page_trust(
+    before: Option<&PageRecord>,
+    record: &PageRecord,
+    set: Option<(crate::trust::TrustTier, Option<Value>)>,
+) -> Result<PageRecord> {
     use crate::trust::{
         OriginStamp, StampRow, TrustTable, TrustTier, page_frontmatter_content, stamp,
     };
@@ -650,15 +669,26 @@ fn stamp_page_trust(before: Option<&PageRecord>, record: &PageRecord) -> Result<
                 || old.deleted_at_us != record.deleted_at_us
                 || page_frontmatter_content(&old.frontmatter)
                     != page_frontmatter_content(&record.frontmatter);
-            (
-                StampRow::Update {
-                    old: tier_of(old),
-                    new: tier_of(old),
-                    content_changed,
-                    origin_set: false,
-                },
-                old.write_origin.clone(),
-            )
+            match set {
+                None => (
+                    StampRow::Update {
+                        old: tier_of(old),
+                        new: tier_of(old),
+                        content_changed,
+                        origin_set: false,
+                    },
+                    old.write_origin.clone(),
+                ),
+                Some((tier, origin)) => (
+                    StampRow::Update {
+                        old: tier_of(old),
+                        new: tier,
+                        content_changed,
+                        origin_set: origin != old.write_origin,
+                    },
+                    origin,
+                ),
+            }
         }
     };
     let stamped = stamp(&context, TrustTable::Pages, row)?;

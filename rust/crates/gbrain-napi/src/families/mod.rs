@@ -4,6 +4,7 @@
 
 mod access_members;
 mod access_rules;
+mod chronicle_events;
 mod chunks;
 mod cli_entities;
 mod cli_reads_import;
@@ -46,6 +47,7 @@ mod aliases;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
+mod derivation_trust;
 mod dream;
 mod embedding_catalog;
 mod embedding_install;

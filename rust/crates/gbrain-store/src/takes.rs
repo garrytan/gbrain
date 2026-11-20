@@ -38,7 +38,7 @@ mod held;
 mod reads;
 
 pub use held::HeldTakeSpec;
-pub use reads::{McpResolvedInput, PurgeTakesInput};
+pub use reads::{IncomingTakeRow, McpResolvedInput, PurgeTakesInput, TakePreimageInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
