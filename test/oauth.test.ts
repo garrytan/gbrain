@@ -984,10 +984,13 @@ describe('operation scope annotations', () => {
     expect(operationsByName.file_upload.localOnly).toBe(true);
   });
 
-  test('file_list and file_url are localOnly', () => {
+  test('path-based file_upload stays localOnly; the byte-based file ops are remote-callable admin ops', () => {
     const { operationsByName } = require('../src/core/operations.ts');
-    expect(operationsByName.file_list.localOnly).toBe(true);
-    expect(operationsByName.file_url.localOnly).toBe(true);
+    expect(operationsByName.file_upload.localOnly).toBe(true);
+    for (const name of ['file_list', 'file_url', 'file_get', 'file_upload_begin', 'file_upload_part', 'file_upload_commit', 'file_upload_abort']) {
+      expect(operationsByName[name].localOnly).toBeUndefined();
+      expect(operationsByName[name].scope).toBe('admin');
+    }
   });
 });
 

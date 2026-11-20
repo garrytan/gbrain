@@ -5189,6 +5189,8 @@
         "kind": "interface",
         "members": [
           "bytes?: Buffer<ArrayBufferLike> | undefined",
+          "fileMetadata?: Record<string, unknown> | undefined",
+          "inMemory?: Buffer<ArrayBufferLike> | undefined",
           "noEmbed?: boolean | undefined",
           "ocrConcurrency?: number | undefined",
           "prepare?: ((prepared: Omit<PreparedContentImport, \"parsedPage\">) => Promise<ImportResult>) | undefined",

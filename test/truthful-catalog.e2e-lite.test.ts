@@ -383,7 +383,7 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
     for (const gated of ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor']) {
       expect(listed.has(gated)).toBe(false);
     }
-    for (const localOnly of ['file_list', 'file_upload', 'file_url', 'sync_brain']) {
+    for (const localOnly of ['file_upload', 'file_register', 'file_verify', 'sync_brain']) {
       expect(listed.has(localOnly)).toBe(false);
     }
     for (const [name, args] of [
@@ -416,9 +416,9 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
   });
 
   e5test('inverse: localOnly op is uncallable with the no-leak unknown_tool envelope', async () => {
-    const denied = await legacyToolCall('file_list', {});
+    const denied = await legacyToolCall('file_upload', {});
     expect(denied.kind).toBe('unknown');
-    expect(denied.envelope?.message).toBe('Unknown tool: file_list');
+    expect(denied.envelope?.message).toBe('Unknown tool: file_upload');
     // Byte-identical error class to a nonexistent op — no existence oracle.
     const noSuchOp = await legacyToolCall('e5_no_such_op_xyz', {});
     expect(noSuchOp.kind).toBe('unknown');
@@ -647,10 +647,10 @@ describe('E5 truthful catalog — OAuth-path cells (serve-http seams over dispat
 
           // One localOnly op: never listed, always the no-leak unknown envelope.
           {
-            if (expected.has('file_list')) record(cell, 'file_list', 'localOnly op in the expected list');
-            const verdict = await oauthToolCall(cell, 'file_list', {});
+            if (expected.has('file_upload')) record(cell, 'file_upload', 'localOnly op in the expected list');
+            const verdict = await oauthToolCall(cell, 'file_upload', {});
             if (verdict.kind !== 'unknown') {
-              record(cell, 'file_list', `expected unknown, got ${verdict.kind}: ${JSON.stringify(verdict.envelope)}`);
+              record(cell, 'file_upload', `expected unknown, got ${verdict.kind}: ${JSON.stringify(verdict.envelope)}`);
             }
           }
 

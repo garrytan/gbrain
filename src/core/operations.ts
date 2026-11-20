@@ -89,6 +89,7 @@ import { whoisOperations } from './ops/whois.ts';
 import { ingestLogOperations } from './ops/ingest-log.ts';
 import { usageOperations } from './ops/usage.ts';
 import { filesOperations } from './ops/files.ts';
+import { fileTransferOperations } from './ops/file-transfer.ts';
 import { jobsOperations } from './ops/jobs.ts';
 import { orphansOperations } from './ops/orphans.ts';
 import { graphRankOperations } from './ops/graph-rank.ts';
@@ -183,8 +184,8 @@ export const operations: Operation[] = [
   ...ingestLogOperations,
   // Usage accounting (get_usage, #4218) — ops/usage.ts
   ...usageOperations,
-  // Files (file_list, file_upload, file_url) — ops/files.ts
-  ...filesOperations, ...storageManifestOperations, ...secretsOperations,
+  // Files (file_list, file_upload, file_url) — ops/files.ts; remote transfer (file_upload_begin/part/commit/abort, file_get) — ops/file-transfer.ts
+  ...filesOperations, ...fileTransferOperations, ...storageManifestOperations, ...secretsOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
   // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, watch_write_request, watch_cron, list_watches, unwatch, accept_wakeshift_terms) — ops/wakeshift.ts

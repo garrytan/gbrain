@@ -1818,6 +1818,13 @@ export interface ImportImageOptions {
    * with sourceId would TS-error on the importImageFile branch.
    */
   sourceId?: string;
+  /**
+   * Import these bytes instead of reading `filePath` (which is then unused): a remote upload's bytes, already verified
+   * and stored by the caller at `relativePath`. No filesystem is touched.
+   */
+  inMemory?: Buffer;
+  /** Metadata for the image's files row (e.g. the storage lane), instead of none. */
+  fileMetadata?: Record<string, unknown>;
 }
 
 /** Module-level limiter so concurrent imports across files share the budget. */
@@ -1839,11 +1846,11 @@ export async function importImageFile(
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   if (!opts.noEmbed && await embeddingSendBlocked(engine)) opts = { ...opts, noEmbed: true };
   // Defense-in-depth: reject symlinks before reading bytes.
-  const lstat = lstatSync(filePath);
-  if (lstat.isSymbolicLink()) {
+  const lstat = opts.inMemory ? null : lstatSync(filePath);
+  if (lstat?.isSymbolicLink()) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: `Skipping symlink: ${filePath}` };
   }
-  const stat = statSync(filePath);
+  const stat = opts.inMemory ? { size: opts.inMemory.byteLength } : statSync(filePath);
   if (stat.size > MAX_IMAGE_BYTES) {
     return {
       slug: slugifyPath(relativePath),
@@ -1867,7 +1874,7 @@ export async function importImageFile(
   const linkOpts = opts.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;
-  const buf = opts.prepare && opts.bytes ? opts.bytes : readSourceFileSync(filePath);
+  const buf = opts.inMemory ?? (opts.prepare && opts.bytes ? opts.bytes : readSourceFileSync(filePath));
   if (buf.byteLength > MAX_IMAGE_BYTES) return { slug: imageSlug, status: 'error', chunks: 0, error: `Image too large (max ${MAX_IMAGE_BYTES} bytes).` };
   const hash = createHash('sha256').update(buf).digest('hex');
 
@@ -1974,6 +1981,7 @@ export async function importImageFile(
     mime_type: decoded.mime,
     size_bytes: buf.byteLength,
     content_hash: hash,
+    ...(opts.fileMetadata ? { metadata: opts.fileMetadata } : {}),
   };
 
   const spec: ImportTransactionSpec = {

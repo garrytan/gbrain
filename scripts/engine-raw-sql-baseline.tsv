@@ -667,6 +667,7 @@ src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restat
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/extraction.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
+src/core/ops/file-transfer.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/get-page-projection.ts	execute_raw	1

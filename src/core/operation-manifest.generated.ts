@@ -3786,7 +3786,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "List files stored in the brain's file storage, optionally for one page. Use when finding attachments before file_url. Needs admin scope and the local stdio server.",
+    "description": "List files stored in the brain's file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs admin scope.",
     "params": {
       "slug": {
         "type": "string",
@@ -3794,7 +3794,6 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       }
     },
     "scope": "admin",
-    "localOnly": true,
     "area": "files"
   },
   {
@@ -3823,7 +3822,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Return a URL for a stored file. Use when a user needs to open an attachment listed by file_list. Needs admin scope and the local stdio server. On storage_error: list the files again with file_list.",
+    "description": "Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs admin scope. On storage_error: list the files again with file_list.",
     "params": {
       "storage_path": {
         "type": "string",
@@ -3831,7 +3830,6 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       }
     },
     "scope": "admin",
-    "localOnly": true,
     "area": "files"
   },
   {
@@ -3904,6 +3902,121 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       ]
     },
     "area": "files"
+  },
+  {
+    "name": "file_upload_begin",
+    "idempotent": false,
+    "mutating": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Start uploading a file (image, PDF, any binary) into the brain's file storage from anywhere, remote callers included. Answers mode \"direct\" with a short-lived URL: send the raw file bytes as the body of an HTTP PUT to it with exactly the returned headers, or mode \"parts\": send the bytes base64-encoded with file_upload_part in parts of at most part_max_bytes. Then call file_upload_commit. With import: true an image also becomes a searchable image page (visual embedding + OCR). Needs admin scope.",
+    "callShape": "{\"filename\":\"whiteboard.png\",\"size_bytes\":123456,\"sha256\":\"<64 hex>\",\"page_slug\":\"meetings/2026-01-15\",\"import\":true}",
+    "params": {
+      "filename": {
+        "type": "string",
+        "required": true,
+        "description": "File name to store under, e.g. whiteboard.png"
+      },
+      "size_bytes": {
+        "type": "integer",
+        "required": true,
+        "description": "Exact size of the file in bytes"
+      },
+      "sha256": {
+        "type": "string",
+        "required": true,
+        "description": "SHA-256 of the file, 64 hex characters (sha256sum / shasum -a 256)"
+      },
+      "mime_type": {
+        "type": "string",
+        "description": "Content type, e.g. image/png (sniffed from the bytes on commit for images and PDFs)"
+      },
+      "page_slug": {
+        "type": "string",
+        "description": "Attach to this page; the file is stored as <page_slug>/<filename>"
+      },
+      "import": {
+        "type": "boolean",
+        "description": "Also import an image as a searchable image page (embedding + OCR)"
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "direct",
+          "parts"
+        ],
+        "description": "Force a transfer mode; default direct when the backend can sign URLs"
+      }
+    },
+    "scope": "admin"
+  },
+  {
+    "name": "file_upload_part",
+    "idempotent": true,
+    "mutating": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Send one part of an upload begun with file_upload_begin in mode \"parts\": the base64 of bytes [(part-1)*part_max_bytes, part*part_max_bytes). Resending a part replaces it. Needs admin scope.",
+    "callShape": "{\"upload_id\":\"<from file_upload_begin>\",\"part\":1,\"data_base64\":\"iVBORw0KGgo...\"}",
+    "params": {
+      "upload_id": {
+        "type": "string",
+        "required": true
+      },
+      "part": {
+        "type": "integer",
+        "required": true,
+        "description": "1-based part number"
+      },
+      "data_base64": {
+        "type": "string",
+        "required": true,
+        "description": "The part's bytes, base64-encoded"
+      }
+    },
+    "scope": "admin"
+  },
+  {
+    "name": "file_upload_commit",
+    "idempotent": false,
+    "mutating": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Finish an upload begun with file_upload_begin: checks the received bytes against the declared size and SHA-256, stores the file (<page_slug>/<filename>, or unsorted/<hash>-<filename>) and records it, and with import: true turns an image into a searchable image page. A failed import never loses the stored file. Needs admin scope.",
+    "callShape": "{\"upload_id\":\"<from file_upload_begin>\"}",
+    "params": {
+      "upload_id": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "scope": "admin"
+  },
+  {
+    "name": "file_upload_abort",
+    "idempotent": true,
+    "mutating": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Drop a pending upload begun with file_upload_begin and every byte staged for it. Needs admin scope.",
+    "params": {
+      "upload_id": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "scope": "admin"
+  },
+  {
+    "name": "file_get",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Return a stored file's bytes: png/jpeg/gif/webp images as an image you can see, any other file as data_base64. Files larger than this connection's result cap are refused (result_too_large); use file_url for a download link instead. Find storage_path with file_list. Needs admin scope.",
+    "callShape": "{\"storage_path\":\"meetings/2026-01-15/whiteboard.png\"}",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "required": true
+      }
+    },
+    "scope": "admin"
   },
   {
     "name": "storage_find",

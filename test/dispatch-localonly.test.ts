@@ -23,7 +23,7 @@ const engineStub = {
   sql: async () => [],
 } as unknown as BrainEngine;
 
-const A_LOCAL_ONLY = 'file_list';
+const A_LOCAL_ONLY = 'file_upload';
 
 function parsed(result: { content: Array<{ text: string }> }) {
   return JSON.parse(result.content[0].text);
