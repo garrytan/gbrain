@@ -3,6 +3,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type * as LoopMutesSql from './engine-sql/loop-mutes.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
@@ -4742,6 +4743,25 @@ export interface BrainEngine {
   listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
   /** The open loops whose counterparty page is (sourceId, slug), newest activity first, at most `limit` (entity-card.ts). */
   readEntityOpenLoops(slug: string, sourceId: string, limit: number): Promise<OpenLoopsSql.EntityOpenLoopRow[]>;
+
+  // Loop mutes (engine-sql/loop-mutes.ts): the loop_suppressions statements and the open-loop statements a mute, an
+  // unmute and the Gmail thread verdict run. loops-store.ts lower-cases `value` and shapes the results.
+  /** Records the mute of `kind` (`sender` or `thread`) and `value` in `sourceId`; an existing row stays as it is. */
+  addLoopSuppression(sourceId: string, kind: LoopMutesSql.SuppressionKind, value: string): Promise<void>;
+  /** Deletes that mute; the number of rows deleted (0 or 1). */
+  removeLoopSuppression(sourceId: string, kind: LoopMutesSql.SuppressionKind, value: string): Promise<number>;
+  /** Every mute in `sourceId`, by kind then value. */
+  listLoopSuppressions(sourceId: string): Promise<Array<{ kind: string; value: string }>>;
+  /** The threads an unmute queued for a re-check in `sourceId` (`closed_by = 'mute_recheck'`), with the greatest page slug of each. */
+  listMuteRecheckThreads(sourceId: string): Promise<Array<{ thread_id: string; page_slug: string | null }>>;
+  /** The open loops the mute covers, by id; with `apply`, closes them as dropped by `'muted'`. */
+  closeMutedLoops(sourceId: string, kind: LoopMutesSql.SuppressionKind, value: string, apply: boolean): Promise<number[]>;
+  /** The muted loops this (removed) mute covered that no other mute covers, by id; with `apply`, queues those with a thread id for a re-check and drops the others as `'unmuted'`. */
+  requeueMutedLoops(sourceId: string, kind: LoopMutesSql.SuppressionKind, value: string, apply: boolean): Promise<Array<{ id: number; thread_id: string | null }>>;
+  /** Closes the thread's open and re-check loops (only the `only` loop types when not null) as done by `closedBy`; the number closed. */
+  closeThreadLoops(sourceId: string, threadId: string, closedBy: string, only: readonly string[] | null): Promise<number>;
+  /** Drops the thread's re-check loops as `'unmuted'`; the number settled. */
+  settleMuteRecheck(sourceId: string, threadId: string): Promise<number>;
 
   // Entity identities: cross-source identity groups (engine-sql/entity-identities.ts; entity-identity.ts validates first).
   /** Links the live page (sourceId, slug) into the group: re-linking moves it; canonical true demotes the old canonical in the same write. Throws the identity page-not-found error with no live page. */

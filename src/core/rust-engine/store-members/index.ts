@@ -39,6 +39,7 @@ import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
 import * as trustWithdrawals from './trust-withdrawals.ts';
 import * as openLoops from './open-loops.ts';
+import * as loopMutes from './loop-mutes.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
@@ -108,7 +109,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
+  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).

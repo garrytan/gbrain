@@ -1,7 +1,7 @@
 /**
  * The source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts), so a Rust brain can be the
- * brain a migration moves. `facts`, `open_loops`, the write history, the manual link statements and the live timeline
- * count are store reads; `sources`, `loop_suppressions` and a page's migration columns are composed here from reads the
+ * brain a migration moves. `facts`, `open_loops`, `loop_suppressions`, the write history, the manual link statements and
+ * the live timeline count are store reads; `sources` and a page's migration columns are composed here from reads the
  * store already serves. What the store does not keep and what each read answers for it:
  * rust/docs/store/engine-migration.md.
  */
@@ -15,11 +15,7 @@ import { storeCall, type StoreMember } from './common.ts';
 export const readEngineMigrationHistory: StoreMember<[], EngineMigrationHistory> = (brain) =>
   storeCall({ member: 'readEngineMigrationHistory' }, () => brain.readEngineMigrationHistory());
 
-/** The `loop_suppressions` columns. The store keeps no suppressions, so the table is always empty. */
-const LOOP_SUPPRESSION_COLUMNS = ['id', 'source_id', 'kind', 'value', 'created_at'];
-
 export const readMigrationRows: StoreMember<[table: MigrationTable], MigrationRows | null> = async (brain, table) => {
-  if (table === 'loop_suppressions') return { columns: [...LOOP_SUPPRESSION_COLUMNS], rows: [] };
   if (table === 'sources') {
     // `default` first, then by id, as the store lists them. The store keeps no commit, archive-date or
     // frontmatter-trust columns: each reads as a fresh source row has it. The retrieval mode comes from `getSource`.

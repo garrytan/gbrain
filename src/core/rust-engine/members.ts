@@ -640,6 +640,15 @@ export const RUST_ENGINE_MEMBERS = {
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',
   readEntityOpenLoops: 'facts',
+  // loop mutes (engine-sql/loop-mutes.ts; key tag `F 0x10`, rust/docs/store/facts.md)
+  addLoopSuppression: 'facts',
+  removeLoopSuppression: 'facts',
+  listLoopSuppressions: 'facts',
+  listMuteRecheckThreads: 'facts',
+  closeMutedLoops: 'facts',
+  requeueMutedLoops: 'facts',
+  closeThreadLoops: 'facts',
+  settleMuteRecheck: 'facts',
   // entity_identities (engine-sql/entity-identities.ts): cross-source identity groups (key tag `i`,
   // rust/docs/store/entity_identities.md).
   linkEntityIdentityRow: 'entity_identities',

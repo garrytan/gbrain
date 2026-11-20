@@ -143,6 +143,7 @@ import { hasCJK } from './cjk.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as trustWithdrawalsImpl from './engine-sql/trust-withdrawals.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
+import * as loopMutesImpl from './engine-sql/loop-mutes.ts';
 import * as entityIdentitiesImpl from './engine-sql/entity-identities.ts';
 import type { EntityIdentityFilter, EntityIdentityLinkInput, EntityIdentityUnlinkInput } from './engine-sql/entity-identities.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
@@ -4055,6 +4056,15 @@ export class PGLiteEngine implements BrainEngine {
   closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return openLoopsImpl.closeOpenLoop(this.engineSql, sourceId, id, status, closedBy); }
   listOpenLoops(opts?: OpenLoopListOpts) { return openLoopsImpl.listOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped'), opts); }
   readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return openLoopsImpl.readEntityOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped'), slug, sourceId, limit); }
+  // Loop mutes (engine-sql/loop-mutes.ts), through the raw path as before.
+  addLoopSuppression(sourceId: string, kind: loopMutesImpl.SuppressionKind, value: string) { return loopMutesImpl.addLoopSuppression(this.engineSql, sourceId, kind, value); }
+  removeLoopSuppression(sourceId: string, kind: loopMutesImpl.SuppressionKind, value: string) { return loopMutesImpl.removeLoopSuppression(this.engineSql, sourceId, kind, value); }
+  listLoopSuppressions(sourceId: string) { return loopMutesImpl.listLoopSuppressions(unscopedExecutor(this.engineSql, 'loop mutes: the mute list read ran through executeRaw unscoped'), sourceId); }
+  listMuteRecheckThreads(sourceId: string) { return loopMutesImpl.listMuteRecheckThreads(unscopedExecutor(this.engineSql, 'loop mutes: the re-check thread read ran through executeRaw unscoped'), sourceId); }
+  closeMutedLoops(sourceId: string, kind: loopMutesImpl.SuppressionKind, value: string, apply: boolean) { return loopMutesImpl.closeMutedLoops(this.engineSql, sourceId, kind, value, apply); }
+  requeueMutedLoops(sourceId: string, kind: loopMutesImpl.SuppressionKind, value: string, apply: boolean) { return loopMutesImpl.requeueMutedLoops(this.engineSql, sourceId, kind, value, apply); }
+  closeThreadLoops(sourceId: string, threadId: string, closedBy: string, only: readonly string[] | null) { return loopMutesImpl.closeThreadLoops(this.engineSql, sourceId, threadId, closedBy, only); }
+  settleMuteRecheck(sourceId: string, threadId: string) { return loopMutesImpl.settleMuteRecheck(this.engineSql, sourceId, threadId); }
   private get entityIdentityRead() { return unscopedExecutor(this.engineSql, 'entity identities: master engine.executeRaw, unscoped'); }
   linkEntityIdentityRow(input: EntityIdentityLinkInput) { return entityIdentitiesImpl.linkEntityIdentityRow(this.engineSql, input); }
   unlinkEntityIdentityRow(input: EntityIdentityUnlinkInput) { return entityIdentitiesImpl.unlinkEntityIdentityRow(this.engineSql, input); }

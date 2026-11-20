@@ -5,8 +5,9 @@
 //! SQL in src/core/engine-sql/open-loops.ts), and `closedLoopWithActiveFact` (the `loops_close`
 //! retry read) and `loopFactDrift` (the loop-fact retirement scan), SQL in
 //! src/core/engine-sql/facts-repair.ts, and `readLoopFactState` and `expireSourceFactNow` (the
-//! loop-fact retirement publication, SQL in src/core/engine-sql/repair-bookkeeping.ts). The other loop statements (thread auto-close, the
-//! staleness pass and mutes) still run through `executeRaw` and refuse on this engine.
+//! loop-fact retirement publication, SQL in src/core/engine-sql/repair-bookkeeping.ts). Mutes, the
+//! thread auto-close and the mute re-check live in [`mutes`]. The staleness pass still runs
+//! through `executeRaw` and refuses on this engine.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
 //! - `F 0x08 id -> LoopRecord`: one row, the `id` primary key (8 big-endian bytes).
@@ -14,7 +15,9 @@
 //! - meta `next_open_loops_id`: the `BIGSERIAL` sequence. Every upsert takes an id, also one that
 //!   lands on an existing row, as `nextval` runs before `ON CONFLICT` looks.
 //!
-//! Deleting a source removes its loops (`ON DELETE CASCADE`, [`remove_source_rows`]).
+//! Deleting a source removes its loops and its mutes (`ON DELETE CASCADE`, [`remove_source_rows`]).
+
+pub(crate) mod mutes;
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -205,8 +208,9 @@ fn read_row(read: &dyn KvRead, id: u64) -> Result<Option<LoopRecord>> {
     get_json::<LoopRecord>(read, &row_key(id))
 }
 
-/// Removes every loop of a source, for the source delete.
+/// Removes every loop and every mute of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    mutes::remove_source_rows(tx, source_id)?;
     let mut doomed = Vec::new();
     scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
         doomed.push((k.to_vec(), keys::be8(v)));

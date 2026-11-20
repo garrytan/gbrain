@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 931/931
+# covered: 939/939
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -61,6 +61,7 @@
 # salience_enrich: 6/6
 # trust: 29/29
 # open_loops: 4/4
+# loop_mutes: 8/8
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
@@ -821,10 +822,18 @@ listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	14	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	8	no	yes	yes	serves
-listOpenLoops	open_loops	yes	3	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	18	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	9	no	yes	yes	serves
+listOpenLoops	open_loops	yes	7	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
+addLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
+removeLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
+listLoopSuppressions	loop_mutes	yes	3	no	yes	yes	serves
+listMuteRecheckThreads	loop_mutes	yes	2	no	yes	yes	serves
+closeMutedLoops	loop_mutes	yes	4	no	yes	yes	serves
+requeueMutedLoops	loop_mutes	yes	3	no	yes	yes	serves
+closeThreadLoops	loop_mutes	yes	2	no	yes	yes	serves
+settleMuteRecheck	loop_mutes	yes	2	no	yes	yes	serves
 linkEntityIdentityRow	entity_identities	yes	9	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves

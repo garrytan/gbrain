@@ -1,8 +1,8 @@
 /**
  * Open loops (`open_loops`, src/schema.sql): the upsert, list and close statements loops-store.ts ran through
  * `executeRaw`, with the same text and parameters, on the engine's own raw path; only their home moved. The members
- * return the raw rows; loops-store.ts still normalizes them. The other loop statements (thread auto-close, the
- * staleness pass, mutes, the loop-fact reads) stay with their callers.
+ * return the raw rows; loops-store.ts still normalizes them. Mutes and the thread auto-close are in loop-mutes.ts; the
+ * staleness pass and the loop-fact reads stay with their callers.
  *
  * `'mute_recheck'` and `'muted'` are `MUTE_RECHECK` and `MUTED` in loops-store.ts, written here as literals so this
  * module needs no runtime import of the store.

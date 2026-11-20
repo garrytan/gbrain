@@ -7,14 +7,13 @@ The reads `gbrain migrate --to <engine>` makes of the brain it moves, so a Rust 
 | JS | Resolves |
 | --- | --- |
 | `brain.readEngineMigrationHistory()` | `{ held, pageVersions }`. `held` names the history tables with a row, in the order the refusal names them: `persistence_requests` when a write request (`J`) is recorded, `fact_withdrawals` when a withdrawal (`t 0x01`) is recorded. `pageVersions` counts the `V` keys |
-| `brain.readMigrationRows(table)` | `{ columns, rows }` for `facts` (every fact as `SELECT *` reads it, `embedding` as vector text, by id) and `open_loops` (every loop row, by id). Another table refuses `INVALID_ARGUMENT` |
+| `brain.readMigrationRows(table)` | `{ columns, rows }` for `facts` (every fact as `SELECT *` reads it, `embedding` as vector text, by id), `open_loops` (every loop row, by id) and `loop_suppressions` (every mute, by source, kind and value in byte order; the SQL read orders by id). Another table refuses `INVALID_ARGUMENT` |
 | `brain.listManualLinkTransitions(sourceId, slug)` | `{ to_slug, to_source_id, link_type, kind, occurred_on }` for each `manual` statement of a relationship the page starts, in any deletion state, by target source, target slug, link type, kind and day (byte order). No page: `[]` |
 | `brain.countLiveTimelineEntries()` | the timeline rows of pages that are not soft-deleted |
 
-The members compose three reads in TypeScript from methods the store already serves:
+The members compose two reads in TypeScript from methods the store already serves:
 
 - `readMigrationRows('sources')` maps `listSourceRecords()` to the 13 columns the copier carries. `config_json` is the config as JSON text.
-- `readMigrationRows('loop_suppressions')` is the column list with no rows.
 - `readMigrationPageColumns(slug, sourceId)` reads `readPageSnapshot(slug, { sourceId, includeDeleted: true })` and takes the origin, kind and provenance columns. `sealed` is true when the text projection revision equals the knowledge revision (two missing revisions are equal, as `IS NOT DISTINCT FROM` says).
 
 All five members are reported under the capability of their family: `persistence_journal`, `sources`, `pages`, `links` and `timeline`.
@@ -22,7 +21,7 @@ All five members are reported under the capability of their family: `persistence
 Differences from the SQL engines:
 
 - The store keeps no source commit, archive dates or frontmatter-trust flag. A migrated source gets `last_commit`, `archived_at` and `archive_expires_at` null and `trust_frontmatter_overrides` false, as a fresh source row has them. Its `contextual_retrieval_mode` is the stored override, read through `getSource`. A source with no name takes its id as its name.
-- The store keeps no loop suppressions, so none migrate.
+- A mute keeps its id and `created_at`. The store takes a mute id on every add, also one that lands on an existing row, as `nextval` does before `ON CONFLICT`.
 - The store records no belief events and no persistence worktrees, so `held` never names `belief_events` or `persistence_worktrees`.
 - A plain `putPage` writes no write request and no page version on the store, so a brain written only through page writes migrates. `createVersion` writes a version, and the migration then refuses with the page-history message, as on PGLite.
 - When a Rust brain holds history the copier would drop, the refusal keeps the brain on the Rust engine and changes nothing (`engineMigrationFix`, `src/core/persistence/maintenance.ts`).

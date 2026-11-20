@@ -308,6 +308,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
   // Open loops (engine-sql/open-loops.ts)
   'upsertOpenLoop', 'listOpenLoops', 'closeOpenLoop',
+  // Loop mutes (engine-sql/loop-mutes.ts; pinned by test/engine-parity/loop-mutes.test.ts)
+  'addLoopSuppression', 'removeLoopSuppression', 'listLoopSuppressions', 'listMuteRecheckThreads',
+  'closeMutedLoops', 'requeueMutedLoops', 'closeThreadLoops', 'settleMuteRecheck',
   // Group C: decide proposals and review proposals (engine-sql/decide-proposals.ts; pinned by test/engine-parity/decide-proposals.test.ts)
   'insertDecideProposal', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals', 'transitionDecideProposal',
   'listDecideProposedPairs', 'insertDecideReviewProposal', 'listDecideReviewProposals', 'getDecideReviewProposal',

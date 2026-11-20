@@ -168,6 +168,7 @@ counter is `M next_facts_id`.
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
+| `F 0x10 source kind value` | `SuppressionRecord` (JSON: `id`, `created_at_us`) | One `loop_suppressions` row (unique `(source_id, kind, value)`); `facts/loops/mutes.rs`. Its counter is `M next_loop_suppressions_id`. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
@@ -499,8 +500,9 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
 `loops_close` retry read `closedLoopWithActiveFact`, the retirement scan `loopFactDrift` (doctor
 `loop_facts_drift`, `gbrain repair loop-facts`) and the retirement's own read and expiry
-(`readLoopFactState`, `expireSourceFactNow`, `rust/docs/store/repair-bookkeeping.md`). The other loop statements (thread auto-close, the
-staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
+(`readLoopFactState`, `expireSourceFactNow`, `rust/docs/store/repair-bookkeeping.md`). Mutes and the
+thread verdict are in `facts/loops/mutes.rs` (below). The staleness pass and the sender list still run
+through `executeRaw`, so they refuse on this engine.
 
 | Member | What it does |
 |---|---|
@@ -526,6 +528,31 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
+
+### Mutes and the thread verdict (`facts/loops/mutes.rs`)
+
+The `loop_suppressions` table and the open-loop statements `gbrain loops mute`, `gbrain loops unmute`
+and the Gmail thread verdict run (`engine-sql/loop-mutes.ts`). loops-store.ts lower-cases each mute
+value before it reaches a member.
+
+| Member | What it does |
+|---|---|
+| `addLoopSuppression` | Writes the `(source, kind, value)` row; a row that exists stays as it is. `kind` other than `sender` or `thread` refuses `constraint_violation`; an unknown source refuses `source_not_found`. |
+| `removeLoopSuppression` | Deletes that row; the number deleted (0 or 1). |
+| `listLoopSuppressions` | `{ kind, value }` of each mute of the source, by kind, then value. The SQL read has no order; loops-store.ts puts them in sets. |
+| `listMuteRecheckThreads` | `{ thread_id, page_slug }` for each thread with a row whose `closed_by` is `mute_recheck`, with the greatest page slug of its rows (byte order). By thread id. |
+| `closeMutedLoops` | The ids of the `unanswered_inbound` rows the mute covers that are open or `mute_recheck`; with `apply`, closes them as `dropped` by `muted`. Ascending. |
+| `requeueMutedLoops` | `{ id, thread_id }` of the `muted` rows the mute covers that no other mute of the source covers; with `apply`, sets `closed_by` to `mute_recheck`, or to `unmuted` for a row with no thread. By id. |
+| `closeThreadLoops` | Closes the `deterministic_thread` rows of the thread that are open or `mute_recheck` (only the `only` loop types when given) as `done` by `closedBy`, now; the number closed. |
+| `settleMuteRecheck` | Sets `closed_by` to `unmuted` on the thread's `mute_recheck` rows; the number settled. |
+
+- A sender mute matches `counterparty_email` byte for byte. A thread mute matches the row's
+  `thread_id` lowered one code point at a time, as Postgres `lower()` does (`pg_lower_char`), then
+  compared byte for byte. Thread ids match the thread byte for byte.
+- Every add takes an id from the counter, also one that lands on an existing row, as `nextval` does
+  before `ON CONFLICT`. A refused add takes none.
+- `apply: false` reads only. `apply: true` reads and writes in one transaction.
+- Deleting a source removes its mutes (`ON DELETE CASCADE`).
 
 ## The fence guard's reads (`facts/fence.rs`)
 
