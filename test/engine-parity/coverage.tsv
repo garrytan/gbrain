@@ -85,7 +85,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	117	no	yes	yes	serves
+transaction	lifecycle	yes	118	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -93,7 +93,7 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	542	yes	yes	yes	serves
+putPage	pages	yes	543	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -281,11 +281,11 @@ listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
 addTimelineEntry	timeline	yes	42	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	18	yes	yes	yes	serves
-getTimelineForDate	timeline	yes	6	no	yes	yes	serves
+getTimelineForDate	timeline	yes	7	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
 getLastSeen	timeline	yes	5	no	yes	yes	serves
-upsertEventProjection	timeline	yes	19	no	yes	yes	serves
+upsertEventProjection	timeline	yes	20	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	serves
@@ -388,7 +388,7 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	16	no	yes	yes	serves
+getConfig	config	yes	17	no	yes	yes	serves
 setConfig	config	yes	28	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -400,7 +400,7 @@ readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	69	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	70	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -737,8 +737,8 @@ readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
-listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	serves
-listPageQuoteTiers	trust_tier_reads	yes	1	no	yes	yes	serves
+listPageRefsByIds	trust_tier_reads	yes	2	no	yes	yes	serves
+listPageQuoteTiers	trust_tier_reads	yes	2	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
 pickValidTimeEdition	trust_tier_reads	yes	9	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves

@@ -39,8 +39,7 @@ async function remoteTimeline(ctx: OperationContext, rows: ChronicleTimelineRow[
   const quoted = await quoteTimelineRows(ctx, r => r.page_slug, redactDiaryTimeline(ctx, rows));
   const events = quoted.flatMap(r => (r.kind ? [Number(r.event_page_id)] : []));
   if (ctx.remote === false || events.length === 0) return quoted;
-  const pages = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; trust_tier: string | null }>(
-    'SELECT id, type, trust_tier FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(events)]])).map(p => [Number(p.id), p]));
+  const pages = new Map((await ctx.engine.listPageQuoteTiers({ ids: [...new Set(events)] })).map(p => [Number(p.id), p]));
   return quoted.map(r => {
     const page = pages.get(Number(r.event_page_id));
     return r.kind && quotesStored(page?.type, page?.trust_tier)

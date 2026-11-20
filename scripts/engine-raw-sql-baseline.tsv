@@ -550,7 +550,6 @@ src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/op-checkpoint.ts	execute_raw	1
 src/core/ops/admin.ts	execute_raw	2
 src/core/ops/backlinks-paged.ts	execute_raw	3
-src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
