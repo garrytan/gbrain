@@ -7,6 +7,8 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 `incarnation` (a UUID that changes when a source is deleted and created again), with
 `last_sync_at` as an ISO string. The record also keeps the source's `chunker_version` stamp, absent
 until the first stamp; the import members read and write it ([import-members.md](import-members.md)).
+It keeps the `last_commit` and `newest_content_at` the sync anchor last advanced, absent before the
+first advance; `getSource`, `listSourceRecords` and the notifier reads return them.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -16,6 +18,8 @@ until the first stamp; the import members read and write it ([import-members.md]
 | `brain.updateSourceConfig(id, patch)` | `boolean`, whether the source exists; `patch` is merged one level deep, and a `null` value is kept as JSON `null` (it does not remove the key) | `updateSourceConfig` |
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
+| `brain.advanceSourceCommit(id, commit, setNewest, newestContentAt)` | nothing; one write that sets `last_commit` and `last_sync_at` (the process clock), and `newest_content_at` when `setNewest` is true (`null` clears it); archived sources advance too, and an unknown source changes nothing | `advanceSourceCommit` (the sync anchor) |
+| `brain.readSourceLastCommit(id)` | the source's `last_commit`, archived sources included, or `null` before a sync and for a missing source | `readSourceLastCommit` (the resident notifier's `lastCommit`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
 
@@ -47,7 +51,6 @@ The source members below behave differently on the Rust engine. Each difference 
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
-- `last_commit` is `null` in the row that `gbrain sources` reads through `getSource`.
 - Restore-target and connector status sort sources by id in byte order on every engine.
 - `insertSource` refuses an id outside `[a-z0-9-]{1,32}` with `invalid_argument`. The SQL engines
   have no check on the id column, so they accept such an id. `sources add` validates the id
