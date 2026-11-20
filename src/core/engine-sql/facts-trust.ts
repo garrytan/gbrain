@@ -14,7 +14,7 @@ import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { ownerReadPolicyFragment, privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
-import { KEEP_HIDDEN_AT } from '../facts/derivation-inputs.ts';
+import { MARK_NEEDS_REDERIVE_SQL } from '../facts/derivation-inputs.ts';
 import { eligibleFactEmbedding, OVERSIZED_SCAN_CAP, staleFactEmbedding } from '../facts/embedding-identity.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { FactCandidate as ReplacementFact } from '../facts/single-prepare.ts';
@@ -628,15 +628,11 @@ export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], 
 
 /**
  * Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). `hiddenNow` names the pages
- * this transaction just hid: their `marked_at` is their `deleted_at`; any other mark keeps that moment or is stamped now (KEEP_HIDDEN_AT,
+ * this transaction just hid: their `marked_at` is their `deleted_at`; any other mark keeps that moment or is stamped now (MARK_NEEDS_REDERIVE_SQL,
  * #9653). Runs in the caller's transaction.
  */
 export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string, hiddenNow: string[]): Promise<void> {
-  await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
-      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
-      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`,
-  [table, ids, sourceId, requestId, reason, hiddenNow]);
+  await raw(MARK_NEEDS_REDERIVE_SQL, [table, ids, sourceId, requestId, reason, hiddenNow]);
 }
 
 export interface MemberPageWithdrawalQuery {
