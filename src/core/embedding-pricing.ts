@@ -49,6 +49,7 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:voyage-finance-2':       { pricePerMTok: 0.12 },
   'voyage:voyage-law-2':           { pricePerMTok: 0.12 },
   'voyage:voyage-multimodal-3':    { pricePerMTok: 0.12 },
+  'voyage:voyage-multimodal-3.5':  { pricePerMTok: 0.12 },
   'voyage:rerank-2.5':             { pricePerMTok: 0.05 },
   'voyage:rerank-2.5-lite':        { pricePerMTok: 0.02 },
   'voyage:rerank-3':               { pricePerMTok: 0.05 },
