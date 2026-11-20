@@ -335,11 +335,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	61	yes	yes	yes	serves
+insertFact	facts	yes	62	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
-listFactsByEntity	facts	yes	28	yes	yes	yes	serves
+listFactsByEntity	facts	yes	29	yes	yes	yes	serves
 listFactsSince	facts	yes	22	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
@@ -720,7 +720,7 @@ listExtractorFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	3	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	2	no	yes	yes	serves
 listWorldFactsFromPrivateSources	facts_repair	yes	1	no	yes	yes	serves
-listFactsForRelevance	facts_trust	yes	6	no	yes	yes	serves
+listFactsForRelevance	facts_trust	yes	7	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	4	no	yes	yes	serves
 matchSavedFacts	facts_trust	yes	6	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	2	no	yes	yes	serves
