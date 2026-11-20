@@ -100,7 +100,7 @@ pub struct SourceInput {
     pub config: Option<Map<String, Value>>,
 }
 
-fn source_key(id: &str) -> Vec<u8> {
+pub(crate) fn source_key(id: &str) -> Vec<u8> {
     keys::text(keys::SOURCE, &[id])
 }
 

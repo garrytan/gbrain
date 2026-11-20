@@ -1241,7 +1241,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-/** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds. */
+/** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds, with the fraction access.serves_since records since v329 (GST-3199). */
 export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
 
 /** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
@@ -1256,7 +1256,7 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
   return {
     several: (fromConfig ? explicit : config[SERVES_DERIVED_KEY]?.trim()) === 'several',
     from: fromConfig ? 'config' : 'members',
-    since: Number.isFinite(since) ? Math.floor(since / 1000) : null,
+    since: Number.isFinite(since) ? since / 1000 : null,
     enforce: !['false', '0', 'off', 'no'].includes(config[REQUESTER_SCOPE_ENFORCE_KEY]?.trim().toLowerCase() ?? ''),
   };
 }

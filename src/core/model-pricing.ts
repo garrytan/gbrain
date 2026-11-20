@@ -221,10 +221,15 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // lockstep (the drift guard asserts they agree).
   'google:gemini-2.0-flash':              { input:  0.10, output:  0.40 },
   'google:gemini-2-flash':                { input:  0.10, output:  0.40 },
-  // Gemini 2.5 Flash / Flash-Lite: the live successors, and what the recipe
-  // lists today. Rates from Google's published pricing (2026-08-02).
+  // Gemini 2.5 Flash / Flash-Lite. Rates from Google's published pricing
+  // (2026-08-02). 2.5-flash retires 2026-12-01 (#9776) and leaves the recipe's
+  // chat list; its row stays so historical usage/audit rows still price.
   'google:gemini-2.5-flash':              { input:  0.30, output:  2.50 },
   'google:gemini-2.5-flash-lite':         { input:  0.10, output:  0.40 },
+  // Gemini 3.5 Flash-Lite: Google's named replacement for 2.5-flash and the
+  // recipe's chat default. Standard paid tier, checked 2026-11-19 at
+  // https://ai.google.dev/gemini-api/docs/pricing.
+  'google:gemini-3.5-flash-lite':         { input:  0.30, output:  2.50 },
 
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },

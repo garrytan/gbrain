@@ -1522,7 +1522,7 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`.
 
@@ -3004,7 +3004,7 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository): removing the row alone would come back at the next reconcile while the decision still says the pages are one person. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository): removing the row alone would come back at the next reconcile while the decision still says the pages are one person or company. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people or companies and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### identity_member_in_other_group
 
@@ -5512,13 +5512,23 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
+### skill_resolver_host_hidden
+
+<a id="skill_resolver_host_hidden"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| OpenClaw now hides some skills the plugin still suggests from the agent's model (ineligible on this host, outside the agent's skill filter, or model invocation off). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only, which re-reads OpenClaw's skill list and stops suggesting them without installing anything. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_host_hidden](../../docs/guides/skill-resolver.md#skill_resolver_host_hidden)
+
 ### skill_resolver_host_load_cut
 
 <a id="skill_resolver_host_load_cut"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot), so setup leaves them out of the agent's suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot in openclaw.json, or split the skill root, then run setup again. | agent | `repeat the read that failed` | 1 | no |
+| OpenClaw does not list some skills in the agent's skill directories (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so setup leaves them out of the agent's suggestions and doctor warns when the plugin still offers one. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot and skills.limits.maxSkillsLoadedPerSource in openclaw.json, or split the skill root, then run gbrain setup openclaw --skills-index-only. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_host_load_cut](../../docs/guides/skill-resolver.md#skill_resolver_host_load_cut)
 
