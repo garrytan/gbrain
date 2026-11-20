@@ -8,4 +8,4 @@
 
 ### Added
 - `search` runs the facts arm too, under the same read policy and skip rules as `query` (`search.search_facts_arm`, default on). Fact rows render as they do in `query`.
-- A degraded or thin `search` or `query` result of a short query also runs the `search_exact` literal scan for its terms as a phrase and merges up to three pages it finds (`search.exact_widen`, default on). Merged rows carry `widened: "exact"` and `_meta.retrieval.exact_widened` is `true` when the scan ran.
+- A degraded or thin `search` or `query` result of a short query also runs the `search_exact` literal scan for its terms as a phrase and merges up to three pages it finds (`search.exact_widen`, default on). The scan is narrowed by the chunk full-text index first, with chunks that have no search vector scanned literally beside it, so it costs tens of milliseconds, not a full table scan; `search_exact` itself is unchanged. Merged rows carry `widened: "exact"` and `_meta.retrieval.exact_widened` is `true` when the scan ran.
