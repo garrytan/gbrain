@@ -738,12 +738,112 @@ fn a_projection_job_without_a_primary_time_keeps_the_seed_time_and_is_a_loss() {
 #[test]
 fn the_plan_lists_every_relation_once_in_import_order() {
     let plan = plan();
-    let names: Vec<_> = plan.iter().map(|p| p.relation).collect();
+    let names: Vec<_> = plan.relations.iter().map(|p| p.relation).collect();
     assert_eq!(&names[..3], ["sources", "config", "pages"]);
     let unique: BTreeSet<_> = names.iter().collect();
     assert_eq!(unique.len(), names.len());
-    assert!(plan.iter().all(|p| !p.key.is_empty()));
-    for name in names {
+    assert!(plan.relations.iter().all(|p| !p.key.is_empty()));
+    for name in &names {
         assert!(relation_spec(name).is_ok());
+    }
+    for (table, relation) in &plan.carried {
+        assert!(names.contains(relation), "{table} rides in {relation}");
+        assert!(!names.contains(table));
+    }
+}
+
+/// The tables the seed leaves behind on purpose. A change to this list changes what a swap to a
+/// seeded store may lose: edit the pin only together with rust/docs/store/seed.md.
+#[test]
+fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
+    let tables: Vec<_> = NOT_COPIED.iter().map(|n| n.table).collect();
+    let mut sorted = tables.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(tables, sorted, "sorted, no duplicates");
+    assert_eq!(
+        tables,
+        [
+            "chat_usage_log",
+            "code_traversal_cache",
+            "conversation_parser_llm_cache",
+            "dream_verdicts",
+            "eval_candidates",
+            "eval_capture_failures",
+            "eval_contradictions_cache",
+            "eval_contradictions_runs",
+            "eval_takes_quality_runs",
+            "extract_atoms_page_state",
+            "extract_atoms_transcript_state",
+            "extract_rollup_7d",
+            "file_migration_ledger",
+            "gbrain_cycle_locks",
+            "ingest_log",
+            "mcp_request_log",
+            "mention_index_status",
+            "migration_impact_log",
+            "minion_attachments",
+            "minion_budget_log",
+            "minion_inbox",
+            "minion_jobs",
+            "minion_lease_pressure_log",
+            "minion_self_fix_log",
+            "op_checkpoint_paths",
+            "op_checkpoints",
+            "page_body_manifest",
+            "page_body_staging_parts",
+            "page_body_staging_texts",
+            "page_body_stagings",
+            "page_mention_state",
+            "page_retrievals",
+            "page_segment_derivation_purge_pages",
+            "page_segment_derivation_purges",
+            "page_segment_derivations",
+            "page_segment_texts",
+            "page_view_digests",
+            "persistence_brain",
+            "persistence_consumers",
+            "persistence_counters",
+            "persistence_effects",
+            "persistence_graduation",
+            "persistence_host_bindings",
+            "persistence_local_writers",
+            "persistence_requests",
+            "persistence_source_bindings",
+            "persistence_topology_changes",
+            "persistence_worktree_refreshes",
+            "persistence_worktrees",
+            "persistence_writer_protocols",
+            "planner_stats_deltas",
+            "planner_stats_state",
+            "query_cache",
+            "reason_purge_tombstones",
+            "retrieval_event_links",
+            "retrieval_event_pages",
+            "retrieval_events",
+            "search_telemetry",
+            "session_context_state",
+            "subagent_messages",
+            "subagent_rate_leases",
+            "subagent_tool_executions",
+            "sync_notifier_leases",
+            "sync_notifier_sources",
+            "sync_wanted_markers",
+            "take_grade_cache",
+            "think_ab_results",
+            "wake_subscriptions",
+            "write_gate_holds",
+            "write_gate_receipts",
+        ]
+    );
+    let plan = plan();
+    for n in NOT_COPIED {
+        assert!(!n.read.is_empty());
+        assert!(
+            relation_spec(n.table).is_err(),
+            "{} is both copied and not",
+            n.table
+        );
+        assert!(plan.carried.iter().all(|(t, _)| *t != n.table));
     }
 }

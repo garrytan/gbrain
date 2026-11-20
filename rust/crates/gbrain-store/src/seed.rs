@@ -20,6 +20,7 @@ mod core;
 mod decide;
 mod decode;
 mod history;
+mod not_copied;
 mod privacy;
 mod spend;
 #[cfg(test)]
@@ -27,6 +28,7 @@ mod tests;
 mod wake;
 
 pub use decode::SeedRow;
+pub use not_copied::{LossKind, NOT_COPIED, NotCopied};
 
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
@@ -61,14 +63,31 @@ pub struct RelationPlan {
     pub key: &'static [&'static str],
 }
 
-/// The relations a seed copies, in import order.
-pub fn plan() -> Vec<RelationPlan> {
-    relations()
-        .map(|(relation, spec)| RelationPlan {
-            relation,
-            key: spec.key,
-        })
-        .collect()
+/// The seed plan: the relations it copies, the tables it carries inside them, and the tables it
+/// leaves behind on purpose. Every other primary table is a gap.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SeedPlan {
+    pub relations: Vec<RelationPlan>,
+    /// `(table, relation)`: a table whose rows ride in the rows of `relation`.
+    pub carried: Vec<(&'static str, &'static str)>,
+    pub not_copied: &'static [NotCopied],
+}
+
+/// Tables read as columns of a relation's rows.
+const CARRIED: &[(&str, &str)] = &[("page_projection_jobs", "pages")];
+
+/// The seed plan, relations in import order.
+pub fn plan() -> SeedPlan {
+    SeedPlan {
+        relations: relations()
+            .map(|(relation, spec)| RelationPlan {
+                relation,
+                key: spec.key,
+            })
+            .collect(),
+        carried: CARRIED.to_vec(),
+        not_copied: NOT_COPIED,
+    }
 }
 
 fn relations() -> impl Iterator<Item = (&'static str, &'static Relation)> {

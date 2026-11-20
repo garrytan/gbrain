@@ -31,8 +31,12 @@ export interface RustStore {
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
    */
   importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult>;
-  /** The relations `importRelation` takes, in import order, with the key columns to read each by. */
-  seedPlan(): Promise<SeedRelationPlan[]>;
+  /**
+   * The seed plan: the relations `importRelation` takes in import order (with the key columns to read each
+   * by), the tables carried inside them, and the tables the seed leaves behind on purpose. Any other primary
+   * table is a gap (rust/docs/store/seed.md).
+   */
+  seedPlan(): Promise<SeedPlan>;
   close(): Promise<void>;
 }
 
@@ -43,6 +47,20 @@ export type SeedRow = Record<string, string | null>;
 export interface SeedRelationPlan {
   relation: string;
   key: string[];
+}
+
+/** A primary table the seed leaves behind on purpose, and the read that differs on the seeded store. */
+export interface SeedNotCopied {
+  table: string;
+  kind: 'jobs' | 'telemetry' | 'cache' | 'machine_local' | 'segmented_body';
+  read: string;
+}
+
+export interface SeedPlan {
+  relations: SeedRelationPlan[];
+  /** `[table, relation]`: a table whose rows ride in the rows of `relation`. */
+  carried: [string, string][];
+  not_copied: SeedNotCopied[];
 }
 
 /** What one `importRelation` batch did. `losses` counts values the store could not keep, by kind. */
@@ -76,7 +94,7 @@ export async function openRustStore(addon: object, databasePath: string): Promis
     },
     async seedPlan() {
       try {
-        return await brain.seedPlan() as SeedRelationPlan[];
+        return await brain.seedPlan() as SeedPlan;
       } catch (error) {
         throw mapStoreError(error, { member: 'seedPlan' });
       }
