@@ -26,15 +26,24 @@ back in jsonb key order. No key part may hold a NUL byte (`invalid_argument`).
 
 Seventeen members for the statements the edge-contradiction cycle (`src/core/cycle/edge-contradictions.ts`), the eval
 scoped read (`src/core/eval-contradictions/scoped-read.ts`), the cost prompt (`cost-prompt.ts`) and the suspected-contradictions
-eval (`src/commands/eval-suspected-contradictions.ts`) ran as raw SQL. None is served on Rust today: each is absent from
-`store-members/*`, so it refuses with `engine_capability_missing` naming the member (the capability in `members.ts` is
-`links` for the thirteen edge members, `chunks` for `listLiveChunksByIds`, `takes` for `listLiveTakesByIds`,
-`contradictions` for `readLastContradictionsPromptVersion`, `eval_capture` for `listEvalCandidateQueries`). The caller
-sees the refusal; no member changes behaviour. What the store would need to serve them:
+eval (`src/commands/eval-suspected-contradictions.ts`) ran as raw SQL.
+
+`listLinkContexts` is served: `Store::list_link_contexts` (`gbrain-store/src/contradictions.rs`) reads the link records
+that leave the page (`links::out_links`), keeps those to the target page with the link type and a non-empty context, and
+answers the first three distinct contexts in byte order. The SQL has no `ORDER BY`, so with more than three distinct
+contexts the three Postgres keeps are its own choice; the edge phase quotes them as evidence and depends on no order.
+
+The other sixteen are not served on Rust today: each is absent from `store-members/*`, so it refuses with
+`engine_capability_missing` naming the member. Their capability in `members.ts` is `contradictions` for the twelve edge
+members (the proposal ledger, the candidate scan and the closure check belong to the edge-contradictions phase) and for
+`readLastContradictionsPromptVersion`, `chunks` for `listLiveChunksByIds`, `takes` for `listLiveTakesByIds` and
+`eval_capture` for `listEvalCandidateQueries`. None of them is classed under a capability the Rust engine reports
+(`test/rust-engine-capability-classes.test.ts`). The caller sees the refusal; no member changes behaviour. What the
+store would need to serve them:
 
 | Members | Reads or writes | The store would need |
 | --- | --- | --- |
-| `listEdgeContradictionCandidates`, `listKnownEdgeProposals`, `listLinkContexts` | live links by subject with the employer filter (type list, or one list per source with a pending cutoff), proposals by hash, link contexts | a scan of the link records joined to their pages, the single-value role lists as arguments, and a proposal index by evidence hash |
+| `listEdgeContradictionCandidates`, `listKnownEdgeProposals` | live links by subject with the employer filter (type list, or one list per source with a pending cutoff), proposals by hash | a scan of the link records joined to their pages, the single-value role lists as arguments, and a proposal index by evidence hash |
 | `recordEdgeProposal`, `readEdgeProposal`, `readEdgeProposalEvidence`, `readEdgeProposalHash` | insert (null when the hash exists), read by id, evidence and hash | a proposal record with a unique hash and an id sequence |
 | `edgeClosureLanded` | whether a dream `end` transition landed on the close date | a lookup over the link-transition records by origin, target, type, kind, producer and date |
 | `markEdgeProposalStale`, `setEdgeProposalStatus`, `rejectOpenEdgeProposal`, `markEdgeProposalUndone`, `markRevertedEdgeProposals` | status updates with their guards (open only, applied only) and a reverted count | conditional updates that return whether a row changed, and the count for the bulk revert |

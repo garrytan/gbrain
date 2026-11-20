@@ -210,7 +210,7 @@ for (const backend of testBackends()) {
 
     test('a failed fact source lookup withholds saved_facts and recall facts with a degraded stage, never unquoted', async () => {
       const failing = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRaw') return (sql: string, params?: unknown[]) => sql.includes('FROM derivation_inputs d JOIN pages') ? Promise.reject(new Error('lookup down')) : target.executeRaw(sql, params);
+        if (key === 'listFactsFromQuotedPages') return () => Promise.reject(new Error('lookup down'));
         const value = (target as unknown as Record<PropertyKey, unknown>)[key];
         return typeof value === 'function' ? value.bind(target) : value;
       } });

@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod reads;
 
-pub use reads::{McpResolvedInput, PurgeTakesInput};
+pub use reads::{IncomingTakeRow, McpResolvedInput, PurgeTakesInput, TakePreimageInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -502,7 +502,7 @@ pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> 
 /// (`trust::stamp_row`): an insert when no row with its id is stored, else an update of the stored
 /// row, restamped only when `claim`, `kind` or `holder` changed. A refused raise is the trigger's
 /// error; the caller's write then rolls back.
-fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+pub(crate) fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
     let content_changed = old
         .as_ref()

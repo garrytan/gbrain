@@ -13,7 +13,9 @@
 
 use super::embedding::md5_hex;
 use super::relink::Memos;
-use super::{AUDIT_ROW_SOURCES, DAY_US, FactRecord, count_arg, like, source_rows};
+use super::{
+    AUDIT_ROW_SOURCES, DAY_US, FactRecord, MEMBER_PAGE_PREFIX, count_arg, like, source_rows,
+};
 use crate::Store;
 use crate::error::{Result, StoreError};
 use crate::kv::KvRead;
@@ -22,6 +24,8 @@ use crate::pages::{all_pages, read_page, read_page_by_id};
 use crate::sources::{SourceRecord, all_sources, read_source};
 use crate::takes::all_takes;
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
+use crate::trust::withdrawals::{withdrawal_time, withdrawn_claim};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -553,9 +557,10 @@ impl Store {
     /// Calls `f` with every embeddable fact of `q`'s sources and whether its vector is stale for
     /// `q.model` and `q.dims`. Embeddable is `eligibleFactEmbedding`: the fact is not expired,
     /// superseded, past `valid_until` or an audit row, its source is not archived, and its page
-    /// (`source_markdown_slug`) is not soft-deleted. The store keeps no `fact_withdrawals` (the
-    /// Rust engine refuses `executeRaw`, their only writer), so none hides a fact.
-    fn for_each_embeddable_fact(
+    /// (`source_markdown_slug`) is not soft-deleted, and no withdrawal covers it (`retainedFactEmbedding`:
+    /// a withdrawal of its source and visibility under either fingerprint, whose subject is the
+    /// fact's member page for a fact on `memory/members/...`, else `*` or the fact's entity).
+    pub(crate) fn for_each_embeddable_fact(
         &self,
         op: &str,
         q: &CoverageQuery,
@@ -593,6 +598,9 @@ impl Store {
                 {
                     continue;
                 }
+                if embedding_withdrawn(&*read, &row)? {
+                    continue;
+                }
                 let stale = row.embedding.is_none()
                     || row.embedding_model.as_deref() != Some(q.model.as_str())
                     || row.embedded_text_hash.as_deref() != Some(md5_hex(&row.fact).as_str())
@@ -601,5 +609,28 @@ impl Store {
             }
         }
         Ok(())
+    }
+}
+
+/// `retainedFactEmbedding`'s two `fact_withdrawals` anti-joins: a withdrawal at the fact's source and visibility under
+/// `gbrain_fact_fingerprint` or `gbrain_fact_fingerprint_v1` of its text, whose subject is the fact's page for a fact
+/// on a member page (`memory/members/...`), else `*` or the fact's entity.
+fn embedding_withdrawn(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    match row.source_markdown_slug.as_deref() {
+        Some(page) if page.starts_with(MEMBER_PAGE_PREFIX) => {
+            for hash in [fact_fingerprint(&row.fact), fact_fingerprint_v1(&row.fact)] {
+                if withdrawal_time(read, &row.source_id, &row.visibility, page, &hash)?.is_some() {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => withdrawn_claim(
+            read,
+            &row.source_id,
+            &row.visibility,
+            &row.fact,
+            row.entity_slug.as_deref(),
+        ),
     }
 }

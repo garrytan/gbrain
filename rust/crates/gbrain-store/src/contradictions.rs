@@ -2,7 +2,8 @@
 //! `eval_contradictions_cache` tables of the PGLite engine.
 //!
 //! Members: writeContradictionsRun, loadContradictionsTrend, getContradictionCacheEntry,
-//! putContradictionCacheEntry, sweepContradictionCache.
+//! putContradictionCacheEntry, sweepContradictionCache, and listLinkContexts (the link contexts
+//! the edge-contradictions phase quotes to its judge, read from the link records of links.rs).
 //!
 //! Keys (every one starts with `keys::CONTRADICTIONS`, `Q`):
 //! - `Q 0x01 run_id -> RunRecord`: one probe run, the `run_id` primary key.
@@ -392,5 +393,30 @@ impl Store {
             }
             Ok(doomed.len() as u64)
         })
+    }
+
+    /// `listLinkContexts(fromPageId, toPageId, linkType)`: up to three distinct non-empty
+    /// contexts of the links from one page to another with one link type (`SELECT DISTINCT
+    /// context FROM links WHERE ... AND context <> '' LIMIT 3`). The SQL names no order; the
+    /// store answers the three first in byte order. An id that is not a whole number at or above
+    /// zero names no page and answers none.
+    pub fn list_link_contexts(
+        &self,
+        from_page_id: f64,
+        to_page_id: f64,
+        link_type: &str,
+    ) -> Result<Vec<String>> {
+        let id =
+            |n: f64| (n.fract() == 0.0 && (0.0..=u64::MAX as f64).contains(&n)).then_some(n as u64);
+        let (Some(from), Some(to)) = (id(from_page_id), id(to_page_id)) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let contexts: std::collections::BTreeSet<String> = crate::links::out_links(&*read, from)?
+            .into_iter()
+            .filter(|l| l.to_page_id == to && l.link_type == link_type && !l.context.is_empty())
+            .map(|l| l.context)
+            .collect();
+        Ok(contexts.into_iter().take(3).collect())
     }
 }

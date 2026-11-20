@@ -83,6 +83,31 @@ describe('engine parity: edge-contradictions phase statements', () => {
     return out;
   });
 
+  parityTest('listLinkContexts answers the distinct non-empty contexts of one link type between two pages', {
+    methods: ['putPage', 'addLink', 'readPageIdInSource', 'listLinkContexts'],
+  }, async (engine) => {
+    await engine.putPage(ALICE, page('Alice', 'person'));
+    await engine.putPage(ACME, page('Acme', 'company'));
+    await engine.putPage(WIDGET, page('Widget', 'company'));
+    // Two distinct contexts over four rows (a repeat and an empty one), so LIMIT 3 keeps both on every engine.
+    await engine.addLink(ALICE, ACME, 'works at Acme', 'works_at', 'manual');
+    await engine.addLink(ALICE, ACME, 'Acme engineer', 'works_at', 'markdown');
+    await engine.addLink(ALICE, ACME, 'works at Acme', 'works_at', 'frontmatter');
+    await engine.addLink(ALICE, ACME, '', 'works_at', 'mcp');
+    await engine.addLink(ALICE, ACME, 'advises Acme', 'advises', 'manual');
+    await engine.addLink(ALICE, WIDGET, 'works at Widget', 'works_at', 'manual');
+    const [alice, acme] = [await idOf(engine, ALICE), await idOf(engine, ACME)];
+    // The SQL names no order, so the case compares the contexts sorted.
+    const out = {
+      worksAt: sorted(await engine.listLinkContexts(alice, acme, 'works_at')),
+      advises: await engine.listLinkContexts(alice, acme, 'advises'),
+      reverse: await engine.listLinkContexts(acme, alice, 'works_at'),
+      otherType: await engine.listLinkContexts(alice, acme, 'invested_in'),
+    };
+    expect(out).toEqual({ worksAt: ['Acme engineer', 'works at Acme'], advises: ['advises Acme'], reverse: [], otherType: [] });
+    return out;
+  });
+
   parityTest('a proposal is recorded once, read back with its slugs and evidence, and moves through its statuses', {
     methods: ['putPage', 'addLink', 'readPageIdInSource', 'recordEdgeProposal', 'readEdgeProposal', 'readEdgeProposalEvidence',
       'readEdgeProposalHash', 'listKnownEdgeProposals', 'edgeClosureLanded', 'setEdgeProposalStatus', 'markEdgeProposalStale',

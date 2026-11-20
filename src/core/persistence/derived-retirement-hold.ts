@@ -48,8 +48,7 @@ export function derivedRetirementPurgeHold(alias: string): string {
  */
 export async function stampDerivedRetirement(tx: BrainEngine, sourceId: string, slugs: readonly string[], retiredBy: DerivedRetiredBy): Promise<void> {
   if (!slugs.length) return;
-  await withTrustKeep(tx, ['pages'], () => tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-    WHERE source_id=$3 AND slug=ANY($4::text[]) AND deleted_at IS NOT NULL`, [retiredBy, new Date().toISOString(), sourceId, [...slugs]]));
+  await withTrustKeep(tx, ['pages'], () => tx.stampPageFrontmatter({ match: 'retired', sourceId, slugs, retiredBy, retiredAt: new Date().toISOString() }));
 }
 
 /** Versions, soft-deletes and stamps `slugs` as retired by `retiredBy` inside the caller's attributed transaction. */

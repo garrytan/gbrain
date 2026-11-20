@@ -111,8 +111,9 @@ Rust guesses and gaps (1x parity):
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
 the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
-request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
-`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line; `facts/withdrawal_guard.rs` runs it for the captured-facts and rehome repair writes only).
+request, the single-fact prepare, the repair and review lanes) and the meta-hook watermark. The `facts` guard
+`gbrain_preserve_fact_withdrawal` is built (`facts/withdrawal_guard.rs`): every fact insert runs it, and so does every
+update member that sets a watched column on a row it can leave active (facts.md, "Captured-facts and rehome repair").
 
 Rust guesses and gaps (1x parity):
 
@@ -124,6 +125,27 @@ Rust guesses and gaps (1x parity):
 - A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
+
+## Derivation trust (`trust::derivation`)
+
+The derived-row trust writes and counts. They read and write the page, take, timeline and fact records and keep no
+key of their own. The `derivation_inputs` edges are not kept on this store line: `recordDerivationInputs` and
+`derivedRowsFrom` (src/core/facts/derivation-inputs.ts) still send raw SQL.
+
+| Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
+| --- | --- | --- |
+| `lowerTrustTier` | `lower_trust_tier`: pages only (the member refuses `takes` and `timeline_entries`); lowers each listed page, soft-deleted included, whose stored rank is above the tier; keeps the revision; returns the ids lowered by id | `UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
+| `countDerivedRowTaint` | `count_derived_row_taint`: pages, takes or timeline entries whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` | `SELECT count(*) FILTER (…) … FROM <table>` |
+| `countDerivedFactTaint` | `count_derived_fact_taint` in `facts/trust_owner.rs` (rust/docs/store/facts.md): the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
+| `stampPageFrontmatter` | `stamp_page_frontmatter`: merges `retired_by`/`retired_at` into soft-deleted pages, or `source_hash` into live `atom` pages; a page the merge leaves unchanged is not written | `UPDATE pages SET frontmatter=frontmatter\|\|jsonb_build_object(…) WHERE …` |
+
+Rust guesses and gaps (1x parity):
+
+- A frontmatter stamp that changes a page moves its revision, as the `gbrain_advance_page_revision` trigger does; a
+  stamp that changes nothing keeps it (Postgres runs the `UPDATE` and the trigger sees no content change either).
+- `propagateTierLowering` (src/core/trust/propagation.ts) walks the rows derived from a lowered row through
+  `derivedRowsFrom`, lowers them and queues `needs_rederive` through `executeRaw`, so on a Rust brain every
+  `lowerToDerivedTier` that lowers a row then stops with `raw_sql`.
 
 ## The write gate (`trust::write_gate`)
 

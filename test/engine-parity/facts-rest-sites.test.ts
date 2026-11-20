@@ -155,6 +155,28 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  parityTest('readLiveFactEntityPage reads one live page, none for a deleted, missing or other-source page, and none under the floor for a private one', {
+    methods: ['readLiveFactEntityPage', 'putPage', 'softDeletePage'],
+  }, async (engine) => {
+    await engine.putPage('people/dana-example', note('Dana Example', {}, 'person'));
+    await engine.putPage('people/erin-example', note('Erin Example', {}, 'person'));
+    await engine.putPage('people/fred-example', note('Fred Example', { visibility: 'private' }, 'person'));
+    await engine.putPage('companies/globex-example', note('Globex Example', {}, 'company'));
+    await engine.softDeletePage('people/erin-example');
+    const out: Record<string, unknown> = {};
+    for (const slug of ['people/dana-example', 'people/erin-example', 'people/fred-example', 'companies/globex-example', 'people/missing']) {
+      out[slug] = { open: await engine.readLiveFactEntityPage(SRC, slug), floor: await engine.readLiveFactEntityPage(SRC, slug, true) };
+    }
+    out.otherSource = await engine.readLiveFactEntityPage('other', 'people/dana-example');
+    expect(out['people/dana-example']).toEqual({ open: { slug: 'people/dana-example', type: 'person' }, floor: { slug: 'people/dana-example', type: 'person' } });
+    expect(out['companies/globex-example']).toEqual({ open: { slug: 'companies/globex-example', type: 'company' }, floor: { slug: 'companies/globex-example', type: 'company' } });
+    expect(out['people/erin-example']).toEqual({ open: null, floor: null });
+    expect(out['people/missing']).toEqual({ open: null, floor: null });
+    expect((out['people/fred-example'] as { floor: unknown }).floor).toBeNull();
+    expect(out.otherSource).toBeNull();
+    return out;
+  });
+
   parityTest('listFactsToRetireFromPage lists the active facts a session or a page context produced, in id order', {
     methods: ['listFactsToRetireFromPage', 'insertFact', 'expireFact'],
   }, async (engine, backend) => {
@@ -181,6 +203,16 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out.sessionOnly.map(r => r.fact)).toEqual(['by session']);
     expect(out.none).toEqual([]);
     return out;
+  });
+
+  parityTest('lockAgentWritebackSetting takes its lock for any setting name and returns nothing', {
+    methods: ['lockAgentWritebackSetting'],
+  }, async (engine) => {
+    const named = await engine.lockAgentWritebackSetting('writeback.enabled');
+    const again = await engine.lockAgentWritebackSetting('writeback.enabled');
+    const other = await engine.lockAgentWritebackSetting('a setting that was never set');
+    expect([named, again, other]).toEqual([undefined, undefined, undefined]);
+    return { named, again, other };
   });
 
   parityTest('listContestedProposalPairs lists the pending proposals naming a fact, both facts readable under the policy, in proposal order', {

@@ -87,9 +87,6 @@ export async function resolveChronicleEventSlugs(engine: BrainEngine, sourceId: 
   events: BuiltChronicleEvent[]): Promise<BuiltChronicleEvent[]> {
   if (events.length === 0) return events;
   const candidates = new Set(events.flatMap((ev) => [ev.slug, suffixedEventSlug(ev.slug, discriminatorOf(ev))]));
-  const rows = await engine.executeRaw<{ slug: string; when: string | null; where: string | null; kind: string | null }>(
-    `SELECT slug, frontmatter->'event'->>'when' AS "when", frontmatter->'event'->>'where' AS "where", frontmatter->'event'->>'kind' AS kind
-       FROM pages WHERE source_id=$1 AND slug = ANY($2::text[])`,
-    [sourceId, [...candidates]]);
+  const rows = await engine.listChronicleEventSlotRows(sourceId, [...candidates]);
   return assignChronicleEventSlugs(events, new Map(rows.map((r) => [r.slug, eventDiscriminator(r)])));
 }

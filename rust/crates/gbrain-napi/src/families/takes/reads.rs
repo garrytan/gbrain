@@ -1,7 +1,7 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
 //! repair sites (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
 
-use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput};
+use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput, TakePreimageInput};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -44,6 +44,19 @@ impl Brain {
         page_id: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_take_rows_for_page(page_id as i64))
+    }
+
+    /// `readTakePreimages({ pageId, by, gone, incoming })`: `[{ preimage, gone }]` by row number.
+    #[napi]
+    pub fn read_take_preimages<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: TakePreimageInput = required(input, "readTakePreimages input")?;
+            s.read_take_preimages(&input)
+        })
     }
 
     /// `countMcpResolvedTakes({ sourceIds, holders, excludePrivate })`: resolves the count.

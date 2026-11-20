@@ -15,6 +15,8 @@ function engine(managed = false, rows: unknown[] = []) {
     kind: 'pglite',
     executeRaw: async (sql: string) => (/persistence_brain/.test(sql) ? [{ enabled: managed }] : rows),
     getConfig: async () => null,
+    // file_url reads the file row through the typed member; no file row is recorded here.
+    readReadableFileForUrl: async () => null,
   } as unknown as OperationContext['engine'];
 }
 

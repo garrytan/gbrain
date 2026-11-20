@@ -25,9 +25,12 @@ async function gatewayEmbedding(): Promise<{ model: string; dimensions: number }
 export const initSchema: StoreMember<[], void> = async (brain) => {
   const stored = await storeCall({ member: 'initSchema' }, () => brain.readEmbeddingIdentity()) as EmbeddingIdentity | null;
   const seed = stored ? { model: stored.model, dimensions: stored.dimensions } : await gatewayEmbedding();
-  const rows: Array<[string, string | null]> = [['embedding_model', seed.model], ['embedding_dimensions', String(seed.dimensions)]];
-  for (const [key, value] of rows) {
-    if (value === null || await storeCall({ member: 'initSchema' }, () => brain.getConfig(key)) !== null) continue;
-    await storeCall({ member: 'initSchema' }, () => brain.setConfig(key, value));
+  // Each key is read by its literal name, so the config-key guard (test/config-reader-keys-registered.test.ts) sees it.
+  const model = seed.model;
+  if (model !== null && await storeCall({ member: 'initSchema' }, () => brain.getConfig('embedding_model')) === null) {
+    await storeCall({ member: 'initSchema' }, () => brain.setConfig('embedding_model', model));
+  }
+  if (await storeCall({ member: 'initSchema' }, () => brain.getConfig('embedding_dimensions')) === null) {
+    await storeCall({ member: 'initSchema' }, () => brain.setConfig('embedding_dimensions', String(seed.dimensions)));
   }
 };
