@@ -415,6 +415,40 @@ impl Store {
     }
 }
 
+/// The token rows of `readOwnerCredentials` (`oauth_client_reads.rs`): `(id, name, grant row)` of every token not revoked and
+/// bound to this member. The grant row has the columns `tokenGrantJsonSql` builds (never the token hash).
+pub(super) fn owner_credential_tokens(
+    read: &dyn KvRead,
+    member_id: &str,
+) -> Result<Vec<(String, String, Value)>> {
+    const COLUMNS: [&str; 12] = [
+        "id",
+        "scopes",
+        "permissions",
+        "private_pages",
+        "private_facts",
+        "grant_revision",
+        "source_grant",
+        "source_id",
+        "federated_read",
+        "allowed_operations",
+        "takes_holders",
+        "min_trust",
+    ];
+    Ok(all_tokens(read)?
+        .into_iter()
+        .filter(|t| t.revoked_at.is_none() && t.member_id.as_deref() == Some(member_id))
+        .map(|t| {
+            let whole = t.whole_row();
+            let row: serde_json::Map<String, Value> = COLUMNS
+                .iter()
+                .map(|c| ((*c).to_string(), whole[*c].clone()))
+                .collect();
+            (t.id.clone(), t.name.clone(), Value::Object(row))
+        })
+        .collect())
+}
+
 /// The member-key setup reads and writes of `gbrain access serves several` (`src/core/engine-sql/access-setup.ts`).
 impl Store {
     /// `listUnboundTokenNames()`: the distinct names of the tokens not revoked and bound to no member, in byte order

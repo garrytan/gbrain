@@ -3977,6 +3977,10 @@ export class PGLiteEngine implements BrainEngine {
   async readOauthClient(clientId: string) { return oauthClients.readOauthClient(this, clientId); }
   async listOauthClients() { return oauthClients.listOauthClients(this); }
   async listClientsReferencingSource(sourceId: string) { return collateStoreReads.listClientsReferencingSource(this, sourceId); }
+  async readOwnerCredentials(memberId: string) { return collateStoreReads.readOwnerCredentials(this, memberId); }
+  async insertPinnedQuestion(row: collateStoreReads.PinnedQuestionInsert) { return collateStoreReads.insertPinnedQuestion(this, row); }
+  async readPinnedQuestion(sourceId: string, slug: string) { return collateStoreReads.readPinnedQuestion(this, sourceId, slug); }
+  async listPinnedQuestions(filter: collateStoreReads.PinnedQuestionFilter) { return collateStoreReads.listPinnedQuestions(this, filter); }
   async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }

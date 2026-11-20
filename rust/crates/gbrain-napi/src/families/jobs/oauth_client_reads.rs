@@ -18,4 +18,14 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_clients_referencing_source(&source_id))
     }
+
+    /// `readOwnerCredentials(memberId)`: `{ kind, id, name, row }` of every live client and token bound to the member, in byte order.
+    #[napi]
+    pub fn read_owner_credentials<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_owner_credentials(&member_id))
+    }
 }

@@ -9,3 +9,15 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 
 export const listClientsReferencingSource: Member<'listClientsReferencingSource'> = (brain, sourceId) =>
   storeCall({ member: 'listClientsReferencingSource' }, () => brain.listClientsReferencingSource(sourceId)) as Promise<Awaited<ReturnType<BrainEngine['listClientsReferencingSource']>>>;
+
+export const readOwnerCredentials: Member<'readOwnerCredentials'> = (brain, memberId) =>
+  storeCall({ member: 'readOwnerCredentials' }, () => brain.readOwnerCredentials(memberId)) as Promise<Awaited<ReturnType<BrainEngine['readOwnerCredentials']>>>;
+
+export const insertPinnedQuestion: Member<'insertPinnedQuestion'> = (brain, row) =>
+  storeCall({ member: 'insertPinnedQuestion' }, () => brain.insertPinnedQuestion(row)) as Promise<Awaited<ReturnType<BrainEngine['insertPinnedQuestion']>>>;
+
+export const readPinnedQuestion: Member<'readPinnedQuestion'> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readPinnedQuestion' }, () => brain.readPinnedQuestion(sourceId, slug)) as Promise<Awaited<ReturnType<BrainEngine['readPinnedQuestion']>>>;
+
+export const listPinnedQuestions: Member<'listPinnedQuestions'> = (brain, filter) =>
+  storeCall({ member: 'listPinnedQuestions' }, () => brain.listPinnedQuestions(filter)) as Promise<Awaited<ReturnType<BrainEngine['listPinnedQuestions']>>>;

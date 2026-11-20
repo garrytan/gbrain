@@ -11,6 +11,7 @@ mod health;
 mod insight;
 mod oauth_client_reads;
 mod ops;
+mod pinned_questions;
 mod spend;
 mod spend_log;
 mod status;

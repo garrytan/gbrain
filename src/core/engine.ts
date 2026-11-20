@@ -97,7 +97,7 @@ import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
-import type { SourceClientReferentRow } from './engine-sql/collate-store-reads.ts';
+import type { OwnerCredentialRow, PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow, SourceClientReferentRow } from './engine-sql/collate-store-reads.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
@@ -4567,6 +4567,14 @@ export interface BrainEngine {
   listOauthClients(): Promise<OauthClientRow[]>;
   /** Every OAuth client that references a source (soft-deleted ones too), by client id in byte order (the source-delete guard). */
   listClientsReferencingSource(sourceId: string): Promise<SourceClientReferentRow[]>;
+  /** Every live credential (token not revoked, client not deleted) bound to a member, clients before tokens then by name and id in byte order (guest-source grant preview). */
+  readOwnerCredentials(memberId: string): Promise<OwnerCredentialRow[]>;
+  /** Adds a pinned question; its row, or null when (source_id, slug) already has one. */
+  insertPinnedQuestion(row: PinnedQuestionInsert): Promise<PinnedQuestionRow | null>;
+  /** One pinned question's row, or null. */
+  readPinnedQuestion(sourceId: string, slug: string): Promise<PinnedQuestionRow | null>;
+  /** Pinned questions that pass the filter, by source id in byte order, then creation time and id. */
+  listPinnedQuestions(filter: PinnedQuestionFilter): Promise<PinnedQuestionRow[]>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

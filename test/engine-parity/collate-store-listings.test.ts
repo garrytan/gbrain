@@ -16,10 +16,10 @@
  *  - Why existing coverage misses it: the tests of these readers use keys that sort the same in every locale, and
  *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an
  *    en_US Postgres to see it fail.
- *  - Seam: rows are written with the production writers where one exists (insertPin, insertRetrievalEvents, the
- *    OAuth provider, addMember, bindCredential, setOwner, insertCalibration) and harness-only SQL otherwise
- *    (receipts, weights, plain OAuth clients). Every reader goes through raw SQL, so the Rust arm stops on its
- *    raw_sql refusal.
+ *  - Seam: rows are written through typed engine members where one exists (insertPinnedQuestion, insertOauthClient,
+ *    insertAccessMember, insertDecideCalibration, insertDecideReceipts, putPage) and harness-only SQL otherwise (weights,
+ *    event links, fence-repair and chronicle rows, held pages). A case that still seeds or reads through raw SQL stops on
+ *    the Rust arm's raw_sql refusal.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,11 +39,9 @@ import { readMissingTables } from '../../src/core/schema-missing-tables.ts';
 import { readBudgetLimited } from '../../src/core/held-embedding.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
 import { inspectSharedMemberMigration } from '../../src/core/shared-skills/migration-members.ts';
-import { addMember, bindCredential } from '../../src/core/access/members.ts';
+import { addMember } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { ownerCredentials } from '../../src/core/guests/owner-credentials.ts';
-import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
-import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, byteOrder, MIXED_IDS, MIXED_SLUGS } from '../helpers/byte-order.ts';
@@ -53,11 +51,6 @@ const { parityTest } = parityArms(testBackends());
 /** Source ids (lower case, digits and `-` only): en_US sorts them `a0, ab, a-z`; bytes put `a-z` first. */
 const MIXED_SOURCES = ['ab', 'a0', 'a-z'];
 const BYTE_SOURCES = byteOrder(MIXED_SOURCES);
-
-const provider = (engine: BrainEngine) => new GBrainOAuthProvider({
-  sql: sqlQueryForEngine(engine),
-  transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
-});
 
 /** Rows sorted field by field by UTF-8 bytes (the order `ORDER BY a, b, c COLLATE "C"` gives). */
 const byteRows = (rows: string[][]) => [...rows].sort((x, y) => {
@@ -140,7 +133,7 @@ describe('store listings come out by byte', () => {
     expect(event?.links.map(l => [l.source_id, l.edge_key, l.to_slug])).toEqual(byteRows(rows));
   });
 
-  parityTest('listPins lists pinned questions by byte of source id', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('listPins lists pinned questions by byte of source id', { methods: ['insertPinnedQuestion', 'listPinnedQuestions'] }, async (engine, backend) => {
     await seedSources(engine, backend);
     for (const sourceId of MIXED_SOURCES) {
       await insertPin(engine, {
@@ -150,22 +143,17 @@ describe('store listings come out by byte', () => {
     expect((await listPins(engine)).map(p => p.source_id)).toEqual(BYTE_SOURCES);
   });
 
-  parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['executeRaw', 'getConfig', 'setConfig', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['insertAccessMember', 'readAccessMembers', 'getConfig', 'setConfig', 'insertOauthClient', 'readOwnerCredentials'] }, async (engine) => {
     await addMember(engine, 'owner-example');
     await setOwner(engine, 'owner-example');
-    for (const name of MIXED_SLUGS) {
-      const { clientId } = await provider(engine).registerClientManual(name, ['client_credentials'], 'read write', [], 'default', ['default']);
-      await bindCredential(engine, { kind: 'client', id: clientId }, { member: 'owner-example' });
-    }
+    for (const name of MIXED_SLUGS) await engine.insertOauthClient({ client_id: `client-${name}`, client_name: name, member_id: 'owner-example' });
     expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.name)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['executeRaw', 'getConfig', 'setConfig'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['insertAccessMember', 'readAccessMembers', 'getConfig', 'setConfig', 'insertOauthClient', 'readOwnerCredentials'] }, async (engine) => {
     await addMember(engine, 'owner-example');
     await setOwner(engine, 'owner-example');
-    for (const id of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ($1, 'same-name', 'owner-example')`, [id]);
-    }
+    for (const id of MIXED_SLUGS) await engine.insertOauthClient({ client_id: id, client_name: 'same-name', member_id: 'owner-example' });
     expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
   });
 

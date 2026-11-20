@@ -784,6 +784,39 @@ SELECT source_id, type FROM pairs`],
      WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
        AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
      ORDER BY f.source_id COLLATE "C", f.id`],
+    from: 'src/core/guests/owner-credentials.ts:72 ownerCredentials, at dded7edc51',
+    case: { method: 'readOwnerCredentials', variant: 'default', run: e => e.readOwnerCredentials('owner-example') },
+    texts: [`SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, jsonb_build_object('id', t.id, 'scopes', t.scopes, 'permissions', t.permissions, 'private_pages', t.private_pages, 'private_facts', t.private_facts, 'grant_revision', t.grant_revision, 'source_grant', t.source_grant, 'source_id', t.source_id, 'federated_read', t.federated_read, 'allowed_operations', t.allowed_operations, 'takes_holders', t.takes_holders, 'min_trust', t.min_trust) AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE "C", name COLLATE "C", id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/questions/store.ts:130 insertPin, at dded7edc51',
+    case: { method: 'insertPinnedQuestion', variant: 'default', run: e => e.insertPinnedQuestion({ sourceId: 'default', slug: 'q', question: 'q?', scopeSlugPrefix: null, scopeEntity: null, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 'owner' }) },
+    texts: [`INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (source_id, slug) DO NOTHING RETURNING id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at`],
+  },
+  {
+    from: 'src/core/questions/store.ts:99 getPin (no row lock), at dded7edc51',
+    case: { method: 'readPinnedQuestion', variant: 'default', run: e => e.readPinnedQuestion('default', 'q') },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = $1 AND slug = $2`],
+  },
+  {
+    from: 'src/core/questions/store.ts:104 listPins, one statement for every filter combination (the old text was composed from the filters)',
+    case: { method: 'listPinnedQuestions', variant: 'default', run: e => e.listPinnedQuestions({}) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions
+   WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[]))
+     AND ($2::text[] IS NULL OR state = ANY($2::text[]))
+     AND ($3::boolean OR $2::text[] IS NOT NULL OR state <> 'archived')
+   ORDER BY source_id COLLATE "C", created_at, id`],
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
