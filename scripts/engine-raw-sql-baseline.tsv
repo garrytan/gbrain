@@ -285,11 +285,10 @@ src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	9
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
-src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
 src/core/chronicle/ledger.ts	execute_raw	9
-src/core/chronicle/publish.ts	execute_raw	4
+src/core/chronicle/publish.ts	execute_raw	2
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
@@ -453,7 +452,6 @@ src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
-src/core/generations/adapters/chronicle-events.ts	execute_raw	13
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	3

@@ -102,6 +102,20 @@ size is the segmented body's byte count, or the byte length of `compiled_truth` 
 that hold `content`, and keeps one whose `activationId` is absent or names an activated activation. Rows come in slug
 byte order; the SQL has no `ORDER BY`, and the callers fold the rows into a set.
 
+The Life Chronicle reads (`generations/chronicle_events.rs`, the members of `engine-sql/chronicle-events.ts`) add no
+keys. `readChronicleDepthRow` reads the page record of one slug (`{ id, live }`, or null when no record has the slug);
+`pageSlugExists` is true for a deleted page too. `listRetiredGenerationItemKeys` reads the ledger rows of the source and
+kind and keeps the listed item keys any of them recorded as `retired`, once each. `listLiveGenerationItems` reads the
+live row of one key and its items, retired items left out, as `{ item_key, identity_hash }` in key order.
+`listPageContentHashes` reads `ids` (deleted pages included, other sources left out) or `live_slugs` (deleted pages
+left out). `listOrphanedChronicleOwners` keeps the live rows of the kind whose depth page (the owner key past
+`depth:`) has no live record and that hold at least one live item page, oldest `updated_at` first, then id, up to the
+limit; a negative limit refuses `INVALID_ARGUMENT` as Postgres refuses `LIMIT -1`. `listChronicleEventSlotRows` reads
+`frontmatter.event` `when`, `where` and `kind` as text (deleted pages included) in slug byte order; the SQL has no
+`ORDER BY`, and the caller folds the rows into a map. The chronicle ledger (`chronicle_page_state`) has no store yet:
+`listChronicleOwnedHashes` answers no hash and `hasChronicleSkipDecision` false, which is what a SQL brain answers for a
+page the ledger holds nothing for. The four projection members are in `timeline_queries.md`.
+
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).
 

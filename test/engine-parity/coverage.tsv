@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 754/754
+# covered: 767/767
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -19,7 +19,7 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 19/19
+# timeline: 23/23
 # ontology: 4/4
 # raw_files: 5/5
 # takes: 24/24
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 12/12
-# persistence_journal: 109/109
+# persistence_journal: 118/118
 # entity_reads: 6/6
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -80,18 +80,18 @@ transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	107	yes	yes	yes	serves
-readPageSnapshot	pages	yes	28	no	yes	yes	serves
+readPageSnapshot	pages	yes	30	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	409	yes	yes	yes	serves
+putPage	pages	yes	412	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	116	yes	yes	yes	serves
+softDeletePage	pages	yes	119	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
-restorePage	pages	yes	9	yes	yes	yes	serves
+restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
 listPages	pages	yes	8	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
@@ -259,9 +259,13 @@ getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
 getLastSeen	timeline	yes	5	no	yes	yes	serves
-upsertEventProjection	timeline	yes	19	no	yes	yes	serves
+upsertEventProjection	timeline	yes	21	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
+listEventProjectionRows	timeline	yes	3	no	yes	yes	serves
+readEventProjectionId	timeline	yes	1	no	yes	yes	serves
+deleteEventProjections	timeline	yes	3	no	yes	yes	serves
+restoreEventProjection	timeline	yes	1	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -418,6 +422,15 @@ readGenerationFenceBlocks	persistence_journal	yes	3	no	yes	yes	serves
 listOwnedGenerationItems	persistence_journal	yes	2	no	yes	yes	serves
 readLiveGenerationId	persistence_journal	yes	1	no	yes	yes	serves
 readGenerationPageRows	persistence_journal	yes	4	no	yes	yes	serves
+readChronicleDepthRow	persistence_journal	yes	3	no	yes	yes	serves
+listChronicleOwnedHashes	persistence_journal	yes	3	no	yes	yes	serves
+listRetiredGenerationItemKeys	persistence_journal	yes	3	no	yes	yes	serves
+listPageContentHashes	persistence_journal	yes	3	no	yes	yes	serves
+listLiveGenerationItems	persistence_journal	yes	3	no	yes	yes	serves
+pageSlugExists	persistence_journal	yes	2	no	yes	yes	serves
+hasChronicleSkipDecision	persistence_journal	yes	1	no	yes	yes	serves
+listOrphanedChronicleOwners	persistence_journal	yes	3	no	yes	yes	serves
+listChronicleEventSlotRows	persistence_journal	yes	3	no	yes	yes	serves
 readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves

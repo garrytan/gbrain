@@ -2,6 +2,7 @@ file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/alias-fanout-reads.test.ts	10	0
 test/engine-parity/alias-trust.test.ts	5	0
+test/engine-parity/chronicle-publish-parity.test.ts	2	1
 test/engine-parity/chunk-reads.test.ts	11	0
 test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0

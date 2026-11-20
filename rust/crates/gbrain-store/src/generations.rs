@@ -64,11 +64,16 @@ use std::collections::BTreeSet;
 
 mod activations;
 mod atom_reads;
+mod chronicle_events;
 mod fence_evidence;
 mod fence_restore;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
+pub use chronicle_events::{
+    ChronicleSlugSpec, ChronicleSlugsSpec, OrphanedOwnersSpec, PageContentHashQuery,
+    RetiredItemKeysSpec,
+};
 pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 

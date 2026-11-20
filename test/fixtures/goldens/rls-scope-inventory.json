@@ -2035,6 +2035,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasChronicleSkipDecision#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "hasClaimableWrite#default": {
         "flagOffLanes": [
           "pool"
@@ -2350,6 +2361,28 @@
         ],
         "flagOnScopes": []
       },
+      "listChronicleEventSlotRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listChronicleOwnedHashes#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChunklessPagesWithContent#afterPageId+sourceId": {
         "flagOffLanes": [
           "pool"
@@ -2486,6 +2519,17 @@
         "flagOnScopes": []
       },
       "listEnrichCandidates#sourceIds+reenrich": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEventProjectionRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2755,6 +2799,17 @@
           "src-a,src-b"
         ]
       },
+      "listLiveGenerationItems#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listLocalPathSources#default": {
         "flagOffLanes": [
           "pool"
@@ -2766,7 +2821,40 @@
         ],
         "flagOnScopes": []
       },
+      "listOrphanedChronicleOwners#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listOwnedGenerationItems#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPageContentHashes#ids": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPageContentHashes#live-slugs": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3050,6 +3138,17 @@
         "flagOnScopes": []
       },
       "listRestorableGenerationRows#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listRetiredGenerationItemKeys#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3546,6 +3645,17 @@
         ],
         "flagOnScopes": []
       },
+      "pageSlugExists#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "parkEffectRow#default": {
         "flagOffLanes": [
           "pool"
@@ -3692,6 +3802,17 @@
         ],
         "flagOnScopes": []
       },
+      "readChronicleDepthRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readCurrentWriteTrust#default": {
         "flagOffLanes": [
           "tx"
@@ -3744,6 +3865,17 @@
         "flagOnScopes": [
           "*"
         ]
+      },
+      "readEventProjectionId#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "readExtractionLagCounts#default": {
         "flagOffLanes": [
@@ -5800,6 +5932,7 @@
         "deleteCycleLock": "none",
         "deleteCycleLockIfStale": "none",
         "deleteEvalCandidatesBefore": "none",
+        "deleteEventProjections": "none",
         "deleteFactRelinkMemos": "none",
         "deleteFactsForPage": "none",
         "deleteJobAttachment": "none",
@@ -5910,6 +6043,7 @@
         "getWorktreeBinding": "none",
         "getWriteGateHoldRow": "none",
         "hasBodylessPageVersion": "none",
+        "hasChronicleSkipDecision": "none",
         "hasClaimableWrite": "none",
         "hasCodeEdgesSymbol": "none",
         "hasCompanyBrainReceipt": "none",
@@ -5970,6 +6104,8 @@
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
+        "listChronicleEventSlotRows": "none",
+        "listChronicleOwnedHashes": "none",
         "listChunklessPagesWithContent": "direct",
         "listCompactableReceipts": "none",
         "listConfigKeys": "none",
@@ -5986,6 +6122,7 @@
         "listEnrichCandidates": "none",
         "listEvalCandidates": "none",
         "listEvalCaptureFailures": "none",
+        "listEventProjectionRows": "none",
         "listExactIdentityCandidates": "none",
         "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
@@ -6026,15 +6163,18 @@
         "listLinkEndpointPages": "none",
         "listLinkPageMetadata": "none",
         "listLinkSources": "direct",
+        "listLiveGenerationItems": "none",
         "listLivePageSummaries": "none",
         "listLocalPathSources": "none",
         "listManagedRootBindings": "none",
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",
         "listOriginClaims": "none",
+        "listOrphanedChronicleOwners": "none",
         "listOutsideContentFenceCounts": "none",
         "listOwnedGenerationItems": "none",
         "listOwnedPrivateQueues": "none",
+        "listPageContentHashes": "none",
         "listPageStatusByRef": "none",
         "listPages": "direct",
         "listPagesTitledIn": "none",
@@ -6056,6 +6196,7 @@
         "listRestatedPrivateCopies": "none",
         "listRestorableGenerationRows": "none",
         "listRetiredDeactivations": "none",
+        "listRetiredGenerationItemKeys": "none",
         "listSessionFactTwins": "none",
         "listSessionFactsForClassification": "none",
         "listSharedSkillPackRoots": "none",
@@ -6160,6 +6301,7 @@
         "ownsSchemaTables": "none",
         "pageAwaitsRederive": "none",
         "pageCollapseFacts": "none",
+        "pageSlugExists": "none",
         "pagesLinkingTo": "none",
         "parkEffectRow": "none",
         "pauseJob": "none",
@@ -6196,6 +6338,7 @@
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
         "readChildCompletions": "none",
+        "readChronicleDepthRow": "none",
         "readChunkVectorColumn": "none",
         "readClientOpUsage": "none",
         "readCounterRows": "none",
@@ -6207,6 +6350,7 @@
         "readEmbeddingCompletion": "none",
         "readEmbeddingIdentity": "none",
         "readEmbeddingStateCounts": "direct",
+        "readEventProjectionId": "none",
         "readExactSnippetChunks": "none",
         "readExtractionLagCounts": "none",
         "readFactCacheWatermark": "none",
@@ -6357,6 +6501,7 @@
         "resolveSlugsByPaths": "none",
         "resolveStrandedParents": "none",
         "resolveTake": "none",
+        "restoreEventProjection": "none",
         "restoreFactPreimage": "none",
         "restorePage": "none",
         "resumeJob": "none",

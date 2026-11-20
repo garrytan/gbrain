@@ -2,6 +2,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as DerivationTrustSql from './engine-sql/derivation-trust.ts';
+import type * as ChronicleEventsSql from './engine-sql/chronicle-events.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
@@ -3489,6 +3490,24 @@ export interface BrainEngine {
   readLiveGenerationId(key: GenerationRowKey): Promise<{ id: number | string } | null>;
   /** The page rows a page generation adapter reads, deleted rows included, by slug (engine-sql/generation-page-rows.ts). */
   readGenerationPageRows(query: GenerationPageRowsQuery): Promise<GenerationPageRow[]>;
+  /**
+   * The Life Chronicle event statements (engine-sql/chronicle-events.ts): the depth page row, the ledger's owned event
+   * hashes and skip decisions, the chronicle items a generation retired or holds live, the event projection rows (read,
+   * deleted, restored), page content hashes and event slot fields, and the live generations whose depth page is gone.
+   */
+  readChronicleDepthRow(sourceId: string, slug: string): Promise<ChronicleEventsSql.ChronicleDepthRow | null>;
+  listChronicleOwnedHashes(sourceId: string, pageId: number): Promise<string[]>;
+  listRetiredGenerationItemKeys(sourceId: string, kind: string, itemKeys: readonly string[]): Promise<string[]>;
+  listEventProjectionRows(eventPageIds: readonly number[]): Promise<ChronicleEventsSql.EventProjectionRow[]>;
+  listPageContentHashes(query: ChronicleEventsSql.PageContentHashQuery): Promise<ChronicleEventsSql.PageContentHashRow[]>;
+  listLiveGenerationItems(key: GenerationRowKey): Promise<Array<{ item_key: string; identity_hash: string }>>;
+  readEventProjectionId(eventPageId: number, date: string): Promise<number | null>;
+  pageSlugExists(sourceId: string, slug: string): Promise<boolean>;
+  deleteEventProjections(sourceId: string, slugs: readonly string[]): Promise<void>;
+  restoreEventProjection(row: ChronicleEventsSql.EventProjectionRestore): Promise<void>;
+  hasChronicleSkipDecision(decision: ChronicleEventsSql.ChronicleSkipDecision): Promise<boolean>;
+  listOrphanedChronicleOwners(sourceId: string, kind: string, limit: number): Promise<string[]>;
+  listChronicleEventSlotRows(sourceId: string, slugs: readonly string[]): Promise<ChronicleEventsSql.ChronicleEventSlotRow[]>;
   /** The atom adapter's reads (engine-sql/generation-atom-reads.ts): a live page origin's input pin, the stored versions a producer wrote, committed managed atom receipts. */
   readAtomOriginInput(sourceId: string, slug: string): Promise<AtomOriginInputRow | null>;
   listProducerVersionRows(sourceId: string, slugs: readonly string[], producer: GenerationVersionProducer): Promise<ProducerVersionRow[]>;

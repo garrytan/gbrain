@@ -175,6 +175,7 @@ import * as generationLedgerImpl from './engine-sql/generation-ledger.ts';
 import * as generationActivationsImpl from './engine-sql/generation-activations.ts';
 import * as generationRepairImpl from './engine-sql/generation-repair.ts';
 import * as generationFenceEvidenceImpl from './engine-sql/generation-fence-evidence.ts';
+import * as chronicleEventsImpl from './engine-sql/chronicle-events.ts';
 import * as generationPageRowsImpl from './engine-sql/generation-page-rows.ts';
 import * as generationAtomReadsImpl from './engine-sql/generation-atom-reads.ts';
 import * as generationFenceRestoreImpl from './engine-sql/generation-fence-restore.ts';
@@ -1295,6 +1296,19 @@ export class PostgresEngine implements BrainEngine {
   hasBodylessPageVersion(sourceId: string, slug: string) { return generationFenceEvidenceImpl.hasBodylessPageVersion(this.executeRaw.bind(this), sourceId, slug); }
   listFenceVersionBodies(sourceId: string, slug: string, before: number | null, limit: number) { return generationFenceEvidenceImpl.listFenceVersionBodies(this.executeRaw.bind(this), sourceId, slug, before, limit); }
   moveKeptFactRows(sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]) { return generationFenceEvidenceImpl.moveKeptFactRows(this.executeRaw.bind(this), sourceId, slug, ids, claimed); }
+  readChronicleDepthRow(sourceId: string, slug: string) { return chronicleEventsImpl.readChronicleDepthRow(this.executeRaw.bind(this), sourceId, slug); }
+  listChronicleOwnedHashes(sourceId: string, pageId: number) { return chronicleEventsImpl.listChronicleOwnedHashes(this.executeRaw.bind(this), sourceId, pageId); }
+  listRetiredGenerationItemKeys(sourceId: string, kind: string, itemKeys: readonly string[]) { return chronicleEventsImpl.listRetiredGenerationItemKeys(this.executeRaw.bind(this), sourceId, kind, itemKeys); }
+  listEventProjectionRows(eventPageIds: readonly number[]) { return chronicleEventsImpl.listEventProjectionRows(this.executeRaw.bind(this), eventPageIds); }
+  listPageContentHashes(query: chronicleEventsImpl.PageContentHashQuery) { return chronicleEventsImpl.listPageContentHashes(this.executeRaw.bind(this), query); }
+  listLiveGenerationItems(key: generationsImpl.GenerationRowKey) { return chronicleEventsImpl.listLiveGenerationItems(this.executeRaw.bind(this), key); }
+  readEventProjectionId(eventPageId: number, date: string) { return chronicleEventsImpl.readEventProjectionId(this.executeRaw.bind(this), eventPageId, date); }
+  pageSlugExists(sourceId: string, slug: string) { return chronicleEventsImpl.pageSlugExists(this.executeRaw.bind(this), sourceId, slug); }
+  deleteEventProjections(sourceId: string, slugs: readonly string[]) { return chronicleEventsImpl.deleteEventProjections(this.executeRaw.bind(this), sourceId, slugs); }
+  restoreEventProjection(row: chronicleEventsImpl.EventProjectionRestore) { return chronicleEventsImpl.restoreEventProjection(this.executeRaw.bind(this), row); }
+  hasChronicleSkipDecision(decision: chronicleEventsImpl.ChronicleSkipDecision) { return chronicleEventsImpl.hasChronicleSkipDecision(this.executeRaw.bind(this), decision); }
+  listOrphanedChronicleOwners(sourceId: string, kind: string, limit: number) { return chronicleEventsImpl.listOrphanedChronicleOwners(this.executeRaw.bind(this), sourceId, kind, limit); }
+  listChronicleEventSlotRows(sourceId: string, slugs: readonly string[]) { return chronicleEventsImpl.listChronicleEventSlotRows(this.executeRaw.bind(this), sourceId, slugs); }
   readGenerationFenceBlocks(generationIds: readonly number[]) { return generationFenceRestoreImpl.readGenerationFenceBlocks(this.executeRaw.bind(this), generationIds); }
   listOwnedGenerationItems(generationIds: readonly number[]) { return generationFenceRestoreImpl.listOwnedGenerationItems(this.executeRaw.bind(this), generationIds); }
   readLiveGenerationId(key: generationsImpl.GenerationRowKey) { return generationFenceRestoreImpl.readLiveGenerationId(this.executeRaw.bind(this), key); }
