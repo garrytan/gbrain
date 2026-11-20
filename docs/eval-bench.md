@@ -19,7 +19,9 @@ MAIN's copy in CI so a PR can't self-approve a regression.
 
 ## Recorded experiments, including negative results
 
-Before repeating an approach, read its measured outcome and limitations:
+Before repeating an approach, read its measured outcome and limitations. Every
+experiment, eval, pilot and trial since November 2026 has a page in
+[research/README.md](research/README.md); the older ones are below.
 
 - [Answer-evidence packets: did not help](eval/ANSWER_PACKET_RESULTS.md).
   Query-selected conversational excerpts over fixed retrieved sessions produced
