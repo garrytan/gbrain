@@ -460,11 +460,14 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       warnLikePglite: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && likePglite(c)).map((c) => c.name)),
       // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
+      // Checks a refused read stopped (they warn with the typed refusal, health unknown).
+      typedRefusals: sorted(checks.filter((c) => TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
       fail: [],
       // default_source_local_path, frontmatter_repairable and image_assets are gone from this list: the sources reads
       // are typed members Rust serves, so those checks run on a Rust brain too.
-      onlyPglite: ['pglite_scale'],
+      // pglite_scale is gone from this list: a Rust brain is one local file too, so it reports the same page threshold.
+      onlyPglite: [],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
       // The git and managed-sync checks (canonical_content_writes, checkout_lagging, commits_outside_source_root,
@@ -494,8 +497,18 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
       // warns on both engines: the fixture's pages are file-backed and the default source has no local path.
-      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
+      // timeline_coverage warns on both engines: the fixture's entity pages are 73% covered, which the store now counts.
+      // embedding_column_registry warns on both engines: the active column holds no vector, which the store now counts.
+      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_column_registry', 'embedding_provider',
+        'pack_upgrade_available', 'timeline_coverage'],
       okWhileRefused: [],
+      // credential_projection_pending is gone from this list: listCredentialResealHoldRows answers a Rust brain's holds
+      // (none: only the credential re-seal migration writes them, through executeRaw).
+      // person_title_duplicates is gone from this list: the stub, candidate, retirement and link-count reads are typed
+      // members the store answers, so it reports what PGLite reports.
+      // unwithdrawn_facts stays refused: the store writes facts-fence generations, so listUnwithdrawnFacts is not
+      // answered with no row; it stays unserved until the store reads the generation tables.
+      typedRefusals: ['unwithdrawn_facts'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

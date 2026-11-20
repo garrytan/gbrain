@@ -189,8 +189,9 @@ pub(crate) fn stamp_revision(
         None if actor.principal_kind.is_some() => ActorColumns::of(&actor),
         None => supplied.clone(),
         Some((_, revision)) if revision != new_revision => ActorColumns::of(&actor),
-        Some((stored, _)) if !stored.is_empty() => stored.clone(),
-        Some(_) => supplied.clone(),
+        // No page write sets the `revision_*` columns itself, so an unchanged revision keeps the
+        // stored writer, NULLs included; the record's copy can be stale (a second write in one call).
+        Some((stored, _)) => stored.clone(),
     })
 }
 

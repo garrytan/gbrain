@@ -200,10 +200,11 @@ impl Store {
         Ok(out)
     }
 
-    /// `countPurgedPageFacts`, as the `purged` flag of each counted fact (at most `limit`, by (source, id)): a fact that
-    /// no ledger row can mark evidenced, so the flag is false. The facts: active, filed on no page, written by a page
-    /// extraction path, whose context head is a slug (not empty, no whitespace) that no page holds (a soft-deleted page
-    /// holds it), with a `/` in the head, and neither withdrawn, superseded, replaced by another fact nor named by a loop.
+    /// `countPurgedPageFacts`, as the `purged` flag of each counted fact (at most `limit`, by (source, id)): true when a
+    /// purge ledger row of the source names the context head at or after the fact was written. The facts: active,
+    /// filed on no page, written by a page extraction path, whose context head is a slug (not empty, no whitespace)
+    /// that no page holds (a soft-deleted page holds it), with a `/` in the head or a purge ledger row, and neither
+    /// withdrawn, superseded, replaced by another fact nor named by a loop.
     pub fn count_purged_page_facts(&self, args: &PurgedArgs) -> Result<Vec<bool>> {
         let op = "countPurgedPageFacts";
         for source in &args.source_ids {

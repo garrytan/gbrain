@@ -3,7 +3,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the three statements that spliced a constant (`TOMBSTONE`, `LIVE_TOMBSTONE`, `identityDowngradeOpen('p')`)
- *    equal the text those readers composed before the constant was inlined, and no member lists a name the engine lacks.
+ *    equal the text those readers composed before the constant was inlined, the credential re-chunk hold read equals
+ *    the text readCredentialResealHolds composed with its chunker generation bound as $1, and no member lists a name
+ *    the engine lacks.
  *  - Regression: a drifted inlined predicate changes which parks and downgrade records doctor reports on PGLite and Postgres.
  *  - Why existing coverage misses it: the parity cases compare engines on an empty brain, not the text against the old builder.
  *  - Seam: none (pure).
@@ -16,6 +18,10 @@ import { TOMBSTONE } from '../src/core/persistence/derived-origin-hold.ts';
 import { LIVE_TOMBSTONE } from '../src/core/persistence/purge-parks.ts';
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
+import { LIST_CREDENTIAL_RESEAL_HOLD_ROWS_SQL } from '../src/core/engine-sql/doctor-checkpoints.ts';
+import {
+  CREDENTIAL_RESEAL_HOLD_OP, CREDENTIAL_RESEAL_HOLD_PAGES, CREDENTIAL_RESEAL_LIVE_HOLD, CREDENTIAL_RESEAL_PRODUCER,
+} from '../src/core/page-state/credential-reseal.ts';
 
 describe('doctor checkpoint SQL text', () => {
   test('derived-origin parks: the statement readDerivedOriginParks composed', () => {
@@ -35,6 +41,13 @@ describe('doctor checkpoint SQL text', () => {
       WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
         AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
       ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`);
+  });
+
+  test('credential re-chunk holds: the statement readCredentialResealHolds composed, with the producer bound as $1', () => {
+    const composed = `SELECT h.completed_keys->0 AS hold, p.body_storage IS NOT DISTINCT FROM 'segmented' AS segmented
+    FROM ${CREDENTIAL_RESEAL_HOLD_PAGES} WHERE h.op='${CREDENTIAL_RESEAL_HOLD_OP}' AND ${CREDENTIAL_RESEAL_LIVE_HOLD} AND ($2::text[] IS NULL OR p.source_id=ANY($2::text[])) ORDER BY p.id`;
+    expect(LIST_CREDENTIAL_RESEAL_HOLD_ROWS_SQL).toBe(composed.replace(`= '${CREDENTIAL_RESEAL_PRODUCER}'`, '= $1'));
+    expect(LIST_CREDENTIAL_RESEAL_HOLD_ROWS_SQL).not.toContain(CREDENTIAL_RESEAL_PRODUCER);
   });
 
   test('every listed member is a classified engine member, once', () => {

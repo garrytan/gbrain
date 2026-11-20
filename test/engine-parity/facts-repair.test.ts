@@ -12,16 +12,17 @@
  *    so each read has to exist as a typed method it can implement or refuse. The Rust store serves nine of the ten:
  *    the four that read only `facts` and `pages`, closedLoopWithActiveFact and loopFactDrift over its open loops,
  *    countLabelFacts, listExtractorFactsForClassification (with the receipt off the write journal) and
- *    countPurgedPageFacts; listUnwithdrawnFacts stops on the typed refusal (rust/docs/store/facts.md).
+ *    countPurgedPageFacts (with the purge ledger); listUnwithdrawnFacts stops on the typed refusal (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: none. Every fact, page, loop and withdrawal is seeded through the typed members. The tables behind
- *    persistence_requests receipts, page_purges and derived_generations have no typed writer on the engine, so those
- *    cases seed the facts the statement joins from and assert the answer an empty table gives. Generated values
- *    (ids) are compared by relation, never by value.
+ *  - Seam: every fact, page, loop and withdrawal is seeded through the typed members. The page_purges ledger has no
+ *    typed writer on the engine, so its case seeds it through the harness fixture `recordPagePurge` (the Rust store's
+ *    writer, plain SQL on the others). The tables behind persistence_requests receipts and derived_generations have no
+ *    typed writer either, so those cases seed the facts the statement joins from and assert the answer an empty table
+ *    gives. Generated values (ids) are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, recordPagePurge } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { METADATA_LABELS } from '../../src/core/conversation-parser/builtins.ts';
@@ -400,6 +401,34 @@ describe('engine parity: group 5 facts repair statements', () => {
       elsewhere: { evidenced: 0, ambiguous: 0, capped: false },
     });
     return { counted, atCap, under, none, elsewhere };
+  });
+
+  parityTest('countPurgedPageFacts counts a fact as evidenced when the purge ledger names its page after it was written', {
+    methods: ['insertFact', 'countPurgedPageFacts'],
+  }, async (engine, backend) => {
+    const at = (text: string, context: string) => fact(engine, text, { source: 'mcp:put_page', context });
+    await at('purged after', 'gone/purged \u2014 a note');
+    await at('bare purged after', 'bare');
+    await at('bare never purged', 'other');
+    await recordPagePurge(engine, backend, 'default', ['h1'], 'gone/purged', null);
+    await recordPagePurge(engine, backend, 'default', ['h2'], 'bare', null);
+    await recordPagePurge(engine, backend, 'default', ['h3'], 'gone/early', null);
+    await recordPagePurge(engine, backend, 'default', ['h4'], 'early', null);
+    // A purge in another source is no evidence for a fact of this one.
+    await createSource(engine, backend, 'other');
+    await recordPagePurge(engine, backend, 'other', ['h5'], 'other', null);
+    // Written after the purge: the ledger row is no evidence for these.
+    await at('slash written after the purge', 'gone/early');
+    await at('bare written after the purge', 'early');
+    const counted = await engine.countPurgedPageFacts(['default'], 10);
+    const capped = await engine.countPurgedPageFacts(['default'], 1);
+    const elsewhere = await engine.countPurgedPageFacts(['other'], 10);
+    const total = (c: { evidenced: number; ambiguous: number }) => c.evidenced + c.ambiguous;
+    expect({ counted, capped: { total: total(capped), capped: capped.capped }, elsewhere }).toEqual({
+      counted: { evidenced: 2, ambiguous: 1, capped: false }, capped: { total: 1, capped: true },
+      elsewhere: { evidenced: 0, ambiguous: 0, capped: false },
+    });
+    return { counted, capped: { total: total(capped), capped: capped.capped }, elsewhere };
   });
 
   parityTest('countPurgedPageFacts counts no fact of a page that was never purged', { methods: ['putPage', 'insertFacts', 'countPurgedPageFacts'] }, async (engine) => {

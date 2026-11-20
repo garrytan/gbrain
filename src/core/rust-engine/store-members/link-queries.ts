@@ -5,7 +5,7 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, entityFeatureCoverage, countDatedMeetingPages, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
  * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
@@ -439,6 +439,23 @@ export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { enti
       () => brain.entityGraphCoverage({ filter }));
     return { entities: Number(r.entities), connected: Number(r.connected), withTimeline: Number(r.withTimeline) };
   };
+
+/**
+ * How many live unquarantined entity pages there are and how many have an inbound link or a timeline entry. The store
+ * reads every page, so it has no sample to draw: a `samplePercent` refuses.
+ */
+export const entityFeatureCoverage: StoreMember<[filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }], { sampleSize: number; matched: number }> =
+  async (brain, filter, feature, opts) => {
+    if (opts?.samplePercent !== undefined) refuseMember('entityFeatureCoverage', 'a TABLESAMPLE percent (the store reads every page)');
+    if (feature !== 'links' && feature !== 'timeline') refuseMember('entityFeatureCoverage', `the feature ${String(feature)}`);
+    const r: { sampleSize: number; matched: number } = await storeCall({ member: 'entityFeatureCoverage' },
+      () => brain.entityFeatureCoverage({ filter, feature }));
+    return { sampleSize: Number(r.sampleSize), matched: Number(r.matched) };
+  };
+
+/** Live meeting pages with an effective date. */
+export const countDatedMeetingPages: StoreMember<[], number> =
+  async (brain) => Number(await storeCall({ member: 'countDatedMeetingPages' }, () => brain.countDatedMeetingPages()));
 
 /** Links of the page whose other end is in another source. */
 export const countForeignEdges: StoreMember<[slug: string, sourceId: string, direction: 'in' | 'out' | 'both'], number> =

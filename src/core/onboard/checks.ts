@@ -12,17 +12,15 @@
 // Each helper is shaped: compute metric → return both Check entry (for
 // doctor render) and RemediationStep[] (for onboard's extra-remediation
 // plumbing per A2). Helpers stay PURE wrt config: no engine.connect, no
-// process.exit. SQL via engine.executeRaw with `sourceScopeOpts(ctx)`
-// when ctx threads — onboard surface threads explicitly per A26.
+// process.exit. Reads go through typed engine members (countEntityPages,
+// entityFeatureCoverage, countDatedMeetingPages) or executeRaw.
 
 import { embedBackfillFix } from '../embed-consent.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
-import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
-import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from '../engine-sql/fragment.ts';
-import { entityTypePredicateSql, resolveEntityTypes, type EntityTypeFilter, type EntityTypeResolution } from '../schema-pack/entity-types.ts';
+import { resolveEntityTypes, type EntityTypeFilter, type EntityTypeResolution } from '../schema-pack/entity-types.ts';
 import type { Action } from '../agent-output.ts';
 import { embeddingEnablement, type ReadinessState } from '../readiness.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
@@ -47,27 +45,6 @@ export interface OnboardCheckResult {
   remediations: RemediationStep[];
 }
 
-/** Internal sql helper. Returns first row or empty object on throw. */
-async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = []): Promise<number> {
-  try {
-    const result = await engine.executeRaw(sql, params);
-    const rows = (result as { rows?: Array<Record<string, unknown>> } | undefined)?.rows
-      ?? (result as Array<Record<string, unknown>> | undefined)
-      ?? [];
-    const row = rows[0] ?? {};
-    const raw = (row as Record<string, unknown>).count ?? (row as Record<string, unknown>).c ?? 0;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** #4772: a live, visible page whose type the active pack(s) declare as an entity, per source (the get_health predicate). */
-function visibleEntityPredicate(filter: EntityTypeFilter): SqlFragment {
-  return sqlFragment`${entityTypePredicateSql('p', filter)} AND p.deleted_at IS NULL AND ${trustedSql(QUARANTINE_FILTER_FRAGMENT)}`;
-}
-
 /**
  * A pack in scope did not load, so the entity population is unknown: a warn
  * with `entity_types_unavailable`, never a coverage read over an empty or
@@ -87,10 +64,16 @@ function entityTypesUnavailableResult(name: string, resolution: Extract<EntityTy
   };
 }
 
-/** Count the visible entity pages under `filter`. */
-async function countVisibleEntities(engine: BrainEngine, filter: EntityTypeFilter): Promise<number> {
-  const sql = renderFragment(sqlFragment`SELECT COUNT(*) AS count FROM pages p WHERE ${visibleEntityPredicate(filter)}`);
-  return safeCount(engine, sql.text, sql.params);
+/**
+ * Count the visible entity pages under `filter` (#4772: live, unquarantined, of a type the active pack(s) declare
+ * as an entity, per source: the get_health predicate). A failed count is unknown, never "no entity pages".
+ */
+async function countVisibleEntities(engine: BrainEngine, filter: EntityTypeFilter): Promise<number | { error: string }> {
+  try {
+    return finiteCount(await engine.countEntityPages(filter, { excludeQuarantined: true }));
+  } catch (error) {
+    return { error: redactConnectionInfo(error instanceof Error ? error.message : String(error)) };
+  }
 }
 
 /**
@@ -108,37 +91,8 @@ function ungradedCoverageResult(name: string, entityPages: number): OnboardCheck
   return { check: { name, status: 'ok', message }, remediations: [] };
 }
 
-export type CoverageFeature =
-  | { table: 'links'; pageIdColumn: 'to_page_id' }
-  | { table: 'timeline_entries'; pageIdColumn: 'page_id' };
-
 /** entity_link_coverage counts inbound links; timeline_coverage counts timeline entries. */
-export const LINK_COVERAGE_FEATURE: CoverageFeature = { table: 'links', pageIdColumn: 'to_page_id' };
-export const TIMELINE_COVERAGE_FEATURE: CoverageFeature = { table: 'timeline_entries', pageIdColumn: 'page_id' };
-
-/**
- * One row `{ sample_size, matched }`: the visible entity pages (optionally
- * TABLESAMPLEd) and how many of them have `feature`. The coverage checks and
- * remediation impact capture both read coverage through this query, so a
- * `gbrain onboard --history` row measures the population the check grades.
- */
-export function visibleEntityCoverageSql(feature: CoverageFeature, filter: EntityTypeFilter, sampleClause = ''): { text: string; params: unknown[] } {
-  return renderFragment(sqlFragment`WITH sampled_entities AS (
-         SELECT p.id
-           FROM pages p ${trustedSql(sampleClause)}
-          WHERE ${visibleEntityPredicate(filter)}
-       )
-       SELECT
-         COUNT(*)::int AS sample_size,
-         COUNT(*) FILTER (
-           WHERE EXISTS (
-             SELECT 1
-               FROM ${trustedSql(feature.table)} f
-              WHERE f.${trustedSql(feature.pageIdColumn)} = s.id
-           )
-         )::int AS matched
-         FROM sampled_entities s`);
-}
+export type CoverageFeature = 'links' | 'timeline';
 
 interface EntityCoverageSample {
   matched: number;
@@ -153,25 +107,20 @@ function finiteCount(value: unknown): number {
 }
 
 /**
- * Count the feature numerator and denominator from the SAME sampled CTE.
+ * Count the feature numerator and denominator from the SAME sampled rows.
  * TABLESAMPLE BERNOULLI returns a random number of rows; deriving its
  * denominator from `total * requestedPercent` can make coverage exceed 100%.
  */
 async function sampleVisibleEntityCoverage(
   engine: BrainEngine,
-  sampleClause: string,
+  samplePercent: number | undefined,
   feature: CoverageFeature,
   filter: EntityTypeFilter,
 ): Promise<EntityCoverageSample | { error: string }> {
   try {
-    const sql = visibleEntityCoverageSql(feature, filter, sampleClause);
-    const result = await engine.executeRaw(sql.text, sql.params);
-    const rows = (result as { rows?: Array<Record<string, unknown>> } | undefined)?.rows
-      ?? (result as Array<Record<string, unknown>> | undefined)
-      ?? [];
-    const row = rows[0] ?? {};
-    const sampleSize = finiteCount(row.sample_size);
-    // The SQL shape guarantees matched <= sample_size. Keep a defensive clamp
+    const row = await engine.entityFeatureCoverage(filter, feature, samplePercent === undefined ? undefined : { samplePercent });
+    const sampleSize = finiteCount(row.sampleSize);
+    // The read guarantees matched <= sampleSize. Keep a defensive clamp
     // at the rendering boundary so a driver/fixture anomaly still cannot emit
     // impossible percentages or feed a negative value into sqrt().
     const matched = Math.min(sampleSize, finiteCount(row.matched));
@@ -331,6 +280,7 @@ export async function checkEntityLinkCoverage(
   const entityTypes = await resolveEntityTypes(engine, null);
   if (entityTypes.status === 'pack_unavailable') return entityTypesUnavailableResult('entity_link_coverage', entityTypes);
   const totalEntities = await countVisibleEntities(engine, entityTypes.filter);
+  if (typeof totalEntities !== 'number') return unmeasuredCoverage('entity_link_coverage', totalEntities);
 
   const ungraded = ungradedCoverageResult('entity_link_coverage', totalEntities);
   if (ungraded) return ungraded;
@@ -340,12 +290,11 @@ export async function checkEntityLinkCoverage(
   const samplePct = useSample
     ? Math.max(2.0, Math.min(100.0, (5000.0 / totalEntities) * 100))
     : 100;
-  const sampleClause = useSample ? `TABLESAMPLE BERNOULLI (${samplePct.toFixed(2)})` : '';
 
   const sample = await sampleVisibleEntityCoverage(
     engine,
-    sampleClause,
-    LINK_COVERAGE_FEATURE,
+    useSample ? samplePct : undefined,
+    'links',
     entityTypes.filter,
   );
   if ('error' in sample || sample.sampleSize === 0) return unmeasuredCoverage('entity_link_coverage', sample);
@@ -414,6 +363,7 @@ export async function checkTimelineCoverage(
   const entityTypes = await resolveEntityTypes(engine, null);
   if (entityTypes.status === 'pack_unavailable') return entityTypesUnavailableResult('timeline_coverage', entityTypes);
   const totalEntities = await countVisibleEntities(engine, entityTypes.filter);
+  if (typeof totalEntities !== 'number') return unmeasuredCoverage('timeline_coverage', totalEntities);
 
   const ungraded = ungradedCoverageResult('timeline_coverage', totalEntities);
   if (ungraded) return ungraded;
@@ -422,12 +372,11 @@ export async function checkTimelineCoverage(
   const samplePct = useSample
     ? Math.max(2.0, Math.min(100.0, (5000.0 / totalEntities) * 100))
     : 100;
-  const sampleClause = useSample ? `TABLESAMPLE BERNOULLI (${samplePct.toFixed(2)})` : '';
 
   const sample = await sampleVisibleEntityCoverage(
     engine,
-    sampleClause,
-    TIMELINE_COVERAGE_FEATURE,
+    useSample ? samplePct : undefined,
+    'timeline',
     entityTypes.filter,
   );
   if ('error' in sample || sample.sampleSize === 0) return unmeasuredCoverage('timeline_coverage', sample);
@@ -451,11 +400,7 @@ export async function checkTimelineCoverage(
     // Only recommend meeting-derived timeline extraction if there are dated
     // meeting pages to extract FROM — otherwise the job creates 0 entries
     // (it skips meetings without effective_date) and the rec never clears.
-    const datableMeetings = await safeCount(
-      engine,
-      `SELECT COUNT(*) AS count FROM pages
-         WHERE type = 'meeting' AND effective_date IS NOT NULL AND deleted_at IS NULL`,
-    );
+    const datableMeetings = await engine.countDatedMeetingPages().catch(() => 0);
     if (datableMeetings > 0) {
       remediations.push(makeRemediationStep({
         id: 'onboard.extract_timeline_from_meetings',
@@ -552,8 +497,8 @@ export async function checkTakesCount(
  * Consumed by onboard's plan generation + (later) doctor's runDoctor.
  *
  * Per A20: callers can race this against an AbortSignal-bound timer for
- * partial-results fallthrough. Each individual safeCount() returns 0
- * on throw so a single check failure doesn't break the aggregate.
+ * partial-results fallthrough. Each read catches its own failure
+ * so a single check failure doesn't break the aggregate.
  */
 export async function runAllOnboardChecks(
   engine: BrainEngine,

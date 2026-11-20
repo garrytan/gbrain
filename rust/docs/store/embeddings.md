@@ -135,6 +135,10 @@ text hash where PGLite keeps md5; both answer "the text has not changed since th
 | `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
 
 `listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
+`readChunkColumnTypes` (doctor embedding_column_registry) is answered in TS from `readChunkVectorColumn`: each
+column that exists reads as `vector(<dims>)`, because the store keeps no `halfvec`. `countChunkColumnCoverage` is
+answered from `getStats` (every chunk, soft-deleted pages too): `embedding` covers the chunks with a stored vector, a
+fixed column covers none, and any other column fails with Postgres's `column "<name>" does not exist`.
 `embedding_image` and `embedding_multimodal` are declared `vector(1024)` on every Postgres and PGLite brain
 (`src/schema.sql`, `engine-sql/bootstrap.ts`, migration v078) and no migration changes their width, so the
 store reports them present at 1024, as PGLite does. The store keeps no vector for them: a chunk image vector

@@ -21,6 +21,7 @@ import type { ManagedSyncPassValue } from '../persistence/sync-pass-row.ts';
 import type { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import type { IdentityDowngrade } from '../sync-identity-downgrades.ts';
 import type { HeldManagedAtom } from '../persistence/atom-maintenance.ts';
+import type { CredentialResealHold } from '../page-state/credential-reseal.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 export type { CandidateRecord, DerivedOriginPark };
@@ -34,7 +35,7 @@ export const DOCTOR_CHECKPOINT_MEMBERS: readonly string[] = [
   'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow',
   'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows',
   'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt',
-  'listFactsAbsorbFailureGroups',
+  'listFactsAbsorbFailureGroups', 'listCredentialResealHoldRows',
 ];
 
 /** A timestamp column as an engine returns it: a Date, or the text a driver without a timestamp codec gives. */
@@ -65,6 +66,8 @@ export type HeldManagedAtomRow = Omit<HeldManagedAtom, 'attempts' | 'held_at'> &
 export interface DoctorLastKnownRow { entry: string; value: unknown }
 /** The sync-admission setting columns: the stored config value, the dating row's value and its `set_at`. */
 export interface SyncAdmissionSettingRecord { stored: string | null; row_value: string | null; set_at: string | null }
+/** A live credential re-chunk hold and whether its page is segmented (its retry command differs). */
+export interface CredentialResealHoldRow { hold: CredentialResealHold; segmented: boolean }
 /** The `facts:absorb` rows of the last 24 hours grouped by source and reason. */
 export interface FactsAbsorbFailureGroup { source_id: string; reason: string; n: string | number; newest: Stamp }
 
@@ -243,4 +246,18 @@ const LIST_FACTS_ABSORB_FAILURE_GROUPS_SQL = `SELECT
 /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason (the first `:` field of the summary), by source then count. */
 export async function listFactsAbsorbFailureGroups(raw: EngineRawRead): Promise<FactsAbsorbFailureGroup[]> {
   return raw<FactsAbsorbFailureGroup>(LIST_FACTS_ABSORB_FAILURE_GROUPS_SQL);
+}
+
+/**
+ * The statement readCredentialResealHolds composed, with the chunker generation (`producer`) bound as $1 instead of
+ * spliced in, and the optional source filter as $2.
+ */
+export const LIST_CREDENTIAL_RESEAL_HOLD_ROWS_SQL = `SELECT h.completed_keys->0 AS hold, p.body_storage IS NOT DISTINCT FROM 'segmented' AS segmented
+    FROM op_checkpoints h JOIN pages p ON p.id = (h.completed_keys->0->>'page_id')::int WHERE h.op='credential-reseal-hold' AND p.deleted_at IS NULL AND p.knowledge_revision::text = h.completed_keys->0->>'revision'
+  AND h.completed_keys->0->>'producer' = $1 AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision AND ($2::text[] IS NULL OR p.source_id=ANY($2::text[])) ORDER BY p.id`;
+
+/** The credential re-chunk holds that still apply at chunker generation `producer` (optionally for some sources), oldest page first. */
+export async function listCredentialResealHoldRows(raw: EngineRawRead, producer: string, sourceIds?: readonly string[]): Promise<CredentialResealHoldRow[]> {
+  const rows = await raw<{ hold: CredentialResealHold | string; segmented: boolean }>(LIST_CREDENTIAL_RESEAL_HOLD_ROWS_SQL, [producer, sourceIds ? [...sourceIds] : null]);
+  return rows.map(row => ({ hold: parsed(row.hold), segmented: row.segmented === true }));
 }

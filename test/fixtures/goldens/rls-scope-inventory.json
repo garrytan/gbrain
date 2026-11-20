@@ -467,6 +467,17 @@
         ],
         "flagOnScopes": []
       },
+      "countDistinctInboundLinkers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countGenerationAttempt#default": {
         "flagOffLanes": [
           "tx"
@@ -3265,6 +3276,17 @@
         ],
         "flagOnScopes": []
       },
+      "listNameVariantCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listNotifierHostSourceRows#default": {
         "flagOffLanes": [
           "pool"
@@ -4002,6 +4024,17 @@
         "flagOnScopes": []
       },
       "listUnmatchedGenerationRows#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnretiredPagesBySlugPattern#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7669,6 +7702,7 @@
         "countAtomExtractionBacklog": "none",
         "countAtomFacts": "none",
         "countBrainLivePages": "none",
+        "countChunkColumnCoverage": "none",
         "countChunkVectorCoverage": "none",
         "countChunklessPagesWithContent": "direct",
         "countClaimLiftedRows": "none",
@@ -7677,12 +7711,14 @@
         "countCompanyPages": "none",
         "countConversationPipelinePages": "none",
         "countCredentialProjectionPending": "none",
+        "countDatedMeetingPages": "none",
         "countDeadDreamSubmissionRows": "none",
         "countDefaultSourceFiles": "none",
         "countDefaultSourceSplit": "none",
         "countDerivedFactTaint": "none",
         "countDerivedRowTaint": "none",
         "countDerivedVisibility": "none",
+        "countDistinctInboundLinkers": "none",
         "countEmbeddingHeldPages": "none",
         "countEntityPages": "none",
         "countFactEmbeddingCoverage": "none",
@@ -7811,6 +7847,7 @@
         "enrollSharedSkillMember": "none",
         "ensureAccessPolicyState": "none",
         "ensureFactsKeywordIndex": "none",
+        "entityFeatureCoverage": "none",
         "entityGraphCoverage": "none",
         "entityIdentityRead": "none",
         "executeRaw": "none",
@@ -8021,6 +8058,7 @@
         "listConversationRelinkPages": "none",
         "listCorePageRows": "none",
         "listCorpusSample": "direct",
+        "listCredentialResealHoldRows": "none",
         "listDanglingFederatedReads": "none",
         "listDeadFactsAbsorbJobsByKeys": "none",
         "listDecideCalibrationRows": "none",
@@ -8117,6 +8155,7 @@
         "listManagedSyncPassStops": "none",
         "listMemoryProposalRows": "none",
         "listMixedModelDecisions": "none",
+        "listNameVariantCandidates": "none",
         "listNotifierHostSourceRows": "none",
         "listOauthClientAuthShapes": "none",
         "listOauthClients": "none",
@@ -8263,6 +8302,7 @@
         "listUnmatchedGenerationRows": "none",
         "listUnpreviewedTrustFacts": "none",
         "listUnpricedDerivationModels": "none",
+        "listUnretiredPagesBySlugPattern": "none",
         "listUnreviewedJobs": "none",
         "listUntiledSegmentedPageRows": "none",
         "listUnwithdrawnFacts": "none",
@@ -8405,6 +8445,7 @@
         "readChronicleDepthRow": "none",
         "readChronicleDuplicateEvents": "none",
         "readChronicleLedgerStats": "none",
+        "readChunkColumnTypes": "none",
         "readChunkVectorColumn": "none",
         "readClientBudgetUsd": "none",
         "readClientOpUsage": "none",
