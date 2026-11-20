@@ -138,7 +138,7 @@ fn after_bigint(text: &str) -> Result<()> {
 
 /// `LIMIT $3`, which Postgres types as bigint: a fraction refuses as bigint syntax, a negative
 /// count as a negative LIMIT.
-fn limit_count(limit: f64) -> Result<()> {
+pub(super) fn limit_count(limit: f64) -> Result<()> {
     if !limit.is_finite() || limit.fract() != 0.0 {
         return Err(StoreError::invalid(format!(
             "invalid input syntax for type bigint: \"{limit}\""

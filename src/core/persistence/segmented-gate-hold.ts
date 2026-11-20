@@ -11,11 +11,11 @@
  */
 import { VERSION } from '../../version.ts';
 import { SEGMENTED_WRITER_WINDOW_DAYS } from '../page-body/limits.ts';
-import type { SqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 import { compareWriterVersions, segmentedGateEvidence, writerVersionBelowFloor, type SegmentedGateWriter } from './writer-versions.ts';
 
 /** `blockers` without those that are `self`'s superseded pre-upgrade writes; reads the gate evidence only when one could be. */
-export async function liveSegmentedBlockers(engine: SqlEngine, blockers: SegmentedGateWriter[], self: string | null): Promise<SegmentedGateWriter[]> {
+export async function liveSegmentedBlockers(engine: Pick<BrainEngine, 'readSegmentedGateEvidence'>, blockers: SegmentedGateWriter[], self: string | null): Promise<SegmentedGateWriter[]> {
   if (!blockers.length || self === null) return blockers;
   const [{ SEGMENTED_WRITER_FLOOR }, { CONSUMER_PURGE_MS }] = await Promise.all([import('../page-body/writer-floor.ts'), import('./consumer-heartbeat.ts')]);
   if ((compareWriterVersions(VERSION, SEGMENTED_WRITER_FLOOR) ?? -1) < 0) return blockers;

@@ -6,7 +6,7 @@ import type * as SynopsisTierSql from './engine-sql/synopsis-tier.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
-import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
+import type { RecentWriterVersionRow, SegmentedGateEvidenceRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
@@ -52,7 +52,7 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from './engine-sql/persistence-admission.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
@@ -3833,6 +3833,8 @@ export interface BrainEngine {
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
+  /** The requests a principal admitted under any of `requestIds` (uuids), in no order (a grouped admission's replays). */
+  readWriteRequestsByRequestIds(principalKind: string, principalId: string, requestIds: readonly string[]): Promise<WriteRequest[]>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
   /** A principal's requests in one live source, newest sequence first, through the cursor and fences (list_write_requests). */
@@ -3867,6 +3869,10 @@ export interface BrainEngine {
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
   insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
+  /** Inserts a grouped admission's page requests in item order and charges their (already locked) counters; returns the stored rows. */
+  insertWriteRequestGroup(group: WriteRequestGroupInsert): Promise<WriteRequest[]>;
+  /** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null without an owner or a binding. */
+  readOwnerHostBinding(worktreeId: string): Promise<string | null>;
   /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null>;
   /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
@@ -3884,6 +3890,8 @@ export interface BrainEngine {
   readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
+  /** The topology changes with a recovery whose worktree host `hostId` owns, after change id `after`, in id order, at most `limit`. */
+  listTopologyRecoveries(hostId: string, after: string | null, limit: number): Promise<TopologyChange[]>;
   readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;
   insertTopologyChange(row: TopologyChangeInsert): Promise<TopologyChange>;
   /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
@@ -4072,6 +4080,8 @@ export interface BrainEngine {
   listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
   /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
   recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
+  /** Every writer the segmented-storage gate saw in the last `days` (requests, ingest log, consumers), grouped with its mark, newest first. */
+  readSegmentedGateEvidence(days: number): Promise<SegmentedGateEvidenceRow[]>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */

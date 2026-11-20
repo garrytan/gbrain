@@ -454,7 +454,30 @@ pub(crate) fn insert_withdrawal_effects_in(
     Ok(missing.into_iter().map(String::from).collect())
 }
 
+/// `readOwnerHostBinding(worktreeId)` (effect-journal.ts `queuePublicationEffects`): the `local_path`
+/// of the owner host's binding of worktree `worktree_id` (`persistence_host_bindings h JOIN
+/// persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id`), or null for an
+/// unknown worktree, one with no owner, and an owner that holds no binding. A worktree id that is not
+/// a uuid refuses, as the `$1::uuid` cast does.
+pub(crate) fn owner_host_binding_in(read: &dyn KvRead, worktree_id: &str) -> Result<Value> {
+    let id = super::effect_worker::pg_uuid(worktree_id)?;
+    let Some(owner) = super::worktrees::worktree_owner_in(read, &id)? else {
+        return Ok(Value::Null);
+    };
+    let Some(host) = owner.get("owner_host_id").and_then(Value::as_str) else {
+        return Ok(Value::Null);
+    };
+    Ok(super::worktrees::host_binding_in(read, &id, host)?
+        .and_then(|b| b.get("local_path").cloned())
+        .unwrap_or(Value::Null))
+}
+
 impl crate::Store {
+    /// `readOwnerHostBinding(worktreeId)`: the owner host's `local_path`, or null.
+    pub fn read_owner_host_binding(&self, worktree_id: &str) -> Result<Value> {
+        owner_host_binding_in(&*self.read()?, worktree_id)
+    }
+
     /// `insertPublicationEffects(spec)`: the kinds inserted, in queue order.
     pub fn insert_publication_effects(&self, spec: &PublicationEffectsSpec) -> Result<Vec<String>> {
         self.write(|tx| insert_publication_effects_in(tx, &*self.env, spec))
@@ -517,5 +540,48 @@ mod tests {
     fn the_claim_order_key_sorts_by_id() {
         assert!(order_key(2) < order_key(10));
         assert!(order_key(255) < order_key(256));
+    }
+
+    #[test]
+    fn the_owner_binding_is_the_owner_hosts_local_path_or_null() {
+        use crate::persistence::{HostBindingInsert, WorktreeInsert};
+        const W: &str = "f0000000-0000-4000-8000-0000000000a1";
+        const BARE: &str = "f0000000-0000-4000-8000-0000000000a2";
+        const OWNER: &str = "a0000000-0000-4000-8000-0000000000a1";
+        const OTHER: &str = "a0000000-0000-4000-8000-0000000000a2";
+        let s = crate::test_support::store();
+        assert_eq!(
+            s.read_owner_host_binding(W).unwrap(),
+            Value::Null,
+            "no worktree"
+        );
+        let worktree = |id: &str, owner: Option<&str>| -> WorktreeInsert {
+            serde_json::from_value(json!({ "id": id, "ownerHostId": owner, "state": "active" }))
+                .unwrap()
+        };
+        s.insert_worktree(&worktree(W, Some(OWNER))).unwrap();
+        s.insert_worktree(&worktree(BARE, None)).unwrap();
+        let bind = |w: &str, host: &str, path: &str| -> HostBindingInsert {
+            serde_json::from_value(json!({ "worktreeId": w, "hostId": host, "localPath": path, "coordinationPath": "/c" })).unwrap()
+        };
+        s.insert_host_binding(&bind(W, OTHER, "/other")).unwrap();
+        assert_eq!(
+            s.read_owner_host_binding(W).unwrap(),
+            Value::Null,
+            "only another host's binding"
+        );
+        s.insert_host_binding(&bind(W, OWNER, "/owner")).unwrap();
+        assert_eq!(s.read_owner_host_binding(W).unwrap(), json!("/owner"));
+        assert_eq!(
+            s.read_owner_host_binding(&W.to_uppercase()).unwrap(),
+            json!("/owner")
+        );
+        assert_eq!(
+            s.read_owner_host_binding(BARE).unwrap(),
+            Value::Null,
+            "no owner"
+        );
+        let bad = s.read_owner_host_binding("w").unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"w\"");
     }
 }

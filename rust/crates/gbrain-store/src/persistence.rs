@@ -1465,6 +1465,18 @@ impl Store {
         self.write(|tx| insert_write_request_in(tx, &*self.env, input))
     }
 
+    /// `insertWriteRequestGroup(rows)`: the stored rows in item order, all inserted in one store
+    /// write. A refusal at any row drops the whole write, so no row and no counter charge is kept.
+    pub fn insert_write_request_group(&self, inputs: &[WriteRequestInsert]) -> Result<Value> {
+        self.write(|tx| {
+            inputs
+                .iter()
+                .map(|input| insert_write_request_in(tx, &*self.env, input))
+                .collect::<Result<Vec<_>>>()
+                .map(Value::Array)
+        })
+    }
+
     /// `stampWriteClaim(id, token, leaseMs, phaseJson)`: the claimed row or `None`.
     pub fn stamp_write_claim(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
         self.write(|tx| stamp_write_claim_in(tx, &*self.env, stamp))

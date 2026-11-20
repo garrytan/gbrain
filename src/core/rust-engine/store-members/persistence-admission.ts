@@ -6,8 +6,8 @@
  * (persistence/worktree_rows.rs): the worktree's state and owner epoch, its active refresh, and whether the binding names
  * this incarnation, worktree and topology generation. No consumer row exists on this engine yet, so `hasDeferralRoom`
  * is true (no live consumer lacks the capability). The row locks change nothing here: each store
- * call is one store write transaction. These members are classified `managed_persistence`, which stays held until its
- * callers are typed (store-capabilities.ts HELD_FOR_CALLERS).
+ * call is one store write transaction. These members are classified `managed_persistence`, which this engine reports
+ * (store-capabilities.ts).
  */
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../../engine-sql/persistence-admission.ts';
 import { storeCall, type StoreMember } from './common.ts';

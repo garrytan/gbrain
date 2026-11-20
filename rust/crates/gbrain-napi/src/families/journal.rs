@@ -9,7 +9,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use gbrain_store::persistence::{Settle, TrueUpReservation};
+use gbrain_store::persistence::{Settle, TrueUpReservation, WriteRequestInsert};
 
 use crate::store_binding::{Brain, required};
 
@@ -231,6 +231,22 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.insert_write_request(&required(row, "insertWriteRequest row")?)
+        })
+    }
+
+    /// `insertWriteRequestGroup(rows)`: the stored rows in order, inserted in one store write
+    /// (`WriteRequestInsert[]`); a refusal at any row keeps none.
+    #[napi]
+    pub fn insert_write_request_group<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_write_request_group(&required::<Vec<WriteRequestInsert>>(
+                rows,
+                "insertWriteRequestGroup rows",
+            )?)
         })
     }
 
@@ -821,6 +837,17 @@ impl Brain {
         self.run(env, move |s| s.recent_writer_versions(days))
     }
 
+    /// `readSegmentedGateEvidence(days)`: every writer the segmented-storage gate saw in the
+    /// last `days`, newest first.
+    #[napi]
+    pub fn read_segmented_gate_evidence<'env>(
+        &self,
+        env: &'env Env,
+        days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_gate_evidence(days))
+    }
+
     #[napi]
     pub fn read_capacity_forecast_inputs<'env>(
         &self,
@@ -952,6 +979,31 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_topology_change(&principal_id, &request_id)
+        })
+    }
+
+    /// `readOwnerHostBinding(worktreeId)`: the owner host's binding `local_path`, or null.
+    #[napi]
+    pub fn read_owner_host_binding<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_owner_host_binding(&worktree_id))
+    }
+
+    /// `listTopologyRecoveries(hostId, after, limit)`: this host's topology changes in recovery,
+    /// in id order after `after`.
+    #[napi]
+    pub fn list_topology_recoveries<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+        after: Option<String>,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_topology_recoveries(&host_id, after.as_deref(), limit)
         })
     }
 
