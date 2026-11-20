@@ -112,10 +112,10 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
 export async function listIdentityDowngrades(engine: RestoreProbeEngine, sourceIds?: readonly string[]): Promise<IdentityDowngrade[]> {
   const rows = await engine.executeRaw<{ record: IdentityDowngrade | string; new_slugs: string[] | null }>(
     `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
-      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
+      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug COLLATE "C") AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
       WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
         AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
-      ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`, [IDENTITY_DOWNGRADE_OP, sourceIds ? [...sourceIds] : null]);
+      ORDER BY dg.completed_keys->0->>'recorded_at' COLLATE "C", dg.fingerprint COLLATE "C"`, [IDENTITY_DOWNGRADE_OP, sourceIds ? [...sourceIds] : null]);
   const records = rows.map(row => {
     const record = typeof row.record === 'string' ? JSON.parse(row.record) as IdentityDowngrade : row.record;
     const owner = pickCanonicalOrigin((row.new_slugs ?? []).map(slug => ({ slug })), record.to);

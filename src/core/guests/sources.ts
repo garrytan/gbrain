@@ -94,7 +94,7 @@ export async function initGuestSource(engine: BrainEngine, sourceId: string, wri
     await tx.executeRaw(`UPDATE sources SET config = config || jsonb_build_object('federated', true, 'guest', true, 'trust_ceiling', $2::text) WHERE id = $1`,
       [sourceId, GUEST_TRUST_CEILING]);
     const [row] = await tx.executeRaw<GuestSource>(`INSERT INTO guest_sources (source_id, writers, trust_ceiling) VALUES ($1, $2::text[], $3)
-      ON CONFLICT (source_id) DO UPDATE SET writers = ARRAY(SELECT DISTINCT w FROM unnest(guest_sources.writers || EXCLUDED.writers) AS w ORDER BY w)
+      ON CONFLICT (source_id) DO UPDATE SET writers = ARRAY(SELECT DISTINCT w COLLATE "C" FROM unnest(guest_sources.writers || EXCLUDED.writers) AS w ORDER BY w COLLATE "C")
       RETURNING source_id, writers, trust_ceiling`, [sourceId, [...new Set(writers)].sort(), GUEST_TRUST_CEILING]);
     return row!;
   });

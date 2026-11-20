@@ -68,14 +68,14 @@ export async function readRelationalFanout(query: ReadQuery, seeds: string[], op
       COUNT(DISTINCT n.last_link_type) AS edge_count,
       array_agg(DISTINCT n.last_link_type) FILTER (WHERE n.last_link_type IS NOT NULL) AS via_link_types,
       (array_agg(array_to_string(n.path, chr(9)) ORDER BY n.depth ASC,
-        array_length(n.path, 1) ASC, array_to_string(n.path, chr(9)) ASC))[1] AS path_str,
+        array_length(n.path, 1) ASC, array_to_string(n.path, chr(9)) COLLATE "C" ASC))[1] AS path_str,
       (array_agg(array_to_string(n.edges, chr(9)) ORDER BY n.depth ASC,
-        array_length(n.path, 1) ASC, array_to_string(n.path, chr(9)) ASC))[1] AS edges_str,
+        array_length(n.path, 1) ASC, array_to_string(n.path, chr(9)) COLLATE "C" ASC))[1] AS edges_str,
       (SELECT cc.id FROM content_chunks cc WHERE cc.page_id = n.id AND ${chunkGenerationProbe('cc', chunkManifest)}
         ${requiresSafeChunks(opts) ? `AND EXISTS (SELECT 1 FROM pages cp WHERE cp.id = n.id AND ${safeChunksFilter('cp')})` : ''}
         ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
     FROM walk n WHERE n.depth > 0 GROUP BY n.source_id, n.slug, n.id
-    ORDER BY hop ASC, edge_count DESC, n.source_id ASC, n.slug ASC LIMIT $3`, params);
+    ORDER BY hop ASC, edge_count DESC, n.source_id COLLATE "C" ASC, n.slug COLLATE "C" ASC LIMIT $3`, params);
   return rows.map(row => ({
     source_id: row.source_id as string, slug: row.slug as string,
     hop: Number(row.hop), edge_count: Number(row.edge_count),
