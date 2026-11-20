@@ -114,7 +114,7 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'export', 'files', 'embed', 'serve', 'sweep', 'config', 'pricing', 'migrate', 'retrieval-upgrade', 'eval', 'jobs', 'agent',
     'book-mirror', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query',
     'reconcile-links', 'repair', 'diag', 'orphans', 'maintain', 'reindex', 'salience', 'anomalies', 'feedback', 'status',
-    'advisor', 'conversation-parser', 'edges-backfill', 'whoknows', 'brainstorm', 'lsd', 'skillopt', 'calibration',
+    'advisor', 'conversation-parser', 'edges-backfill', 'whoknows', 'identity', 'brainstorm', 'lsd', 'skillopt', 'calibration',
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'think', 'notability-eval', 'waiting', 'loops',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
     'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',

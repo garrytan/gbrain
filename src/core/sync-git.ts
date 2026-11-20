@@ -14,6 +14,7 @@ import { invalidateGitListingCache, knownOutsideGitRepo, noteGitFailure } from '
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-config.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
+import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
@@ -561,7 +562,7 @@ export function createSyncBaselineCommit(repoPath: string): void {
   // `:!dir` shorthand) so a db_only dir name that itself starts with a
   // pathspec magic character like `:` is excluded literally rather than
   // reinterpreted (round 9, P2).
-  const excludePathspecs = dbOnlyDirs.map((dir) => `:(exclude,literal)${dir}`);
+  const excludePathspecs = [...dbOnlyDirs, OWNED_FOLDER_ROOT].map((dir) => `:(exclude,literal)${dir}`);
   // Clear the index before staging (round 6, P1): the unborn-HEAD
   // recovery site can reach this function with a repo whose index
   // already has entries staged from some OTHER prior operation (a manual

@@ -22,6 +22,8 @@ apple/helper/scripts/install.sh
 
 It builds the helper, signs it with a certificate made on this Mac, installs `~/Applications/GBrain Helper.app` and registers its background agent. It shows no dialog. The first run makes the signing keychain `~/Library/Keychains/gbrain-helper-signing.keychain-db`, with its random password in a 0600 file in `~/Library/Application Support/GBrain Helper/`. Every later run signs with that same certificate, so macOS keeps the helper's Full Disk Access, Automation and keychain access across rebuilds. If the app is installed but its signing keychain is gone, the script stops and changes nothing, because a new certificate would make macOS treat the helper as a different app. An interrupted run leaves the installed app in place, and one install runs at a time. `install.sh --repair` re-signs the installed app with the same certificate and registers it again, without rebuilding.
 
+A reinstall refreshes the app's LaunchServices record and registers the background agent again, so the new build is the one that runs. When a valid config exists and the agent is on, the script waits up to about 10 seconds for the helper to answer on `127.0.0.1:<port>/health` and fails if it doesn't. When the agent is waiting for you to switch it on in System Settings, the script says so and doesn't wait. It ends by printing what stays on the Mac and the steps to remove it, including `gbrain-apple-helper unregister`, which removes the background agent.
+
 After it runs:
 
 - macOS may show "Background Items Added". If System Settings > General > Login Items & Extensions lists GBrain Helper as off, switch it on.
@@ -104,6 +106,7 @@ gbrain-apple-helper send-key add --name <name> --public-key-file <path or ->
 gbrain-apple-helper send-key remove --name <name>
 gbrain-apple-helper send-limits set <limit>=<n>...
 gbrain-apple-helper send-audit show --redacted [--since <n>d]
+gbrain-apple-helper unregister
 gbrain-apple-helper --version
 ```
 
@@ -185,7 +188,7 @@ Every answer carries `outcome`, `code`, `retryable`, `side_effects` and `replaye
 
 ### Send keys and the keychain
 
-The Mac stores only public keys, with the on switch and the limits, in one keychain item (service `io.gbrain.apple-helper`, account `send-keys`). The helper reads that exact item and refuses it (`send_keys_tampered`) when its access list lets any program other than GBrain Helper read or change it. Reinstall the helper with the same signing identity, or macOS stops letting it read the item (`send_keys_unreadable`).
+The Mac stores only public keys, with the on switch and the limits, in one keychain item (service `io.gbrain.apple-helper`, account `send-keys`). The helper reads that exact item and refuses it (`send_keys_tampered`) when its access list lets any program other than GBrain Helper read or change it. The paths it accepts are the helper's own program file and, when that file sits at `<name>.app/Contents/MacOS/<program>`, that one `.app` folder, because macOS may record either. Reinstall the helper with the same signing identity, or macOS stops letting it read the item (`send_keys_unreadable`).
 
 What this does not stop: a program running as the owner that builds a look-alike item trusted only by the helper before the helper makes its own. The banner on every send and the limits are the backstop. Another local program can also take the tailnet port while the helper is down (KeepAlive restarts it within about 10 seconds); it learns no secret it can replay, but it would see one recipient and text.
 
