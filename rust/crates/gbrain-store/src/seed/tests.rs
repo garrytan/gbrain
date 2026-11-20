@@ -795,6 +795,7 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
             "page_body_staging_parts",
             "page_body_staging_texts",
             "page_body_stagings",
+            "page_generation_clock",
             "page_mention_state",
             "page_retrievals",
             "page_segment_derivation_purge_pages",

@@ -97,7 +97,7 @@ every other op are machine-local.
 | `minion_inbox`, `minion_attachments`, `minion_budget_log`, `minion_lease_pressure_log`, `minion_self_fix_log`, `subagent_messages`, `subagent_tool_executions`, `subagent_rate_leases` | job runtime goes with the jobs: `gbrain agent logs`, `gbrain jobs stats` and `gbrain jobs watch` show no earlier runs |
 | `wake_subscriptions` | open watches are not carried and never wake. A watch copied without its job or write request would wake on the first tick, so none is copied. (`wake_crons` is copied: a lost cron would make every `watch_cron` read `not_found`) |
 | `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
-| `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call) |
+| `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries`, `page_generation_clock` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call); cached query results recompute (`page_generation_clock` is the query cache's clock, and no store read uses it) |
 | `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text (`segmented_body`) |
 | `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints` (except the rows below), `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again |
 
@@ -125,7 +125,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `sync_identity_downgrades` (`op_checkpoints` rows of op `sync-identity-downgrade`) | `rust-engine/main`, `rust-engine/identity-downgrade-rust` | pending rename repairs are lost: the purge of deleted pages no longer holds the old page, so the repair can find nothing to restore |
 | `budget_ledger`, `budget_reservations` | key tag only on `rust-engine/main` | the resolver's daily budget restarts at zero |
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
-| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_generation_clock`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
+| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
 
 ### Swap readiness: the gaps a real-shaped brain fills (measured 2026-11-20)
 
@@ -144,7 +144,6 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | Gap | Rows A / B / C | Rust family | Branch, head | On `rust-engine/main` |
 | --- | --- | --- | --- | --- |
 | `git_canonical_brain` | 1 / 1 / 1 | none | none | no |
-| `page_generation_clock` | 1 / 1 / 1 | none | none | no |
 | `page_write_guards` | 0 / 32 / 7 | none (`write_guards.rs` holds other guards) | none | no |
 | `shared_skill_state` | 1 / 1 / 1 | `shared_skill_members.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_heads`, `shared_skill_revisions`, `shared_skill_policies`, `shared_skill_policy_audit` | 3, 3, 1, 1 / same / 0 | `shared_skill_catalog.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
@@ -168,7 +167,8 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `pinned_questions` | 0 / 1 / 0 | `jobs/pinned_questions.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 | `context_volunteer_events` | 0 / 1 / 0 | `volunteer_events.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 
-No measured brain wrote rows to the other 39 gap tables. Those tables need a paid model key, a browser or tty step,
+`page_generation_clock` (1 row on every brain) was a gap in this measurement and is now left behind on purpose (a
+cache). No measured brain wrote rows to the other 39 gap tables. Those tables need a paid model key, a browser or tty step,
 or an event the run did not make, so this measurement does not clear them.
 
 ## What the seed does not keep

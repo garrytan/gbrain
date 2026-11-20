@@ -222,6 +222,11 @@ pub const NOT_COPIED: &[NotCopied] = &[
         "a body write in flight at the swap is not carried",
     ),
     t(
+        "page_generation_clock",
+        Cache,
+        "cached query results recompute (the query cache is not copied, and no store read uses this clock)",
+    ),
+    t(
         "page_mention_state",
         MachineLocal,
         "mention scanning checks every page again",
