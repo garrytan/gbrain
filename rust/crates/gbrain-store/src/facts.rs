@@ -531,14 +531,24 @@ pub(crate) fn stamp_fact(
 /// with the trust context `trust` ([`stamp_fact`], a `BEFORE` row trigger, so a refusal comes
 /// before a unique-index refusal). A unique index another row holds refuses as Postgres does
 /// (`23505`); the caller's write then rolls back.
+///
+/// After the purge refusal, an insert (`old` is `None`) runs the withdrawal half of the insert
+/// guard as `gbrain_guard_inserted_facts` does: an active row a withdrawal of its claim reaches is
+/// saved expired at the earliest such withdrawal, `valid_until` clamped to it
+/// ([`withdrawal_guard::preserve_withdrawal`]). Every insert writes through here: `insert_fact`,
+/// `insert_facts` and the ontology inserts.
 pub(crate) fn write_fact(
     tx: &mut dyn KvWrite,
     trust: &WriteTrust,
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
-    let new = &stamp_fact(trust, old, new)?;
-    purge_ledger::refuse_purged(tx, old, new)?;
+    let mut new = stamp_fact(trust, old, new)?;
+    purge_ledger::refuse_purged(tx, old, &new)?;
+    if old.is_none() {
+        withdrawal_guard::preserve_withdrawal(&*tx, &mut new)?;
+    }
+    let new = &new;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;

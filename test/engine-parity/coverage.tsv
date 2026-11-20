@@ -397,11 +397,11 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	107	yes	yes	yes	serves
-insertFacts	facts	yes	129	no	yes	yes	serves
+insertFact	facts	yes	108	yes	yes	yes	serves
+insertFacts	facts	yes	130	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	73	no	yes	yes	serves
-listFactsByEntity	facts	yes	34	yes	yes	yes	serves
+listFactsByEntity	facts	yes	36	yes	yes	yes	serves
 listFactsSince	facts	yes	16	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -1069,7 +1069,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	4	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	24	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	26	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	4	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves

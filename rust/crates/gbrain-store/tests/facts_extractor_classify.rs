@@ -137,13 +137,14 @@ fn extractor_facts_carry_their_page_withdrawal_duplicate_fence_and_receipt_evide
     );
     expire(&store, unreceipted, Some(&failed_at));
 
-    // Withdrawn under `*`, with an active duplicate and a fence row on the page.
+    // Withdrawn under `*`, with an active duplicate and a fence row on the page. The duplicate is
+    // saved before the withdrawal: the insert guard saves one inserted after it expired.
     let withdrawn = fact(&store, "Cy sings", json!({}));
     expire(&store, withdrawn, None);
+    fact(&store, "  CY sings. ", json!({}));
     store
         .insert_fact_withdrawal("default", "private", "Cy sings", "*", None)
         .unwrap();
-    fact(&store, "  CY sings. ", json!({}));
     fact(
         &store,
         "a fence row",
