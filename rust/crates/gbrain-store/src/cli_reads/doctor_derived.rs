@@ -44,20 +44,20 @@ pub struct AtomFenceInput {
 
 /// `s.archived IS NOT TRUE` over `JOIN sources s ON s.id = p.source_id`: the source exists and is
 /// not archived. Looked up once per source.
-struct LiveSources<'a> {
+pub(super) struct LiveSources<'a> {
     read: &'a dyn KvRead,
     seen: HashMap<String, bool>,
 }
 
 impl<'a> LiveSources<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(super) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             seen: HashMap::new(),
         }
     }
 
-    fn unarchived(&mut self, id: &str) -> Result<bool> {
+    pub(super) fn unarchived(&mut self, id: &str) -> Result<bool> {
         if let Some(known) = self.seen.get(id) {
             return Ok(*known);
         }
@@ -69,12 +69,12 @@ impl<'a> LiveSources<'a> {
     }
 }
 
-fn in_scope(sources: Option<&[String]>, source_id: &str) -> bool {
+pub(super) fn in_scope(sources: Option<&[String]>, source_id: &str) -> bool {
     sources.is_none_or(|s| s.iter().any(|x| x == source_id))
 }
 
 /// `p.page_kind='markdown' OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file', p.source_path) IS NOT NULL)`.
-fn rebuildable(page: &PageRecord) -> bool {
+pub(super) fn rebuildable(page: &PageRecord) -> bool {
     page.page_kind == "markdown"
         || (page.page_kind == "code"
             && (fm_text(&page.frontmatter, "file").is_some() || page.source_path.is_some()))
