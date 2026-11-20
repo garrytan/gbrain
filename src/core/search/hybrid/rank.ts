@@ -183,7 +183,7 @@ export async function fuseArms(
     if (resolvedMode.collapse) req.collapsePrefetch = prefetchPageFacts(engine, fused.map(r => r.page_id));
     await runPostFusionStages(engine, fused, {
       ...postFusionOpts, skipMetadataBoosts: !metadataBoostGate.boosts_applied,
-    });
+    }, degraded);
     // v0.32.x search-lite: intent exact-match boost (entity/event intents).
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
     await applyIdentityBoosts(req, fused, generatedRead);

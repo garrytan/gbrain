@@ -74,6 +74,35 @@ describe('engine parity: search reads', () => {
     },
   );
 
+  // Hybrid search's supersession stage reads supersedingPageSlugs after fusion and tells an empty map ("nothing here is
+  // superseded") from a rejection ("currency was not verified": the degraded stage supersede_check_failed). So every arm must
+  // reject a read it cannot run, never answer an empty map, and must see an edge written right after an empty answer.
+  // A read the database refuses is injected with a page id that is no integer (a fault the engine cannot answer as empty).
+  parityTest(
+    'supersedingPageSlugs: a read that cannot run rejects instead of answering an empty map; an edge written after an empty answer is seen at once',
+    { methods: ['putPage', 'addLink', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
+    async (engine, backend) => {
+      const canon = await put(engine, 'notes/canon');
+      const stale = await put(engine, 'notes/stale');
+      const probeBefore = await engine.hasSupersedeEdges();
+      const emptyBefore = (await engine.supersedingPageSlugs([stale.id])).size;
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const probeAfter = await engine.hasSupersedeEdges();
+      const seen = [...await engine.supersedingPageSlugs([stale.id])].map(([id, by]) => `${id === stale.id ? 'notes/stale' : 'unknown'}<${by}`);
+      expect(probeBefore).toBe(false);
+      expect(emptyBefore).toBe(0);
+      expect(probeAfter).toBe(true);
+      expect(seen).toEqual(['notes/stale<notes/canon']);
+      const failure = await engine.supersedingPageSlugs([canon.id, 1.5]).then(() => null, (e: unknown) => e);
+      expect(failure).toBeInstanceOf(Error);
+      // The Rust arm stops here on its typed refusal of a non-integer page id (rust-engine/store-members/link-queries.ts bigintIds,
+      // the links member area): a rejection, not an empty map. A real statement timeout cannot be injected from TypeScript on
+      // that arm, so the arm-level proof is that it rejects rather than answers.
+      if (backend === 'rust') throw failure;
+      return { probeBefore, emptyBefore, probeAfter, seen, rejected: true };
+    },
+  );
+
   parityTest(
     'aliasCanonicalRefs: the refs a rename made canonical, per source and policy',
     { methods: ['putPage', 'updateSlug', 'aliasCanonicalRefs'] },
