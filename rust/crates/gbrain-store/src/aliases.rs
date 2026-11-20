@@ -396,35 +396,54 @@ fn record_rename_history(tx: &mut dyn KvWrite, source: &str, old: &str, new: &st
     tx.put(&rename_key(source, old, new), &[])
 }
 
+/// The rows `scrub_purged_slug_stores` removed from each of the three stores, as the purge receipt counts them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SlugStoreCounts {
+    pub page_aliases: u64,
+    pub slug_aliases: u64,
+    pub slug_rename_history: u64,
+}
+
 /// The three stores of `scrubPurgedSlugStores` this family keeps, in the order of its
 /// `SLUG_STORES` list (src/core/persistence/purge-slug-stores.ts:6): `page_aliases` by `slug`,
 /// `slug_aliases` by `canonical_slug` (an alias spelled like a purged slug that names another page
 /// stays), then `slug_rename_history` by `new_slug`. `deletePages` and `purgeDeletedPages`
 /// (`page_ops::scrub_purged_slugs`) call it in the purge's transaction, after the pages are gone,
-/// as src/core/engine-sql/pages.ts:237 and :397 do. A single `deletePage` and a soft delete keep
-/// every row.
+/// as src/core/engine-sql/pages.ts:237 and :397 do; the `deletePurgedSlugStoreRows` member
+/// (a page purge's scrub) calls it too and reports the counts. A single `deletePage` and a soft
+/// delete keep every row. A slug named twice is scrubbed once.
 pub(crate) fn scrub_purged_slug_stores(
     tx: &mut dyn KvWrite,
     source: &str,
     slugs: &[String],
-) -> Result<()> {
+) -> Result<SlugStoreCounts> {
+    let mut counts = SlugStoreCounts::default();
     if has_nul(&[source]) {
-        return Ok(());
+        return Ok(counts);
     }
-    for slug in slugs.iter().filter(|s| !has_nul(&[s.as_str()])) {
+    let slugs: Vec<String> = slugs
+        .iter()
+        .filter(|s| !has_nul(&[s.as_str()]))
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    for slug in &slugs {
         for (alias, origin) in page_alias_rows(&*tx, source, slug)? {
             delete_page_alias(tx, source, &alias, slug, &origin)?;
+            counts.page_aliases += 1;
         }
     }
-    for slug in slugs.iter().filter(|s| !has_nul(&[s.as_str()])) {
+    for slug in &slugs {
         for (_, parts) in scan_tails(&*tx, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, slug]))? {
             if let [alias] = parts.as_slice() {
                 delete_slug_alias(tx, source, alias)?;
+                counts.slug_aliases += 1;
             }
         }
     }
-    scrub_purged_rename_history(tx, source, slugs)?;
-    Ok(())
+    counts.slug_rename_history = scrub_purged_rename_history(tx, source, &slugs)?;
+    Ok(counts)
 }
 
 /// `scrubPurgedSlugStores` on `slug_rename_history`: drops the rows of `source` that end at a

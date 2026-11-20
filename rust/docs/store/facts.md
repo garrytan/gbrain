@@ -395,6 +395,38 @@ are walked, as `countPurgedPageFacts` does). Outcome markers are never claims. M
 Tombstones list newest first by their purge time, equal times in key order. An id that is not a UUID in `requestIds`
 refuses with `invalid_argument`.
 
+### The page purge sweep, its segment storage and its slug stores
+
+Eighteen members: the eleven new ones of `src/core/engine-sql/page-purge-sweep.ts` and seven that `facts-purge.ts` and `purge-slug-stores.ts` already had, now served (store files
+`eval_capture/decide_proposals/purge.rs`, `trust/proposals/purge.rs`, `trust/write_gate/purge.rs`, `raw_files/purge.rs`,
+`page_body/purge_sweep.rs`, `facts/page_purge_sweep.rs`, `facts/page_purge_journal.rs`, `aliases.rs`, `takes/proposals.rs`,
+`facts/loops.rs`). Every delete runs in the caller's purge transaction and removes the row with each key that points at it.
+Members whose SQL has no order (`RETURNING`, `UNION`) answer sorted, as the SQL functions do.
+
+| JS | Resolves |
+| --- | --- |
+| `deletePurgeReviewQueue(sourceId, refs)`, `deletePurgeReviewProposals(sourceId, refs)`, `deletePurgeDecideProposals(sourceId, factIds)` | how many rows of the source name a ref (`a_ref` or `b_ref`, ids as text) or a fact (`new_fact_id`, `old_fact_id`); the fact purge and the page sweep share them |
+| `deletePurgedPageTrustProposals(sourceId, pageId, factIds, takeIds)` | how many of the source's trust proposals name the page, a fact or a take as target or related row; each pending key goes only when it points at the proposal |
+| `deletePurgedPageHolds(sourceId, slug)` | the ids (text, in id order) of the slug's holds, with their dedupe keys |
+| `deletePurgedPageGateReceipts(pageId, factIds, takeIds, holdIds)` | how many receipts name the page, a fact, a take or a hold (ids matched as text) |
+| `deletePurgedPageFacts(sourceId, slug)` | how many facts the page has (`page_facts`: filed on it or extracted from it), removed with their indexes; a successor link that named one is cleared |
+| `deletePurgedPageFiles(sourceId, slug, pageId)` | the storage paths (sorted) of the files attached to the page and of the detached ones that still name the slug in the source |
+| `listPageTimelineReceipts(sourceId, slugs, limit, after, withDiffs)` | the add_timeline_entry (and, with diffs, edit_page) receipts of the slugs after a sequence, by sequence: `id`, principal, `sequence` as text, `summary`, `source`, `bullet`, `diff` |
+| `listPageSegmentShas(sourceId, slug, pageId)`, `countPageManifestRows(pageId)` | the sha256 (hex, sorted) of the texts the page's manifest and stagings name; how many manifest rows the page has |
+| `deletePageStagings(sourceId, slug, pageId)`, `deletePageSegmentTexts(sourceId, shas)` | how many stagings of the slug or page (with their client keys and recorded texts) and how many unreferenced, unrecorded texts among the shas |
+| `sweepPageTextsForClaims(sourceId, cursor, forms, chunkBytes)` | `{ last, deleted }`: one statement of the claim sweep over the source's unreferenced texts after the cursor, 4096 at most, bounded by `chunkBytes` before each text, deleting those whose lowered text holds a form and that no live staging recorded |
+| `listPageChangeReasons(sourceId, slug, pageId)`, `listRequestsRecordingReasons(sourceId, slug)` | `[{ reason }]` (NULL first, then byte order); `[{ id, principal_kind, principal_id }]` by sequence, first 10000 |
+| `deletePurgedSlugStoreRows(sourceId, slugs)` | `{ removed, secretStore }`: rows scrubbed from take proposals, open loops, page aliases, slug aliases and rename history; a slug named twice counts once |
+| `listPageSecretOccurrences(pageIds)` | `[]`, without a store call |
+
+The store keeps no `core_edit_notices` and no secret store, so `deletePurgedSlugStoreRows` answers `core_edit_notices: 0` and
+`secretStore: false`, and `scrubPurgedSlugStores` then reports `secret_store_occurrence` and `secret_store` as 0 (it does so
+only when the caller did not pass `ifPresent`, which names a restored archive). `listPageSecretOccurrences` has nothing to
+read. A text is needed while a manifest row names it or a live staging (a live state, or one an outstanding request names)
+recorded it; a text that is not UTF-8 refuses the claim sweep, as `convert_from` does. `sweepPurgedPage` itself still stops on
+the Rust engine at the statements of other units that it runs in the same transaction (`clearRebuildableCache`, the intent
+redaction, the generation ledger scrub), so `delete_page --purge` is guarded until those are served.
+
 | Member | What it answers | Rust |
 | --- | --- | --- |
 | `listSessionFactsForClassification` | Active, unsuperseded facts of the capture lanes whose attribution is the user or unset, optionally only the named ids, by (source, id). | Served |
@@ -923,9 +955,9 @@ archived flag; the purge transaction is the store's single writer, so FOR UPDATE
 writes `insertFactPurge` and `insertTakePurge` have Rust implementations, as do the Git effect statements
 (`listGitEffectsCarryingReason`, `listPageGitEffectsForStrip`, `setPurgeEffectData`; persistence.md, "Purge effect
 statements") and `countPagePurgeTombstones` (`facts/page_purges.rs`). A whole `purge_fact` on the Rust arm admits its
-write request, then stops on the refusal of `deletePurgeReviewQueue`, and its transaction keeps nothing
+write request, then stops on the refusal of `deletePurgeTrustProposals` (the three review and decide deletes before it are served), and its transaction keeps nothing
 (`test/engine-parity/fact-purge-commit.test.ts`). The parity file
-`test/engine-parity/fact-purge-sites.test.ts` stops on that refusal for every case, and the Postgres text of each
+`test/engine-parity/fact-purge-sites.test.ts` stops on a typed refusal for 13 of its cases, and the Postgres text of each
 statement is pinned byte for byte by `test/fact-purge-sites-sql-pin.test.ts`. One statement of `purge.ts` stays a raw
 read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column list and lock clause from its two callers
 (the purge and the held-fact move), so it has no constant text to type.

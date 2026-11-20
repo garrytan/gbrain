@@ -51,11 +51,10 @@ import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheck
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
-import { PAGE_FACTS } from '../engine-sql/page-purge.ts';
+import type { PageTimelineReceiptRow } from '../engine-sql/page-purge-sweep.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewrittenContentHash } from '../page-body/segment-rewrite.ts';
-import { stagingNeedsTextSql } from '../page-body/schema.ts';
 import { CLAIM_FORMS_BATCH, claimTextForms } from '../fence-shared.ts';
 import type { PagePurgeContext } from '../facts/purge-verify.ts';
 import { pageChangeReasons, requestsRecordingReasons, stripPageGitNotes } from '../facts/purge-reasons.ts';
@@ -272,17 +271,14 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
 /** The page's add_timeline_entry and edit_page receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
 const TIMELINE_RECEIPT_CAP = 10_000;
 
-type TimelineReceipt = IntentRedactionTarget & { sequence: string; summary: string | null; source: string | null; bullet: string | null; diff: string | null };
+type TimelineReceipt = PageTimelineReceiptRow;
 
 /**
  * The add_timeline_entry receipts of `slugs`, compacted ones included, in sequence order after `after`; their outcome keeps the
  * entry text. `withDiffs` adds the edit_page receipts, whose outcome keeps the edit's unified diff of the page text.
  */
 export async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0', withDiffs = false): Promise<TimelineReceipt[]> {
-  return tx.executeRaw<TimelineReceipt>(`SELECT id::text AS id, principal_kind, principal_id, sequence::text AS sequence, outcome->'entry'->>'summary' AS summary,
-    outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet, outcome->>'diff' AS diff FROM persistence_requests
-    WHERE source_id=$1 AND slug=ANY($2::text[]) AND ((operation='add_timeline_entry' AND outcome ? 'entry') OR ($5::boolean AND operation='edit_page' AND outcome ? 'diff'))
-    AND sequence > $4::bigint ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit, after, withDiffs]);
+  return tx.listPageTimelineReceipts(sourceId, slugs, limit, after, withDiffs);
 }
 
 const receiptText = (rows: readonly TimelineReceipt[]) => rows.flatMap(t => [t.summary, t.source, t.bullet, t.diff]).map(text => text?.trim() ?? '').filter(Boolean);
@@ -353,29 +349,20 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   const lookup = input.lookup ?? (<T>(_point: PurgeLookupPoint, fn: () => Promise<T>) => fn());
   const has = (store: SweptStore) => !input.present || input.present.has(store);
   const timelineCap = input.timelineCap ?? TIMELINE_RECEIPT_CAP;
-  const count = async (sql: string, params: unknown[]) => (await tx.executeRaw(sql, params)).length;
   const refs = factIds.map(String);
   const removed: Record<string, number> = {};
-  if (has('decide_review_queue')) removed.decide_review_queue = await count('DELETE FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]);
-  if (has('decide_review_proposals')) removed.decide_review_proposals = await count('DELETE FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]);
-  if (has('decide_proposals')) removed.decide_proposals = await count('DELETE FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($2::bigint[]) OR old_fact_id=ANY($2::bigint[])) RETURNING 1', [sourceId, factIds]);
-  if (has('trust_proposals')) {
-    removed.trust_proposals = await count(`DELETE FROM trust_proposals WHERE source_id=$1 AND ((target_table='pages' AND target_id=$2) OR (related_table='pages' AND related_id=$2)
-      OR (target_table='facts' AND target_id=ANY($3::bigint[])) OR (related_table='facts' AND related_id=ANY($3::bigint[]))
-      OR (target_table='takes' AND target_id=ANY($4::bigint[])) OR (related_table='takes' AND related_id=ANY($4::bigint[]))) RETURNING 1`, [sourceId, pageId, factIds, takeIds]);
-  }
-  const holds = has('write_gate_holds') ? (await tx.executeRaw<{ id: string }>('DELETE FROM write_gate_holds WHERE source_id=$1 AND slug=$2 RETURNING id::text AS id', [sourceId, slug])).map(h => h.id) : [];
+  if (has('decide_review_queue')) removed.decide_review_queue = await tx.deletePurgeReviewQueue(sourceId, refs);
+  if (has('decide_review_proposals')) removed.decide_review_proposals = await tx.deletePurgeReviewProposals(sourceId, refs);
+  if (has('decide_proposals')) removed.decide_proposals = await tx.deletePurgeDecideProposals(sourceId, factIds);
+  if (has('trust_proposals')) removed.trust_proposals = await tx.deletePurgedPageTrustProposals(sourceId, pageId, factIds, takeIds);
+  const holds = has('write_gate_holds') ? await tx.deletePurgedPageHolds(sourceId, slug) : [];
   if (has('write_gate_holds')) removed.write_gate_holds = holds.length;
-  if (has('write_gate_receipts')) {
-    removed.write_gate_receipts = await count(`DELETE FROM write_gate_receipts WHERE (target_table='pages' AND target_id=$1) OR (target_table='facts' AND target_id=ANY($2::text[]))
-      OR (target_table='takes' AND target_id=ANY($3::text[])) OR (target_table='write_gate_holds' AND target_id=ANY($4::text[])) RETURNING 1`,
-    [String(pageId), refs, takeIds.map(String), holds]);
-  }
+  if (has('write_gate_receipts')) removed.write_gate_receipts = await tx.deletePurgedPageGateReceipts(pageId, factIds, takeIds, holds);
   const missingCaches: string[] = [];
   const cleared = await clearRebuildableCache(tx, 'query_cache');
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
-  removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
+  removed.facts = await tx.deletePurgedPageFacts(sourceId, slug);
   Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present, pageIds: [pageId] }));
   let complete = true;
   if (has('persistence_requests')) {
@@ -395,11 +382,10 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
     complete = census.complete && timelineRows.length <= timelineCap;
     if (has('persistence_effects')) removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
   }
-  const files = has('files') ? await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
-    RETURNING storage_path`, [pageId, slug, sourceId]) : [];
+  const files = has('files') ? await tx.deletePurgedPageFiles(sourceId, slug, pageId) : [];
   if (has('files')) removed.files = files.length;
   if (has('derived_generations') && has('derived_generation_items')) Object.assign(removed, await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, sourceId, { slug }));
-  return { removed, blobs: files.map(f => f.storage_path).filter(Boolean), missingCaches, complete };
+  return { removed, blobs: files.filter(Boolean), missingCaches, complete };
 }
 
 /**
@@ -579,14 +565,11 @@ export async function unpurgePage(ctx: OperationContext, p: Record<string, unkno
  */
 export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, slug: string, pageId: number, claims: readonly string[] = []):
   Promise<{ shas: string[]; page_body_manifest: number; page_body_stagings: number; page_segment_texts: number }> {
-  const shas = (await tx.executeRaw<{ sha: string }>(`SELECT encode(sha256,'hex') AS sha FROM page_body_manifest WHERE page_id=$1
-    UNION SELECT encode(r.sha256,'hex') FROM page_body_stagings s JOIN page_body_staging_texts r ON r.staging_id=s.id
-      WHERE s.source_id=$2 AND (s.slug=$3 OR s.page_id=$1) AND r.source_id=$2`, [pageId, sourceId, slug])).map(r => r.sha);
-  const manifest = (await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_body_manifest WHERE page_id=$1', [pageId]))[0]?.n ?? 0;
-  const stagings = (await tx.executeRaw('DELETE FROM page_body_stagings WHERE source_id=$1 AND (slug=$2 OR page_id=$3) RETURNING 1', [sourceId, slug, pageId])).length;
+  const shas = await tx.listPageSegmentShas(sourceId, slug, pageId);
+  const manifest = await tx.countPageManifestRows(pageId);
+  const stagings = await tx.deletePageStagings(sourceId, slug, pageId);
   await tx.deletePage(slug, { sourceId });
-  const texts = shas.length ? (await tx.executeRaw(`DELETE FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256=ANY(SELECT decode(h,'hex') FROM unnest($2::text[]) AS h)
-    AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) AND NOT ${stagingNeedsTextSql('t')} RETURNING 1`, [sourceId, shas])).length : 0;
+  const texts = shas.length ? await tx.deletePageSegmentTexts(sourceId, shas) : 0;
   const forms = claimTextForms(claims), carrying: string[] = [];
   // #9743: sweep the unreferenced texts CLAIM_SWEEP_CHUNK_BYTES at a time in sha order, each text lowered once per
   // statement (MATERIALIZED) instead of once per claim form, so every statement fits the publication's statement_timeout.
@@ -595,21 +578,9 @@ export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, 
   for (let cursor: string | null = forms.length ? '' : null; cursor !== null;) {
     let next: string | null = null;
     for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
-      const [swept] = await tx.executeRaw<{ last: string | null; deleted: string[] }>(`WITH chunk AS MATERIALIZED (
-          SELECT u.sha256 FROM (SELECT t.sha256, sum(t.byte_len) OVER (ORDER BY t.sha256) - t.byte_len AS before
-            FROM (SELECT t.sha256, t.byte_len FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256 > decode($2,'hex')
-              AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) ORDER BY t.sha256 LIMIT 4096) t) u
-          WHERE u.before < $4),
-        lowered AS MATERIALIZED (SELECT t.sha256, lower(convert_from(t.body,'UTF8')) AS body FROM page_segment_texts t
-          WHERE t.source_id=$1 AND t.sha256 IN (SELECT sha256 FROM chunk)),
-        gone AS (DELETE FROM page_segment_texts d WHERE d.source_id=$1
-            AND d.sha256 IN (SELECT l.sha256 FROM lowered l WHERE EXISTS (SELECT 1 FROM unnest($3::text[]) AS n WHERE strpos(l.body,n)>0))
-            AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=d.source_id AND m.sha256=d.sha256) AND NOT ${stagingNeedsTextSql('d')}
-          RETURNING d.sha256)
-        SELECT (SELECT encode(sha256,'hex') FROM chunk ORDER BY sha256 DESC LIMIT 1) AS last, ARRAY(SELECT encode(sha256,'hex') FROM gone) AS deleted`,
-        [sourceId, cursor, forms.slice(at, at + CLAIM_FORMS_BATCH), CLAIM_SWEEP_CHUNK_BYTES]);
-      carrying.push(...(swept?.deleted ?? []));
-      if (at === 0) next = swept?.last ?? null;
+      const swept = await tx.sweepPageTextsForClaims(sourceId, cursor, forms.slice(at, at + CLAIM_FORMS_BATCH), CLAIM_SWEEP_CHUNK_BYTES);
+      carrying.push(...swept.deleted);
+      if (at === 0) next = swept.last;
     }
     cursor = next;
   }

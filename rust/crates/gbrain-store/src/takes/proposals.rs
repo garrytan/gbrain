@@ -234,6 +234,23 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     Ok(())
 }
 
+/// A page purge's scrub of the proposal queue (`deletePurgedSlugStoreRows` on `take_proposals`): deletes the proposals of
+/// `source_id` filed under one of `slugs`, each with its idempotency entry and its nudges; how many.
+pub(crate) fn remove_for_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &std::collections::BTreeSet<&str>,
+) -> Result<u64> {
+    let mut removed = 0;
+    for record in all_proposals(&*tx)? {
+        if record.source_id == source_id && slugs.contains(record.page_slug.as_str()) {
+            delete_proposal(tx, &record)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// Updates a proposal when `pick` accepts it; the updated record, or `None`.
 fn update_proposal(
     tx: &mut dyn KvWrite,

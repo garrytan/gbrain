@@ -56,7 +56,7 @@ test/engine-parity/facts-conversation-sites.test.ts	0	22
 test/engine-parity/facts-cycle-sites.test.ts	0	15
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	5	22
+test/engine-parity/facts-purge-sites.test.ts	6	21
 test/engine-parity/facts-purge.test.ts	25	2
 test/engine-parity/facts-repair-sites.test.ts	0	14
 test/engine-parity/facts-repair.test.ts	16	1
@@ -111,8 +111,8 @@ test/engine-parity/owner-only-reads.test.ts	3	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	4	0
 test/engine-parity/page-purge-reads.test.ts	10	0
-test/engine-parity/page-purge-stores.test.ts	0	2
-test/engine-parity/page-purge-sweep.test.ts	0	4
+test/engine-parity/page-purge-stores.test.ts	3	0
+test/engine-parity/page-purge-sweep.test.ts	5	1
 test/engine-parity/page-read-options.test.ts	3	0
 test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0

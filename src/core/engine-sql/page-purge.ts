@@ -83,6 +83,12 @@ export async function listPageLinkStreams(engine: RawSql, sourceId: string, page
   return rows.map(r => r.slug).sort(byText);
 }
 
+/** The page's facts (`PAGE_FACTS`: filed on it or extracted from it), all of them; how many. Writes facts; run it in the purge transaction. */
+export async function deletePurgedPageFacts(engine: RawSql, sourceId: string, slug: string): Promise<number> {
+  const { text } = renderFragment(sqlFragment`DELETE FROM facts WHERE source_id=${trustedSql(P.p1)} AND ${trustedSql(PAGE_FACTS)} RETURNING 1`);
+  return (await engine.executeRaw(text, [sourceId, slug])).length;
+}
+
 /** The text-free fact tombstones of a page purge: one for each distinct claim the page holds that is not an outcome marker. Writes fact_purges; run it in the purge transaction. */
 export async function insertPageFactPurges(engine: RawSql, sourceId: string, slug: string, requestId: string, actor: string): Promise<void> {
   const { text } = renderFragment(sqlFragment`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)

@@ -401,11 +401,12 @@ export async function setPurgeEffectData(raw: EngineRawRead, effectId: string, d
   await raw('UPDATE persistence_effects SET data = $2::text::jsonb WHERE id = $1::bigint', [effectId, JSON.stringify(data)]);
 }
 
-/** pageChangeReasons: the reasons the page's snapshots and its requests (intent and outcome) recorded, each once. */
+/** pageChangeReasons: the reasons the page's snapshots and its requests (intent and outcome) recorded, each once; NULL first, then in text order (the `UNION` has none). */
 export async function listPageChangeReasons(raw: EngineRawRead, sourceId: string, slug: string, pageId: number): Promise<Array<{ reason: string | null }>> {
-  return raw<{ reason: string | null }>(`SELECT change_reason AS reason FROM page_versions WHERE page_id = $1
+  const rows = await raw<{ reason: string | null }>(`SELECT change_reason AS reason FROM page_versions WHERE page_id = $1
     UNION SELECT intent->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3
     UNION SELECT outcome->'reason_recorded'->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3`, [pageId, sourceId, slug]);
+  return rows.sort((a, b) => (a.reason === b.reason ? 0 : a.reason === null ? -1 : b.reason === null ? 1 : a.reason < b.reason ? -1 : 1));
 }
 
 /** requestsRecordingReasons: the slug's requests whose intent or outcome records a reason, oldest first, compacted ones included. */

@@ -105,6 +105,7 @@ import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts'
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 import type { CheckoutFileRow, OriginDependentRow, OriginRefInput, PageLabelRow, PrivacyOriginRow } from './engine-sql/label-door.ts';
 import type * as PagePurgeSql from './engine-sql/page-purge.ts';
+import type * as PagePurgeSweepSql from './engine-sql/page-purge-sweep.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -4089,6 +4090,29 @@ export interface BrainEngine {
   deleteFactPurgesByRequests(sourceId: string, requestIds: readonly string[]): Promise<number>;
   /** Removes the source's take tombstones of these purge requests; how many. Writes take_purges. */
   deleteTakePurgesByRequests(sourceId: string, requestIds: readonly string[]): Promise<number>;
+  // The deletes and reads of a page purge's sweep and of its segment storage (engine-sql/page-purge-sweep.ts; persistence/page-purge.ts).
+  /** The trust proposals that name the page, one of its facts or one of its takes as target or related row; how many. Writes trust_proposals; run it in the purge transaction. */
+  deletePurgedPageTrustProposals(sourceId: string, pageId: number, factIds: number[], takeIds: number[]): Promise<number>;
+  /** The page's held writes (every hold of the slug in the source); their ids as text, in id order. Writes write_gate_holds; run it in the purge transaction. */
+  deletePurgedPageHolds(sourceId: string, slug: string): Promise<string[]>;
+  /** The gate receipts that name the page, one of its facts or takes, or one of its held writes (`holdIds`, as text); how many. Writes write_gate_receipts; run it in the purge transaction. */
+  deletePurgedPageGateReceipts(pageId: number, factIds: number[], takeIds: number[], holdIds: string[]): Promise<number>;
+  /** The page's facts (filed on it or extracted from it and filed on none); how many. Writes facts; run it in the purge transaction. */
+  deletePurgedPageFacts(sourceId: string, slug: string): Promise<number>;
+  /** The page's file records (attached to it, or detached and still naming its slug in the source or in none); their storage paths, sorted. Writes files; run it in the purge transaction. */
+  deletePurgedPageFiles(sourceId: string, slug: string, pageId: number): Promise<string[]>;
+  /** The add_timeline_entry receipts of the slugs (and, with `withDiffs`, their edit_page receipts) after a sequence, by sequence, up to `limit`. Reads persistence_requests. */
+  listPageTimelineReceipts(sourceId: string, slugs: readonly string[], limit: number, after: string, withDiffs: boolean): Promise<PagePurgeSweepSql.PageTimelineReceiptRow[]>;
+  /** The sha256 (hex) of every text the page's manifest names or its stagings recorded in the source, once each, sorted. Reads page_body_manifest, page_body_stagings and page_body_staging_texts. */
+  listPageSegmentShas(sourceId: string, slug: string, pageId: number): Promise<string[]>;
+  /** How many manifest rows the page has, staged rows included. Reads page_body_manifest. */
+  countPageManifestRows(pageId: number): Promise<number>;
+  /** The source's stagings of the slug or of the page, with the texts and parts they recorded; how many stagings. Writes page_body_stagings; run it in the purge transaction. */
+  deletePageStagings(sourceId: string, slug: string, pageId: number): Promise<number>;
+  /** The source's segment texts among `shas` (hex) that no manifest row names and no live staging recorded; how many. Writes page_segment_texts; run it in the purge transaction. */
+  deletePageSegmentTexts(sourceId: string, shas: readonly string[]): Promise<number>;
+  /** One claim-sweep statement (#9743): the unreferenced texts of the source after `cursor` (a sha256 as hex) in sha order, `chunkBytes` of them at most, and those that hold a claim form deleted. Writes page_segment_texts; run it in the purge transaction. */
+  sweepPageTextsForClaims(sourceId: string, cursor: string, forms: readonly string[], chunkBytes: number): Promise<PagePurgeSweepSql.ClaimTextSweep>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */

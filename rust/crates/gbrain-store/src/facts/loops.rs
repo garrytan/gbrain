@@ -220,6 +220,34 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     Ok(())
 }
 
+/// A page purge's scrub of the loops (`deletePurgedSlugStoreRows` on `open_loops`): deletes the loops of `source_id` whose
+/// `page_slug` is one of `slugs`, with their dedupe keys; how many.
+pub(crate) fn remove_for_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &std::collections::BTreeSet<&str>,
+) -> Result<u64> {
+    let mut found = Vec::new();
+    scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
+        if let Some(id) = keys::be8(v) {
+            found.push((k.to_vec(), id));
+        }
+        true
+    })?;
+    let mut removed = 0;
+    for (key, id) in found {
+        let Some(row) = read_row(&*tx, id)? else {
+            continue;
+        };
+        if row.page_slug.as_deref().is_some_and(|s| slugs.contains(s)) {
+            tx.delete(&key)?;
+            tx.delete(&row_key(id))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 impl Store {
     /// `upsertOpenLoop`: inserts the loop, or updates the row with its `(source_id, dedup_key)`
     /// when that row is open, the new activity is newer, or an unmute queued it, and a mute does

@@ -3,7 +3,7 @@
 //! `decide_review_queue` and the conflict sweep's retry table `decide_sweep_deferred`.
 //! Contract: rust/docs/store/decide-proposals.md; SQL twin: src/core/engine-sql/decide-proposals.ts.
 //!
-//! Members: insertDecideProposal, getDecideProposal, listDecideProposalIds, listDecideProposals,
+//! Members (the purge's deletes are in `decide_proposals/purge.rs`): insertDecideProposal, getDecideProposal, listDecideProposalIds, listDecideProposals,
 //! transitionDecideProposal, listDecideProposedPairs, insertDecideReviewProposal,
 //! listDecideReviewProposals, getDecideReviewProposal, transitionDecideReviewProposal,
 //! listDecideReviewProposalIds, readProposalReviewRates, listDueDecideReviewQueue,
@@ -42,6 +42,8 @@ use crate::timeline_queries::timestamptz_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+mod purge;
 
 const NEXT_PROPOSAL_ID: &str = "decide_proposal_next_id";
 const NEXT_REVIEW_PROPOSAL_ID: &str = "decide_review_proposal_next_id";

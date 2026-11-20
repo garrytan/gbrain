@@ -679,7 +679,7 @@ impl Store {
 }
 
 /// The requests that pass `keep`, by sequence.
-fn requests(
+pub(super) fn requests(
     read: &dyn KvRead,
     keep: impl Fn(&RequestRecord) -> bool,
 ) -> Result<Vec<RequestRecord>> {

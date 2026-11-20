@@ -194,6 +194,26 @@ async function seedJournal(engine: BrainEngine): Promise<Record<string, string>>
   return ids;
 }
 
+/** The rows around the seeded page, as each store lists them: what a sweep leaves and what it must not touch. */
+async function pageState(engine: BrainEngine, s: Seeded) {
+  const factNames = (id: number | string) => name(engine, 'facts', id);
+  // A ref is a fact id as text (different on each arm) or a page path.
+  const ref = (value: string) => (/^\d+$/.test(value) ? factNames(value) : value);
+  return {
+      facts: (await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 1000 } as never)).map(f => f.fact).sort(),
+      factsOther: (await engine.listFactsSince(OTHER, new Date(0), { activeOnly: false, limit: 1000 } as never)).map(f => f.fact).sort(),
+      decide: (await engine.listDecideProposals({ status: 'all' })).map(r => [factNames(r.new_fact_id), factNames(r.old_fact_id)]).sort(),
+      reviewProposals: (await engine.listDecideReviewProposals('all')).map(r => [ref(r.a_ref), ref(r.b_ref)]).sort(),
+      queue: (await engine.listDueDecideReviewQueue('duplicate_page', SRC, 100)).length,
+      trust: (await engine.listTrustProposals({ status: 'all' })).map(r => [r.action, r.target_table, r.related_table]).sort(),
+      holds: (await engine.listWriteGateHoldRows({ status: 'all', limit: 100 })).map(h => name(engine, 'write_gate_holds', h.id)).sort(),
+      receipts: await Promise.all([['pages', s.doomed], ['pages', s.keeper], ['facts', s.facts.filed], ['facts', s.facts.keeper], ['takes', s.takes.first], ['takes', s.takes.keeper]]
+        .map(async ([table, id]) => [name(engine, `receipt:${table}`, id as number), (await engine.listWriteGateReceiptsFor(table as string, String(id), 10)).length])),
+      files: (await engine.listFilesForPage(s.doomed)).map(f => f.storage_path),
+      filesKeeper: (await engine.listFilesForPage(s.keeper)).map(f => f.storage_path),
+      };
+}
+
 describe('engine parity: the page purge sweep, its segment storage and its slug stores', () => {
   parityTest('sweepPurgedPage removes the proposals, review rows, held writes, gate receipts, facts, file records and journal receipts that name the page, and nothing of another page or source', {
     methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'listTakes', 'insertDecideProposal', 'insertDecideReviewProposal', 'applyDecideReviewQueue', 'insertTrustProposal',
@@ -204,20 +224,7 @@ describe('engine parity: the page purge sweep, its segment storage and its slug 
   }, async (engine, backend) => {
     const s = await seed(engine, backend);
     await seedJournal(engine);
-    const factNames = (id: number | string) => name(engine, 'facts', id);
-    const state = async () => ({
-      facts: (await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 1000 } as never)).map(f => f.fact).sort(),
-      factsOther: (await engine.listFactsSince(OTHER, new Date(0), { activeOnly: false, limit: 1000 } as never)).map(f => f.fact).sort(),
-      decide: (await engine.listDecideProposals({ status: 'all' })).map(r => [factNames(r.new_fact_id), factNames(r.old_fact_id)]).sort(),
-      reviewProposals: (await engine.listDecideReviewProposals('all')).map(r => [r.a_ref === String(s.facts.keeper) ? 'keeper' : r.a_ref.startsWith('pages/') ? r.a_ref : 'doomed-fact', r.b_ref]).sort(),
-      queue: (await engine.listDueDecideReviewQueue('duplicate_page', SRC, 100)).length,
-      trust: (await engine.listTrustProposals({ status: 'all' })).map(r => [r.action, r.target_table, r.related_table]).sort(),
-      holds: (await engine.listWriteGateHoldRows({ status: 'all', limit: 100 })).map(h => name(engine, 'write_gate_holds', h.id)).sort(),
-      receipts: await Promise.all([['pages', s.doomed], ['pages', s.keeper], ['facts', s.facts.filed], ['facts', s.facts.keeper], ['takes', s.takes.first], ['takes', s.takes.keeper]]
-        .map(async ([table, id]) => [name(engine, `receipt:${table}`, id as number), (await engine.listWriteGateReceiptsFor(table as string, String(id), 10)).length])),
-      files: (await engine.listFilesForPage(s.doomed)).map(f => f.storage_path),
-      filesKeeper: (await engine.listFilesForPage(s.keeper)).map(f => f.storage_path),
-    });
+    const state = () => pageState(engine, s);
     const before = await state();
     const out = await engine.transaction(tx => sweepPurgedPage(tx, {
       sourceId: SRC, slug: SLUG, pageId: s.doomed, requestId: PURGE_REQUEST, factIds: [s.facts.filed, s.facts.entity, s.facts.marker, s.facts.extracted],
@@ -232,8 +239,51 @@ describe('engine parity: the page purge sweep, its segment storage and its slug 
     return { before, result, after };
   });
 
+  parityTest('the sweep\'s typed deletes remove what names the page, in its source only, and answer zero for ids that name nothing', {
+    methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'listTakes', 'insertDecideProposal', 'insertDecideReviewProposal', 'applyDecideReviewQueue', 'insertTrustProposal',
+      'upsertWriteGateHold', 'upsertWriteGateReceipt', 'upsertFile', 'transaction', 'listDecideProposals', 'listDecideReviewProposals', 'listDueDecideReviewQueue', 'listTrustProposals',
+      'listWriteGateHoldRows', 'listWriteGateReceiptsFor', 'listFilesForPage', 'listFactsSince', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals',
+      'deletePurgedPageTrustProposals', 'deletePurgedPageHolds', 'deletePurgedPageGateReceipts', 'deletePurgedPageFacts', 'deletePurgedPageFiles'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    const s = await seed(engine, backend);
+    const factIds = [s.facts.filed, s.facts.entity, s.facts.marker, s.facts.extracted];
+    const refs = factIds.map(String);
+    const takeIds = [s.takes.first, s.takes.second];
+    const before = await pageState(engine, s);
+    // Nothing named: no ids, ids no row has, another source, another slug.
+    const nothing = await engine.transaction(async tx => ({
+      queue: [await tx.deletePurgeReviewQueue(SRC, []), await tx.deletePurgeReviewQueue(SRC, ['999999']), await tx.deletePurgeReviewQueue('nobody', refs)],
+      reviews: [await tx.deletePurgeReviewProposals(SRC, []), await tx.deletePurgeReviewProposals(SRC, ['999999']), await tx.deletePurgeReviewProposals('nobody', refs)],
+      decide: [await tx.deletePurgeDecideProposals(SRC, []), await tx.deletePurgeDecideProposals(SRC, [999999]), await tx.deletePurgeDecideProposals('nobody', factIds)],
+      trust: [await tx.deletePurgedPageTrustProposals(SRC, 999999, [], []), await tx.deletePurgedPageTrustProposals('nobody', s.doomed, factIds, takeIds)],
+      holds: [await tx.deletePurgedPageHolds(SRC, 'notes/never'), await tx.deletePurgedPageHolds('nobody', SLUG)],
+      receipts: await tx.deletePurgedPageGateReceipts(999999, [], [], []),
+      facts: [await tx.deletePurgedPageFacts(SRC, 'notes/never'), await tx.deletePurgedPageFacts('nobody', SLUG)],
+      files: [await tx.deletePurgedPageFiles(SRC, 'notes/never', 999999), await tx.deletePurgedPageFiles('nobody', 'notes/never', 999999)],
+    }));
+    const untouched = await pageState(engine, s);
+    const removed = await engine.transaction(async tx => {
+      const holds = await tx.deletePurgedPageHolds(SRC, SLUG);
+      return {
+        queue: await tx.deletePurgeReviewQueue(SRC, refs), reviews: await tx.deletePurgeReviewProposals(SRC, refs), decide: await tx.deletePurgeDecideProposals(SRC, factIds),
+        trust: await tx.deletePurgedPageTrustProposals(SRC, s.doomed, factIds, takeIds),
+        holds: holds.map(id => name(engine, 'write_gate_holds', id)),
+        receipts: await tx.deletePurgedPageGateReceipts(s.doomed, factIds, takeIds, holds),
+        facts: await tx.deletePurgedPageFacts(SRC, SLUG), files: await tx.deletePurgedPageFiles(SRC, SLUG, s.doomed),
+        again: [await tx.deletePurgedPageHolds(SRC, SLUG), await tx.deletePurgedPageFacts(SRC, SLUG), await tx.deletePurgedPageFiles(SRC, SLUG, s.doomed)],
+      };
+    });
+    const after = await pageState(engine, s);
+    expect(untouched).toEqual(before);
+    expect(removed).toMatchObject({ queue: 2, reviews: 2, decide: 2, trust: 5, receipts: 4, facts: 4, files: ['doomed/a.png', 'doomed/b.png'], again: [[], 0, []] });
+    expect(removed.holds).toHaveLength(2);
+    expect(after.factsOther).toEqual(before.factsOther);
+    return { before, nothing, removed, after };
+  });
+
   parityTest('timelineReceipts lists a slug\'s add_timeline_entry receipts, and its edit_page diffs when asked, in sequence order after a cursor, up to a limit, in its source only', {
-    methods: ['putPage', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction', 'executeRaw'],
+    methods: ['putPage', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction', 'listPageTimelineReceipts'],
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
     await engine.putPage(SLUG, note('Doomed', 'The harbor ledger starts here.'));
@@ -263,7 +313,7 @@ describe('engine parity: the page purge sweep, its segment storage and its slug 
 
   parityTest('deletePageWithSegments deletes a segmented page, its stagings, its texts and the unreferenced texts that hold its claims, and keeps the texts another page or a live staging needs', {
     methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'setBodyStagingState', 'flipBodyGeneration', 'readSegmentTexts',
-      'readManifest', 'getPage', 'transaction', 'executeRaw'],
+      'readManifest', 'getPage', 'transaction', 'listPageSegmentShas', 'countPageManifestRows', 'deletePageStagings', 'deletePage', 'deletePageSegmentTexts', 'sweepPageTextsForClaims'],
     timeout: 120_000,
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
@@ -315,8 +365,45 @@ describe('engine parity: the page purge sweep, its segment storage and its slug 
     return { before, view, after };
   });
 
+  parityTest('the segment members answer a page\'s shas, manifest rows and stagings, delete only unreferenced unrecorded texts, and sweep claim texts a chunk at a time', {
+    methods: ['readSegmentTexts', 'stageSegmentTexts', 'transaction', 'listPageSegmentShas', 'countPageManifestRows', 'deletePageStagings', 'deletePage', 'deletePageSegmentTexts',
+      'sweepPageTextsForClaims', 'listPageTimelineReceipts'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, OTHER);
+    const kept = segmentText('Kept by the manifest alice likes tea\n');
+    const doomed = await publishSegmentedPage(engine, 'notes/seg', [kept, segmentText('Second text\n')]);
+    const loose = segmentText('A loose text: Alice likes tea\n');
+    const clean = segmentText('A clean loose text\n');
+    await engine.stageSegmentTexts(SRC, [loose, clean]);
+    await engine.stageSegmentTexts(OTHER, [loose]);
+    const names = new Map([[hexOf(kept.sha256), 'kept'], [hexOf(loose.sha256), 'loose'], [hexOf(clean.sha256), 'clean']]);
+    const label = (h: string) => names.get(h) ?? 'second';
+    const stored = async (sourceId: string) => (await engine.readSegmentTexts(sourceId, [kept.sha256, loose.sha256, clean.sha256])).size;
+    const forms = ['alice likes tea'];
+    const out = await engine.transaction(async tx => {
+      const shas = (await tx.listPageSegmentShas(SRC, 'notes/seg', doomed.pageId)).map(label);
+      const none = await tx.listPageSegmentShas(OTHER, 'notes/never', 987654);
+      const manifest = [await tx.countPageManifestRows(doomed.pageId), await tx.countPageManifestRows(987654)];
+      // The manifest still names its texts, so nothing it names deletes.
+      const whileNamed = await tx.deletePageSegmentTexts(SRC, [hexOf(kept.sha256), 'ab'.repeat(32)]);
+      const zeroBudget = await tx.sweepPageTextsForClaims(SRC, '', forms, 0);
+      const swept = await tx.sweepPageTextsForClaims(SRC, '', forms, 4 * 1024 * 1024);
+      const stagings = [await tx.deletePageStagings(SRC, 'notes/seg', doomed.pageId), await tx.deletePageStagings(SRC, 'notes/seg', doomed.pageId)];
+      await tx.deletePage('notes/seg', { sourceId: SRC });
+      const afterPage = [await tx.countPageManifestRows(doomed.pageId), await tx.deletePageSegmentTexts(SRC, [hexOf(kept.sha256)]), await tx.deletePageSegmentTexts(SRC, [])];
+      return { shas, none, manifest, whileNamed, zeroBudget: { last: zeroBudget.last === null, deleted: zeroBudget.deleted }, swept: { hasLast: swept.last !== null, deleted: swept.deleted.map(label) }, stagings, afterPage,
+        timeline: await tx.listPageTimelineReceipts(SRC, [SLUG], 10, '0', true) };
+    });
+    const after = { source: await stored(SRC), other: await stored(OTHER) };
+    expect(out.whileNamed).toBe(0);
+    expect(out.swept.deleted).toEqual(['loose']);
+    expect(after.other).toBe(1);
+    return { out, after };
+  });
+
   parityTest('deletePageWithSegments answers zeros and deletes nothing for a page that is not segmented and has no stagings, whatever its claims', {
-    methods: ['putPage', 'getPage', 'transaction', 'executeRaw'],
+    methods: ['putPage', 'getPage', 'transaction', 'readSegmentTexts', 'stageSegmentTexts', 'listPageSegmentShas', 'countPageManifestRows', 'deletePageStagings', 'deletePage', 'sweepPageTextsForClaims'],
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
     const plain = await engine.putPage('notes/plain', note('Plain', 'Plain notes about the harbor.'));

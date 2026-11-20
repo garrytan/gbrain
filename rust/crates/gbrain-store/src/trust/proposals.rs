@@ -32,6 +32,8 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod purge;
+
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
 const BY_ROW: u8 = 0x08;
@@ -292,23 +294,28 @@ fn put_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
     put_json(tx, &by_id(record.id), record)
 }
 
+/// Removes one proposal and its index entries: the pending key when it still points at the proposal, the row keys of its
+/// target and related row, and the row itself.
+fn remove_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, id, record.id))?;
+    }
+    tx.delete(&by_id(record.id))
+}
+
 /// Removes every proposal of a deleted source and its index entries (`ON DELETE CASCADE`).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for record in all_records(tx)? {
-        if record.source_id != source_id {
-            continue;
+        if record.source_id == source_id {
+            remove_record(tx, &record)?;
         }
-        if record.status == "pending" {
-            let key = record.pending_key();
-            if get_id(tx, &key)? == Some(record.id) {
-                tx.delete(&key)?;
-            }
-        }
-        tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
-        if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
-            tx.delete(&row_key(table, id, record.id))?;
-        }
-        tx.delete(&by_id(record.id))?;
     }
     Ok(())
 }

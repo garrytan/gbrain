@@ -27,6 +27,10 @@ export async function scrubPurgedSlugStores(
     const secrets = await (await import('../secret-store/store.ts')).purgeSecretsForSlugs(engine, sourceId, slugs, onPages);
     removed.secret_store_occurrence = secrets.occurrences;
     removed.secret_store = secrets.entries;
+  } else if (!opts.ifPresent) {
+    // A brain that keeps no secret store (the Rust engine) holds nothing to purge: the receipt still names both stores, at 0.
+    removed.secret_store_occurrence = 0;
+    removed.secret_store = 0;
   }
   return removed;
 }

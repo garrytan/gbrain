@@ -12,8 +12,9 @@
 //!   re-opens a hold when the same content arrives again.
 //!
 //! Ids come from the `write_gate_receipts` and `write_gate_holds` counters and start at 1. Neither
-//! table has a foreign key in Postgres, so a source or page delete leaves these rows; the callers
-//! that scrub them (source delete, purge) still run raw SQL, which the Rust engine refuses.
+//! table has a foreign key in Postgres, so a source or page delete leaves these rows. A page purge's
+//! sweep removes the holds of its slug and the receipts that name it (`write_gate/purge.rs`); the
+//! source delete's scrub still runs raw SQL, which the Rust engine refuses.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -24,6 +25,8 @@ use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+mod purge;
 
 const RECEIPT: u8 = 0x02;
 const RECEIPT_TARGET: u8 = 0x03;
