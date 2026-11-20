@@ -48,3 +48,9 @@ export const reserveChronicleJudgeSlot: Member<'reserveChronicleJudgeSlot'> = (b
 
 export const readChronicleLedger: Member<'readChronicleLedger'> = (brain) =>
   storeCall({ member: 'readChronicleLedger' }, () => brain.readChronicleLedger()) as Promise<Awaited<ReturnType<BrainEngine['readChronicleLedger']>>>;
+
+export const listSharedSkillMigrationRows: Member<'listSharedSkillMigrationRows'> = (brain, sourceId) =>
+  storeCall({ member: 'listSharedSkillMigrationRows' }, () => brain.listSharedSkillMigrationRows(sourceId)) as Promise<Awaited<ReturnType<BrainEngine['listSharedSkillMigrationRows']>>>;
+
+export const normalizeDerivationClaims: Member<'normalizeDerivationClaims'> = (brain, claims) =>
+  storeCall({ member: 'normalizeDerivationClaims' }, () => brain.normalizeDerivationClaims(claims)) as Promise<Awaited<ReturnType<BrainEngine['normalizeDerivationClaims']>>>;

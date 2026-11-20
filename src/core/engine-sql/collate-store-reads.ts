@@ -500,3 +500,43 @@ export async function readChronicleLedger(tx: Raw): Promise<ChronicleLedgerSecti
     reasons, calls: Number(calls?.n ?? 0), principals,
   };
 }
+
+/** One member that follows a source, as `inspectSharedMemberMigration` reads it (epoch as a number on every engine). */
+export interface SharedSkillMigrationRow {
+  installation_id: string;
+  adapter: string;
+  epoch: number;
+  active: boolean;
+  approved_incarnation: string | null;
+  desired_view: string | null;
+  acknowledged_view: string | null;
+  stage: string | null;
+}
+
+/** The statement shared-skills/migration-members.ts ran: its text, with the adapter sort key `COLLATE "C"` so Postgres sorts by byte like PGLite and the store. */
+export const SHARED_SKILL_MIGRATION_SQL = `SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
+      m.desired_view,m.acknowledged_view,
+      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
+        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`;
+
+/** The members that follow the source, by byte of adapter then installation id, at most 4096. */
+export async function listSharedSkillMigrationRows(tx: Raw, sourceId: string): Promise<SharedSkillMigrationRow[]> {
+  const rows = await tx.executeRaw<Omit<SharedSkillMigrationRow, 'epoch'> & { epoch: string | number }>(SHARED_SKILL_MIGRATION_SQL, [sourceId]);
+  return rows.map(row => ({ ...row, epoch: Number(row.epoch) }));
+}
+
+/**
+ * The statement page-body/segment-derive.ts derivationNeedles ran, with `foldSql('gbrain_fact_normalize(c)')` written out:
+ * translate final sigma to sigma, drop the combining dot after an i (`\u0307` below is that one character), then keep the
+ * distinct non-empty results by byte.
+ */
+export const DERIVATION_NEEDLES_SQL = `SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`;
+
+/** The claims normalized by the database and folded: distinct, non-empty, in byte order. */
+export async function normalizeDerivationClaims(tx: Raw, claims: string[]): Promise<string[]> {
+  if (!claims.length) return [];
+  const rows = await tx.executeRaw<{ f: string }>(DERIVATION_NEEDLES_SQL, [claims]);
+  return rows.map(row => row.f);
+}

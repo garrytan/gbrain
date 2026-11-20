@@ -55,6 +55,7 @@ pub mod chronicle_ledger;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+pub mod derivation_needles;
 pub mod dream;
 pub mod embedding_catalog;
 pub mod embedding_install;

@@ -33,6 +33,7 @@ import { listPins, insertPin } from '../../src/core/questions/store.ts';
 import { insertCalibration, listCalibrations, receiptStats, slotUsage } from '../../src/core/ai/decide/store.ts';
 import { readCandidateRecords, upsertCandidatePart } from '../../src/core/fence-repair/census-store.ts';
 import { readUncommittedFenceRepairs, recordUncommittedFenceRepair, type UncommittedFenceRepair } from '../../src/core/fence-repair/uncommitted.ts';
+import { randomUUID } from 'node:crypto';
 import { readChronicleLedgerStats } from '../../src/core/chronicle/ledger-stats.ts';
 import { volunteerUsageStats } from '../../src/core/context/volunteer.ts';
 import { derivationNeedles } from '../../src/core/page-body/segment-derive.ts';
@@ -223,7 +224,7 @@ describe('store listings come out by byte', () => {
     expect(Object.keys((await readChronicleLedgerStats(engine)).last7d.reasons)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('derivationNeedles lists claim needles by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('derivationNeedles lists claim needles by byte', { methods: ['normalizeDerivationClaims'] }, async (engine) => {
     const { needles } = await derivationNeedles(engine, ['ab', 'a b', 'a c']);
     expect(needles).toEqual([' a b ', ' a c ', ' ab ']);
   });
@@ -272,12 +273,17 @@ describe('store listings come out by byte', () => {
     expect(bySource.map(s => s.source_id)).toEqual([...BYTE_IDS]);
   });
 
-  parityTest('inspectSharedMemberMigration lists installations by byte of adapter', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const adapter of MIXED_SLUGS) {
-      await engine.executeRaw(
-        `INSERT INTO shared_skill_members (installation_id, principal_kind, principal_id, adapter, brain_id, follow_policy)
-         VALUES (gen_random_uuid(), 'client', 'c', $1, gen_random_uuid(), '{"sources": {"s": "1"}}'::jsonb)`, [adapter]);
+  parityTest('inspectSharedMemberMigration lists installations by byte of adapter', { methods: ['enrollSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'acknowledgeSharedSkillDeliveryBatch', 'listSharedSkillMigrationRows'] }, async (engine) => {
+    const ids = MIXED_SLUGS.map(() => randomUUID());
+    for (const [i, adapter] of MIXED_SLUGS.entries()) {
+      await engine.enrollSharedSkillMember({ installationId: ids[i], principalKind: 'client', principalId: 'c', adapter, brainId: randomUUID(), followPolicy: { sources: { s: '1' } } });
     }
+    // The first installation reports an installed batch, so its stage reads from the batch it acknowledged.
+    const token = randomUUID();
+    await engine.issueSharedSkillDeliveryBatch({ installationId: ids[0], epoch: 1, issuedSequence: 0, viewToken: 'v1', authorityDigest: 'a', revisions: [], token, retainedBatches: 32 });
+    await engine.acknowledgeSharedSkillDeliveryBatch({ token, evidence: { stage: 'installed', revisions: [] }, installationId: ids[0], advance: { sequence: 1, viewToken: 'v1' } });
+    const states = Object.fromEntries((await inspectSharedMemberMigration(engine, 's', '1')).map(m => [m.adapter, m.state]));
+    expect(states[MIXED_SLUGS[0]]).toBe('delivery_reported');
     expect((await inspectSharedMemberMigration(engine, 's', '1')).map(m => m.adapter)).toEqual([...BYTE_SLUGS]);
   });
 });

@@ -219,3 +219,55 @@ fn follow_sources_skip_archived_and_filter_by_both_lists() {
         .unwrap();
     assert_eq!(none, json!([]));
 }
+
+#[test]
+fn migration_rows_follow_a_source_by_byte_of_adapter_and_report_the_acknowledged_stage() {
+    let b = brain("ssm-migration");
+    let enroll_as = |id: &str, principal: &str, adapter: &str, policy: Value| {
+        let spec: SharedSkillMemberEnroll = serde_json::from_value(json!({
+            "installationId": id, "principalKind": "token", "principalId": principal, "adapter": adapter,
+            "brainId": BRAIN, "followPolicy": policy,
+        }))
+        .unwrap();
+        b.enroll_shared_skill_member(&spec).unwrap();
+    };
+    // `_` sorts before `a` by byte but after it under en_US; the array and string policies match, a policy without the
+    // source does not, and the stage is the evidence of the batch acknowledged at the member's sequence.
+    enroll_as(MEMBER, "p1", "a-adapter", json!({"sources": {"s": "1"}}));
+    enroll_as(&token(7), "p2", "_adapter", json!({"sources": ["s"]}));
+    enroll_as(
+        &token(8),
+        "p3",
+        "b-adapter",
+        json!({"sources": {"other": "1"}}),
+    );
+    let spec: SharedSkillBatchIssue = serde_json::from_value(json!({
+        "installationId": MEMBER, "epoch": 1, "issuedSequence": 0, "viewToken": "v1", "authorityDigest": "a",
+        "revisions": [], "token": token(1), "retainedBatches": 3,
+    }))
+    .unwrap();
+    b.issue_shared_skill_delivery_batch(&spec).unwrap();
+    let ack: SharedSkillBatchAcknowledge = serde_json::from_value(json!({
+        "token": token(1), "evidence": {"stage": "installed"}, "installationId": MEMBER,
+        "advance": {"sequence": 1, "viewToken": "v1"},
+    }))
+    .unwrap();
+    b.acknowledge_shared_skill_delivery_batch(&ack).unwrap();
+
+    let rows = b.list_shared_skill_migration_rows("s").unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["adapter"], "_adapter");
+    assert_eq!(rows[0]["approved_incarnation"], Value::Null);
+    assert_eq!(rows[0]["stage"], Value::Null);
+    assert_eq!(rows[1]["adapter"], "a-adapter");
+    assert_eq!(rows[1]["approved_incarnation"], "1");
+    assert_eq!(rows[1]["acknowledged_view"], "v1");
+    assert_eq!(rows[1]["stage"], "installed");
+    assert_eq!(rows[1]["active"], true);
+    assert_eq!(rows[1]["epoch"], 1);
+    assert_eq!(
+        b.list_shared_skill_migration_rows("none").unwrap(),
+        json!([])
+    );
+}

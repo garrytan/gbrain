@@ -4188,6 +4188,8 @@ export class PostgresEngine implements BrainEngine {
   async upsertChronicleRow(w: collateStoreReads.ChronicleRowUpsert) { return collateStoreReads.upsertChronicleRow(this, w); }
   async reserveChronicleJudgeSlot(limit: number, key: collateStoreReads.ChronicleJudgeKey) { return collateStoreReads.reserveChronicleJudgeSlot(this, limit, key); }
   async readChronicleLedger() { return collateStoreReads.readChronicleLedger(this); }
+  async listSharedSkillMigrationRows(sourceId: string) { return collateStoreReads.listSharedSkillMigrationRows(this, sourceId); }
+  async normalizeDerivationClaims(claims: string[]) { return collateStoreReads.normalizeDerivationClaims(this, claims); }
   async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }

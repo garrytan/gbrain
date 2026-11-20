@@ -38,6 +38,7 @@ when the store seeds the brain; a brain created before this family mints it on t
 | `readSharedSkillDeliveryBatch(token, installationId, epoch)` | the batch or null: this member's, this epoch's, issued within 24 hours | the `SELECT ... FOR UPDATE` |
 | `acknowledgeSharedSkillDeliveryBatch({ token, evidence, installationId, advance })` | null | the batch evidence `UPDATE` and, with `advance`, `acknowledged_sequence=GREATEST(...)`, `acknowledged_view` |
 | `listSharedSkillFollowSources(allowed, sourceIds)` | `[{ id, incarnation }]`: sources not archived, in both lists (null matches every source), by id in byte order, at most 65 | `listSharedSkillFollowSources` |
+| `listSharedSkillMigrationRows(sourceId)` | `[{ installation_id, adapter, epoch, active, approved_incarnation, desired_view, acknowledged_view, stage }]`: the members whose `follow_policy.sources` holds the source (an object key, an array element or the string itself), by adapter in byte order then installation id, at most 4096; `stage` is the evidence `stage` of the batch at the member's acknowledged sequence in its epoch, when acknowledged | `inspectSharedMemberMigration` (`engine-sql/collate-store-reads.ts`, `SHARED_SKILL_MIGRATION_SQL`; `shared_skill_members/migration.rs`) |
 
 Each write is one `Store::write`. An issue that refuses leaves nothing behind, the prune of old batches included. On
 Postgres outside a transaction the prune is its own statement and stays.

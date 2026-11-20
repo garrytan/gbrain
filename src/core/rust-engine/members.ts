@@ -1018,6 +1018,8 @@ export const RUST_ENGINE_MEMBERS = {
   upsertChronicleRow: 'telemetry',
   reserveChronicleJudgeSlot: 'telemetry',
   readChronicleLedger: 'telemetry',
+  listSharedSkillMigrationRows: 'persistence_journal',
+  normalizeDerivationClaims: 'facts',
   patchOauthClient: 'minion_queue',
   insertAccessToken: 'minion_queue',
   findActiveAccessTokens: 'minion_queue',

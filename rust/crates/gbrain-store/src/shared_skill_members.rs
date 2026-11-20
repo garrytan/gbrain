@@ -30,6 +30,8 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod migration;
+
 const STATE: u8 = 0x04;
 const MEMBER: u8 = 0x05;
 const BATCH: u8 = 0x06;

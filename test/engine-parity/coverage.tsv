@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1022/1032
+# covered: 1024/1034
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -41,7 +41,7 @@
 # entity_reads: 19/19
 # cycle_locks: 10/10
 # minion_jobs: 8/8
-# minion_queue: 115/117
+# minion_queue: 117/119
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -457,12 +457,12 @@ listSharedSkillFollowSources	shared_skill_members	yes	2	no	yes	yes	serves
 lockSharedSkillBrainId	shared_skill_members	yes	5	no	yes	yes	serves
 readSharedSkillMember	shared_skill_members	yes	3	no	yes	yes	serves
 countSharedSkillMembers	shared_skill_members	yes	2	no	yes	yes	serves
-enrollSharedSkillMember	shared_skill_members	yes	4	no	yes	yes	serves
+enrollSharedSkillMember	shared_skill_members	yes	5	no	yes	yes	serves
 rebindSharedSkillMember	shared_skill_members	yes	2	no	yes	yes	serves
 leaveSharedSkillMember	shared_skill_members	yes	2	no	yes	yes	serves
-issueSharedSkillDeliveryBatch	shared_skill_members	yes	4	no	yes	yes	serves
+issueSharedSkillDeliveryBatch	shared_skill_members	yes	5	no	yes	yes	serves
 readSharedSkillDeliveryBatch	shared_skill_members	yes	3	no	yes	yes	serves
-acknowledgeSharedSkillDeliveryBatch	shared_skill_members	yes	2	no	yes	yes	serves
+acknowledgeSharedSkillDeliveryBatch	shared_skill_members	yes	3	no	yes	yes	serves
 claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
 readNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
 holdsNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
@@ -722,6 +722,8 @@ readVolunteerUsage	minion_queue	no	0	no	-	-	-
 upsertChronicleRow	minion_queue	yes	2	no	yes	yes	serves
 reserveChronicleJudgeSlot	minion_queue	yes	2	no	yes	yes	serves
 readChronicleLedger	minion_queue	yes	2	no	yes	yes	serves
+listSharedSkillMigrationRows	minion_queue	yes	1	no	yes	yes	serves
+normalizeDerivationClaims	minion_queue	yes	1	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	23	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
@@ -850,7 +852,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	33	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	31	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

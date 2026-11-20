@@ -1111,6 +1111,21 @@ SELECT source_id, type FROM pairs`],
        GROUP BY 1 ORDER BY calls DESC, principal LIMIT 5`],
   },
   {
+    from: 'src/core/shared-skills/migration-members.ts inspectSharedMemberMigration, at dded7edc51',
+    case: { method: 'listSharedSkillMigrationRows', variant: 'default', run: e => e.listSharedSkillMigrationRows('s') },
+    texts: [`SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
+      m.desired_view,m.acknowledged_view,
+      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
+        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`],
+  },
+  {
+    from: 'src/core/page-body/segment-derive.ts:359 derivationNeedles (foldSql written out), at dded7edc51',
+    case: { method: 'normalizeDerivationClaims', variant: 'default', run: e => e.normalizeDerivationClaims(['a b', 'a  c', 'ab']) },
+    texts: [`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
+  },
+  {
     from: 'src/core/context/volunteer.ts:366 volunteerUsageStats, at dded7edc51',
     case: { method: 'readVolunteerUsage', variant: 'default', run: e => e.readVolunteerUsage(['default'], 30) },
     texts: [`SELECT e.match_arm, e.channel,

@@ -553,3 +553,7 @@ trigger's exception does. Deleting a source removes its tombstones.
 
 The withdrawal ledger and the insert/update guards that read it, and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.
+
+## Derivation claim needles
+
+`normalizeDerivationClaims(claims)` (`derivation_needles.rs`; SQL in `src/core/engine-sql/collate-store-reads.ts`, `DERIVATION_NEEDLES_SQL`) returns the claims as the derivation predicates of `src/core/page-body` match them: each through `gbrain_fact_normalize`, then `foldSql` (final sigma `ς` to `σ`, the combining dot `U+0307` after an `i` dropped), empty results dropped, the rest distinct and in byte order. A claim holding a NUL character is refused.

@@ -606,6 +606,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'upsertChronicleRow': OOS.callerRawSql,
   'reserveChronicleJudgeSlot': OOS.callerRawSql,
   'readChronicleLedger': OOS.callerRawSql,
+  'listSharedSkillMigrationRows': OOS.callerRawSql,
+  'normalizeDerivationClaims': OOS.callerRawSql,
   'patchOauthClient': OOS.minionJobs,
   // access_tokens rows (engine-sql/access-tokens.ts)
   'insertAccessToken': OOS.minionJobs,
@@ -1640,6 +1642,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('upsertChronicleRow', [['default', (e) => e.upsertChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', state: 'skipped', reason: 'too_short', trigger: 'auto', principalKind: null, principalId: null, requestId: null, noExtract: false, nextAttemptAt: null })]]),
   ...variants('reserveChronicleJudgeSlot', [['default', (e) => e.reserveChronicleJudgeSlot(10, { sourceId: 'default', pageId: 1, contentHash: 'h' })]]),
   ...variants('readChronicleLedger', [['default', (e) => e.readChronicleLedger()]]),
+  ...variants('listSharedSkillMigrationRows', [['default', (e) => e.listSharedSkillMigrationRows('s')]]),
+  ...variants('normalizeDerivationClaims', [['default', (e) => e.normalizeDerivationClaims(['a b', 'a  c', 'ab', '', '   '])]]),
   ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] })]]),
   ...variants('listReadableFileRows', [['all', (e) => e.listReadableFileRows(undefined, false)], ['page', (e) => e.listReadableFileRows('people/alice-example', false)], ['private_excluded', (e) => e.listReadableFileRows('people/alice-example', true)]]),
   ...variants('resolveLiveSlugByPath', [['default', (e) => e.resolveLiveSlugByPath('notes/a.md')]]),

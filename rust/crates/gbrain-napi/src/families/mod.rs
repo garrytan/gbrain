@@ -37,6 +37,7 @@ mod search;
 mod session_state;
 mod shared_skill_members;
 mod slug_reads;
+mod shared_skill_migration;
 mod sources;
 mod tags;
 #[cfg(feature = "test-seeds")]
@@ -59,6 +60,7 @@ mod chunk_queries;
 mod code_edges;
 mod contradictions;
 mod decide_store;
+mod derivation_needles;
 mod dream;
 mod embedding_catalog;
 mod embedding_install;
