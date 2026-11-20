@@ -5333,6 +5333,28 @@
         ],
         "flagOnScopes": []
       },
+      "readFenceCandidateRecords#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readFenceCandidateRecords#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readFenceHoldFiles#default": {
         "flagOffLanes": [
           "pool"
@@ -5803,6 +5825,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOpCheckpointRecords#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOpCheckpointRecords#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -7680,6 +7724,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertFenceCandidatePart#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertFile#default": {
         "flagOffLanes": [
           "pool"
@@ -8536,6 +8591,7 @@
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "readFeedbackStatus": "none",
+        "readFenceCandidateRecords": "none",
         "readFenceHoldFiles": "none",
         "readFenceOriginGone": "none",
         "readFenceOverlayRows": "none",
@@ -8603,6 +8659,7 @@
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
+        "readOpCheckpointRecords": "none",
         "readOpCheckpointValues": "none",
         "readOwnerCredentials": "none",
         "readOwnerOnlySourceConfig": "none",
@@ -8877,6 +8934,7 @@
         "upsertDecideState": "none",
         "upsertEventProjection": "none",
         "upsertFactRelinkAttempt": "none",
+        "upsertFenceCandidatePart": "none",
         "upsertFile": "none",
         "upsertGuestSource": "none",
         "upsertOpenLoop": "none",
