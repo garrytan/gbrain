@@ -140,13 +140,13 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
   test('a fact read is hidden by the owner-only rule the way privacy.rs applies it', () => {
     // The fact rule ends the rendering with `AND NOT <owner-only fact form>`: outside an engine scope the closed form (any
     // owner-only source, or the held flag, hides every fact; the store reads a mark as the flag); in a served brain the
-    // lineage form (the fact's own row). privacy.rs has the
+    // lineage form (the fact's own row). owner_only.rs holds the closed form; privacy.rs has the
     // fact's own source (`fact_hidden`) and the provenance page's owner-only test (`owner_only_hidden`) for the first
     // two parts, and models no `derivation_inputs` or `owner_only_marks` row.
     const closed = factsBaseline();
     expect(closed, `the fact policy lost its owner-only term. ${HOW}`).toContain(`AND NOT ${normalizeConceptInputs(ownerOnlyFactSql('facts', 'closed'))}`);
     expect(ownerOnlyFactSql('facts', 'closed')).toStartWith(`(${ANY_OWNER_ONLY_SQL} OR EXISTS (SELECT 1 FROM pg_catalog.pg_description held`);
-    expect(RUST, 'the closed form in privacy.rs does not read the marks that stand for the held flag').toContain('OwnerOnly::Closed => self.guarded()');
+    expect(OWNER_ONLY_RUST, 'the closed form in owner_only.rs does not read the marks that stand for the held flag').toContain('OwnerOnlyForm::Closed => self.guarded()');
     expect(ownerOnlyFactSql('facts', 'fn')).toContain(`gbrain_owner_only_lineage('facts', facts.id)`);
     const body = RUST.slice(RUST.indexOf('pub(crate) fn hidden_by_private_provenance'));
     expect(body, 'hidden_by_private_provenance does not apply the owner-only fact rule').toContain('owner_only.fact_hidden(policy.owner_only, &row.source_id)');
