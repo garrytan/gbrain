@@ -6,8 +6,8 @@
 //!
 //! - `target`: the first of `redirect_to`, `redirect` and `merged_into` that is not empty after
 //!   `btrim`, then `superseded_by` when `lower(status)` names an alias or a redirect.
-//! - `BODY` is `btrim(COALESCE(left(coalesce(compiled_truth, truth_lead), 65536), ''))`; the store
-//!   keeps no segmented page, so it reads `compiled_truth` (NULL only for a segmented shell).
+//! - `BODY` is `btrim(COALESCE(left(coalesce(compiled_truth, truth_lead), 65536), ''))`; a
+//!   segmented page has no `compiled_truth`, so it reads the page's stored truth lead.
 //! - `body_chars` is `length(BODY)`; `body` is `md5(BODY)` for an id in `bodyIds` whose body has
 //!   at least 200 characters; `lead` is `left(BODY, 4000)` for an id in `bodyIds`.
 //!

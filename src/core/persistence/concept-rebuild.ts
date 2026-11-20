@@ -13,13 +13,15 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
-import type { OperationContext } from '../ops/contract.ts';
-import { loadConfig } from '../config.ts';
-import { submitPageMutation } from './page-mutations.ts';
-import { linkStreamSlugs } from './page-purge.ts';
+import type { MaintenanceAuthority } from './prepared-maintenance.ts';
+import type { ClaimPhaseClock } from './claim-phase.ts';
+import type { GBrainConfig } from '../config.ts';
+import type { PreparedMutation } from './coordinator.ts';
+import type { WriteRequest } from './model.ts';
+import { linkStreamSlugs, redactExpiredPageJournal } from './page-purge.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { pendingRequestId } from '../cycle/dream-write-deferral.ts';
 import { OWED_PURGE_OP } from './derived-origin-hold.ts';
 import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
@@ -27,7 +29,6 @@ import { PRIVACY_ALIASES, privacyPartSql, privatePagesFilterFragment } from '../
 import { preservedConceptSections } from '../cycle/concept-sections.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
-import { managedPersistenceEnabled } from './ownership.ts';
 
 type Sql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -35,12 +36,8 @@ type Sql = Pick<BrainEngine, 'executeRaw'>;
 export interface ConceptRebuild { page_id: number; deleted_us: string; revision: string; members: Array<{ slug: string; revision: string }> }
 
 /** Why a held concept is not rebuilt: something a person or an agent stated (with the kinds), no model, or wider access. */
-export type RebuildKept = { source_id: string; slug: string } & ({ reason: 'stated'; kinds: string[] } | { reason: 'no_model' } | { reason: 'managed' } | { reason: 'access'; why: string });
+export type RebuildKept = { source_id: string; slug: string } & ({ reason: 'stated'; kinds: string[] } | { reason: 'no_model' } | { reason: 'access'; why: string });
 
-let managedRebuild = false;
-/** GST-3179 re-checks the hold and the members inside the write owner's transaction; until then a managed brain keeps its held concepts hidden. */
-export function __setManagedConceptRebuildForTests(on: boolean): void { managedRebuild = on; }
-const managedHeld = async (engine: Sql) => !managedRebuild && await managedPersistenceEnabled(engine);
 
 /** Frontmatter keys only an owner or an agent sets on a concept (synthesis writes visibility alone): any of them is stated. */
 const STATED_LABEL_KEYS: readonly string[] = [...Object.keys(PRIVACY_ALIASES), 'readable_by', 'pinned_question', 'derived_from'];
@@ -97,8 +94,8 @@ const DELETED_US = `floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::tex
  * What on or about the concept row `$1` (source `$2`, slug `$3`) synthesis did not write: REBUILD_STORES kinds for rows a
  * person or an agent stated, plus a title other than the slug's, a frontmatter key synthesis does not write, a stored
  * timeline, a file other than `<slug>.md`, dated link transitions, an attached raw_data payload, a person's decision on an
- * edge proposal (rejected, undone or reverted), an entity identity, a guest mark or promotion, and a sealed secret original recorded on the page (even one copied
- * from a live member, until entries can be compared across pages).
+ * edge proposal (rejected, undone or reverted), an entity identity, a guest mark or promotion, and a sealed secret original the purge would delete with the page
+ * (one also recorded on another page or a commit survives it and holds nothing).
  */
 const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $2 AND (f.entity_slug = $3 OR f.source_markdown_slug = $3) AND NOT ${extractedFromPageSql('f', '$3')}) THEN 'facts' END,
@@ -126,7 +123,10 @@ const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM guest_marks g WHERE g.page_id = $1) THEN 'guest_marks' END,
   CASE WHEN EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1) THEN 'guest_promotions' END,
   CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.source_id = $2 AND o.commit_sha IS NULL
-    AND (o.page_id = $1 OR (o.page_id IS NULL AND o.slug = $3))) THEN 'secret_store_occurrence' END,
+    AND (o.page_id = $1 OR (o.page_id IS NULL AND o.slug = $3)) AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence k WHERE k.entry_id = o.entry_id
+      AND NOT (k.source_id = $2 AND k.commit_sha IS NULL AND (k.page_id = $1 OR (k.page_id IS NULL AND k.slug = $3)))
+      AND (k.commit_sha IS NOT NULL OR EXISTS (SELECT 1 FROM pages pk WHERE pk.deleted_at IS NULL
+        AND (pk.id = k.page_id OR (k.page_id IS NULL AND pk.source_id = k.source_id AND pk.slug = k.slug)))))) THEN 'secret_store_occurrence' END,
   CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
     AND p.frontmatter ?| $5::text[]) THEN 'labels' END
 ], NULL) AS kinds,
@@ -138,6 +138,30 @@ export async function statedKinds(engine: Sql, pageId: number, sourceId: string,
   // A body past the bounded lead is not scanned, so it may hold curated sections and counts as if it did.
   const unread = row?.segmented === true || (row?.lead ?? '').length >= BOUNDED_PREFIX_BYTES;
   return [...row?.kinds ?? [], ...unread || preservedConceptSections(row?.lead ?? '').length ? ['curated_sections'] : []];
+}
+
+/** Whether the tombstone `pageId` is still held for a rebuild at the delete `deletedUs` recorded when synthesis read it. */
+export async function stillHeld(engine: Sql, pageId: number, deletedUs: string): Promise<boolean> {
+  return (await engine.executeRaw(`SELECT 1 FROM pages p WHERE p.id = $1 AND ${DELETED_US} = $2 AND ${HELD_SQL}`, [pageId, deletedUs])).length > 0;
+}
+
+/**
+ * Under a managed retention purge's lock: why the purge of a concept tombstone held at `hold` must not run (it is no
+ * longer held at that delete, or something was stated on it since), or null. `hold` is the purge's internal concept_hold.
+ */
+export async function conceptPurgeRefusal(tx: Sql, sourceId: string, slug: string, hold: unknown): Promise<string | null> {
+  const { page_id: pageId, deleted_us: deletedUs } = (hold ?? {}) as { page_id?: unknown; deleted_us?: unknown };
+  if (typeof pageId !== 'number' || typeof deletedUs !== 'string') return 'its concept hold is malformed';
+  if (!await stillHeld(tx, pageId, deletedUs)) return 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)';
+  const kinds = await statedKinds(tx, pageId, sourceId, slug);
+  return kinds.length ? `something was stated on the concept since synthesis read it (${kinds.join(', ')})` : null;
+}
+
+/** Whether every member is live at the revision its body was read at; inside a transaction it locks them against a purge. */
+export async function membersUnchanged(engine: Sql, sourceId: string, members: ConceptRebuild['members']): Promise<boolean> {
+  const live = await engine.executeRaw(`SELECT m.slug FROM pages m JOIN jsonb_to_recordset($2::text::jsonb) AS r(slug text, revision text)
+    ON m.slug = r.slug AND m.knowledge_revision::text = r.revision WHERE m.source_id = $1 AND m.deleted_at IS NULL FOR SHARE OF m`, [sourceId, JSON.stringify(members)]);
+  return members.length > 0 && live.length === members.length;
 }
 
 /** Who may read a page, as the read predicate decides it: compared before and after a rebuild (rebuildWidens). */
@@ -175,7 +199,6 @@ export async function heldConceptRebuild(engine: Sql, sourceId: string, snapshot
   const slug = snapshot.page.slug;
   const kinds = await statedKinds(engine, pageId, sourceId, slug);
   if (kinds.length) return { kept: { source_id: sourceId, slug, reason: 'stated', kinds } };
-  if (await managedHeld(engine)) return { kept: { source_id: sourceId, slug, reason: 'managed' } };
   const access = await readRebuildAccess(engine, pageId);
   if (!access || (visibility === 'world' && !access.public_part)) return { kept: { source_id: sourceId, slug, reason: 'access', why: WIDER } };
   const rows = await engine.executeRaw<{ slug: string; revision: string }>(`SELECT slug, knowledge_revision::text AS revision FROM pages
@@ -197,9 +220,7 @@ async function purgeHeldConcept(tx: BrainEngine, sourceId: string, slug: string,
     AND ${DELETED_US} = $4 AND ${HELD_SQL} FOR UPDATE OF p`, [rebuild.page_id, sourceId, slug, rebuild.deleted_us]);
   if (!held) return 'The concept is no longer held for a rebuild (a person or sync deleted, restored or purged it), so the rebuild wrote nothing.';
   if ((await statedKinds(tx, rebuild.page_id, sourceId, slug)).length) return 'Something was stated on the concept during synthesis, so the rebuild wrote nothing and it stays held.';
-  const live = await tx.executeRaw(`SELECT m.slug FROM pages m JOIN jsonb_to_recordset($2::text::jsonb) AS r(slug text, revision text)
-    ON m.slug = r.slug AND m.knowledge_revision::text = r.revision WHERE m.source_id = $1 AND m.deleted_at IS NULL FOR SHARE OF m`, [sourceId, JSON.stringify(rebuild.members)]);
-  if (!rebuild.members.length || live.length !== rebuild.members.length) return 'A member the rebuilt narrative was built from changed or was removed during synthesis, so the rebuild wrote nothing; the next run builds it again.';
+  if (!await membersUnchanged(tx, sourceId, rebuild.members)) return 'A member the rebuilt narrative was built from changed or was removed during synthesis, so the rebuild wrote nothing; the next run builds it again.';
   const access = await readRebuildAccess(tx, rebuild.page_id);
   const incoming = (await tx.executeRaw<{ link: unknown }>(`SELECT to_jsonb(l) AS link FROM links l JOIN pages f ON f.id = l.from_page_id
     WHERE l.to_page_id = $1 AND l.from_page_id <> $1 AND f.deleted_at IS NULL AND l.link_source IS DISTINCT FROM 'concept-provenance'`, [rebuild.page_id])).map(row => row.link);
@@ -209,6 +230,7 @@ async function purgeHeldConcept(tx: BrainEngine, sourceId: string, slug: string,
   }
   const purged = await tx.purgeDeletedPages(0, { onlyIds: [rebuild.page_id] });
   if (purged.count !== 1 || !access) return 'The tombstone is held by another purge rule, so the rebuild wrote nothing and it stays held.';
+  await redactExpiredPageJournal(tx, sourceId, [slug]);
   return { access, incoming, oldId: rebuild.page_id };
 }
 
@@ -233,6 +255,7 @@ export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, 
   const publicationId = randomUUID(), report = { appended: 0 };
   let parked: string | undefined;
   await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     const slugs = [...new Set([slug, ...await linkStreamSlugs(tx, sourceId, rebuild.page_id)])].sort();
     await tx.lockPageKeys(slugs.map(key => ({ sourceId, slug: key })));
     await withBeliefBatch(tx, { sourceId, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report }, async () => {
@@ -247,23 +270,26 @@ export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, 
   if (parked) throw Object.assign(new Error(parked), { code: 'revision_conflict' });
 }
 
+/** GST-3179: the write owner's preparer for that maintenance kind: the same retention purge a delete_page prepares. */
+export async function prepareConceptPurge(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  const { preparePageMutation } = await import('./page-prepare.ts');
+  return preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { clock });
+}
+
 /**
- * Managed: submits the retention purge of the tombstone, pinned to the revision the synthesis read, so a person's edit,
- * restore or delete in between refuses it. True only when its receipt shows the purge committed; a pending, failed or
+ * Managed: submits the retention purge of the tombstone, pinned to the revision the synthesis read and to the delete it
+ * was held at (`concept_hold`, re-checked with what was stated under the purge's lock: conceptPurgeRefusal), so a
+ * person's edit, restore, delete or statement in between refuses it. True only when its receipt shows the purge committed; a pending, failed or
  * refused purge returns why, and the next synthesis handles whatever it finds.
  */
-export async function submitHeldConceptPurge(engine: BrainEngine, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<true | string> {
-  const live = await engine.executeRaw(`SELECT m.slug FROM pages m JOIN jsonb_to_recordset($2::text::jsonb) AS r(slug text, revision text)
-    ON m.slug = r.slug AND m.knowledge_revision::text = r.revision WHERE m.source_id = $1 AND m.deleted_at IS NULL`, [sourceId, JSON.stringify(rebuild.members)]);
-  if (live.length !== rebuild.members.length) return 'a member the rebuilt narrative was built from changed or was removed during synthesis';
-  const [held] = await engine.executeRaw(`SELECT 1 FROM pages p WHERE p.id = $1 AND ${DELETED_US} = $2 AND ${HELD_SQL}`, [rebuild.page_id, rebuild.deleted_us]);
-  if (!held) return 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)';
+export async function submitHeldConceptPurge(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<true | string> {
+  if (!await membersUnchanged(engine, sourceId, rebuild.members)) return 'a member the rebuilt narrative was built from changed or was removed during synthesis';
+  if (!await stillHeld(engine, rebuild.page_id, rebuild.deleted_us)) return 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)';
   if ((await statedKinds(engine, rebuild.page_id, sourceId, slug)).length) return 'something was stated on the concept during synthesis';
-  const ctx: OperationContext = { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, sourceId, dryRun: false,
-    logger: { info() {}, warn() {}, error() {} } };
   try {
-    const purged = await submitPageMutation(ctx, { operation: 'delete_page', waitMs: maintenancePublishWaitMs(), params: { slug, source_id: sourceId,
-      purge: true, retention: true, expected_revision: rebuild.revision, request_id: randomUUID() } });
+    // GST-3179: its own maintenance kind, so a write owner too old to re-check the hold refuses it instead of purging.
+    const purged = await (await import('./prepared-maintenance.ts')).submitMaintenanceIntent(engine, authority, slug, { kind: 'managed_maintenance_concept_purge', expected_revision: rebuild.revision,
+      deleted_page: true, purge: true, retention: true, concept_hold: { page_id: rebuild.page_id, deleted_us: rebuild.deleted_us } }, randomUUID());
     return purged.status === 'purged' ? true : `the purge of the hidden concept did not commit (${String(purged.status ?? 'no status')})`;
   } catch (error) {
     const pending = pendingRequestId(error);
@@ -277,17 +303,23 @@ export async function submitHeldConceptPurge(engine: BrainEngine, sourceId: stri
  * whether a synthesis model is configured; without one a concept built from many atoms is not rebuilt.
  */
 export async function readHeldConcepts(engine: Sql, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
+  // Report-only: a failed read leaves the previews without it, never the purge or the status that asked for it.
+  return readHeldConceptRows(engine, model).catch((e: unknown) => {
+    console.warn(`[purge] held-concept report skipped: ${e instanceof Error ? e.message : String(e)}`);
+    return { held: [], kept: [] };
+  });
+}
+
+async function readHeldConceptRows(engine: Sql, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; private: boolean; members_private: boolean }>(`SELECT p.id, p.source_id, p.slug,
     NOT ${privacyPartSql('p')} AS private,
     EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id::text = d.input_id AND d.input_table = 'pages'
       WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
     FROM pages p WHERE ${HELD_SQL} ORDER BY p.source_id, p.slug`);
   const kept: RebuildKept[] = [];
-  const managed = rows.length > 0 && await managedHeld(engine);
   for (const row of rows) {
     const kinds = await statedKinds(engine, Number(row.id), row.source_id, row.slug);
     if (kinds.length) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'stated', kinds });
-    else if (managed) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'managed' });
     else if (row.private && !row.members_private) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'access', why: WIDER });
     else if (!model) kept.push({ source_id: row.source_id, slug: row.slug, reason: 'no_model' });
   }
@@ -305,6 +337,5 @@ export async function tombstoneWindow(tx: Sql, pageId: number, hours: number): P
 export function keptReason(kept: RebuildKept): string {
   if (kept.reason === 'stated') return `${kept.source_id}/${kept.slug}: stays hidden, it carries what a person or an agent stated (${kept.kinds.join(', ')})`;
   if (kept.reason === 'access') return `${kept.source_id}/${kept.slug}: stays hidden, a rebuild would be readable more widely (${kept.why})`;
-  if (kept.reason === 'managed') return `${kept.source_id}/${kept.slug}: stays hidden, its rebuild on a managed brain waits for a later release`;
   return `${kept.source_id}/${kept.slug}: stays hidden, no synthesis model is configured to rebuild it`;
 }
