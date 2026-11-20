@@ -98,7 +98,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
     const dcrDefault = await resolveDefaultClientSurface(engine, cfg);
     const findings: GrantFinding[] = [];
 
-    const clients = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
+    const clients = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id COLLATE "C"');
     for (const row of clients) {
       const grant = grantFromRow(row);
       const client = isMcpSurface(grant.surface) ? grant.surface : null;

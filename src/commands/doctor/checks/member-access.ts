@@ -36,7 +36,7 @@ async function malformed(engine: BrainEngine): Promise<Check> {
   const rows = await engine.executeRaw<PageRef & { total: number }>(
     `SELECT source_id, slug, count(*) OVER ()::int AS total FROM pages
       WHERE deleted_at IS NULL AND frontmatter->'readable_by' IS NOT NULL AND gbrain_access_readers(frontmatter) = ARRAY['!nobody']::text[]
-      ORDER BY source_id, slug LIMIT ${SAMPLE}`);
+      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT ${SAMPLE}`);
   const total = rows[0]?.total ?? 0;
   if (!total) return { name, status: 'ok', message: 'Every page that names readers names them validly.', details: { count: 0 } };
   return { name, status: 'warn', details: { count: total, samples: rows.map(ref), truncated: total > rows.length },
@@ -59,7 +59,7 @@ async function unknownReaders(engine: BrainEngine): Promise<Check> {
            FROM (SELECT 1) one LEFT JOIN access_groups g ON g.id = substr(n.reader, 7)) END AS kind
        FROM named n)
      SELECT reader, kind, count(*)::int AS pages, jsonb_build_object('source_id', min(source_id), 'slug', min(slug)) AS sample
-       FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind, reader LIMIT ${SAMPLE}`);
+       FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind COLLATE "C", reader COLLATE "C" LIMIT ${SAMPLE}`);
   const unknown = rows.filter(r => r.kind !== 'empty_group');
   const empty = rows.filter(r => r.kind === 'empty_group');
   const details = { unknown: unknown.map(r => ({ reader: r.reader, kind: r.kind, pages: r.pages, sample: ref(r.sample) })),

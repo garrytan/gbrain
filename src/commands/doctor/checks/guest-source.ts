@@ -84,7 +84,7 @@ export async function guestSourceCheck(engine: BrainEngine): Promise<Check> {
   try {
     const sources = await engine.executeRaw<GuestSourceRow>(
       'SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id '
-        + 'WHERE ' + guestSourceSql('s.config', 's.id') + ' ORDER BY s.id');
+        + 'WHERE ' + guestSourceSql('s.config', 's.id') + ' ORDER BY s.id COLLATE "C"');
     if (!sources.length) return infoCheck(name, 'Not applicable: this brain has no guest source (gbrain guests init).', 'not_applicable');
     const findings: Finding[] = [];
     for (const s of sources) findings.push(...await sourceFindings(engine, s));

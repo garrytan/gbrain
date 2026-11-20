@@ -36,7 +36,7 @@ export async function privacyLabelIgnoredCheck(engine: BrainEngine, sourceIds?: 
        FROM hits p CROSS JOIN LATERAL (VALUES ${values}) AS l(key, raw, is_string)
        WHERE NULLIF(${edgeTrimSql('l.raw')}, '') IS NOT NULL
        GROUP BY l.key, l.raw, l.is_string
-       ORDER BY pages DESC, l.key, l.raw
+       ORDER BY pages DESC, l.key COLLATE "C", l.raw COLLATE "C"
        LIMIT ${VALUE_ROWS}`, sourceIds ? [sourceIds] : [], { timeoutMs: STATEMENT_MS });
     const scanned = Math.min(rows[0]?.scanned ?? 0, SCAN_CAP);
     const capped = (rows[0]?.scanned ?? 0) > SCAN_CAP;

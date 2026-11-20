@@ -27,7 +27,7 @@ import { isGitWorkTree, sourcePolicyRoot } from '../../../core/access/policy-git
 const DOCS = 'docs/guides/write-refusals.md#access_policy_pending';
 
 async function policySources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"')).map(r => r.source_id);
 }
 
 async function pending(engine: BrainEngine, sources: string[]): Promise<Check> {

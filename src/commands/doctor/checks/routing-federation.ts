@@ -259,7 +259,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
          CROSS JOIN LATERAL unnest(c.federated_read) AS g(grant_id)
          LEFT JOIN sources s ON s.id = g.grant_id
         WHERE s.id IS NULL AND c.deleted_at IS NULL
-        ORDER BY c.client_id, g.grant_id`,
+        ORDER BY c.client_id COLLATE "C", g.grant_id COLLATE "C"`,
     );
     // A revoked agent's workspace can hold FACTS with zero pages (facts are
     // the primary agent write lane) — such a source is NOT empty and the
@@ -277,7 +277,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
              WHERE c.deleted_at IS NULL
                AND (c.source_id = s.id OR s.id = ANY(c.federated_read))
           )
-        ORDER BY s.id`;
+        ORDER BY s.id COLLATE "C"`;
     let orphaned: Array<{ id: string }>;
     try {
       orphaned = await engine.executeRaw<{ id: string }>(orphanSql(true), [WORKSPACE_SUFFIX]);
@@ -315,7 +315,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
               SELECT 1 FROM oauth_grant_audit a
                WHERE a.client_id = c.client_id AND a.action = 'register'
             )
-          ORDER BY c.client_id`,
+          ORDER BY c.client_id COLLATE "C"`,
         [privilegedScopeRegex],
       );
     } catch (e) {
