@@ -306,6 +306,36 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'getVersions under excludePrivate withholds a snapshot\'s reason when the next snapshot is private or names readers',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const edits: Array<[string, Record<string, unknown>, string]> = [
+        ['World one', {}, 'before a private edit'],
+        ['Private two', { visibility: 'private' }, 'private edit'],
+        ['World three', {}, 'before a reader-named edit'],
+        ['Team four', { readable_by: ['alice-example'] }, 'reader-named edit'],
+        ['World five', {}, 'before a world edit'],
+        ['World six', {}, 'before the live page'],
+      ];
+      for (const [title, frontmatter, reason] of edits) {
+        await engine.putPage('notes/succ', { type: 'note', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+        await engine.createVersion('notes/succ', { reason });
+      }
+      await engine.putPage('notes/succ', { type: 'note', title: 'Live', compiled_truth: 'Live.', timeline: '' });
+      const read = async (excludePrivate: boolean) =>
+        (await engine.getVersions('notes/succ', { excludePrivate })).map((v) => [v.title, v.replaced_because ?? null]);
+      const trusted = await read(false);
+      const world = await read(true);
+      expect(trusted).toContainEqual(['World one', 'before a private edit']);
+      expect(world).toContainEqual(['World one', null]);
+      expect(world).toContainEqual(['World three', null]);
+      expect(world).toContainEqual(['World five', 'before a world edit']);
+      expect(world).toContainEqual(['World six', 'before the live page']);
+      return { trusted, world };
+    },
+  );
+
+  parityTest(
     'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
     { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
     async (engine) => {
