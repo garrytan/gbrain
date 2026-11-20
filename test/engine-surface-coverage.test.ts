@@ -265,6 +265,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // batch write (engine-sql/persistence-journal.ts, persistence-effect-scans.ts).
   'countLivePagesBySourceType', 'countLivePagesBySlugPrefixes', 'countSourcePagesAndChunks', 'readQueryCacheStats',
   'readWriteRequests', 'insertWriteRequestGroup', 'requeueBatchLinksEffects', 'readLinksEffectStates',
+  // list_write_conflicts' drift-conflict audit reads (engine-sql/drift-conflicts.ts).
+  'readDriftConflictBounds', 'countDriftConflicts', 'listDriftConflictGroups', 'readNewestCommittedReceipts', 'readPageSourcePaths',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',

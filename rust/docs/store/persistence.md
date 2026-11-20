@@ -86,6 +86,24 @@ list matches no row, as the SQL `IS NULL OR EXISTS` terms do.
 
 Lengths count characters, as Postgres `left` and `length` do.
 
+## Drift-conflict audit
+
+The reads of `auditDriftConflicts` (`persistence/drift-conflicts.ts`; the `list_write_conflicts` tool)
+(`crates/gbrain-store/src/persistence/drift_conflicts.rs`).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readDriftConflictBounds(sourceId)` | the source's incarnation and its lowest and highest request sequences in it, as decimal text | `readDriftConflictBounds` |
+| `brain.countDriftConflicts(filter, policy)` | `{ slugs, receipts }` over the window's `source_changed` conflicts | `countDriftConflicts` |
+| `brain.listDriftConflictGroups(filter, { after, fetch }, policy, message)` | one row per slug after the byte cursor `after`, in byte slug order, at most `fetch` | `listDriftConflictGroups` |
+| `brain.readNewestCommittedReceipts(sourceId, slugs)` | each slug's newest committed request that is not compacted | `readNewestCommittedReceipts` |
+| `brain.readPageSourcePaths(sourceId, slugs)` | each live page's source path | `readPageSourcePaths` |
+
+The filter is `{ sourceId, incarnation, floor, through, slugPrefixes, live }`: the sequences in `(floor, through]`
+of the incarnation. A null `slugPrefixes` skips the fence; a prefix that ends in `/` matches the slugs that start
+with it, any other prefix the lower-case slug itself or the slugs under it. `live` keeps the slugs with a live page;
+the page policy (`facts/privacy.rs`), when sent, also judges that page.
+
 ## Steps that need one transaction
 
 Three coordinator steps run as one engine transaction. Each calls `requireTransactions`

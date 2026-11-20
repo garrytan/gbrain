@@ -179,6 +179,7 @@ import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as driftConflictsImpl from './engine-sql/drift-conflicts.ts';
 import * as writeGuardsImpl from './engine-sql/write-guards.ts';
 import * as pageVisibilityImpl from './engine-sql/page-visibility.ts';
 import * as largePageImpl from './engine-sql/large-page.ts';
@@ -1669,6 +1670,11 @@ export class PGLiteEngine implements BrainEngine {
   readWriteRequests(principalKind: string, principalId: string, requestIds: readonly string[]) { return persistenceJournalImpl.readWriteRequests(unscopedExecutor(this.engineSql, 'persistence: batch request read ran unscoped through executeRaw'), principalKind, principalId, requestIds); }
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestById(unscopedExecutor(this.engineSql, 'persistence: request read ran unscoped through executeRaw'), id, opts); }
   listWriteRequestRows(principalKind: string, principalId: string, sourceId: string, filter: persistenceJournalImpl.WriteRequestListFilter) { return persistenceJournalImpl.listWriteRequestRows(unscopedExecutor(this.engineSql, 'persistence: receipt list ran unscoped through executeRaw'), principalKind, principalId, sourceId, filter); }
+  readDriftConflictBounds(sourceId: string) { return driftConflictsImpl.readDriftConflictBounds(unscopedExecutor(this.engineSql, 'persistence: drift-conflict bounds ran unscoped through executeRaw'), sourceId); }
+  countDriftConflicts(filter: driftConflictsImpl.DriftConflictFilter) { return driftConflictsImpl.countDriftConflicts(unscopedExecutor(this.engineSql, 'persistence: drift-conflict totals ran unscoped through executeRaw'), filter); }
+  listDriftConflictGroups(filter: driftConflictsImpl.DriftConflictFilter, page: { after: string; fetch: number }) { return driftConflictsImpl.listDriftConflictGroups(unscopedExecutor(this.engineSql, 'persistence: drift-conflict groups ran unscoped through executeRaw'), filter, page); }
+  readNewestCommittedReceipts(sourceId: string, slugs: readonly string[]) { return driftConflictsImpl.readNewestCommittedReceipts(unscopedExecutor(this.engineSql, 'persistence: newest committed receipts ran unscoped through executeRaw'), sourceId, slugs); }
+  readPageSourcePaths(sourceId: string, slugs: readonly string[]) { return driftConflictsImpl.readPageSourcePaths(unscopedExecutor(this.engineSql, 'persistence: page source paths ran unscoped through executeRaw'), sourceId, slugs); }
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }) { return persistenceJournalImpl.readWriteRequestProgress(unscopedExecutor(this.engineSql, 'persistence: request progress read ran unscoped through executeRaw'), id, opts); }
   readCounterRows(keys: readonly string[]) { return persistenceJournalImpl.readCounterRows(unscopedExecutor(this.engineSql, 'persistence: counter rows read ran unscoped through executeRaw'), keys); }
   ownsSchemaTables() { return persistenceJournalImpl.ownsSchemaTables(unscopedExecutor(this.engineSql, 'persistence: schema owner read ran unscoped through executeRaw')); }

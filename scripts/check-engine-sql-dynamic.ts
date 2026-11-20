@@ -78,6 +78,9 @@ const VETTED_BUILDERS: Record<string, string> = {
 
   // memory-mutation-reads.ts builders (ownerReachesFact)
   ownerReadPolicyFragment: 'src/core/search/private-visibility.ts: the owner read rule over a caller page alias; it splices an identity only after validIdentity and rule ids only after validQualifiedRuleId (each a quoted literal of a checked shape), else FALSE',
+  // drift-conflicts.ts builders (list_write_conflicts)
+  driftConflictTotalsSql: 'src/core/persistence/drift-conflict-sql.ts: the drift audit totals statement, kept byte-identical with its hand-numbered placeholders ($1-$4 fixed, $5.. one per slug prefix from a count of constant shapes, never a value); splices only remoteReadFloorSql over the constant alias p; no values',
+  driftConflictGroupsSql: 'src/core/persistence/drift-conflict-sql.ts: the drift audit groups statement, kept byte-identical; it names the bound message before the cursor and limit, which renderFragment cannot number, so the placeholders are hand-numbered from a count of constant prefix shapes; splices only remoteReadFloorSql over the constant alias p; no values',
   // access-control.ts builders
   edgeTrimSql: 'src/core/edge-whitespace.ts: btrim of a code-provided constant expression over the constant EDGE_WHITESPACE set; no values',
 

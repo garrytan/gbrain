@@ -25,10 +25,22 @@ import { NoticeLedger } from '../../src/core/notice-ledger.ts';
 import { archiveSource, basisEmbedding, createSource, parityArms } from './harness.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { FILE_DRIFT_MESSAGE } from '../../src/core/persistence/drift-conflicts.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const { parityTest } = parityArms(testBackends());
 
 const LOCAL = { remote: false, transport: 'stdio' as const, sourceId: 'default' };
+
+/** Runs `fn` under a fresh GBRAIN_HOME, so no host id or worktree binding from this machine reaches the trusted path. */
+async function inFreshHome<T>(fn: () => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-conflicts-'));
+  try { return await withEnv({ GBRAIN_HOME: home }, fn); }
+  finally { rmSync(home, { recursive: true, force: true }); }
+}
 
 interface ToolAnswer { error: string | null; body: Record<string, unknown> | null; notices: string[] }
 
@@ -202,4 +214,58 @@ describe('engine parity: MCP tools a Rust brain refused', () => {
       expect(JSON.stringify(world.body)).not.toContain('mayor-zebraexample');
       return { local: ranked(local.body), world: ranked(world.body) };
     });
+
+  parityTest('list_write_conflicts groups source_changed conflicts by slug and names no private page to a world-only caller',
+    { methods: ['readDriftConflictBounds', 'countDriftConflicts', 'listDriftConflictGroups', 'readNewestCommittedReceipts', 'readPageSourcePaths',
+      'insertWriteRequest', 'completeWriteRow', 'lockPersistenceCounters', 'readSourceMembership'] }, (engine) => inFreshHome(async () => {
+      const page = (slug: string, frontmatter: Record<string, unknown> = {}) =>
+        engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Synthetic page.', timeline: '', frontmatter }, { sourceId: 'default' });
+      await page('notes/public-drift');
+      await page('notes/private-drift', { visibility: 'private' });
+      const source = await engine.readSourceMembership('default');
+      const keys = ['principal:local_cli:parity-writer', 'brain'];
+      const receipt = async (n: number, slug: string, state: 'conflict' | 'committed', kind = 'put_page') => {
+        const id = `c0000000-0000-4000-8000-00000000000${n}`;
+        await engine.lockPersistenceCounters(keys);
+        const row = await engine.insertWriteRequest({
+          principalKind: 'local_cli', principalId: 'parity-writer', requestId: id, operation: 'put_page', sourceId: 'default',
+          sourceIncarnation: source!.incarnation, pageId: null, slug, worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64),
+          intent: { kind, slug }, authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page',
+          protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null, state: 'queued', deferredRefreshId: null,
+        });
+        await engine.completeWriteRow({ id: row.id, state, outcome: null, errorCode: state === 'conflict' ? 'source_changed' : null,
+          errorMessage: state === 'conflict' ? (n === 2 ? 'Another message.' : FILE_DRIFT_MESSAGE) : null, consumerVersion: 'parity', consumerHostId: null,
+          errorDetail: null, resultBytes: 0, counterKeys: keys, intentBytes: 100, retainedBytes: 800, terminalReservation: 4096, probePurges: false });
+      };
+      await receipt(1, 'notes/public-drift', 'committed');
+      await receipt(2, 'notes/public-drift', 'conflict', 'put_page');
+      await receipt(3, 'notes/public-drift', 'conflict', 'tag');
+      await receipt(4, 'notes/private-drift', 'conflict');
+      await receipt(5, 'notes/ghost-drift', 'conflict');
+      const view = (body: Record<string, unknown> | null) => {
+        const b = body as { conflicts: Array<Record<string, unknown>>; totals: unknown; complete: boolean; next: unknown; next_actions: string[] };
+        for (const c of b.conflicts) {
+          expect(String(c.first_seen)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+          expect(String(c.last_seen)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+        }
+        return { totals: b.totals, complete: b.complete, next: b.next, actions: b.next_actions.length,
+          conflicts: b.conflicts.map(c => {
+            const last = c.last_committed as { request_id?: string; completed_at: string } | null;
+            return { slug: c.slug, receipts: c.receipts, drift: c.drift_receipts, producers: c.producers, last_conflict: c.last_conflict_request_id ?? null,
+              source_path: c.source_path ?? null, still: c.still_present, committed: last ? { request_id: last.request_id ?? null, at: /Z$/.test(last.completed_at) } : null };
+          }) };
+      };
+      const local = await call(engine, 'list_write_conflicts', {});
+      expect(local.error).toBeNull();
+      expect(view(local.body).conflicts.map(c => c.slug)).toEqual(['notes/ghost-drift', 'notes/private-drift', 'notes/public-drift']);
+      const paged = await call(engine, 'list_write_conflicts', { limit: 1 });
+      const next = (paged.body as { next: string | null }).next;
+      expect(next).toBeString();
+      const second = await call(engine, 'list_write_conflicts', { limit: 1, cursor: next });
+      const world = await call(engine, 'list_write_conflicts', {}, { remote: true });
+      expect(world.error).toBeNull();
+      expect(view(world.body).conflicts.map(c => c.slug)).toEqual(['notes/public-drift']);
+      expect(JSON.stringify(world.body)).not.toContain('private-drift');
+      return { local: view(local.body), paged: view(paged.body).conflicts, second: view(second.body).conflicts, world: view(world.body) };
+    }));
 });

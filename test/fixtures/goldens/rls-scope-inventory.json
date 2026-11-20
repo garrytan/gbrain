@@ -313,6 +313,28 @@
         ],
         "flagOnScopes": []
       },
+      "countDriftConflicts#floor": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countDriftConflicts#trusted": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -2406,6 +2428,28 @@
           "src-a"
         ]
       },
+      "listDriftConflictGroups#live": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listDriftConflictGroups#prefixed": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listEffectRecoveries#after": {
         "flagOffLanes": [
           "pool"
@@ -3784,6 +3828,17 @@
         ],
         "flagOnScopes": []
       },
+      "readDriftConflictBounds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readEmbeddingStateCounts#full": {
         "flagOffLanes": [
           "pool"
@@ -4222,6 +4277,17 @@
         ],
         "flagOnScopes": []
       },
+      "readNewestCommittedReceipts#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readNoopEmbeddingCandidates#default": {
         "flagOffLanes": [
           "tx"
@@ -4304,6 +4370,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "readPageSourcePaths#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "readPersistenceBrainId#default": {
         "flagOffLanes": [
@@ -5890,6 +5967,7 @@
         "countDefaultSourceSplit": "none",
         "countDerivedFactTaint": "none",
         "countDistinctInboundLinkers": "none",
+        "countDriftConflicts": "none",
         "countEmbeddingHeldPages": "none",
         "countEntityPages": "none",
         "countFactEmbeddingCoverage": "none",
@@ -6190,6 +6268,7 @@
         "listDecideReviewProposals": "none",
         "listDecideSpendBySlot": "none",
         "listDerivedRows": "none",
+        "listDriftConflictGroups": "none",
         "listDueDecideReviewQueue": "none",
         "listDueDecideSweepDeferred": "none",
         "listDueWakeWatches": "none",
@@ -6458,6 +6537,7 @@
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readDecideState": "none",
+        "readDriftConflictBounds": "none",
         "readEmbedBackfillBySource": "none",
         "readEmbeddingCompletion": "none",
         "readEmbeddingIdentity": "none",
@@ -6526,6 +6606,7 @@
         "readMemoryProposal": "none",
         "readMentionLastPass": "none",
         "readMirrorGateRows": "none",
+        "readNewestCommittedReceipts": "none",
         "readNoopEmbeddingCandidates": "none",
         "readOAuthClientWriteGrant": "none",
         "readOauthClient": "none",
@@ -6545,6 +6626,7 @@
         "readPageRevisions": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
+        "readPageSourcePaths": "none",
         "readPageTierRef": "none",
         "readPageTierRows": "none",
         "readPageTitle": "none",

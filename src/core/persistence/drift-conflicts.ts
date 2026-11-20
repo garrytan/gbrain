@@ -22,13 +22,13 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { DriftConflictFilter } from '../engine-sql/drift-conflicts.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
 import { resolveSourceLocalFilePath } from '../markdown.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
 import { hardenedGitSync, hardenedPathDirty } from '../hardened-git.ts';
-import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
@@ -46,7 +46,7 @@ import { loadSyncEligibility, syncGit } from './sync-discovery.ts';
 import { recordsNoFileOrigin, slugPathFile } from './unbound-pages.ts';
 
 /** The refusal message `prepareFileTarget` stores on a drift conflict receipt (the detail is not kept on the row). */
-export const FILE_DRIFT_MESSAGE = 'The canonical file contains an uncoordinated local edit.';
+export { FILE_DRIFT_MESSAGE } from './drift-conflict-sql.ts';
 /** Separate from `dream.concepts.failed_attempts` (#6260): `{ "<source>:<slug>": { file_hash, db_revision, at } }`. */
 export const DRIFT_SKIPS_KEY = 'dream.concepts.drift_skips';
 export const CONFLICT_WINDOW_DEFAULT = 100_000;
@@ -269,7 +269,6 @@ function parseCursor(value: unknown): { through: bigint; after: string } | null 
   return { through: BigInt(match[1]), after };
 }
 function validSlug(slug: string): boolean { try { validateSlug(slug); return true; } catch { return false; } }
-const likeEscape = (value: string) => value.replace(/[\\%_]/g, char => `\\${char}`);
 
 /**
  * Conflict receipts of one source (its current incarnation) grouped by slug. The rows scanned are the
@@ -295,11 +294,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
   if (access.sourceIds && !access.sourceIds.includes(sourceId)) return empty();
   // The window is bounded by this source's own requests (its current incarnation, the request table's
   // (source_incarnation, sequence) index), so its sequences never reveal write activity in other sources.
-  const [bounds] = await engine.executeRaw<{ incarnation: string; top: string | null; bottom: string | null }>(
-    `SELECT s.incarnation::text AS incarnation,
-        (SELECT max(r.sequence) FROM persistence_requests r WHERE r.source_incarnation=s.incarnation)::text AS top,
-        (SELECT min(r.sequence) FROM persistence_requests r WHERE r.source_incarnation=s.incarnation)::text AS bottom
-       FROM sources s WHERE s.id=$1`, [sourceId]);
+  const bounds = await engine.readDriftConflictBounds(sourceId);
   if (!bounds) return empty();
   const top = BigInt(bounds.top ?? '0');
   const through = cursor && cursor.through < top ? cursor.through : top;
@@ -307,44 +302,20 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
   const coversHistory = bounds.bottom == null || BigInt(bounds.bottom) > floor;
   const report: ConflictAuditReport = { ...empty(), complete: false,
     window: { from_sequence: String(floor > 0n ? floor + 1n : 1n), through_sequence: String(through), covers_history: coversHistory } };
-  const params: unknown[] = [sourceId, String(floor), String(through), bounds.incarnation];
-  const where = [`r.source_id=$1`, `r.source_incarnation=$4::uuid`, `r.sequence > $2::bigint`, `r.sequence <= $3::bigint`, `r.state='conflict'`, `r.error_code='source_changed'`];
   const prefixes = access.slugPrefixes?.map(normalizeSlugPrefix).filter(Boolean);
-  if (prefixes) {
-    if (!prefixes.length) { report.complete = true; return report; }
-    const alternatives = prefixes.map(base => {
-      params.push(base.endsWith('/') ? `${likeEscape(base)}%` : likeEscape(base));
-      const at = params.length;
-      return base.endsWith('/') ? `lower(r.slug) LIKE $${at}` : `(lower(r.slug) = $${at} OR lower(r.slug) LIKE $${at} || '/%')`;
-    });
-    where.push(`(${alternatives.join(' OR ')})`);
-  }
-  if (!access.trusted || access.excludePrivate) {
-    where.push(`EXISTS (SELECT 1 FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL${access.excludePrivate ? ` AND ${remoteReadFloorSql('p')}` : ''})`);
-  }
-  const filtered = where.join(' AND ');
-  const [totals] = await engine.executeRaw<{ slugs: number; receipts: number }>(
-    `SELECT count(DISTINCT r.slug)::int AS slugs, count(*)::int AS receipts FROM persistence_requests r WHERE ${filtered}`, params);
-  report.totals.slugs = Number(totals?.slugs ?? 0);
-  report.totals.receipts = Number(totals?.receipts ?? 0);
-  params.push(cursor?.after ?? '', limit + 1, FILE_DRIFT_MESSAGE);
-  const rows = await engine.executeRaw<{ slug: string; receipts: number; drift_receipts: number; first_seen: string; last_seen: string; producers: string[]; last_request_id: string }>(
-    `SELECT r.slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=$${params.length})::int AS drift_receipts,
-        to_char(min(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first_seen,
-        to_char(max(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
-        array_agg(DISTINCT r.operation || COALESCE(':' || (r.intent->>'kind'), '') ORDER BY r.operation || COALESCE(':' || (r.intent->>'kind'), '')) AS producers,
-        (array_agg(r.request_id::text ORDER BY r.sequence DESC))[1] AS last_request_id
-      FROM persistence_requests r WHERE ${filtered} AND r.slug > $${params.length - 2}
-      GROUP BY r.slug ORDER BY r.slug LIMIT $${params.length - 1}`, params);
+  if (prefixes && !prefixes.length) { report.complete = true; return report; }
+  const filter: DriftConflictFilter = { sourceId, incarnation: bounds.incarnation, floor: String(floor), through: String(through),
+    ...(prefixes ? { slugPrefixes: prefixes } : {}),
+    visibility: access.excludePrivate ? 'floor' : access.trusted ? 'none' : 'live' };
+  const totals = await engine.countDriftConflicts(filter);
+  report.totals.slugs = totals.slugs;
+  report.totals.receipts = totals.receipts;
+  const rows = await engine.listDriftConflictGroups(filter, { after: cursor?.after ?? '', fetch: limit + 1 });
   const page = rows.slice(0, limit);
   const slugs = page.map(row => row.slug);
   // The newest committed receipt per slug, read through the slug intent index (receipts within retention).
-  const committed = slugs.length ? await engine.executeRaw<{ slug: string; request_id: string; completed_at: string }>(
-    `SELECT DISTINCT ON (r.slug) r.slug, r.request_id::text, to_char(r.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS completed_at
-       FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=ANY($2::text[]) AND r.intent IS NOT NULL AND NOT r.compacted AND r.state='committed'
-      ORDER BY r.slug, r.sequence DESC`, [sourceId, slugs]) : [];
-  const recorded = access.trusted && slugs.length ? await engine.executeRaw<{ slug: string; source_path: string | null; source_uri: string | null }>(
-    'SELECT slug, source_path, source_uri FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, slugs]) : [];
+  const committed = slugs.length ? await engine.readNewestCommittedReceipts(sourceId, slugs) : [];
+  const recorded = access.trusted && slugs.length ? await engine.readPageSourcePaths(sourceId, slugs) : [];
   const hostId = access.trusted ? existingHostIdFor(engine) : null;
   const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
   const owner = !!binding?.local_path && binding.owner_host_id === hostId && binding.state === 'active';

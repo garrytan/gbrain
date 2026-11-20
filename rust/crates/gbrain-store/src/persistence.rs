@@ -53,6 +53,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod drift_conflicts;
 mod effect_scans;
 mod effect_worker;
 mod effects;
@@ -65,6 +66,7 @@ pub(crate) mod projection_queue;
 mod receipt_list;
 mod topology;
 mod writer_versions;
+pub use drift_conflicts::{DriftConflictFilter, DriftConflictPage};
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{BatchLinksRequeue, PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};

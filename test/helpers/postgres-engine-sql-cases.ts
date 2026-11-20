@@ -48,6 +48,7 @@ const OOS = {
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
   writeMisc: 'out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)',
   writeAttribution: 'out-of-scope:write-attribution (born in engine-sql/write-attribution.ts; pinned by test/engine-parity/write-attribution.test.ts)',
+  driftConflicts: 'out-of-scope:drift-conflicts (born in engine-sql/drift-conflicts.ts, the list_write_conflicts audit reads; pinned by test/engine-parity/mcp-tools-rust.test.ts)',
   journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
   pageEmbeddingBudget: 'out-of-scope:page-embedding-budget (born in engine-sql/page-embedding-budget.ts; pinned by test/engine-parity/page-embedding-budget.test.ts and test/page-embedding-budget.test.ts)',
   embeddingInstall: 'out-of-scope:embedding-install (born in engine-sql/embedding-install.ts; pinned by test/engine-parity/embedding-install.test.ts and test/persistence-embedding-effects.test.ts)',
@@ -764,6 +765,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertPublicationEffects': OOS.journal,
   'insertWithdrawalEffects': OOS.journal, 'requeueBatchLinksEffects': OOS.journal,
   'listWriteRequestRows': OOS.journal, 'cancelWriteRow': OOS.journal,
+  'readDriftConflictBounds': OOS.driftConflicts, 'countDriftConflicts': OOS.driftConflicts, 'listDriftConflictGroups': OOS.driftConflicts,
+  'readNewestCommittedReceipts': OOS.driftConflicts, 'readPageSourcePaths': OOS.driftConflicts,
   'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
@@ -1568,6 +1571,17 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['default', (e) => e.listWriteRequestRows('local_cli', 'writer-1', SRC, { before: null, limit: 51, slugPrefixes: null, operations: null, slugAllowList: null })],
     ['fenced', (e) => e.listWriteRequestRows('local_cli', 'writer-1', SRC, { before: '7', limit: 3, slugPrefixes: ['notes/'], operations: ['put_page'], slugAllowList: ['notes/*'] })],
   ]),
+  ...variants('readDriftConflictBounds', [['default', (e) => e.readDriftConflictBounds(SRC)]]),
+  ...variants('countDriftConflicts', [
+    ['trusted', (e) => e.countDriftConflicts({ sourceId: SRC, incarnation: JOURNAL_REQUEST, floor: '0', through: '9', visibility: 'none' })],
+    ['floor', (e) => e.countDriftConflicts({ sourceId: SRC, incarnation: JOURNAL_REQUEST, floor: '0', through: '9', slugPrefixes: ['notes/', 'people/alice-example'], visibility: 'floor' })],
+  ]),
+  ...variants('listDriftConflictGroups', [
+    ['live', (e) => e.listDriftConflictGroups({ sourceId: SRC, incarnation: JOURNAL_REQUEST, floor: '0', through: '9', visibility: 'live' }, { after: '', fetch: 26 })],
+    ['prefixed', (e) => e.listDriftConflictGroups({ sourceId: SRC, incarnation: JOURNAL_REQUEST, floor: '0', through: '9', slugPrefixes: ['notes/'], visibility: 'floor' }, { after: SLUG, fetch: 2 })],
+  ]),
+  ...variants('readNewestCommittedReceipts', [['default', (e) => e.readNewestCommittedReceipts(SRC, [SLUG, SLUG2])]]),
+  ...variants('readPageSourcePaths', [['default', (e) => e.readPageSourcePaths(SRC, [SLUG, SLUG2])]]),
   ...variants('lockPersistenceCounters', [['default', (e) => e.transaction((tx: any) => tx.lockPersistenceCounters(JOURNAL_KEYS))]]),
   ...variants('insertWriteRequest', [['default', (e) => e.transaction((tx: any) => tx.insertWriteRequest({
     principalKind: 'local_cli', principalId: 'writer-1', requestId: JOURNAL_REQUEST, operation: 'put_page', sourceId: SRC,

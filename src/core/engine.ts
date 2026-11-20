@@ -44,6 +44,7 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { AccessTokenWriteGrant, AdmissionRate, BatchLinksRequeue, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { CommittedReceiptRow, DriftConflictBounds, DriftConflictFilter, DriftConflictGroupRow, DriftConflictTotals, PageSourcePathRow } from './engine-sql/drift-conflicts.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest, LinksEffectState, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
@@ -3635,6 +3636,16 @@ export interface BrainEngine {
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
   /** A principal's requests in one live source, newest sequence first, through the cursor and fences (list_write_requests). */
   listWriteRequestRows(principalKind: string, principalId: string, sourceId: string, filter: WriteRequestListFilter): Promise<WriteRequest[]>;
+  /** The drift-conflict audit window of a source: its incarnation and that incarnation's top and bottom request sequences, or null. */
+  readDriftConflictBounds(sourceId: string): Promise<DriftConflictBounds | null>;
+  /** Distinct slugs and receipts of the `source_changed` conflicts under the audit filter (list_write_conflicts). */
+  countDriftConflicts(filter: DriftConflictFilter): Promise<DriftConflictTotals>;
+  /** Up to `page.fetch` conflict groups by slug after `page.after`, in slug order (list_write_conflicts). */
+  listDriftConflictGroups(filter: DriftConflictFilter, page: { after: string; fetch: number }): Promise<DriftConflictGroupRow[]>;
+  /** The newest committed, uncompacted receipt with an intent per slug of one source. */
+  readNewestCommittedReceipts(sourceId: string, slugs: readonly string[]): Promise<CommittedReceiptRow[]>;
+  /** The recorded `source_path` and `source_uri` of each live page at `slugs` in one source, in no stated order. */
+  readPageSourcePaths(sourceId: string, slugs: readonly string[]): Promise<PageSourcePathRow[]>;
   /** The progress columns of request `id` (state, error, outcome, deferral), or null; `signal` cancels the read. */
   readWriteRequestProgress(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequestProgress | null>;
   /** The sources holding outstanding (queued, deferred, running, recovering) requests of one principal, as `{ source_id, n }`: the most first, a tie in byte order of the source id. */

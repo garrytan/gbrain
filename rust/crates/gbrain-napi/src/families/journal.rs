@@ -882,4 +882,82 @@ impl Brain {
             s.find_topology_changes(&principal_id, &request_ids)
         })
     }
+
+    /// `readDriftConflictBounds(sourceId)`: `{ incarnation, top, bottom }` or `null`.
+    #[napi]
+    pub fn read_drift_conflict_bounds<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_drift_conflict_bounds(&source_id))
+    }
+
+    /// `countDriftConflicts(filter, policy)`: `{ slugs, receipts }`; a `null` policy applies none.
+    #[napi]
+    pub fn count_drift_conflicts<'env>(
+        &self,
+        env: &'env Env,
+        filter: Value,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter = required(filter, "countDriftConflicts filter")?;
+            let policy = drift_policy(policy, "countDriftConflicts policy")?;
+            s.count_drift_conflicts(&filter, policy.as_ref())
+        })
+    }
+
+    /// `listDriftConflictGroups(filter, page, policy, message)`: the slug groups after the cursor.
+    #[napi]
+    pub fn list_drift_conflict_groups<'env>(
+        &self,
+        env: &'env Env,
+        filter: Value,
+        page: Value,
+        policy: Option<Value>,
+        message: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter = required(filter, "listDriftConflictGroups filter")?;
+            let page = required(page, "listDriftConflictGroups page")?;
+            let policy = drift_policy(policy, "listDriftConflictGroups policy")?;
+            s.list_drift_conflict_groups(&filter, &page, policy.as_ref(), &message)
+        })
+    }
+
+    /// `readNewestCommittedReceipts(sourceId, slugs)`: `[{ slug, request_id, completed_at }]`.
+    #[napi]
+    pub fn read_newest_committed_receipts<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_newest_committed_receipts(&source_id, &slugs)
+        })
+    }
+
+    /// `readPageSourcePaths(sourceId, slugs)`: `[{ slug, source_path, source_uri }]`.
+    #[napi]
+    pub fn read_page_source_paths<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_source_paths(&source_id, &slugs))
+    }
+}
+
+/// An optional page policy argument (`facts/privacy.rs`).
+fn drift_policy(
+    policy: Option<Value>,
+    what: &str,
+) -> gbrain_store::error::Result<Option<gbrain_store::facts::PrivacyPolicy>> {
+    policy
+        .filter(|v| !v.is_null())
+        .map(|v| required::<gbrain_store::facts::PrivacyPolicy>(v, what))
+        .transpose()
 }

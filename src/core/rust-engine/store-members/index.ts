@@ -46,6 +46,7 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as driftConflicts from './drift-conflicts.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
@@ -140,6 +141,8 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
+  // The drift-conflict audit reads of list_write_conflicts (gbrain-store persistence/drift_conflicts.rs).
+  ...driftConflicts,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
   ...pageEmbeddingBudget,
   ...embeddingInstall,
