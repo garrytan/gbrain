@@ -4606,6 +4606,23 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "entity_basis": "reserved_page",
+              "identifier_kinds": [],
+              "identifier_shared": 0,
+              "identifiers": 0,
+              "owner_member_set": false,
+              "person_types_unavailable": false,
+              "several_pages": false,
+              "unbound_google_sources": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+            "name": "owner_identity",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "auto_repair": {
@@ -4901,23 +4918,6 @@
             "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
-          },
-          {
-            "category": "ops",
-            "details": {
-              "entity_basis": "reserved_page",
-              "identifier_kinds": [],
-              "identifier_shared": 0,
-              "identifiers": 0,
-              "owner_member_set": false,
-              "person_types_unavailable": false,
-              "several_pages": false,
-              "unbound_google_sources": 0
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
-            "name": "owner_identity",
-            "status": "ok"
           },
           {
             "category": "ops",
@@ -10183,6 +10183,23 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "entity_basis": "reserved_page",
+              "identifier_kinds": [],
+              "identifier_shared": 0,
+              "identifiers": 0,
+              "owner_member_set": false,
+              "person_types_unavailable": false,
+              "several_pages": false,
+              "unbound_google_sources": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+            "name": "owner_identity",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "auto_repair": {
@@ -10478,23 +10495,6 @@
             "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
-          },
-          {
-            "category": "ops",
-            "details": {
-              "entity_basis": "reserved_page",
-              "identifier_kinds": [],
-              "identifier_shared": 0,
-              "identifiers": 0,
-              "owner_member_set": false,
-              "person_types_unavailable": false,
-              "several_pages": false,
-              "unbound_google_sources": 0
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
-            "name": "owner_identity",
-            "status": "ok"
           },
           {
             "category": "ops",

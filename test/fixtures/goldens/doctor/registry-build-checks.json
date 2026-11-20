@@ -1258,12 +1258,12 @@
         "name": "secret_store"
       },
       {
-        "category": "brain",
-        "name": "fence_integrity"
-      },
-      {
         "category": "ops",
         "name": "owner_identity"
+      },
+      {
+        "category": "brain",
+        "name": "fence_integrity"
       },
       {
         "category": "ops",
