@@ -796,7 +796,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	68	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	67	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -864,7 +864,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 listLivePagesNamingReader	collate_command_reads	yes	1	no	yes	yes	serves
-readPageAccessRows	collate_command_reads	yes	1	no	yes	yes	serves
+readPageAccessRows	collate_command_reads	yes	2	no	yes	yes	serves
 listMarkdownPageSlugs	collate_command_reads	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
 readSourceState	write_misc	yes	2	no	yes	yes	serves

@@ -390,6 +390,50 @@
         ],
         "flagOnScopes": []
       },
+      "countLivePageTypes#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countLivePageTypes#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countLivePageTypes#sourceIds": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countOrphanedAliasRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -450,6 +494,17 @@
         "flagOnScopes": []
       },
       "countRepoBoundSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countSoftDeletedAliasTargets#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2600,6 +2655,17 @@
         ],
         "flagOnScopes": []
       },
+      "listClosedConsolidationTies#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listCompactableReceipts#default": {
         "flagOffLanes": [
           "pool"
@@ -2636,6 +2702,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "listDuplicateFactRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listEffectRecoveries#after": {
         "flagOffLanes": [
@@ -3023,6 +3100,17 @@
         ],
         "flagOnScopes": []
       },
+      "listOrphanedAliasTargets#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listOverdueHeldWrites#import": {
         "flagOffLanes": [
           "pool"
@@ -3057,6 +3145,17 @@
         "flagOnScopes": []
       },
       "listOwnerRecoveryHeads#excluded": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPagelessEntityFacts#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3350,6 +3449,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceIncarnations#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLastCommits#default": {
         "flagOffLanes": [
           "pool"
@@ -3606,6 +3716,39 @@
         "flagOnScopes": []
       },
       "listTrueUpRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listTypeOrphanPages#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listTypeOrphanPages#sourceIds": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnarchivedSlugSources#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4509,6 +4652,17 @@
         "flagOnScopes": []
       },
       "readEntityOpenLoops#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readExportPageRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5652,6 +5806,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "resolveLiveSlugByPath#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -6899,6 +7064,7 @@
         "countLabelFacts": "none",
         "countLeasePressure": "none",
         "countLegacyFactsPending": "none",
+        "countLivePageTypes": "none",
         "countLivePagesInSource": "none",
         "countMcpResolvedTakes": "none",
         "countMentionDueSince": "none",
@@ -6906,6 +7072,7 @@
         "countOnboardSignal": "none",
         "countOpenJobsByOwner": "none",
         "countOrphanChunks": "none",
+        "countOrphanedAliasRows": "none",
         "countOutstandingBySource": "none",
         "countOversizedEmbedSkips": "none",
         "countPagesBy": "direct",
@@ -6921,6 +7088,7 @@
         "countRepoBoundSources": "none",
         "countSearchVectorRows": "none",
         "countSegmentedTimelinePages": "none",
+        "countSoftDeletedAliasTargets": "none",
         "countSourcePages": "none",
         "countStaleChunks": "direct",
         "countStaleFactEmbeddings": "none",
@@ -7168,6 +7336,7 @@
         "listCapturedFactsForClassification": "none",
         "listChunklessPagesWithContent": "direct",
         "listClientsReferencingSource": "none",
+        "listClosedConsolidationTies": "none",
         "listCompactableReceipts": "none",
         "listConfigKeys": "none",
         "listContextualModeCandidates": "none",
@@ -7183,6 +7352,7 @@
         "listDecideResolvedModels": "none",
         "listDecideSpendBySlot": "none",
         "listDueWakeWatches": "none",
+        "listDuplicateFactRows": "none",
         "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
         "listEmbeddingStores": "none",
@@ -7241,6 +7411,7 @@
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",
         "listOriginClaims": "none",
+        "listOrphanedAliasTargets": "none",
         "listOutsideContentFenceCounts": "none",
         "listOverdueHeldWrites": "none",
         "listOwnedPrivateQueues": "none",
@@ -7248,6 +7419,7 @@
         "listOwnerRecoveryHeads": "none",
         "listPageRefsByIds": "none",
         "listPageStatusByRef": "none",
+        "listPagelessEntityFacts": "none",
         "listPages": "direct",
         "listPagesNamingReader": "none",
         "listPagesTitledIn": "none",
@@ -7275,6 +7447,7 @@
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
         "listSourceIds": "none",
+        "listSourceIncarnations": "none",
         "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
@@ -7313,6 +7486,8 @@
         "listTrustAllowRuleRows": "none",
         "listTrustProposals": "none",
         "listTrustScanRows": "none",
+        "listTypeOrphanPages": "none",
+        "listUnarchivedSlugSources": "none",
         "listUnarchivedSourceIds": "none",
         "listUnattributedFacts": "none",
         "listUnboundClientIds": "none",
@@ -7462,6 +7637,7 @@
         "readEntityInboundEdges": "none",
         "readEntityOpenLoops": "none",
         "readExactSnippetChunks": "none",
+        "readExportPageRows": "none",
         "readExtractionLagCounts": "none",
         "readFactCacheWatermark": "none",
         "readFactForOwnerAction": "none",
@@ -7671,6 +7847,7 @@
         "resolveCaseSensitiveAliases": "none",
         "resolveFactsEmbeddingCast": "none",
         "resolveFrozenHits": "none",
+        "resolveLiveSlugByPath": "none",
         "resolveParentJob": "none",
         "resolveSlugWithAlias": "none",
         "resolveSlugWithAliasDetailed": "none",
