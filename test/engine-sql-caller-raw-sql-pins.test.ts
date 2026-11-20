@@ -1200,6 +1200,8 @@ SELECT source_id, type FROM pairs`],
           AND e.volunteered_at > now() - ($2 || ' days')::interval
         GROUP BY e.match_arm, e.channel
         ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
+  },
+  {
     from: 'src/core/guests/sources.ts:96 initGuestSource, at dded7edc51',
     case: { method: 'upsertGuestSource', variant: 'default', run: e => e.upsertGuestSource('default', ['a-z', 'ab'], 'external_untrusted') },
     texts: [`INSERT INTO guest_sources (source_id, writers, trust_ceiling) VALUES ($1, $2::text[], $3)

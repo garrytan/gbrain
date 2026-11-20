@@ -141,7 +141,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Command page reads (engine-sql/collate-command-reads.ts; covered by test/engine-parity/collate-command-listings.test.ts)
   'readPageAccessRows', 'listMarkdownPageSlugs',
   // Slug reads that order by byte (engine-sql/collate-slug-reads.ts; covered by the collate-*.test.ts parity files)
-  'listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs', 'resolveLiveSlugByPath', 'listLiveSlugSources', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies', 'scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'readPageFileOrigin',
+  'listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs', 'resolveLiveSlugByPath', 'listLiveSlugSources', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies', 'scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'readPageFileOrigin', 'upsertGuestSource', 'listGuestNotes',
   // Identity-downgrade record reads, checkpoint value rows and the cycle window (engine-sql/collate-identity-downgrades.ts, collate-cycle-window.ts; covered by test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts and collate-belief-cycle-walks.test.ts)
   'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues', 'readOpCheckpointValues', 'readCycleListingInstant', 'listSourceChangedPagesAfter',
   // Phantom-redirect root-page walk (engine-sql/collate-phantom-redirect.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
@@ -161,7 +161,6 @@ const INTERFACE_METHODS: readonly string[] = [
   'recordBeliefCommitMarks',
   // Propose-takes failure tombstones (engine-sql/collate-take-proposals.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'recordFailureTombstone', 'listFailureTombstones',
-  'listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs', 'scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'readPageFileOrigin', 'upsertGuestSource', 'listGuestNotes', 'resolveLiveSlugByPath', 'listLiveSlugSources', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows', 'countOrphanedAliasRows', 'listOrphanedAliasTargets', 'countSoftDeletedAliasTargets', 'listDuplicateFactRows', 'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',

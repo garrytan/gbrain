@@ -3292,6 +3292,28 @@
         ],
         "flagOnScopes": []
       },
+      "listGuestNotes#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listGuestNotes#one source": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listHeldFactRows#default": {
         "flagOffLanes": [
           "pool"
@@ -7669,6 +7691,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertGuestSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertWantedMarker#default": {
         "flagOffLanes": [
           "pool"
@@ -8214,6 +8247,7 @@
         "listGazetteerAliasRows": "none",
         "listGazetteerPages": "none",
         "listGazetteerSourceIds": "none",
+        "listGuestNotes": "none",
         "listGuestSourceIds": "none",
         "listHeldFactRows": "none",
         "listHeldFenceCells": "none",
@@ -8844,6 +8878,7 @@
         "upsertEventProjection": "none",
         "upsertFactRelinkAttempt": "none",
         "upsertFile": "none",
+        "upsertGuestSource": "none",
         "upsertOpenLoop": "none",
         "upsertPageWriteGateReceipt": "none",
         "upsertSegmentDerivations": "none",
