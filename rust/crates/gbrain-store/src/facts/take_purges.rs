@@ -9,7 +9,8 @@
 //!
 //! - the take guard ([`refuse_purged_take`]), which every takes writer that inserts a row or sets
 //!   its claim runs, as the `takes_refuse_purged` trigger (`gbrain_refuse_purged_take`) does;
-//! - the import overlay's purge probe (`readSourcePurgeFlags`, [`has_take_purges`]);
+//! - the import overlay's purge probe (`readSourcePurgeFlags`, [`has_take_purges`]) and its take
+//!   match (`listPurgedTakeRows`, [`Store::list_purged_take_rows`]);
 //! - the belief ledger's tombstone read (`readBeliefTombstones`, [`tombstoned_hashes`]).
 //!
 //! Deleting a source removes its tombstones (`ON DELETE CASCADE`, [`remove_source_rows`]).
@@ -38,6 +39,14 @@ const PURGED_TAKE_MESSAGE: &str =
 struct TakePurgeRecord {
     request_id: Option<String>,
     purged_at_us: i64,
+}
+
+/// One row of `listPurgedTakeRows`'s `takes` (`TakeClaimRow`): an incoming takes-fence row.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakeClaimRow {
+    pub row_num: i32,
+    pub claim: String,
 }
 
 /// `insertTakePurge`'s argument (`TakePurgeInsert`).
@@ -71,13 +80,6 @@ pub(crate) fn has_take_purges(read: &dyn KvRead, source_id: &str) -> Result<bool
 
 /// `SELECT claim_hash FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($2)`: the hashes
 /// among `hashes` that a tombstone of the source names, under any subject, each once.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the Rust readBeliefTombstones member reads it later in push 2"
-    )
-)]
 pub(crate) fn tombstoned_hashes(
     read: &dyn KvRead,
     source_id: &str,
@@ -152,6 +154,54 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 }
 
 impl Store {
+    /// `listPurgedTakeRows`: the row numbers of `takes` whose claim fingerprint a tombstone of the
+    /// source names, under subject `*` or `subject` (any subject when `None`), each once and in
+    /// ascending order (the SQL has no set order).
+    pub fn list_purged_take_rows(
+        &self,
+        source_id: &str,
+        takes: &[TakeClaimRow],
+        subject: Option<&str>,
+    ) -> Result<Vec<i32>> {
+        let op = "listPurgedTakeRows";
+        no_nul(
+            op,
+            &[("sourceId", source_id), ("subject", subject.unwrap_or(""))],
+        )?;
+        for t in takes {
+            no_nul(op, &[("claim", &t.claim)])?;
+        }
+        let read = self.read()?;
+        let hashes: Vec<(i32, String)> = takes
+            .iter()
+            .map(|t| (t.row_num, fact_fingerprint(&t.claim)))
+            .collect();
+        let mut rows = BTreeSet::new();
+        match subject {
+            Some(subject) => {
+                for (row_num, hash) in &hashes {
+                    for who in ["*", subject] {
+                        if read.get(&key(&[source_id, who, hash]))?.is_some() {
+                            rows.insert(*row_num);
+                            break;
+                        }
+                    }
+                }
+            }
+            None => {
+                let wanted: Vec<String> = hashes.iter().map(|(_, h)| h.clone()).collect();
+                let found = tombstoned_hashes(&*read, source_id, &wanted)?;
+                rows.extend(
+                    hashes
+                        .iter()
+                        .filter(|(_, h)| found.contains(h))
+                        .map(|(row_num, _)| *row_num),
+                );
+            }
+        }
+        Ok(rows.into_iter().collect())
+    }
+
     /// `insertTakePurge`: stores the tombstone; false when the same key exists (`ON CONFLICT DO
     /// NOTHING`), which keeps its columns. A missing source fails as the foreign key does.
     pub fn insert_take_purge(&self, row: &TakePurgeInsert) -> Result<bool> {
@@ -190,5 +240,59 @@ impl Store {
             )?;
             Ok(true)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::SourceInput;
+    use crate::test_support::store;
+
+    fn tombstone(s: &Store, subject: &str, claim: &str) {
+        s.insert_take_purge(&TakePurgeInsert {
+            source_id: "default".into(),
+            subject: subject.into(),
+            claim_hash: fact_fingerprint(claim),
+            request_id: None,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn purged_take_rows_match_subject_star_or_the_subject() {
+        let s = store();
+        s.upsert_source(&SourceInput {
+            id: "default".into(),
+            ..SourceInput::default()
+        })
+        .unwrap();
+        tombstone(&s, "*", "Acme will win");
+        tombstone(&s, "people/a", "Widgets sell out");
+        tombstone(&s, "people/b", "Rates fall");
+        let takes: Vec<TakeClaimRow> = [
+            (4, "Rates fall"),
+            (1, "  ACME will win. "),
+            (2, "Widgets sell out"),
+            (3, "Nobody purged this"),
+            (1, "Widgets sell out"),
+        ]
+        .into_iter()
+        .map(|(row_num, claim)| TakeClaimRow {
+            row_num,
+            claim: claim.into(),
+        })
+        .collect();
+        let rows = |subject| s.list_purged_take_rows("default", &takes, subject).unwrap();
+        assert_eq!(rows(Some("people/a")), vec![1, 2]);
+        assert_eq!(rows(Some("people/b")), vec![1, 4]);
+        assert_eq!(rows(None), vec![1, 2, 4]);
+        assert!(
+            s.list_purged_take_rows("default", &[], None)
+                .unwrap()
+                .is_empty()
+        );
+        let nul = s.list_purged_take_rows("default", &takes, Some("a\0b"));
+        assert!(nul.is_err());
     }
 }

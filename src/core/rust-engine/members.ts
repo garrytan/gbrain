@@ -821,6 +821,7 @@ export const RUST_ENGINE_MEMBERS = {
   readFactCacheWatermark: 'facts',
   readTrustGeneration: 'facts',
   readSourcePurgeFlags: 'facts',
+  listPurgedTakeRows: 'facts',
   // trust: the forget commit and the fact_withdrawn refusal (engine-sql/trust-withdrawals.ts)
   lockFactForWithdrawal: 'facts',
   queueWithdrawalReview: 'facts',

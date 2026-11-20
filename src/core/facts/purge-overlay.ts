@@ -58,13 +58,9 @@ export async function dropPurgedFenceRows(engine: BrainEngine, sourceId: string,
   if (hasTakes && purges.takes) {
     const parsed = parseTakesFence(body);
     if (parsed.warnings.length || !parsed.takes.length) return body;
-    const rows = await engine.executeRaw<{ row_num: number }>(`SELECT DISTINCT i.row_num
-      FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text)
-      JOIN take_purges p ON p.source_id=$1 AND p.claim_hash=gbrain_fact_fingerprint(i.claim)
-        AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
-    [sourceId, JSON.stringify(parsed.takes.map(t => ({ row_num: t.rowNum, claim: t.claim }))), subject ?? null]);
+    const rows = await engine.listPurgedTakeRows(sourceId, parsed.takes.map(t => ({ row_num: t.rowNum, claim: t.claim })), subject ?? null);
     if (!rows.length) return body;
-    const drop = new Set(rows.map(r => Number(r.row_num)));
+    const drop = new Set(rows);
     const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
     if (beginIdx === -1 || endIdx === -1) return body;
     body = body.slice(0, beginIdx) + renderTakesFence(parsed.takes.filter(t => !drop.has(t.rowNum)), [...parsed.reservedRowNums, ...drop]) + body.slice(endIdx + TAKES_FENCE_END.length);

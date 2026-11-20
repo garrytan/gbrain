@@ -5006,6 +5006,8 @@ export interface BrainEngine {
   readTrustGeneration(): Promise<string>;
   /** Whether the source has any fact purge tombstone (`facts`) and any take purge tombstone (`takes`). */
   readSourcePurgeFlags(sourceId: string): Promise<{ facts: boolean; takes: boolean }>;
+  /** The row numbers of `takes` whose claim fingerprint a take purge tombstone of the source names, under subject '*' or `subject` (any subject when null), each once. No set order. Reads take_purges. */
+  listPurgedTakeRows(sourceId: string, takes: readonly TrustWithdrawalsSql.TakeClaimRow[], subject: string | null): Promise<number[]>;
   /** The fact a withdrawal admits (id and source; world facts only when worldOnly unless it is on memberPage; the remote provenance floor when remoteFloor), locked for the withdrawal; null when none. */
   lockFactForWithdrawal(spec: TrustWithdrawalsSql.WithdrawalLockSpec): Promise<TrustWithdrawalsSql.WithdrawalLockRow | null>;
   /** Queues the overnight review of withdrawn fact `factRef`; a queued review stays. */

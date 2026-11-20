@@ -872,8 +872,9 @@ character refuses with `invalid_argument`; a missing source refuses as the forei
 take tombstone through this member. The page purge's take tombstones (one per take of the page, fingerprinted in SQL)
 still go through `executeRaw`, so a page purge on Rust stops on that statement's refusal.
 
-Readers: `readSourcePurgeFlags`'s `takes` (any tombstone of the source, read in the same snapshot as `facts`) and the
-belief ledger's tombstone read (`tombstoned_hashes`: the hashes among the asked ones that a tombstone of the source
+Readers: `readSourcePurgeFlags`'s `takes` (any tombstone of the source, read in the same snapshot as `facts`), the
+import overlay's take match (`listPurgedTakeRows`, [trust.md](trust.md): the incoming takes-fence rows a tombstone names
+for subject `*` or the page, any subject when none is given) and the belief ledger's tombstone read (`tombstoned_hashes`: the hashes among the asked ones that a tombstone of the source
 names, under any subject).
 
 The guard (`refuse_purged_take`, the `takes_refuse_purged` trigger's `gbrain_refuse_purged_take`): the page the row's

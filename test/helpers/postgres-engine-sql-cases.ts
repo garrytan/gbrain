@@ -165,6 +165,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readTrustGeneration': OOS.trustWithdrawals,
   'moveFactWithdrawalSubject': OOS.trustWithdrawals,
   'readSourcePurgeFlags': OOS.trustWithdrawals,
+  'listPurgedTakeRows': OOS.trustWithdrawals,
   'lockFactForWithdrawal': OOS.trustWithdrawals,
   'queueWithdrawalReview': OOS.trustWithdrawals,
   'listSegmentedPagesBySlug': OOS.trustWithdrawals,
