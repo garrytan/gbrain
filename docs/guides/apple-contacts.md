@@ -12,10 +12,12 @@ What it does on day one:
 - **Exact links to your people pages.** When a contact's email or phone equals the email or phone on exactly one
   person page in your brain, the contact page is linked to that person (an identity link, the same kind
   `gbrain dedupe confirm` makes). Names never match: two people called Alice stay two people.
-- **A small block on that person page.** The matched `people/` page gets a short block with three fields only:
-  company, job title and group names. Phones, emails, the nickname and the contact id stay on the owner-only contact
-  page and never reach a `people/` page. Everything outside the block stays as you wrote it; the edit marks the page
-  as agent-written (`trust_tier: agent_written`), as every automated edit does.
+- **Facts on that person page.** The matched `people/` page gets rows in its `## Facts` section, one each for the
+  company, the job title and every group name (`Company: …`, `Job title: …`, `Contacts group: …`), with the
+  source `apple-contacts:<id>`. Phones, emails, the nickname and the contact id stay on the owner-only contact page and
+  never reach a `people/` page. Nothing outside the Facts section changes: not your text, not the frontmatter, not
+  the page's trust tier. Only this source updates or retires its own rows; a claim you saved yourself with the same
+  text is left alone, and the source does not add a copy of it.
 - **Questions it cannot settle go to you.** A contact whose email or phone belongs to two or more people is not linked;
   `gbrain sync status --source <id>` lists it under identity reviews until you decide.
 - **`whois` by phone.** `gbrain whois "+1 555 555 0100"` finds the person whose `phone` or `phones` holds that
@@ -54,15 +56,17 @@ written without a country code are read as `identity.phone_country_code` (defaul
 
 - A changed contact rewrites its page; an unchanged one writes nothing.
 - A contact deleted in Contacts soft-deletes its page, which `gbrain restore <slug> --source-id <id>` can bring back during the purge
-  window. Its identity link and its person-page block are removed.
+  window. Its identity link is removed and its rows on the person page are retired (struck in the Facts section; a
+  retirement is not a `forget`, so the rows come back when the contact does). A lost match or a group left retires
+  the same way; a changed company or job title replaces its row.
 - A full re-read (the first run, `gbrain sync --source <id> --full`, or the helper forgetting the cursor) deletes a page
   for a missing contact only when the helper says the snapshot was complete.
 - **Delete floor.** A full re-read that comes back empty, or would delete more than 20% of the source's contacts,
   writes nothing and stops with `apple_contacts_delete_floor`. An incremental pull applies its changes but keeps the
   deletions it was sent pending until the end of the run; if they are more than 20% of the source's contacts, or all
   of them, none is applied, they stay pending (`gbrain sync status --source <id>` shows them under `held_deletes`) and the
-  run ends with the same error. A contact that comes back cancels its pending deletion. Nothing on a person page is
-  removed by a held run.
+  run ends with the same error. A contact that comes back cancels its pending deletion. No row on a person page is
+  retired by a held run, or by a full re-read that did not end complete.
 
 ## Errors
 

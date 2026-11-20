@@ -21,7 +21,9 @@
  * contact the source owns.
  *
  * Identity (identity-match.ts) links a contact page to the one person page with the same email or phone; two or more
- * are an identity review for the owner. Person pages get only the person-block.ts block (company, job title, groups).
+ * are an identity review for the owner. Person pages get only person-facts.ts rows in their ## Facts fence (company, job
+ * title, groups), which only this source updates or retires; removals wait for a complete run and pass the delete floor
+ * with the contact deletions behind them.
  *
  * Records: on a brain with a repository the source can record to Git (--record git with --dir; commits through the
  * door, connectors/api-source.ts); otherwise the database is the record. The source is owner-only.
@@ -45,7 +47,7 @@ import { parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../phone-k
 import { appleContactsError, appleContactsHelper, AppleContactsCursorExpiredError, AppleContactsShapeDriftError, readAppleContactsToken, type AppleContactsHelper } from '../apple/contacts-client.ts';
 import { appleBaseSlug, appleContactFingerprint, appleContactRender, appleTombstoneSlugs, renderAppleContactPage } from './render.ts';
 import { APPLE_CONTACTS_LINK_ORIGIN, decidedDifferent, exactPersonMatches, linkContactPage, readIdentityReviews, unlinkContact, writeIdentityReviews, type IdentityReview } from './identity-match.ts';
-import { blockKey, personBlockInterior, readPersonBlocks, safePersonFields, syncPersonBlock, writePersonBlocks, type PersonBlockFields } from './person-block.ts';
+import { holderKey, personClaims, readPersonFactHolders, safePersonFields, syncPersonFacts, writePersonFactHolders, type PersonFields } from './person-facts.ts';
 import { readPendingDeletes, writePendingDeletes, type HeldDeletes } from './review-status.ts';
 import { APPLE_CONTACT_ID_KEY, APPLE_CONTACTS_DELETE_FLOOR, APPLE_CONTACTS_KIND, appleContactHoldKey, type AppleContact, type AppleContactChange, type AppleContactsSourceConfig } from './types.ts';
 
@@ -54,7 +56,7 @@ export interface AppleContactsState extends Record<string, unknown> {
   cursor: string | null;
   /** Each contact's fingerprint as last written (contact id → fingerprint). */
   fps: Record<string, string>;
-  /** Contacts whose person-page block change waits for a complete run (a snapshot without full:true removes nothing). */
+  /** Contacts whose person-page facts change waits for a complete run (or failed), decided again on the next run. */
   deferred?: string[];
   item_holds?: unknown;
 }
@@ -108,9 +110,9 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
   const holds = await ConnectorHoldSession.open(engine, sourceId, managed, emptyState(), state.item_holds, { full: opts.full });
   const ctx: ConnectorPublishCtx = { engine, sourceId, managed, summary, label: 'Apple Contacts', tag: APPLE_CONTACTS_KIND, record: cfg.record, dir: cfg.dir, gated: true };
   const reviews = new Map((await readIdentityReviews(engine, sourceId)).map(r => [r.contact_id, r]));
-  const blocks = await readPersonBlocks(engine, sourceId);
-  /** Contacts whose block this run decides: contact id → the person page it may write (null: none). */
-  const blockTargets = new Map<string, { person: { source_id: string; slug: string }; fields: PersonBlockFields } | null>();
+  const holders = await readPersonFactHolders(engine, sourceId);
+  /** Contacts whose person-page facts this run decides: contact id → the person page it may write (null: none). */
+  const factTargets = new Map<string, { person: { source_id: string; slug: string }; fields: PersonFields } | null>();
   const touched = new Set<string>();
   const deferred = new Set(state.deferred ?? []);
   /** Contacts the helper reported deleted whose deletion waits for the end of the run (the delete floor), kept in the database. */
@@ -165,8 +167,8 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     applied: () => {},
   });
 
-  /** Link (or unlink) one contact page and decide its block from what the page now holds. */
-  const decideIdentity = async (id: string, slug: string, emails: string[], phones: string[], fields: PersonBlockFields) => {
+  /** Link (or unlink) one contact page and decide its person-page facts from what the page now holds. */
+  const decideIdentity = async (id: string, slug: string, emails: string[], phones: string[], fields: PersonFields) => {
     const link = await linkContactPage(engine, sourceId, slug, emails, phones, countryCode);
     if (link.outcome === 'many') reviews.set(id, { contact_id: id, slug, candidates: link.candidates! });
     else reviews.delete(id);
@@ -175,7 +177,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
       const { pages } = await exactPersonMatches(engine, sourceId, emails, phones, countryCode);
       if (pages.length === 1 && pages[0]!.slug.startsWith('people/')) target = pages[0]!;
     }
-    blockTargets.set(id, target ? { person: target, fields: safePersonFields(fields, emails, phones, countryCode) } : null);
+    factTargets.set(id, target ? { person: target, fields: safePersonFields(fields, emails, phones, countryCode) } : null);
   };
 
   const applyUpsert = async (contact: AppleContact) => {
@@ -190,14 +192,14 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     }
     const slug = written !== null ? slugifyPath(written) : null;
     if (slug) await decideIdentity(contact.id, slug, render.data.emails, render.data.phones, { company: contact.organization, jobTitle: contact.jobTitle, groups: contact.groups });
-    else { reviews.delete(contact.id); blockTargets.set(contact.id, null); }
+    else { reviews.delete(contact.id); factTargets.set(contact.id, null); }
     state.fps[contact.id] = appleContactFingerprint(contact);
   };
   const applyDelete = async (id: string) => {
     await applyContactPage(id, true, io(id, null, () => {}));
     touched.add(id);
     reviews.delete(id);
-    blockTargets.set(id, null);
+    factTargets.set(id, null);
     delete state.fps[id];
   };
 
@@ -240,7 +242,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     if (owned.size > 0 && deletes.size > owned.size * APPLE_CONTACTS_DELETE_FLOOR && !massReconcileAllowed()) {
       throw deleteFloor(sourceId, `the snapshot would delete ${deletes.size} of the ${owned.size} contacts the source owns (more than ${APPLE_CONTACTS_DELETE_FLOOR * 100}%).`);
     }
-    if (!meta.full) log(`[apple-contacts] ${sourceId}: the snapshot did not end with full:true; nothing is deleted for being absent and no person-page block is removed`);
+    if (!meta.full) log(`[apple-contacts] ${sourceId}: the snapshot did not end with full:true; nothing is deleted for being absent and no person-page fact is retired`);
     for (const change of upserts) pending.delete(change.id);
     for (const change of upserts) {
       if (signal?.aborted) return meta.full;
@@ -307,12 +309,12 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
   try {
     const complete = opts.full || !state.cursor ? await snapshot() : await incremental();
 
-    // Reviews and deferred blocks this run did not reach are decided again from the contact page itself.
+    // Reviews and deferred person-page facts this run did not reach are decided again from the contact page itself.
     for (const id of new Set([...reviews.keys(), ...deferred])) {
       if (touched.has(id)) continue;
       const [page] = await engine.executeRaw<{ slug: string; frontmatter: Record<string, unknown> }>(
         `SELECT slug, frontmatter FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'${APPLE_CONTACT_ID_KEY}'=$2 LIMIT 1`, [sourceId, id]);
-      if (!page) { reviews.delete(id); blockTargets.set(id, null); continue; }
+      if (!page) { reviews.delete(id); factTargets.set(id, null); continue; }
       const fm = typeof page.frontmatter === 'string' ? JSON.parse(page.frontmatter) as Record<string, unknown> : page.frontmatter;
       const list = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []);
       await decideIdentity(id, page.slug, list(fm.emails), list(fm.phones), { company: typeof fm.company === 'string' ? fm.company : null,
@@ -325,30 +327,40 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     const waiting = [...reviews.values()].filter(r => !r.decided).length;
     if (waiting) log(`[apple-contacts] ${sourceId}: ${waiting} contact(s) match two or more people and wait for the owner: gbrain sync status --source ${sourceId}`);
 
-    // Person-page blocks. A page another contact of this source already holds keeps its block (first writer wins).
-    const holderOf = new Map(Object.entries(blocks).map(([page, id]) => [page, id]));
-    const pageOf = new Map(Object.entries(blocks).map(([page, id]) => [id, page]));
+    // Person-page facts. A page another contact of this source already holds keeps its rows (first writer wins).
+    const holderOf = new Map(Object.entries(holders));
+    const pageOf = new Map(Object.entries(holders).map(([page, id]) => [id, page]));
     state.deferred = [];
-    for (const [id, target] of blockTargets) {
+    const sync = async (id: string, person: { source_id: string; slug: string }, claims: string[]) => {
+      try { return await syncPersonFacts(engine, sourceId, person, claims, log); } catch (error) {
+        if (stopsRun(error)) throw error;
+        summary.failedFiles++;
+        state.deferred!.push(id);
+        log('[apple-contacts] ' + sourceId + ': the facts on ' + person.slug + ' were not updated: ' + (error instanceof Error ? error.message : String(error)));
+        return null;
+      }
+    };
+    for (const [id, target] of factTargets) {
       const had = pageOf.get(id) ?? null;
-      const want = target ? blockKey(target.person) : null;
-      const interior = target ? personBlockInterior(target.fields) : null;
+      const want = target ? holderKey(target.person) : null;
+      const claims = target ? personClaims(target.fields) : [];
       if (had && had !== want) {
         if (!complete) { state.deferred.push(id); continue; }
         const [source_id, slug] = had.split('\t') as [string, string];
-        await syncPersonBlock(engine, sourceId, { source_id, slug }, null);
-        delete blocks[had]; holderOf.delete(had); pageOf.delete(id);
+        if (await sync(id, { source_id, slug }, []) === null) continue;
+        delete holders[had]; holderOf.delete(had); pageOf.delete(id);
       }
       if (!target || !want) continue;
       const holder = holderOf.get(want);
-      if (holder && holder !== id) { log(`[apple-contacts] ${sourceId}: ${target.person.slug} already carries the block of another contact; left as it is`); continue; }
-      if (interior === null && !complete) { state.deferred.push(id); continue; }
-      const result = await syncPersonBlock(engine, sourceId, target.person, interior);
-      if (interior !== null && result !== 'skipped') { blocks[want] = id; holderOf.set(want, id); pageOf.set(id, want); }
-      else if (interior === null) { delete blocks[want]; holderOf.delete(want); pageOf.delete(id); }
+      if (holder && holder !== id) { log('[apple-contacts] ' + sourceId + ': ' + target.person.slug + ' already carries the facts of another contact; left as it is'); continue; }
+      if (!claims.length && !complete) { state.deferred.push(id); continue; }
+      const result = await sync(id, target.person, claims);
+      if (result === null) continue;
+      if (claims.length && result !== 'skipped') { holders[want] = id; holderOf.set(want, id); pageOf.set(id, want); }
+      else if (!claims.length) { delete holders[want]; holderOf.delete(want); pageOf.delete(id); }
     }
     if (!state.deferred.length) delete state.deferred;
-    await writePersonBlocks(engine, sourceId, blocks);
+    await writePersonFactHolders(engine, sourceId, holders);
 
     if (summary.failedFiles > 0 || blocked || floor.refusal) summary.status = 'partial';
     state.item_holds = holds.finish();

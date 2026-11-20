@@ -8,8 +8,9 @@
  * than 20%, or an empty snapshot) writes nothing; the helper's refusals and a down helper stop the run with their codes
  * after bounded retries; the token file is refused when unsafe and the token never leaves the authorization header;
  * the socks5h proxy resolves the helper's host name; exact email/phone matching links one person, reviews two and
- * leaves none alone; the person-page block carries company, job title and groups only, is rewritten in place, removed
- * when the match goes, and never touches a byte outside it; and on a brain with a Git checkout no contact reaches it.
+ * leaves none alone; the person page gets company, job title and groups as rows in its Facts fence only, written,
+ * replaced, retired (never withdrawn, so they come back) by this source alone, with the floor holding removals and
+ * the page outside the fence, its frontmatter and its trust tier unchanged; on a brain with a Git checkout too.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -25,7 +26,6 @@ import { ContactsStub, Socks5Stub, STUB_TOKEN, type StubContact } from './helper
 import { runAppleContactsSync } from '../src/core/apple-contacts/apple-contacts-source.ts';
 import { parseAppleContactsSourceConfig, parseSocksProxy } from '../src/core/apple-contacts/source-config.ts';
 import { appleContactsHelper, readAppleContactsToken, APPLE_CONTACTS_RETRY_DELAYS_MS } from '../src/core/apple/contacts-client.ts';
-import { personBlockMarkers } from '../src/core/apple-contacts/person-block.ts';
 import { canonicalPhone } from '../src/core/phone-key.ts';
 import { connectorDbCursorKey, readConnectorDbCursor } from '../src/core/connectors/db-cursor.ts';
 import { connectorIdentity } from '../src/core/persistence/connector-identity.ts';
@@ -90,13 +90,103 @@ const frontmatterOf = async (slug: string, sourceId = 'default') =>
   (await engine.executeRaw<{ fm: Record<string, unknown> }>('SELECT frontmatter AS fm FROM pages WHERE slug=$1 AND source_id=$2', [slug, sourceId]))[0]!.fm;
 const versions = async (slug: string, sourceId = 'default') => (await engine.executeRaw<{ n: number }>(
   'SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.slug=$1 AND p.source_id=$2', [slug, sourceId]))[0]!.n;
-const outsideBlock = (body: string, sourceId: string) => {
-  const m = personBlockMarkers(sourceId);
-  const at = body.indexOf(m.begin);
-  if (at < 0) return body;
-  return body.slice(0, at).replace(/\n$/, '') + body.slice(body.indexOf(m.end) + m.end.length).replace(/^\n/, '');
-};
-async function deletePeople() { await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'people/%'`); }
+const outsideFacts = (body: string) => body.split('\n## Facts\n')[0]!.replace(/\n+$/, '');
+const pageTier = async (slug: string, sourceId: string) => (await engine.executeRaw<{ t: string | null }>('SELECT trust_tier AS t FROM pages WHERE slug=$1 AND source_id=$2', [slug, sourceId]))[0]!.t;
+const ourFacts = async (contactsId: string, slug = 'people/alice-example') => (await engine.executeRaw<{ fact: string }>(
+  "SELECT fact FROM facts WHERE entity_slug=$1 AND source=$2 AND expired_at IS NULL ORDER BY fact", [slug, 'apple-contacts:' + contactsId])).map(r => r.fact);
+const ownerCtx = (sourceId: string) => ({ engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } }) as never;
+async function deletePeople() {
+  await engine.executeRaw("DELETE FROM facts WHERE entity_slug LIKE 'people/%' OR source_markdown_slug LIKE 'people/%'");
+  await engine.executeRaw("DELETE FROM pages WHERE slug LIKE 'people/%'");
+}
+
+/**
+ * Decision B as Facts rows, on one person page in personSource: add, an unchanged rerun, a change, a group left and
+ * rejoined, removals held by the floor, a contact deletion, and the same claims written again. The owner's own claim
+ * with the same text survives every removal; outside the Facts section the page, its frontmatter and its trust tier
+ * never change. Returns the contacts source id.
+ */
+async function factsScenario(personSource: string, extra: Record<string, unknown> = {}, file?: () => string): Promise<string> {
+  const slug = 'people/alice-example';
+  const { operationsByName } = await import('../src/core/operations.ts');
+  await operationsByName.remember!.handler(ownerCtx(personSource), { fact: 'Company: Acme Example', entity: slug, source_id: personSource,
+    provenance: 'owner-note', content_origin: 'user_said', infer_entity: false });
+  const ownerRow = async () => (await engine.executeRaw<{ n: number }>(
+    "SELECT count(*)::int AS n FROM facts WHERE entity_slug=$1 AND source_id=$2 AND source='owner-note' AND expired_at IS NULL", [slug, personSource]))[0]!.n;
+  const original = await bodyOf(slug, personSource);
+  const fmBefore = JSON.stringify(await frontmatterOf(slug, personSource));
+  const tierBefore = await pageTier(slug, personSource);
+  const fileBefore = file?.();
+  const unchangedOutside = async () => {
+    const body = await bodyOf(slug, personSource);
+    expect(outsideFacts(body)).toBe(outsideFacts(original));
+    expect(body).toContain('| Company: Acme Example |');
+    expect(JSON.stringify(await frontmatterOf(slug, personSource))).toBe(fmBefore);
+    expect(await pageTier(slug, personSource)).toBe(tierBefore);
+    if (file) expect(outsideFacts(file())).toBe(outsideFacts(fileBefore!));
+    expect(await ownerRow()).toBe(1);
+  };
+
+  const s = freshStub();
+  s.upsert('c-alice', ALICE);
+  for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
+  const { id, cfg } = await contactsSource(s, extra);
+  await run(id, cfg);
+  const page = (await live(id)).find(r => r.id === 'c-alice')!;
+  const group = (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: id })).find(m => m.slug === page.slug)!;
+  expect(group.established_by).toBe('apple-contacts');
+  expect((await listEntityIdentities(engine, { entityId: group.entity_id })).map(m => m.slug).sort()).toEqual([page.slug, slug].sort());
+  // The owner's identical company claim is already there, so only the job title and the group are added.
+  expect(await ourFacts(id)).toEqual(['Contacts group: Harbor Club', 'Job title: Engineer']);
+  await unchangedOutside();
+  const factsText = (await bodyOf(slug, personSource)).slice(outsideFacts(original).length);
+  for (const value of ['alice@example.invalid', ...CONTACT_ONLY, '5555550100', '555-0100', 'c-alice']) expect(factsText).not.toContain(value);
+
+  // An unchanged rerun, incremental or full, writes nothing.
+  const v = await versions(slug, personSource);
+  const body = await bodyOf(slug, personSource);
+  s.upsert('c-alice', ALICE);
+  await run(id, cfg);
+  await run(id, cfg, { full: true });
+  expect(await versions(slug, personSource)).toBe(v);
+  expect(await bodyOf(slug, personSource)).toBe(body);
+
+  // A changed job title replaces its row; a group left is retired; rejoined, it is written again.
+  s.upsert('c-alice', { ...ALICE, job_title: 'Harbor Master' });
+  await run(id, cfg);
+  expect(await ourFacts(id)).toEqual(['Contacts group: Harbor Club', 'Job title: Harbor Master']);
+  s.upsert('c-alice', { ...ALICE, job_title: 'Harbor Master', groups: [] });
+  await run(id, cfg);
+  expect(await ourFacts(id)).toEqual(['Job title: Harbor Master']);
+  await unchangedOutside();
+  s.upsert('c-alice', { ...ALICE, job_title: 'Harbor Master' });
+  await run(id, cfg);
+  expect(await ourFacts(id)).toEqual(['Contacts group: Harbor Club', 'Job title: Harbor Master']);
+  await unchangedOutside();
+
+  // Deletions the floor holds retire nothing.
+  s.remove('c-alice');
+  s.remove('c1');
+  await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+  expect(await ourFacts(id)).toEqual(['Contacts group: Harbor Club', 'Job title: Harbor Master']);
+  // One comes back, the other deletion passes: its rows are retired, the owner's claim stays.
+  s.upsert('c1', contact(1));
+  expect((await run(id, cfg)).deleted).toBe(1);
+  expect(await ourFacts(id)).toEqual([]);
+  expect((await listEntityIdentities(engine, { slug, slugSourceId: personSource })).length).toBe(0);
+  await unchangedOutside();
+  const struck = await bodyOf(slug, personSource);
+  expect(struck.split('\n').find(l => l.includes('| Company: Acme Example |'))).not.toContain('~~');
+
+  // The restored contact writes the same claims again (a retirement is not a withdrawal).
+  s.upsert('c-alice', { ...ALICE, job_title: 'Harbor Master' });
+  await run(id, cfg);
+  expect(await ourFacts(id)).toEqual(['Contacts group: Harbor Club', 'Job title: Harbor Master']);
+  await unchangedOutside();
+  s.upsert('c-alice', { ...ALICE, job_title: 'Harbor Master', groups: [] });
+  await run(id, cfg);
+  return id;
+}
 
 describe('phone keys', () => {
   test('a number is one canonical E.164-like key however it is written; ambiguous shapes are refused', () => {
@@ -420,70 +510,28 @@ describe('sync (repo-less brain)', () => {
   });
 });
 
-describe('identity and the person-page block (repo-less brain)', () => {
-  test('one exact match links the contact and writes company, job title and groups only; reruns write nothing; a change rewrites only the block', async () => {
+describe('identity and person-page facts (repo-less brain)', () => {
+  test('one exact match links the contact and writes company, job title and groups as Facts rows only; the full add, change, remove, re-add cycle', async () => {
     await deletePeople();
     await personPage('people/alice-example', { email: 'alice@example.invalid' });
-    const original = await bodyOf('people/alice-example');
-    const s = freshStub();
-    s.upsert('c-alice', ALICE);
-    for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
-    const { id, cfg } = await contactsSource(s);
-    const fmBefore = await frontmatterOf('people/alice-example');
-    await run(id, cfg);
-    const page = (await live(id)).find(r => r.id === 'c-alice')!;
-    const group = (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: id })).find(m => m.slug === page.slug)!;
-    expect(group.established_by).toBe('apple-contacts');
-    expect((await listEntityIdentities(engine, { entityId: group.entity_id })).map(m => m.slug).sort()).toEqual([page.slug, 'people/alice-example'].sort());
-
-    const body = await bodyOf('people/alice-example');
-    const m = personBlockMarkers(id);
-    expect(body.startsWith(original)).toBe(true);
-    const interior = body.slice(body.indexOf(m.begin) + m.begin.length, body.indexOf(m.end));
-    expect(interior).toContain('- Company: Acme Example');
-    expect(interior).toContain('- Job title: Engineer');
-    expect(interior).toContain('- Contacts groups: Harbor Club');
-    for (const value of ['alice@example.invalid', ...CONTACT_ONLY, '5555550100', 'Alice', 'c-alice']) expect(interior).not.toContain(value);
-    expect(outsideBlock(body, id)).toBe(original);
-    // The edit door marks an automated edit as agent-written; that marker is the one change outside the block.
-    expect(await frontmatterOf('people/alice-example')).toEqual({ ...fmBefore, trust_tier: 'agent_written' });
-
-    const v = await versions('people/alice-example');
-    s.upsert('c-alice', ALICE);
-    await run(id, cfg);
-    await run(id, cfg, { full: true });
-    expect(await versions('people/alice-example')).toBe(v);
-    expect(await bodyOf('people/alice-example')).toBe(body);
-
-    s.upsert('c-alice', { ...ALICE, job_title: 'Harbor Master' });
-    await run(id, cfg);
-    const changed = await bodyOf('people/alice-example');
-    expect(changed).toContain('- Job title: Harbor Master');
-    expect(changed).not.toContain('- Job title: Engineer');
-    expect(outsideBlock(changed, id)).toBe(original);
-
-    s.remove('c-alice');
-    await run(id, cfg);
-    expect(await bodyOf('people/alice-example')).toBe(original);
-    expect((await listEntityIdentities(engine, { slug: 'people/alice-example', slugSourceId: 'default' })).length).toBe(0);
+    await factsScenario('default');
   });
 
-  test('a phone match links too; losing the match removes the link and the block, curated text outside it stays byte-identical', async () => {
+  test('a phone match links too; losing the match retires the rows and the curated text stays byte-identical', async () => {
     await deletePeople();
     const curated = 'Alice runs the harbor project.\n\n## Notes\n- Prefers mornings.';
     await personPage('people/alice-example', { phones: ['+1 555-555-0100'] }, 'default', curated);
-    const original = await bodyOf('people/alice-example');
     const s = freshStub();
     s.upsert('c-alice', { ...ALICE, emails: [] });
     const { id, cfg } = await contactsSource(s);
     await run(id, cfg);
-    expect(await bodyOf('people/alice-example')).toContain('- Company: Acme Example');
-    // Curated edits land outside the block, then the contact stops matching.
+    expect(await ourFacts(id)).toContain('Company: Acme Example');
+    // Curated edits land outside the fence, then the contact stops matching.
     await engine.executeRaw('UPDATE pages SET compiled_truth = $1 || compiled_truth WHERE slug=$2', ['Intro line.\n\n', 'people/alice-example']);
-    const edited = 'Intro line.\n\n' + original;
     s.upsert('c-alice', { ...ALICE, emails: [], phones: [{ label: null, value: '555-555-0142' }] });
     await run(id, cfg);
-    expect(await bodyOf('people/alice-example')).toBe(edited);
+    expect(await ourFacts(id)).toEqual([]);
+    expect(outsideFacts(await bodyOf('people/alice-example'))).toBe('Intro line.\n\n' + curated);
     expect((await listEntityIdentities(engine, { slug: (await live(id))[0]!.slug, slugSourceId: id })).length).toBe(0);
   });
 
@@ -504,6 +552,7 @@ describe('identity and the person-page block (repo-less brain)', () => {
     for (const row of await live(id)) expect((await listEntityIdentities(engine, { slug: row.slug, slugSourceId: id })).length).toBe(0);
     expect(await bodyOf('people/alice-example')).toBe(original);
     expect(await bodyOf('people/alice-example', 'people-b')).toBe(original);
+    expect(await ourFacts(id)).toEqual([]);
     const status = await readSyncStatus(engine, id);
     expect(status.needs_human).toBe(true);
     expect(status.identity_reviews!.length).toBe(1);
@@ -526,45 +575,50 @@ describe('identity and the person-page block (repo-less brain)', () => {
     expect(await bodyOf('people/alice-example')).toBe(original);
   });
 
-  test('an incomplete snapshot and the delete floor never remove a block', async () => {
+  test('an incomplete snapshot never retires the rows; a full snapshot the floor refuses keeps them', async () => {
     await deletePeople();
     await personPage('people/alice-example', { email: 'alice@example.invalid' });
-    const original = await bodyOf('people/alice-example');
     const s = freshStub();
     s.upsert('c-alice', ALICE);
-    for (let i = 1; i <= 4; i++) s.upsert(`c${i}`, contact(i));
+    for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
     const { id, cfg } = await contactsSource(s);
     await run(id, cfg);
-    const withBlock = await bodyOf('people/alice-example');
-    expect(withBlock).not.toBe(original);
+    const rows = await ourFacts(id);
+    expect(rows.length).toBe(3);
 
-    // The match goes away in a snapshot that does not say full:true: the block waits.
+    // The match goes away in a snapshot that does not say full:true: the rows wait.
     s.full = false;
     s.upsert('c-alice', { ...ALICE, emails: [{ label: null, value: 'alice.new@example.invalid' }], phones: [] });
     await run(id, cfg, { full: true });
-    expect(await bodyOf('people/alice-example')).toBe(withBlock);
+    expect(await ourFacts(id)).toEqual(rows);
     s.full = true;
     await run(id, cfg);
-    expect(await bodyOf('people/alice-example')).toBe(original);
+    expect(await ourFacts(id)).toEqual([]);
 
-    // Back again, then a mass deletion the floor refuses: the block stays.
+    // Back again, then a mass deletion the floor refuses: the rows stay.
     s.upsert('c-alice', ALICE);
     await run(id, cfg);
-    expect(await bodyOf('people/alice-example')).toBe(withBlock);
+    expect(await ourFacts(id)).toEqual(rows);
     s.contacts.delete('c-alice'); s.contacts.delete('c1');
     await expect(run(id, cfg, { full: true })).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
-    expect(await bodyOf('people/alice-example')).toBe(withBlock);
+    expect(await ourFacts(id)).toEqual(rows);
   });
 
-  test('no people/ page ever carries a phone or an email the contact alone holds', async () => {
-    const rows = await engine.executeRaw<{ slug: string; body: string; fm: unknown }>(`SELECT slug, compiled_truth AS body, frontmatter AS fm FROM pages WHERE slug LIKE 'people/%'`);
-    const versionsText = await engine.executeRaw<{ t: string }>(`SELECT v.compiled_truth || ' ' || v.frontmatter::text AS t FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.slug LIKE 'people/%'`);
+  test('no people/ page or Facts row ever carries a phone or an email the contact holds', async () => {
+    const rows = await engine.executeRaw<{ slug: string; body: string; fm: unknown }>("SELECT slug, compiled_truth AS body, frontmatter AS fm FROM pages WHERE slug LIKE 'people/%'");
+    const versionsText = await engine.executeRaw<{ t: string }>("SELECT v.compiled_truth || ' ' || v.frontmatter::text AS t FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.slug LIKE 'people/%'");
     const text = rows.map(r => r.body + JSON.stringify(r.fm)).join('\n') + versionsText.map(v => v.t).join('\n');
     for (const value of CONTACT_ONLY) expect(text.replace(/\D/g, '').includes('5555550199') || text.includes(value)).toBe(false);
+    const facts = await engine.executeRaw<{ fact: string }>("SELECT fact FROM facts WHERE source LIKE 'apple-contacts:%'");
+    expect(facts.length).toBeGreaterThan(0);
+    for (const { fact } of facts) {
+      expect(fact).not.toMatch(/@/);
+      expect(fact.replace(/\D/g, '').length).toBeLessThan(7);
+    }
   });
 });
 
-test('on a brain with a Git checkout, no contact reaches the checkout or a commit; the person page in Git gets only its block', async () => {
+test('on a brain with a Git checkout the person file changes only inside its Facts fence and no contact reaches the checkout', async () => {
   await deletePeople();
   const repo = join(home, 'brain-repo');
   const remote = join(home, 'brain-remote.git');
@@ -581,27 +635,23 @@ test('on a brain with a Git checkout, no contact reaches the checkout or a commi
   git(repo, 'push', '-q', 'origin', 'main');
   await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', ['notes-git', repo, JSON.stringify({ federated: true })]);
   await importFromContent(engine, 'people/alice-example', file, { sourceId: 'notes-git', sourcePath: 'people/alice-example.md', sourceRoot: repo, noEmbed: true });
-  const s = freshStub();
-  s.upsert('c-alice', ALICE);
   const contactsDir = join(home, 'contacts-checkout');
   mkdirSync(contactsDir);
   git(contactsDir, 'init', '-q', '-b', 'main');
-  const { id, cfg } = await contactsSource(s, { ac_record: 'git', ac_dir: contactsDir });
-  await run(id, cfg);
-  const text = readFileSync(join(repo, 'people', 'alice-example.md'), 'utf8');
-  const m = personBlockMarkers(id);
-  expect(text).toContain(m.begin);
-  expect(text).toContain('- Company: Acme Example');
-  // Outside the block only the door's agent-written marker is added to the frontmatter.
-  expect(text.replace(/\n?<!-- gbrain:apple-contacts[\s\S]*:end -->/, '')).toBe(file.replace('email: alice@example.invalid\n', 'email: alice@example.invalid\ntrust_tier: agent_written\n'));
-  // The door's write-through leaves the person page file for the brain's own commit path; nothing else changed.
-  expect(git(repo, 'status', '--porcelain', '--untracked-files=all').stdout).toBe(' M people/alice-example.md\n');
-  expect(git(repo, 'rev-parse', 'HEAD').stdout).toBe(git(remote, 'rev-parse', 'main').stdout);
+  const personFile = () => readFileSync(join(repo, 'people', 'alice-example.md'), 'utf8');
+  const before = personFile();
+  const id = await factsScenario('notes-git', { ac_record: 'git', ac_dir: contactsDir }, personFile);
+  const text = personFile();
+  // Outside the Facts section the file is the original, frontmatter included (no trust marker).
+  expect(outsideFacts(text)).toBe(outsideFacts(before));
+  expect(text).toContain('Job title: Harbor Master');
+  expect(text).toContain('~~Contacts group: Harbor Club~~');
   const tracked = git(repo, 'ls-files').stdout;
   expect(tracked).not.toContain('contacts/apple');
   expect(git(contactsDir, 'status', '--porcelain', '--untracked-files=all').stdout).toBe('');
   expect(git(contactsDir, 'rev-list', '--all').stdout).toBe('');
-  const grep = spawnSync('grep', ['-rl', '-e', 'alice.home@example.invalid', '-e', '555-0199', repo, remote], { encoding: 'utf8' }).stdout;
+  const grep = spawnSync('grep', ['-rl', '-e', 'alice.home@example.invalid', '-e', '555-0199', '-e', '5550100', repo, remote], { encoding: 'utf8' }).stdout;
   expect(grep).toBe('');
   expect(git(repo, 'log', '-p', '--all').stdout).not.toContain('alice.home@example.invalid');
+  expect(id.startsWith('apple-contacts-')).toBe(true);
 });
