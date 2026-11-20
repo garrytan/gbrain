@@ -278,6 +278,7 @@ test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/keyword-timeout-rerun-7082.test.ts
+test/known-as-of-owner-r94.test.ts
 test/label-only-repairs.test.ts
 test/label-repair-derived-stamps-gst2603.test.ts
 test/lane-apply-pipelining.test.ts
