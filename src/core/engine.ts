@@ -14,7 +14,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AppliedPolicyRevision } from './engine-sql/access-control.ts';
-import type { FactsFencePagesQuery, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
+import type { FactsFencePagesQuery, SweepPageRefRow, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
@@ -4413,6 +4413,8 @@ export interface BrainEngine {
   listSweepStalePages(q: SweepStalePagesQuery): Promise<SweepStalePageRow[]>;
   /** Of the sweep's deferred segmented `slugs`, those still recent and stale. */
   listSweepDeferredPages(q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]>;
+  /** The live pages of any source whose slug is in `slugs` (the links pass's refs), in no set order. */
+  listPageRefsForSlugs(slugs: readonly string[]): Promise<SweepPageRefRow[]>;
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;

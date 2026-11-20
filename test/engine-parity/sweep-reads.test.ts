@@ -15,11 +15,11 @@
  *    fence also reads the purge tombstones (facts/purge-overlay.ts), a different path from the sweep. The sweep is the
  *    real runMaintenanceSweep.
  *
- * Known stop on Rust: past these reads the sweep still reaches raw SQL. Pass 1 stops in the held-fact move
- * (cycle/extract-facts.ts moveHeldFacts -> facts/held-fact-move.ts planHeldMoves), pass 2 in the link-ref lookup
- * (link-reconciliation.ts lookupRefsForSlugs). The sweep catches each refusal and skips the pass, so on Rust the case
- * pins the exact skip list and then ends on the refusal it caught: the harness counts it stopped, and the pin fails as
- * soon as either pass runs, so the list must shrink with the fix.
+ * Known stop on Rust: past these reads pass 1 still reaches raw SQL, in the held-fact move
+ * (cycle/extract-facts.ts moveHeldFacts -> facts/held-fact-move.ts planHeldMoves). The sweep catches the refusal and
+ * skips the pass, so on Rust the first case pins the exact skip list and then ends on the refusal it caught: the
+ * harness counts it stopped, and the pin fails as soon as pass 1 runs, so the list must shrink with the fix. Pass 2
+ * (links and timeline) runs on every arm; the second case holds it equal.
  */
 import { describe, expect } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -46,7 +46,7 @@ const FENCED_BODY = [
 const FENCED_TIMELINE = '- **2025-02-03** | joined [[companies/widget-co]] as an advisor';
 
 /** The passes the sweep still skips on Rust, each on a raw-SQL refusal it caught (see the known stop above). */
-const RUST_KNOWN_STOP = ['facts_fence_error', 'links_timeline_error'];
+const RUST_KNOWN_STOP = ['facts_fence_error'];
 
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {

@@ -263,6 +263,12 @@ const PINS: Pin[] = [
         AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)
         AND slug = ANY($3::text[])`],
   },
+  {
+    from: 'src/core/link-reconciliation.ts:442 lookupRefsForSlugs (the links and timeline pass\'s page refs, at 932324b281)',
+    case: { method: 'listPageRefsForSlugs', variant: 'default', run: e => e.listPageRefsForSlugs(['a', 'b']) },
+    texts: [`SELECT slug, source_id, type, knowledge_revision FROM pages
+        WHERE deleted_at IS NULL AND slug IN ($1, $2)`],
+  },
 ];
 
 describe('caller raw SQL moved into typed members keeps its Postgres text byte for byte', () => {

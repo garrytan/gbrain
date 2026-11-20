@@ -273,3 +273,39 @@ fn a_bad_since_a_negative_limit_and_an_unknown_field_are_refused() {
         .is_err()
     );
 }
+
+#[test]
+fn page_refs_read_the_named_live_pages_of_every_source() {
+    let b = brain("sweep-refs");
+    put(&b, "n/a", None, "a");
+    put(&b, "n/b", None, "b");
+    put(&b, "n/gone", None, "gone");
+    let other: SourceInput = args(json!({ "id": "other", "name": "other" }));
+    b.upsert_source(&other).unwrap();
+    put(&b, "n/a", Some("other"), "a elsewhere");
+    b.soft_delete_page("n/gone", None).unwrap();
+    let rows = b
+        .list_page_refs_for_slugs(&args(json!({ "slugs": ["n/a", "n/gone", "n/missing"] })))
+        .unwrap();
+    let refs: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["source_id"].as_str().unwrap(),
+                r["slug"].as_str().unwrap(),
+                r["type"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(refs, [("default", "n/a", "note"), ("other", "n/a", "note")]);
+    assert!(rows.iter().all(|r| r["knowledge_revision"].is_string()));
+    assert!(
+        b.list_page_refs_for_slugs(&args(json!({ "slugs": [] })))
+            .unwrap()
+            .is_empty()
+    );
+    let err = b
+        .list_page_refs_for_slugs(&args(json!({ "slugs": ["n/\0"] })))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
