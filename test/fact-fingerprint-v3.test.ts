@@ -139,4 +139,31 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
       SELECT $1,'world',s,${legacyFingerprintSql('c')},'2026-01-02T00:00:00Z' FROM unnest($2::text[], $3::text[]) u(c, s)`, [id, [claim, global], [slug, '*']]));
     expect(await shownRows(slug, sourceId)).toEqual([[['A live claim', false]], [['A live claim', false]]]);
   });
+
+  // Follow-up (Gap 2, open): fails on a Postgres arm whose lower() or [[:space:]] differs from PGLite's (en_US.utf8 on
+  // glibc). A pre-migration withdrawal or purge of a claim holding U+1680, or a letter only glibc lowers (U+24B6), that
+  // has no twin row matches only the folded spelling after the migration: _v2 answers NULL for the claim's own
+  // spelling, and a purge keeps only the hash, so it never gets a twin. PGLite passes, since its old fold equals the
+  // new one. Unskip this case with the fix.
+  test.skip('a twinless withdrawal or purge of a U+1680 or case-only claim stored before the migration still matches its claim', async () => {
+    const slug = 'notes/fpv3-gap2', purgedSpace = 'Nu\u1680purged claim', purgedCase = 'Xi \u24b6 purged claim';
+    const orphanSpace = 'Lambda\u1680orphan claim', orphanCase = 'Mu \u24b6 orphan claim';
+    // The withdrawn claims survive nowhere (no fact, no fence cell), so the migration writes no twin row for them.
+    const sourceId = await legacyPage(slug, [purgedSpace, purgedCase, 'A live claim'], async id => {
+      await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash,withdrawn_at)
+        SELECT $1,'world',${legacyFingerprintSql('c')},'2026-01-02T00:00:00Z' FROM unnest($2::text[]) c ON CONFLICT DO NOTHING`, [id, [orphanSpace, orphanCase]]);
+      await engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,purged_at)
+        SELECT $1,'world',$3,${legacyFingerprintSql('c')},'2026-01-02T00:00:00Z' FROM unnest($2::text[]) c`, [id, [purgedSpace, purgedCase], slug]);
+    });
+    const seen: Array<[string, boolean, boolean]> = [];
+    for (const claim of [orphanSpace, orphanCase]) {
+      const withdrawn = await isFactWithdrawn(engine, sourceId, 'world', claim, null);
+      const reinserted = await engine.insertFact({ fact: claim, visibility: 'world', source: 'synthetic' }, { source_id: sourceId });
+      seen.push([claim, withdrawn, await expired(reinserted.id)]);
+    }
+    expect({ seen, shown: await shownRows(slug, sourceId) }).toEqual({
+      seen: [[orphanSpace, true, true], [orphanCase, true, true]],
+      shown: [[['A live claim', false]], [['A live claim', false]]],
+    });
+  });
 });
