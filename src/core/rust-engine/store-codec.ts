@@ -55,8 +55,9 @@ const PAGE_ROW_DEFAULTS = { contextual_retrieval_mode: null, emotional_weight: 0
  * `updated_at_iso` is the one computed column, listed after `updated_at`). `JSON.stringify` writes keys in insertion
  * order, so the order is part of what `gbrain get --json` and an MCP reply print. A column a family adds through the
  * page-columns hook is not listed: it follows these, as a later migration's column follows the table.
+ * test/page-key-order-columns.test.ts fails on a `pages` column that neither this list nor its own skip list names.
  */
-const PAGE_KEY_ORDER = [
+export const PAGE_KEY_ORDER = [
   'id', 'slug', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'content_hash', 'source_path', 'knowledge_revision',
   'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso', 'deleted_at', 'effective_date',
   'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'withheld_source_path',
