@@ -116,6 +116,7 @@ test/doctor-frontmatter-holds.test.ts
 test/doctor-guard-ledger-checks.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
+test/doctor-owner-identity.test.ts
 test/doctor-purged-page-facts-count.test.ts
 test/doctor-routing-skill-pack-source.test.ts
 test/doctor-session-lane-gbra133.test.ts
@@ -456,6 +457,7 @@ test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
 test/owner-facts-d1-gst2346.test.ts
+test/owner-identity.test.ts
 test/owner-label-guard.test.ts
 test/owner-member-boundary.test.ts
 test/owner-private-fact-edits-gst3064.test.ts
