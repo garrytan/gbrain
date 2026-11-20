@@ -217,8 +217,10 @@ reads refuse their `hasAttempts: true` form.
 - With no attempts table nothing was tried or paid, so the served unlinked reads return
   `conversation_tried`, `conversation_paid`, `no_subject` and `conversation_unresolved` as 0,
   and only the `relink` fix targets rows.
-- `countFactEmbeddingCoverage` treats `fact_withdrawals` as empty (the same stance as
-  "Lookups and hooks"): the Rust engine refuses `executeRaw`, the only writer of a withdrawal.
+- `countFactEmbeddingCoverage`, `countStaleFactEmbeddings` and `listOversizedStaleFacts` share one scan
+  (`for_each_embeddable_fact`), which skips a withdrawn fact as `retainedFactEmbedding` does: a withdrawal at the
+  fact's source and visibility under `gbrain_fact_fingerprint` or `gbrain_fact_fingerprint_v1` of its text, whose
+  subject is the fact's page for a fact on `memory/members/...`, else `*` or the fact's entity.
   A fact is `partial` when its text is over 8000 UTF-16 units and the row is not stale.
 - The window reads sort by `created_at DESC` then `id DESC`; PGLite leaves a tie in
   `created_at` unordered. Rows come sorted by source id (and origin or slug) where PGLite's
@@ -541,6 +543,33 @@ and the bare-name page lookup of a slot-history question (`search/slot-history.t
 The TypeScript member of `listReadablePageSlugs` resolves the privacy policy as the chunk reads do (a caller's readers are
 allowed) and ignores `requireSafeChunks`, which `pageReadFilter` does not read.
 Parity: `test/engine-parity/facts-quoted.test.ts`.
+
+## Write-path, repair and fence-cycle reads (`facts/write_path.rs`)
+
+The W2c members of `facts-trust.ts`, `facts-repair.ts` and `facts-cycle.ts` that the capture, embedding backfill and
+fence reconcile paths call. The TypeScript members are `rust-engine/store-members/facts-write-path.ts`; the napi family
+is `families/facts_write_path.rs`.
+
+| Member | What the store does |
+| --- | --- |
+| `listLivePageTitles(sourceId, slugs)` | `{ slug, title }` of each live (not soft-deleted) page at the slugs, by slug. |
+| `listLivePersonTitles(sourceId, slugs)` | The `listLivePageTitles` rows whose page is `type = 'person'` and not retired (`retiredPageSql`). |
+| `listPageAliasNames(sourceId, slugs)` | `{ slug, alias_norm }` of each alias row at the slugs, by slug then alias; a deleted page's aliases too. |
+| `listCaptureDuplicateCandidates(opts)` | The facts of the source in `visibilities` with the candidate's fingerprint, unexpired, inside `valid_until`, spoken by nobody else, not `replacingPage`'s conversation-extractor rows and not on an owned memory page; newest first (`created_at`, then id), at most `scanLimit` (a negative limit is refused). |
+| `computeFactFingerprints(texts)` | `gbrain_fact_fingerprint` of each text, in order. |
+| `listOversizedStaleFacts(opts)` | The stale embeddable facts (the scan of `countStaleFactEmbeddings`) longer than `maxTokens` bytes, by id, at most 10000; `id` as text. |
+| `listFenceRowClaims(sourceId, slug)` | `{ row_num, fact, source }` of the page's facts that hold a fence row, by id. |
+| `adoptFactIntoFence(sourceId, id, rowNum, slug, fact)` | In one store write, an unfenced fact of the source gets the row number, page and claim text; the withdrawal guard (`preserve_withdrawal`) runs before `write_fact`. A fenced row or another source's row is left alone; an id that is not an integer is refused as `bigint` input. |
+| `readSourceCheckoutPath(sourceId)` | The source's `local_path`, null for none or an unknown source. |
+| `listPageStates(sourceId, slug)` | The page row (no `deleted_at` filter), then its 20 newest versions that hold a body, newest first; none for a missing page. |
+| `countSegmentedVersionsOfPage(sourceId, slug)` | The page's versions with `body_storage = 'segmented'`; 0 for a missing page. |
+
+`readPendingWriteReceipt` reads the persistence request store (`readWriteRequest`) and answers only a queued, running
+or recovering request. `lockSourceShared` resolves at once: the store's writer gate already serializes every write.
+`readFactsFtsIndexState` and `swapFactsFtsIndex` stay refused: they read and rebuild a Postgres catalog index
+(`pg_index`, `pg_get_indexdef`), which a store brain does not have.
+Parity: `test/engine-parity/facts-rest-sites.test.ts`, `facts-repair-sites.test.ts` and `facts-cycle-sites.test.ts`;
+crate tests: `rust/crates/gbrain-store/tests/facts_write_path.rs`.
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
 

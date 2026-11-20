@@ -76,6 +76,7 @@ pub mod withdrawal_discovery;
 pub mod withdrawal_fence;
 mod withdrawal_guard;
 pub mod withdrawal_pages;
+pub mod write_path;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};

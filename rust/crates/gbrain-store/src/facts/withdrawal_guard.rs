@@ -12,7 +12,8 @@
 //! `write_fact` calls this on every insert (the withdrawal half of `gbrain_guard_inserted_facts`), after the
 //! purge refusal. Every update member whose `UPDATE` sets a watched column on a row it can leave active calls it
 //! before `write_fact`: `rehomeEntityFacts` ([`super::captured`]), `restoreOntologyFact`, `placeRelinkedFact`,
-//! `linkConversationFact`, `restoreSupersededFact`, `restoreFactPreimage` and `migrateFactsToCanonical`. The
+//! `linkConversationFact`, `restoreSupersededFact`, `restoreFactPreimage`, `migrateFactsToCanonical` and
+//! `adoptFactIntoFence` ([`super::write_path`]). The
 //! other update members the store serves set no watched column, or set `expired_at` to a time, so the guard has
 //! nothing to do.
 
