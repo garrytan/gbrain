@@ -10,7 +10,7 @@
 
 import { describe, it, expect, afterEach } from 'bun:test';
 import { spawnSync, execSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { checkResolvable } from '../src/core/check-resolvable.ts';
@@ -74,6 +74,15 @@ describe('GST-3155 item 1: prose bullets in a workspace AGENTS.md', () => {
     expect(report.ok).toBe(true);
   });
 
+  it('a list row in a workspace AGENTS.md for a skill that exists still routes to it', () => {
+    const skillsDir = workspace([{ folder: 'alpha-skill', triggers: [] }], {
+      parentAgentsMd: '## Skills\n- **alpha-skill**: run alpha | alpha please\n',
+    });
+    const report = checkResolvable(skillsDir);
+    expect(report.issues.filter(i => i.skill === 'alpha-skill' && i.type === 'unreachable')).toEqual([]);
+    expect(report.summary.reachable).toBe(1);
+  });
+
   it('a list row in skills/RESOLVER.md for a skill that is gone is still missing_file', () => {
     const skillsDir = workspace([{ folder: 'alpha-skill' }], {
       resolverMd: '## Skills\n- **alpha-skill**: run alpha\n- **ghost-skill**: run ghost\n',
@@ -135,6 +144,41 @@ describe('GST-3155 item 4: --fix preview agrees with the report', () => {
     for (const p of json.autoFix.fixed) expect(findings.has(p.skill)).toBe(true);
     expect(json.autoFix.fixed.map((p: any) => p.skill)).toEqual(['filing-skill']);
   }, 30_000);
+
+  it('check-resolvable --fix without --dry-run leaves a skill missing the brain-first callout unchanged', () => {
+    const skillsDir = workspace([{ folder: 'lookup-skill', body: '# Lookup\n\nUse perplexity to answer the question.\n' }], { git: true });
+    const skillMd = join(skillsDir, 'lookup-skill', 'SKILL.md');
+    const before = readFileSync(skillMd, 'utf-8');
+    const { json } = runCli(['--json', '--fix', '--skills-dir', skillsDir]);
+    expect(json.autoFix.fixed).toEqual([]);
+    expect(readFileSync(skillMd, 'utf-8')).toBe(before);
+  }, 30_000);
+
+  it('autoFixDryViolations still proposes the brain-first callout by default, as doctor --fix relies on', () => {
+    const skillsDir = workspace([{ folder: 'lookup-skill', body: '# Lookup\n\nUse perplexity to answer the question.\n' }], { git: true });
+    expect(autoFixDryViolations(skillsDir, { dryRun: true }).fixed.map(f => f.patternLabel)).toEqual(['brain-first compliance']);
+    expect(autoFixDryViolations(skillsDir, { dryRun: true, insertMissingRules: false }).fixed).toEqual([]);
+  });
+
+  it('a DRY replacement stops at a code fence', () => {
+    const skillsDir = workspace(
+      [{ folder: 'filing-skill', body: '# Filing\n\nCheck the notability gate before creating a page.\n```\nexample();\n```\n' }],
+      { git: true },
+    );
+    const { fixed } = autoFixDryViolations(skillsDir, { dryRun: true });
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].before).toBe('Check the notability gate before creating a page.');
+  });
+
+  it('a DRY match on a heading replaces that heading alone, not the body under it', () => {
+    const skillsDir = workspace(
+      [{ folder: 'filing-skill', body: '# Filing\n\n## Iron Law: Back-Linking (MANDATORY)\nEvery page links back.\n' }],
+      { git: true },
+    );
+    const { fixed } = autoFixDryViolations(skillsDir, { dryRun: true });
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].before).toBe('## Iron Law: Back-Linking (MANDATORY)');
+  });
 
   it('a DRY replacement in an unbroken section never takes the headings with it', () => {
     const skillsDir = workspace(
