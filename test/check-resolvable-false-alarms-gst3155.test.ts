@@ -170,6 +170,16 @@ describe('GST-3155 item 4: --fix preview agrees with the report', () => {
     expect(fixed[0].before).toBe('Check the notability gate before creating a page.');
   });
 
+  it('a DRY replacement of a bullet keeps the code block nested inside that bullet', () => {
+    const skillsDir = workspace(
+      [{ folder: 'filing-skill', body: '# Filing\n\n- Check the notability gate first:\n  ```\n  check();\n  ```\n  then file it.\n- Keep going\n' }],
+      { git: true },
+    );
+    const { fixed } = autoFixDryViolations(skillsDir, { dryRun: true });
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].before).toBe('- Check the notability gate first:\n  ```\n  check();\n  ```\n  then file it.');
+  });
+
   it('a DRY match on a heading replaces that heading alone, not the body under it', () => {
     const skillsDir = workspace(
       [{ folder: 'filing-skill', body: '# Filing\n\n## Iron Law: Back-Linking (MANDATORY)\nEvery page links back.\n' }],

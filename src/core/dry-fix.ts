@@ -144,7 +144,8 @@ export interface Block {
 }
 
 /** Headings and code fences bound every block: a replacement never takes a
- *  heading or a fence with it (GST-3155: whole-section replacements). */
+ *  heading or a fence with it (GST-3155: whole-section replacements). A fence
+ *  indented past a bullet's marker belongs to that bullet. */
 function isBlockBoundary(line: string): boolean {
   return /^#{1,6}\s/.test(line) || /^\s*(?:```|~~~)/.test(line);
 }
@@ -173,7 +174,7 @@ export function expandBullet(lines: string[], lineIdx: number): Block | null {
     const prevIsBullet = /^(\s*)(?:[-*]\s|\d+\.\s)/.test(prev);
     const prevIndent = prev.match(/^(\s*)/)?.[1].length ?? 0;
     if (prevIsBullet && prevIndent <= baseIndent) break;
-    if (prev.trim() === '' || isBlockBoundary(prev)) break;
+    if (prev.trim() === '' || (isBlockBoundary(prev) && prevIndent <= baseIndent)) break;
     start--;
   }
 
@@ -182,10 +183,10 @@ export function expandBullet(lines: string[], lineIdx: number): Block | null {
   let end = lineIdx;
   for (let i = lineIdx + 1; i < lines.length; i++) {
     const l = lines[i];
-    if (l.trim() === '' || isBlockBoundary(l)) break;
+    if (l.trim() === '') break;
     const isBullet = /^(\s*)(?:[-*]\s|\d+\.\s)/.test(l);
     const indent = l.match(/^(\s*)/)?.[1].length ?? 0;
-    if (isBullet && indent <= baseIndent) break;
+    if ((isBullet || isBlockBoundary(l)) && indent <= baseIndent) break;
     end = i;
   }
   return { startLine: start, endLine: end };
