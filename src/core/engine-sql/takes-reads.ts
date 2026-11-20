@@ -1,7 +1,8 @@
 /**
  * The small reads that doctor, onboarding, the fact purge, the fence import, the scorecard's MCP count and the take
  * supersession repair made through `executeRaw`: take counts and rows, the pages whose salience weight lags their
- * takes, and whether a source owns unresolved code edges. SQL once for both engines, so a store that is not SQL
+ * takes, and whether a source owns unresolved code edges; and the take reads and writes of the takes publication's
+ * prepare step. SQL once for both engines, so a store that is not SQL
  * serves the same members (rust/docs/store/takes-reads.md).
  *
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
@@ -225,4 +226,26 @@ export async function deleteTakesByIds(tx: Raw, ids: readonly number[]): Promise
 export async function findTakeId(tx: Raw, pageId: number, rowNum: number): Promise<number | null> {
   const [take] = await tx.executeRaw<{ id: number | string }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [pageId, rowNum]);
   return take ? Number(take.id) : null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The takes publication's prepare step (persistence/takes-prepare.ts): the same text as the raw statements it sent.
+
+/** Page `pageId`'s take at `rowNum`: its id, claim and stored trust tier, or null. */
+export async function readTakeTrustRow(tx: Raw, pageId: number, rowNum: number): Promise<{ id: number; claim: string; trust_tier: string } | null> {
+  const [take] = await tx.executeRaw<{ id: number | string; claim: string; trust_tier: string }>(
+    'SELECT id,claim,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2', [pageId, rowNum]);
+  return take ? { id: Number(take.id), claim: take.claim, trust_tier: take.trust_tier } : null;
+}
+
+/** Sets the `resolved_at` of page `pageId`'s take at `rowNum` to `resolvedAt` (text Postgres reads as a time). */
+export async function stampTakeResolvedAt(tx: Raw, pageId: number, rowNum: number, resolvedAt: string): Promise<void> {
+  await tx.executeRaw('UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2', [pageId, rowNum, resolvedAt]);
+}
+
+/** Stores `holders` as request `requestId`'s `authority.takeHoldersUsed`, in the order given. */
+export async function recordTakeHoldersUsed(tx: Raw, requestId: string, holders: readonly string[]): Promise<void> {
+  await tx.executeRaw(`UPDATE persistence_requests
+      SET authority=jsonb_set(authority,'{takeHoldersUsed}',$2::text::jsonb)
+      WHERE id=$1::uuid`, [requestId, JSON.stringify([...holders])]);
 }

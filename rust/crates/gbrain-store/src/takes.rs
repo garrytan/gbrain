@@ -37,6 +37,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
+mod prepare;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};

@@ -452,7 +452,7 @@ src/core/generations/adapters/synthesis.ts	execute_raw	1
 src/core/generations/adapters/take-rows.ts	execute_raw	1
 src/core/generations/fence-evidence.ts	execute_raw	4
 src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/fence.ts	execute_raw	4
+src/core/generations/fence.ts	execute_raw	3
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
@@ -800,7 +800,6 @@ src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/takes-prepare.ts	execute_raw	7
 src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	20

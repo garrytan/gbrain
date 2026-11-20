@@ -3619,6 +3619,8 @@ export interface BrainEngine {
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
   /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
+  /** Delete the owner's held `fence_absent` or `no_proof` fence result of `kind` in `sourceId` (`clearFenceHold`, engine-sql/fence-holds.ts). */
+  clearFenceHoldRows(sourceId: string, kind: string, ownerKey: string): Promise<void>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
@@ -4392,6 +4394,12 @@ export interface BrainEngine {
   deleteTakesByIds(ids: readonly number[]): Promise<void>;
   /** The id of the page's take at `rowNum`, or null. */
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
+  /** The page's take at `rowNum`: its id, claim and stored trust tier, or null. */
+  readTakeTrustRow(pageId: number, rowNum: number): Promise<{ id: number; claim: string; trust_tier: string } | null>;
+  /** Set the `resolved_at` of the page's take at `rowNum` (a date or an ISO time); no take there writes nothing. */
+  stampTakeResolvedAt(pageId: number, rowNum: number, resolvedAt: string): Promise<void>;
+  /** Store `holders` as persistence request `requestId`'s `authority.takeHoldersUsed`, in the order given. */
+  recordTakeHoldersUsed(requestId: string, holders: readonly string[]): Promise<void>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

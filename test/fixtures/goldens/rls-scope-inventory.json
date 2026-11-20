@@ -210,6 +210,17 @@
         ],
         "flagOnScopes": []
       },
+      "clearFenceHoldRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "completeEffectRow#default": {
         "flagOffLanes": [
           "pool"
@@ -5724,6 +5735,7 @@
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
         "clearCodeTraversalCache": "none",
+        "clearFenceHoldRows": "none",
         "cliReads": "none",
         "closeOpenLoop": "none",
         "closedLoopWithActiveFact": "none",
@@ -6433,6 +6445,7 @@
         "readSourceWriteRow": "none",
         "readStoredBodyBytes": "none",
         "readStoredPageTier": "none",
+        "readTakeTrustRow": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
@@ -6457,6 +6470,7 @@
         "recordPageEmbeddingHold": "none",
         "recordSearchTelemetry": "none",
         "recordSubagentToolExecutions": "none",
+        "recordTakeHoldersUsed": "none",
         "recordWakeCronRun": "none",
         "recordWakeTermsAcceptance": "none",
         "refreshCycleLock": "none",
@@ -6565,6 +6579,7 @@
         "staleLinkRelationshipKeys": "none",
         "stampEffectClaim": "none",
         "stampPageIngest": "none",
+        "stampTakeResolvedAt": "none",
         "stampVersionChangeReason": "none",
         "stampWorktreeHeartbeats": "none",
         "stampWriteClaim": "none",

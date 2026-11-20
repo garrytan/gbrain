@@ -7,8 +7,9 @@
  * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
  * whose member pages, grants or lineage widen the policy.
  *
- * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
- * row id that is not an integer, as the SQL's integer casts refuse it.
+ * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) and the take members
+ * of the takes publication's prepare step (readTakeTrustRow, stampTakeResolvedAt) refuse a page, take or row id that
+ * is not an integer, as the SQL's integer casts refuse it.
  */
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
@@ -111,4 +112,22 @@ export const findTakeId: StoreMember<[pageId: number, rowNum: number], number | 
   ints('findTakeId', [pageId, rowNum]);
   const id = await storeCall({ member: 'findTakeId' }, () => brain.findTakeId(pageId, rowNum)) as number | null;
   return id === null || id === undefined ? null : Number(id);
+};
+
+export const readTakeTrustRow: StoreMember<[pageId: number, rowNum: number], { id: number; claim: string; trust_tier: string } | null> =
+  async (brain, pageId, rowNum) => {
+    ints('readTakeTrustRow', [pageId, rowNum]);
+    const row = await storeCall({ member: 'readTakeTrustRow' }, () => brain.readTakeTrustRow(pageId, rowNum)) as
+      { id: number; claim: string; trust_tier: string } | null;
+    return row ? { id: Number(row.id), claim: row.claim, trust_tier: row.trust_tier } : null;
+  };
+
+export const stampTakeResolvedAt: StoreMember<[pageId: number, rowNum: number, resolvedAt: string], void> =
+  async (brain, pageId, rowNum, resolvedAt) => {
+    ints('stampTakeResolvedAt', [pageId, rowNum]);
+    await storeCall({ member: 'stampTakeResolvedAt' }, () => brain.stampTakeResolvedAt(pageId, rowNum, resolvedAt));
+  };
+
+export const recordTakeHoldersUsed: StoreMember<[requestId: string, holders: readonly string[]], void> = async (brain, requestId, holders) => {
+  await storeCall({ member: 'recordTakeHoldersUsed' }, () => brain.recordTakeHoldersUsed(requestId, [...holders]));
 };

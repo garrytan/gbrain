@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 907/907
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 20/20
 # ontology: 4/4
 # raw_files: 6/6
-# takes: 28/28
+# takes: 31/31
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 83/83
+# persistence_journal: 84/84
 # entity_reads: 10/10
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -89,7 +89,7 @@ transaction	lifecycle	yes	116	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	126	yes	yes	yes	serves
+getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
@@ -299,9 +299,9 @@ upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	47	yes	yes	yes	serves
+addTakesBatch	takes	yes	48	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	22	no	yes	yes	serves
+listTakes	takes	yes	24	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -309,13 +309,13 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	2	no	yes	yes	serves
 supersedeTake	takes	yes	2	no	yes	yes	serves
-resolveTake	takes	yes	13	no	yes	yes	serves
+resolveTake	takes	yes	14	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	3	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	4	no	yes	yes	serves
 matchTakeRows	takes	yes	1	no	yes	yes	serves
-deleteTakeRows	takes	yes	1	no	yes	yes	serves
+deleteTakeRows	takes	yes	2	no	yes	yes	serves
 countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
 countTakes	takes	yes	1	no	yes	yes	serves
 planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
@@ -324,7 +324,10 @@ listHeldFenceTakeRows	takes	yes	1	no	yes	yes	serves
 listTakeIdsLeavingFence	takes	yes	1	no	yes	yes	serves
 listTakePreimages	takes	yes	1	no	yes	yes	serves
 deleteTakesByIds	takes	yes	1	no	yes	yes	serves
-findTakeId	takes	yes	1	no	yes	yes	serves
+findTakeId	takes	yes	3	no	yes	yes	serves
+readTakeTrustRow	takes	yes	2	no	yes	yes	serves
+stampTakeResolvedAt	takes	yes	1	no	yes	yes	serves
+recordTakeHoldersUsed	takes	yes	1	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	4	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
@@ -413,7 +416,8 @@ readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
+clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	9	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves

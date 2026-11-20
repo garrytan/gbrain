@@ -1,5 +1,6 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
-//! repair sites, and the reads and the delete of `gbrain extract takes` (rust/docs/store/takes-reads.md).
+//! repair sites, the reads and the delete of `gbrain extract takes`, and the reads and writes of the takes
+//! publication's prepare step (rust/docs/store/takes-reads.md).
 //! Same shape as `../takes.rs`.
 
 use gbrain_store::takes::{IncomingTake, McpResolvedInput, PurgeTakesInput, TakesLeavingFence};
@@ -171,5 +172,47 @@ impl Brain {
         row_num: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.find_take_id(page_id as i64, row_num as i64))
+    }
+
+    /// `readTakeTrustRow(pageId, rowNum)`: `{ id, claim, trust_tier }`, or null.
+    #[napi]
+    pub fn read_take_trust_row<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_num: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_take_trust_row(page_id as i64, row_num as i64)
+        })
+    }
+
+    /// `stampTakeResolvedAt(pageId, rowNum, resolvedAt)`: resolves when the take's `resolved_at` is set.
+    #[napi]
+    pub fn stamp_take_resolved_at<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_num: f64,
+        resolved_at: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_take_resolved_at(page_id as i64, row_num as i64, &resolved_at)
+        })
+    }
+
+    /// `recordTakeHoldersUsed(requestId, holders)`: resolves when the request's
+    /// `authority.takeHoldersUsed` is set.
+    #[napi]
+    pub fn record_take_holders_used<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        holders: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let holders: Vec<String> = required(holders, "recordTakeHoldersUsed holders")?;
+            s.record_take_holders_used(&request_id, &holders)
+        })
     }
 }

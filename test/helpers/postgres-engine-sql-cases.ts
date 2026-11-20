@@ -102,6 +102,7 @@ const OOS = {
   minionJobs: 'out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)',
   decideProposals: 'out-of-scope:decide-proposals (born in engine-sql/decide-proposals.ts; pinned by test/engine-parity/decide-proposals.test.ts)',
   extractTakes: 'out-of-scope:extract-takes (born in engine-sql/takes-reads.ts, engine-sql/trust-fence.ts and engine-sql/belief.ts; the Postgres text is pinned by test/extract-takes-sql-pin.test.ts, the answers by test/engine-parity/extract-takes-reads.test.ts)',
+  takesPrepare: 'out-of-scope:takes-prepare (born in engine-sql/takes-reads.ts for persistence/takes-prepare.ts; the Postgres text is pinned by test/takes-prepare-sql-pin.test.ts, the answers by test/engine-parity/takes-prepare.test.ts)',
   takesReads: 'out-of-scope:takes-reads (born in engine-sql/takes-reads.ts; pinned by test/engine-parity/takes.test.ts, code-eval-salience.test.ts and test/engine-sql-takes-reads.test.ts)',
   identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
@@ -644,6 +645,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listHeldFenceTakeRows': OOS.takesReads,
   'readLivePageIdBySlug': OOS.extractTakes, 'readPageTierRef': OOS.extractTakes, 'readPageTierRows': OOS.extractTakes, 'pageHasFrontmatterKey': OOS.extractTakes,
   'listTakeIdsLeavingFence': OOS.extractTakes, 'listTakePreimages': OOS.extractTakes, 'deleteTakesByIds': OOS.extractTakes, 'findTakeId': OOS.extractTakes,
+  'readTakeTrustRow': OOS.takesPrepare, 'stampTakeResolvedAt': OOS.takesPrepare, 'recordTakeHoldersUsed': OOS.takesPrepare,
   'countMcpResolvedTakes': OOS.takesReads,
   'listTakeSupersessionCandidates': OOS.takesReads,
   'countZeroWeightWithTakes': OOS.takesReads,
@@ -753,7 +755,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readRowAttribution': OOS.writeAttribution,
   'attributionReads': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
-  'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal, 'listFenceHoldRows': OOS.journal,
+  'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal, 'listFenceHoldRows': OOS.journal, 'clearFenceHoldRows': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'readOAuthClientWriteGrant': OOS.journal, 'readAccessTokenWriteGrant': OOS.journal, 'shareLockWriteCredential': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
@@ -1555,6 +1557,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['all', (e) => e.listFenceHoldRows([SRC], ['fact_fence', 'take_fence'])],
     ['owner', (e) => e.listFenceHoldRows([SRC], ['fact_fence', 'take_fence'], 'page:people/alice-example')],
   ]),
+  ...variants('clearFenceHoldRows', [['default', (e) => e.clearFenceHoldRows(SRC, 'take_fence', 'page:people/alice-example')]]),
   ...variants('readWriteRequest', [['default', (e) => e.readWriteRequest('local_cli', 'writer-1', JOURNAL_REQUEST)]]),
   ...variants('readWriteRequestById', [['default', (e) => e.readWriteRequestById(JOURNAL_REQUEST)]]),
   ...variants('listWriteRequestRows', [

@@ -51,9 +51,25 @@ on the store, which records no belief events). The whole re-extract still stops 
 | `brain.listTakeIdsLeavingFence(pageId, fence)` | the ids of the page's takes at no listed row number (`removed`), or that no row restates with the same claim (`replaced`) | `unheldTakes` |
 | `brain.listTakePreimages(pageId, ids, incoming)` | `[{ preimage, gone }]` by row number: the gone takes and those an incoming row of the number restates with another claim, kind or holder, once per such row (the SQL's `LEFT JOIN`) | `takePreimages` |
 | `brain.deleteTakesByIds(ids)` | deletes the listed takes on any page with the evidence rows that cite them; an empty list writes nothing | the prune delete |
-| `brain.findTakeId(pageId, rowNum)` | the id of the page's take at the row number, or null | `upsertProjectedTakes` |
+| `brain.findTakeId(pageId, rowNum)` | the id of the page's take at the row number, or null | `upsertProjectedTakes`, the takes prepare step |
 
 The `preimage` object has the keys of `TAKE_PREIMAGE_SQL`; `resolved_at` is printed the way `jsonb_build_object` prints
 a `timestamptz`. The TypeScript members refuse an id that is not an integer. Pinned by
 `rust/crates/gbrain-store/tests/takes_extract.rs`, `test/engine-parity/extract-takes-reads.test.ts` and, for the
 Postgres text, `test/extract-takes-sql-pin.test.ts`.
+
+## The takes publication's prepare step
+
+`persistence/takes-prepare.ts` (takes_add, takes_resolve, takes_supersede, takes_remove) reads and writes takes and the
+request's holders through these members, besides `findTakeId` and `deleteTakeRows`. The store side is
+`rust/crates/gbrain-store/src/takes/prepare.rs`.
+
+| Member | Returns | Used by |
+| --- | --- | --- |
+| `brain.readTakeTrustRow(pageId, rowNum)` | `{ id, claim, trust_tier }` of the page's take at the row number, or null | takes_remove, takes_supersede, the written row |
+| `brain.stampTakeResolvedAt(pageId, rowNum, resolvedAt)` | sets the take's `resolved_at` (a date reads as midnight UTC); a take that is not there is left alone | a resolution with its own date |
+| `brain.recordTakeHoldersUsed(requestId, holders)` | stores the holders as the request's `authority.takeHoldersUsed`, in the order given; a request that is not stored is left alone | the write's holder check |
+
+Pinned by `test/engine-parity/takes-prepare.test.ts`, the store's `takes::prepare` unit tests and, for the Postgres
+text, `test/takes-prepare-sql-pin.test.ts`. On Rust a whole takes write lands; the page projection rebuild the consumer
+runs after the commit still stops on the typed `raw_sql` refusal in `page-state/projections.ts`.

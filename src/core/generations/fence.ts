@@ -166,8 +166,7 @@ export async function publishFenceGeneration(tx: BrainEngine, request: FenceGene
 
 /** A readable fence answers a held `fence_absent` (or `no_proof`) row: it is the proof the hold waited for. */
 export async function clearFenceHold(tx: BrainEngine, key: GenerationKey): Promise<void> {
-  await tx.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason IN ('fence_absent','no_proof')`,
-    [key.sourceId, key.kind, key.ownerKey]);
+  await tx.clearFenceHoldRows(key.sourceId, key.kind, key.ownerKey);
 }
 
 /** A held fence result, as doctor, `get_page` and `gbrain sync status` list it. */

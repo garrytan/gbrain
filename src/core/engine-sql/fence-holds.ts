@@ -1,8 +1,9 @@
 /**
  * The held fence results read (generations/fence.ts `listFenceHolds`): the `derived_generations` rows a facts or takes
- * fence publish holds, as `gbrain get`, doctor and `gbrain sync status` list them. One SQL implementation for both
+ * fence publish holds, as `gbrain get`, doctor and `gbrain sync status` list them; and the delete of a held row a
+ * readable fence answers (`clearFenceHold`). One SQL implementation for both
  * engines; the statement is the text `listFenceHolds` sent through `executeRaw`, byte for byte, on the engine's own
- * `executeRaw`. Only its home moved. The Rust engine holds no fence results (store-members/fence-holds.ts).
+ * `executeRaw`; so does the delete's. Only its home moved. The Rust engine holds no fence results (store-members/fence-holds.ts).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -31,4 +32,12 @@ export async function listFenceHoldRows(raw: EngineRawRead, sourceIds: readonly 
   const params: unknown[] = [[...sourceIds], [...kinds]];
   if (ownerKey !== undefined) params.push(ownerKey);
   return raw<FenceHoldRow>(ownerKey === undefined ? EVERY_OWNER_SQL : ONE_OWNER_SQL, params);
+}
+
+/** `clearFenceHoldRows`: the statement `clearFenceHold` sent through `executeRaw`. */
+const CLEAR_HOLD_SQL = `DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason IN ('fence_absent','no_proof')`;
+
+/** Deletes the owner's held `fence_absent` or `no_proof` row of `kind` in `sourceId` (generations/fence.ts `clearFenceHold`). */
+export async function clearFenceHoldRows(raw: (sql: string, params: unknown[]) => Promise<unknown>, sourceId: string, kind: string, ownerKey: string): Promise<void> {
+  await raw(CLEAR_HOLD_SQL, [sourceId, kind, ownerKey]);
 }
