@@ -168,6 +168,7 @@ test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
 test/entity-duplicates-finder.test.ts
@@ -266,6 +267,7 @@ test/holding-page-saves-gst2497.test.ts
 test/holding-read-transient-gst2667.test.ts
 test/hosted-repo-g7b2.test.ts
 test/ignored-privacy-labels.test.ts
+test/imessage-owned-folder.test.ts
 test/import-file-result-callback-gbra130.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
@@ -456,6 +458,7 @@ test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
+test/owned-folder-guards.test.ts
 test/owner-facts-d1-gst2346.test.ts
 test/owner-identity.test.ts
 test/owner-label-guard.test.ts

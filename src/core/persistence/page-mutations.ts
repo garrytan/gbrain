@@ -56,6 +56,7 @@ import type { GuestSource } from '../guests/sources.ts';
 import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, guestSourcesUnreadable, refuseRemoteGuestDelete, schemaBehindGuests } from '../guests/admission.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
+import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -454,6 +455,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   // GST-1943: the storage manifest takes page writes only from the storage verbs (and the owner's import of its own commits).
   assertStorageSourceWriter(ctx, sourceId, source.role, { managedFileImport: input.managedFileImport });
+  if (source.kind && OWNED_FOLDER_KINDS.includes(source.kind)) await (await import('../owned-folder/remove.ts')).assertOwnedPagesUnchanged(ctx.engine, sourceId, input.operation);
   // A managed file import keeps the file canonical: its content is re-read and compared at preparation.
   const nulRemoved = input.managedFileImport ? 0 : stripPageTextNul(input.operation, p);
   if (nulRemoved) ctx.logger?.warn(`[nul_removed] ${input.operation} ${JSON.stringify(String(p.slug))}: removed ${nulRemoved} U+0000 character(s) from the page text; the page is stored without them.`);

@@ -177,6 +177,13 @@ case "send-audit":
 
 case "register":
     let agent = SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist")
+    if agent.status == .enabled {
+        do {
+            try agent.unregister()
+        } catch {
+            FileHandle.standardError.write(Data("\(name): macOS didn't unregister the background agent, so it stays registered from the earlier install: \(error.localizedDescription)\n".utf8))
+        }
+    }
     if agent.status != .enabled, agent.status != .requiresApproval {
         do {
             try agent.register()
@@ -194,6 +201,14 @@ case "register":
     default:
         fail("background agent not registered", code: 1)
     }
+
+case "unregister":
+    do {
+        try SMAppService.agent(plistName: "\(HelperIdentity.bundleId).plist").unregister()
+    } catch {
+        fail("macOS didn't unregister the background agent: \(error.localizedDescription)", code: 1)
+    }
+    print("background agent unregistered")
 
 case "check":
     let path = value("--db") ?? (try? Config.load(path: configPath))?.dbPath ?? Config.defaultDBPath
