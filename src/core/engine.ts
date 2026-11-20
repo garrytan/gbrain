@@ -84,7 +84,7 @@ import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTar
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
-import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow } from './engine-sql/repair-page-scans.ts';
+import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
 import type { OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
@@ -1706,6 +1706,8 @@ export interface BrainEngine {
   countLiveFileBackedPages(sourceId: string, opts?: { nonBlank?: boolean }): Promise<number>;
   /** The ghost-pages and legacy-twins page reads of one source, by id (engine-sql/repair-page-scans.ts `RepairScanQuery`). */
   listRepairScanPages(sourceId: string, q: RepairScanQuery): Promise<RepairScanPage[]>;
+  /** What moving twin `twinId` into `survivorId` would land on (engine-sql/repair-page-scans.ts `TwinMergeLosers`). Read-only. */
+  listTwinMergeLosers(survivorId: number, twinId: number): Promise<TwinMergeLosers>;
   /** Live pages of the source that record an origin, by slug in byte order (engine-sql/repair-plan-scans.ts). */
   listPagesByOriginPath(sourceId: string): Promise<OriginPathPageRow[]>;
   /** How many live file-backed pages of `sourceIds` store their body in segments. */

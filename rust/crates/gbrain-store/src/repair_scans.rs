@@ -1,8 +1,8 @@
 //! The page scans of the `safe-chunks`, `origin-twins`, `ghost-pages` and `legacy-twins` repair
-//! plans (`src/core/engine-sql/repair-page-scans.ts`).
+//! plans, and the twin-merge conflict read (`src/core/engine-sql/repair-page-scans.ts`).
 //!
 //! Members: listSafeChunksPending, listOriginTwinGroups, listLegacyOriginPairs,
-//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages.
+//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages, listTwinMergeLosers.
 //!
 //! Each member reads every page record once and filters it as the SQL's `WHERE` does, so a brain
 //! the store never wrote through its own guards still answers what the SQL engines answer. A
@@ -13,10 +13,15 @@
 use crate::Store;
 use crate::chunks::{SAFE_FENCE_CHUNKER_VERSION, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_text};
-use crate::error::Result;
-use crate::kv::KvRead;
+use crate::error::{Result, StoreError};
+use crate::keys;
+use crate::kv::{KvRead, scan_prefix};
+use crate::link_queries::link_temporal::{TransitionRecord, all_transitions};
+use crate::links::{LinkRecord, in_links, origin_page_links, out_links};
 use crate::pages::{PageRecord, all_pages};
 use crate::persistence::op_checkpoint_completed_keys;
+use crate::raw_files::page_raw_rows;
+use crate::timeline::TimelineRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -347,4 +352,236 @@ impl Store {
         }
         Ok(pages.into_iter().map(scan_page).collect())
     }
+
+    /// `listTwinMergeLosers(survivorId, twinId)`: what moving the twin into the survivor would land
+    /// on (`TwinMergeLosers`). Read-only.
+    pub fn list_twin_merge_losers(
+        &self,
+        survivor_id: u64,
+        twin_id: u64,
+    ) -> Result<TwinMergeLosers> {
+        let read = self.read()?;
+        twin_merge_losers(&*read, survivor_id, twin_id)
+    }
+}
+
+/// A moving link's loser row: its id, its `link_source`, and whether every row on its key says the
+/// same thing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkLoser {
+    pub id: u64,
+    pub link_source: Option<String>,
+    pub same: bool,
+}
+
+/// A moving link transition's loser row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TransitionLoser {
+    pub id: u64,
+    pub producer: String,
+    pub same: bool,
+}
+
+/// A timeline entry of the twin whose detail differs from the survivor's same entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TimelineLoser {
+    pub id: u64,
+}
+
+/// A raw_data source of the twin whose payload differs from the survivor's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawLoser {
+    pub source: String,
+}
+
+/// `TwinMergeLosers`: each list in id (source) order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TwinMergeLosers {
+    pub links: Vec<LinkLoser>,
+    pub transitions: Vec<TransitionLoser>,
+    pub timeline: Vec<TimelineLoser>,
+    pub raw_data: Vec<RawLoser>,
+}
+
+/// One row of the SQL's `m`: a row touching the pair (not between the two), whether it moves, and
+/// its endpoints with the twin mapped to the survivor.
+struct Moved<T> {
+    row: T,
+    moving: bool,
+    f: u64,
+    t: u64,
+    o: Option<u64>,
+}
+
+fn moved<T>(
+    row: T,
+    from: u64,
+    to: u64,
+    origin: Option<u64>,
+    twin: u64,
+    survivor: u64,
+) -> Option<Moved<T>> {
+    let in_pair = |id: u64| id == twin || id == survivor;
+    let touches = in_pair(from) || in_pair(to) || origin.is_some_and(in_pair);
+    if !touches || (in_pair(from) && in_pair(to)) {
+        return None;
+    }
+    let map = |id: u64| if id == twin { survivor } else { id };
+    Some(Moved {
+        row,
+        moving: from == twin || to == twin || origin == Some(twin),
+        f: map(from),
+        t: map(to),
+        o: origin.map(map),
+    })
+}
+
+/// The SQL's self-join: for each moving row, the other rows on its mapped key (a moving one only
+/// when its id is lower), and whether `same` holds for all of them; rows with none are skipped.
+fn losers<T>(
+    m: &[Moved<T>],
+    id: impl Fn(&T) -> u64,
+    key: impl Fn(&Moved<T>, &Moved<T>) -> bool,
+    same: impl Fn(&T, &T) -> bool,
+) -> Vec<(usize, bool)> {
+    let mut out = Vec::new();
+    for (i, s) in m.iter().enumerate() {
+        if !s.moving {
+            continue;
+        }
+        let sid = id(&s.row);
+        let mut all: Option<bool> = None;
+        for k in m {
+            let kid = id(&k.row);
+            if kid != sid
+                && k.f == s.f
+                && k.t == s.t
+                && k.o == s.o
+                && key(s, k)
+                && (!k.moving || kid < sid)
+            {
+                all = Some(all.unwrap_or(true) && same(&s.row, &k.row));
+            }
+        }
+        if let Some(all) = all {
+            out.push((i, all));
+        }
+    }
+    out.sort_by_key(|(i, _)| id(&m[*i].row));
+    out
+}
+
+fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<TwinMergeLosers> {
+    let mut links: BTreeMap<u64, LinkRecord> = BTreeMap::new();
+    for page in [twin, survivor] {
+        for link in out_links(read, page)?
+            .into_iter()
+            .chain(in_links(read, page)?)
+            .chain(origin_page_links(read, page)?)
+        {
+            links.insert(link.id, link);
+        }
+    }
+    let m: Vec<Moved<LinkRecord>> = links
+        .into_values()
+        .filter_map(|l| {
+            let (f, t, o) = (l.from_page_id, l.to_page_id, l.origin_page_id);
+            moved(l, f, t, o, twin, survivor)
+        })
+        .collect();
+    let link_losers = losers(
+        &m,
+        |l| l.id,
+        |s, k| s.row.link_type == k.row.link_type && s.row.link_source == k.row.link_source,
+        |s, k| {
+            s.context == k.context
+                && s.origin_field == k.origin_field
+                && s.link_kind == k.link_kind
+                && s.resolution_type == k.resolution_type
+                && s.assertion_tense == k.assertion_tense
+        },
+    )
+    .into_iter()
+    .map(|(i, same)| LinkLoser {
+        id: m[i].row.id,
+        link_source: m[i].row.link_source.clone(),
+        same,
+    })
+    .collect();
+
+    let mut ts: Vec<TransitionRecord> = all_transitions(read)?;
+    ts.sort_by_key(|t| t.id);
+    let m: Vec<Moved<TransitionRecord>> = ts
+        .into_iter()
+        .filter_map(|t| {
+            let (f, to, o) = (t.from_page_id, t.to_page_id, t.origin_page_id);
+            moved(t, f, to, o, twin, survivor)
+        })
+        .collect();
+    let transition_losers = losers(
+        &m,
+        |t| t.id,
+        |s, k| {
+            s.row.link_type == k.row.link_type
+                && s.row.kind == k.row.kind
+                && s.row.occurred_on == k.row.occurred_on
+                && s.row.producer == k.row.producer
+        },
+        |s, k| s.date_precision == k.date_precision,
+    )
+    .into_iter()
+    .map(|(i, same)| TransitionLoser {
+        id: m[i].row.id,
+        producer: m[i].row.producer.clone(),
+        same,
+    })
+    .collect();
+
+    let survivor_rows = timeline_rows(read, survivor)?;
+    let mut timeline: Vec<TimelineLoser> = timeline_rows(read, twin)?
+        .into_iter()
+        .filter(|s| {
+            survivor_rows.iter().any(|o| {
+                o.date == s.date
+                    && o.summary == s.summary
+                    && o.source == s.source
+                    && o.detail != s.detail
+            })
+        })
+        .map(|s| TimelineLoser { id: s.id })
+        .collect();
+    timeline.sort_by_key(|r| r.id);
+
+    let survivor_raw = page_raw_rows(read, survivor)?;
+    let mut raw_data: Vec<RawLoser> = page_raw_rows(read, twin)?
+        .into_iter()
+        .filter(|s| {
+            survivor_raw
+                .iter()
+                .any(|o| o.source == s.source && o.data != s.data)
+        })
+        .map(|s| RawLoser { source: s.source })
+        .collect();
+    raw_data.sort_by(|a, b| a.source.as_bytes().cmp(b.source.as_bytes()));
+
+    Ok(TwinMergeLosers {
+        links: link_losers,
+        transitions: transition_losers,
+        timeline,
+        raw_data,
+    })
+}
+
+/// The timeline rows of `page_id` (event projections included, as the SQL reads them).
+fn timeline_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<TimelineRecord>> {
+    let mut rows = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &keys::timeline_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<TimelineRecord>(v) {
+            Ok(row) => rows.push(row),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(rows), Err)
 }

@@ -7176,6 +7176,7 @@
         "listTrustAllowRuleRows": "none",
         "listTrustProposals": "none",
         "listTrustScanRows": "none",
+        "listTwinMergeLosers": "none",
         "listUnarchivedSourceIds": "none",
         "listUnattributedFacts": "none",
         "listUnboundClientIds": "none",

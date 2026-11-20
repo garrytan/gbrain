@@ -265,7 +265,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listOwnedContentRows', 'readContentReceiptBinding', 'readConfigForUpdate',
     'countPageChildOrphans', 'clearPageChildOrphans', 'probeTornPages', 'listAccessReaderDrift', 'countAccessReaderDrift', 'deriveAccessReaders', 'readOriginIndexState', 'listOriginTwinCounts',
     'listAliasTargets', 'deleteOrphanedAliases',
-    'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages', 'listRepairScanPages',
+    'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages', 'listRepairScanPages', 'listTwinMergeLosers',
     'listPagesByOriginPath', 'countSegmentedOriginPages', 'listUntiledSegmentedPages', 'listSourceHoldRecords',
     'requestGitHoldRetry', 'readRepairBusyRows'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)

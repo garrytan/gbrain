@@ -743,7 +743,7 @@ src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	14
+src/core/persistence/sync-holds.ts	execute_raw	13
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-lease.ts	execute_raw	5
@@ -783,7 +783,7 @@ src/core/persistence/topology-recovery.ts	execute_raw	17
 src/core/persistence/topology-transaction.ts	execute_raw	1
 src/core/persistence/transfer-administration.ts	execute_raw	1
 src/core/persistence/transient-retry.ts	execute_raw	1
-src/core/persistence/twin-merge.ts	execute_raw	15
+src/core/persistence/twin-merge.ts	execute_raw	11
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8

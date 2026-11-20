@@ -2080,6 +2080,7 @@ export class PGLiteEngine implements BrainEngine {
   listLiveOriginPages(sourceId: string, paths: readonly string[]) { return repairPageScansImpl.listLiveOriginPages(this.repairBookkeepingReads, sourceId, paths); }
   countLiveFileBackedPages(sourceId: string, opts?: { nonBlank?: boolean }) { return repairPageScansImpl.countLiveFileBackedPages(this.repairBookkeepingReads, sourceId, opts); }
   listRepairScanPages(sourceId: string, q: repairPageScansImpl.RepairScanQuery) { return repairPageScansImpl.listRepairScanPages(this.repairBookkeepingReads, sourceId, q); }
+  listTwinMergeLosers(survivorId: number, twinId: number) { return repairPageScansImpl.listTwinMergeLosers(this.repairBookkeepingReads, survivorId, twinId); }
   listPagesByOriginPath(sourceId: string) { return repairPlanScansImpl.listPagesByOriginPath(this.repairBookkeepingReads, sourceId); }
   countSegmentedOriginPages(sourceIds: readonly string[]) { return repairPlanScansImpl.countSegmentedOriginPages(this.repairBookkeepingReads, sourceIds); }
   listUntiledSegmentedPages(opts?: repairPlanScansImpl.UntiledPageQuery) { return repairPlanScansImpl.listUntiledSegmentedPages(this.repairBookkeepingReads, opts); }

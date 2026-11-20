@@ -169,6 +169,7 @@ empty `source_path` that SQL's `IS NOT NULL` keeps.
 | `listLiveOriginPages(sourceId, paths)` | live pages recording any of `paths`, by id |
 | `countLiveFileBackedPages(sourceId, { nonBlank? })` | live pages recording a `source_path`; with `nonBlank`, one that is not empty after trimming spaces |
 | `listRepairScanPages(sourceId, q)` | the page rows the ghost-pages and legacy-twins scans read, by id: `{ afterId, limit }` live pages after an id, `legacy: true` only those with a blank origin and no `database_only_reason`; `{ slugs }` live pages at the slugs with a non-blank origin; `{ ids }` pages in any state, with `deleted` set. Each row carries the revision, content hash, origin, the revision's write request id and `updated_ms` |
+| `listTwinMergeLosers(survivorId, twinId)` | what merging the twin into the survivor would land on: each moving link and link transition (an endpoint or origin on the twin, not an edge between the two) whose key, with the twin mapped to the survivor, another row already holds (a moving row only when its id is lower), with whether every such row says the same thing; each twin timeline entry whose date, summary and source the survivor holds with another detail; each twin raw-data source the survivor holds with other data. Ids ascend; raw sources sort in byte order |
 
 On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
 served yet, and its apply finds `pages_live_origin_key` present. So the kind previews and applies.

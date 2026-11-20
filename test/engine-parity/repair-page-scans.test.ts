@@ -11,13 +11,15 @@
  *    read there. The legacy-pair read also had no ORDER BY under its LIMIT, so the pairs it kept were not fixed.
  *    The ghost-pages and legacy-twins scans read pages through `executeRaw` too; `listRepairScanPages` and
  *    `countLiveFileBackedPages({ nonBlank })` now answer each of their query shapes (a page after an id, a legacy page
- *    with no origin, live file pages by slug, pages in any state by id).
+ *    with no origin, live file pages by slug, pages in any state by id). Merging a twin read what it would land on
+ *    (links, link transitions, timeline entries and raw data already on the survivor) through `executeRaw` as well;
+ *    `listTwinMergeLosers` answers it.
  *  - Why existing coverage misses it: test/repair-safe-chunks*.test.ts and test/origin-twins*.test.ts run on PGLite
  *    or Postgres only.
  *  - Seam: none. The safe-chunks apply re-seals chunks, a write that moves in batch 6, so this case previews it only.
  *    Generated values (the brain id, timestamps, hashes) are compared by shape.
  */
-import { describe } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -117,6 +119,48 @@ describe('engine parity: repair page scans', () => {
       otherSource: await engine.listRepairScanPages('other-example', { afterId: 0, limit: 10 }),
       fileBacked: await engine.countLiveFileBackedPages('default'),
       nonBlank: await engine.countLiveFileBackedPages('default', { nonBlank: true }),
+    };
+  }));
+
+  parityTest('the twin-merge conflict read names the same landing rows on every engine', {
+    methods: ['putPage', 'addLink', 'addTimelineEntry', 'putRawData', 'listRepairScanPages', 'listTwinMergeLosers'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    for (const slug of ['notes/s-example', 'notes/t-example', 'notes/x-example', 'notes/y-example', 'notes/z-example']) {
+      await put(engine, slug, 'markdown', `${slug}.md`);
+    }
+    const [s, t, x, y, z] = ['s', 't', 'x', 'y', 'z'].map(k => `notes/${k}-example`) as [string, string, string, string, string];
+    // x: the same key and context (a quiet loser); y: the same key, another context; z: the twin's alone.
+    await engine.addLink(s, x, 'c', 'mentions', 'markdown');
+    await engine.addLink(t, x, 'c', 'mentions', 'markdown');
+    await engine.addLink(s, y, 'c', 'mentions', 'markdown');
+    await engine.addLink(t, y, 'other', 'mentions', 'markdown');
+    await engine.addLink(t, z, 'c', 'mentions', 'markdown');
+    // An edge only the origin moves: x -> z by way of the twin lands on x -> z by way of the survivor.
+    await engine.addLink(x, z, 'c', 'mentions', 'frontmatter', s, 'related');
+    await engine.addLink(x, z, 'c', 'mentions', 'frontmatter', t, 'related');
+    // Between the pair: not a moving row.
+    await engine.addLink(t, s, 'c', 'mentions', 'markdown');
+    await engine.addTimelineEntry(s, { date: '2026-01-02', source: 'notes', summary: 'met', detail: 'one' });
+    await engine.addTimelineEntry(t, { date: '2026-01-02', source: 'notes', summary: 'met', detail: 'two' });
+    await engine.addTimelineEntry(t, { date: '2026-01-03', source: 'notes', summary: 'met', detail: 'two' });
+    await engine.putRawData(s, 'api', { a: 1 });
+    await engine.putRawData(t, 'api', { a: 2 });
+    await engine.putRawData(s, 'same', { a: 1 });
+    await engine.putRawData(t, 'same', { a: 1 });
+    const ids = Object.fromEntries((await engine.listRepairScanPages('default', { afterId: 0, limit: 10 })).map(r => [r.slug, Number(r.id)]));
+    const losers = await engine.listTwinMergeLosers(ids[s]!, ids[t]!);
+    expect(losers.links.map(l => [l.link_source, l.same])).toEqual([['markdown', true], ['markdown', false], ['frontmatter', true]]);
+    expect(losers.timeline).toHaveLength(1);
+    expect(losers.raw_data).toEqual([{ source: 'api' }]);
+    const ascending = (rows: { id: number }[]) => rows.every((r, i) => i === 0 || rows[i - 1]!.id < r.id);
+    return {
+      links: losers.links.map(l => ({ link_source: l.link_source, same: l.same, id: typeof l.id })),
+      linksAscending: ascending(losers.links),
+      transitions: losers.transitions,
+      timeline: losers.timeline.map(r => typeof r.id),
+      raw_data: losers.raw_data,
+      noPair: await engine.listTwinMergeLosers(ids[s]!, 999_999),
     };
   }));
 });

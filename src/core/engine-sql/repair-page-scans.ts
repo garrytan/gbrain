@@ -1,6 +1,7 @@
 /**
  * The page scans of the `safe-chunks`, `origin-twins`, `ghost-pages` and `legacy-twins` repair plans, moved here from
- * their repair modules (and ghost-pages.ts) so the Rust engine can serve them as typed members. PGLite and Postgres read unscoped through
+ * their repair modules (and ghost-pages.ts), and the twin-merge conflict read (from persistence/twin-merge.ts), so the
+ * Rust engine can serve them as typed members. PGLite and Postgres read unscoped through
  * executeRaw, as before. The Rust engine scans its page records (rust/crates/gbrain-store/src/repair_scans.rs;
  * rust/docs/store/repair-bookkeeping.md, "Repair page scans").
  */
@@ -32,6 +33,19 @@ export interface RepairScanPage {
  * non-blank origin, `ids` those pages in any state.
  */
 export type RepairScanQuery = { afterId: number; limit: number; legacy?: boolean } | { slugs: readonly string[] } | { ids: readonly number[] };
+
+/**
+ * The rows of a twin whose move into its survivor would land on another row's unique key (persistence/twin-merge.ts
+ * `twinMergeConflicts` keeps the ones that would discard distinct evidence). `links` and `transitions` carry whether
+ * every row on that key says the same thing; `timeline` names the twin's entries whose detail differs from the
+ * survivor's same-day entry; `raw_data` names the sources whose payload differs. Each list is in id (source) order.
+ */
+export interface TwinMergeLosers {
+  links: Array<{ id: number; link_source: string | null; same: boolean }>;
+  transitions: Array<{ id: number; producer: string; same: boolean }>;
+  timeline: Array<{ id: number }>;
+  raw_data: Array<{ source: string }>;
+}
 
 const BLANK_ORIGIN = `COALESCE(btrim(source_path), '')=''`;
 
@@ -87,4 +101,47 @@ export async function listLiveOriginPages(exec: LegacyUnscopedRead, sourceId: st
 export async function countLiveFileBackedPages(exec: LegacyUnscopedRead, sourceId: string, opts: { nonBlank?: boolean } = {}): Promise<number> {
   const [row] = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND ${opts.nonBlank ? `NOT ${BLANK_ORIGIN}` : 'source_path IS NOT NULL'}`, [sourceId]);
   return Number(row?.n ?? 0);
+}
+
+/** The twin-merge SQL fragments ($1 the twin, $2 the survivor); persistence/twin-merge.ts `mergeTwinInto` moves rows with them. */
+export const PAIR = 'NOT (from_page_id IN ($1::int, $2::int) AND to_page_id IN ($1::int, $2::int))';
+export const MAP = (col: string) => `CASE WHEN ${col}=$1::int THEN $2::int ELSE ${col} END`;
+const TOUCHES = 'from_page_id IN ($1::int, $2::int) OR to_page_id IN ($1::int, $2::int) OR origin_page_id IN ($1::int, $2::int)';
+export const MOVING = '(from_page_id=$1::int OR to_page_id=$1::int OR origin_page_id IS NOT DISTINCT FROM $1::int)';
+
+/** Moving rows of the twin that land on another row's unique key, with whether every such row says the same thing. */
+export const LINK_LOSERS = `WITH m AS (
+    SELECT id, link_type, link_source, context, origin_field, link_kind, resolution_type, assertion_tense, ${MOVING} AS moving,
+      ${MAP('from_page_id')} AS f, ${MAP('to_page_id')} AS t, ${MAP('origin_page_id')} AS o
+    FROM links WHERE (${TOUCHES}) AND ${PAIR})
+  SELECT s.id, s.link_source, bool_and(s.context=k.context AND s.origin_field IS NOT DISTINCT FROM k.origin_field AND s.link_kind IS NOT DISTINCT FROM k.link_kind
+      AND s.resolution_type IS NOT DISTINCT FROM k.resolution_type AND s.assertion_tense IS NOT DISTINCT FROM k.assertion_tense) AS same
+  FROM m s JOIN m k ON s.moving AND k.id<>s.id AND k.f=s.f AND k.t=s.t AND k.link_type=s.link_type
+    AND k.link_source IS NOT DISTINCT FROM s.link_source AND k.o IS NOT DISTINCT FROM s.o AND (NOT k.moving OR k.id<s.id)
+  GROUP BY s.id, s.link_source ORDER BY s.id`;
+
+export const TRANSITION_LOSERS = `WITH m AS (
+    SELECT id, link_type, kind, occurred_on, producer, date_precision, ${MOVING} AS moving,
+      ${MAP('from_page_id')} AS f, ${MAP('to_page_id')} AS t, ${MAP('origin_page_id')} AS o
+    FROM link_transitions WHERE (${TOUCHES}) AND ${PAIR})
+  SELECT s.id, s.producer, bool_and(s.date_precision=k.date_precision) AS same
+  FROM m s JOIN m k ON s.moving AND k.id<>s.id AND k.f=s.f AND k.t=s.t AND k.link_type=s.link_type AND k.kind=s.kind
+    AND k.occurred_on=s.occurred_on AND k.producer=s.producer AND k.o IS NOT DISTINCT FROM s.o AND (NOT k.moving OR k.id<s.id)
+  GROUP BY s.id, s.producer ORDER BY s.id`;
+
+/** What moving twin `twinId` into `survivorId` would land on (`TwinMergeLosers`). Read-only; runs inside a caller's transaction too. */
+export async function listTwinMergeLosers(exec: LegacyUnscopedRead, survivorId: number, twinId: number): Promise<TwinMergeLosers> {
+  const params = [twinId, survivorId];
+  const links = await exec.executeRaw<{ id: number; link_source: string | null; same: boolean }>(LINK_LOSERS, params);
+  const transitions = await exec.executeRaw<{ id: number; producer: string; same: boolean }>(TRANSITION_LOSERS, params);
+  const timeline = await exec.executeRaw<{ id: number }>(`SELECT s.id FROM timeline_entries s JOIN timeline_entries o ON o.page_id=$2::int AND o.date=s.date
+      AND md5(o.summary)=md5(s.summary) AND o.source=s.source WHERE s.page_id=$1::int AND o.detail<>s.detail ORDER BY s.id`, params);
+  const raw = await exec.executeRaw<{ source: string }>(`SELECT s.source FROM raw_data s JOIN raw_data o ON o.page_id=$2::int AND o.source=s.source
+      WHERE s.page_id=$1::int AND o.data IS DISTINCT FROM s.data ORDER BY s.source COLLATE "C"`, params);
+  return {
+    links: links.map(row => ({ id: Number(row.id), link_source: row.link_source ?? null, same: row.same === true })),
+    transitions: transitions.map(row => ({ id: Number(row.id), producer: row.producer, same: row.same === true })),
+    timeline: timeline.map(row => ({ id: Number(row.id) })),
+    raw_data: raw.map(row => ({ source: row.source })),
+  };
 }

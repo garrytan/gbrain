@@ -1,11 +1,11 @@
 /**
  * The page scans of the safe-chunks and origin-twins repair plans (BrainEngine listSafeChunksPending through
- * listRepairScanPages, the statements of engine-sql/repair-page-scans.ts). The store scans its page records as the
+ * listTwinMergeLosers, the statements of engine-sql/repair-page-scans.ts). The store scans its page records as the
  * SQL filters its rows (rust/crates/gbrain-store/src/repair_scans.rs).
  */
-import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow } from '../../engine-sql/repair-page-scans.ts';
+import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from '../../engine-sql/repair-page-scans.ts';
 import { CREDENTIAL_RESEAL_PRODUCER } from '../../page-state/credential-reseal-hold.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 const cap = (limit: number) => Math.max(1, Math.floor(limit));
 
@@ -30,3 +30,9 @@ export const listRepairScanPages: StoreMember<[sourceId: string, q: RepairScanQu
     ids: 'ids' in q ? q.ids.map(Number) : null, slugs: 'slugs' in q ? [...q.slugs] : null,
     after_id: 'afterId' in q ? Math.max(0, Math.floor(q.afterId)) : 0, limit: 'afterId' in q ? cap(q.limit) : 0, legacy: 'afterId' in q && q.legacy === true,
   })) as RepairScanPage[];
+
+/** The twin-merge conflict read: the store reads the pair's links, link transitions, timeline and raw data. */
+export const listTwinMergeLosers: StoreMember<[survivorId: number, twinId: number], TwinMergeLosers> = async (brain, survivorId, twinId) => {
+  if (![survivorId, twinId].every(id => Number.isSafeInteger(id) && id > 0)) refuseMember('listTwinMergeLosers', 'a page id that is not a positive integer');
+  return await storeCall({ member: 'listTwinMergeLosers' }, () => brain.listTwinMergeLosers(survivorId, twinId)) as TwinMergeLosers;
+};

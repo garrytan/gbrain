@@ -1,23 +1,28 @@
 //! The page scans of the safe-chunks, origin-twins, ghost-pages and legacy-twins repair plans. The three-arm cases are in
 //! test/engine-parity/repair-page-scans.test.ts; these pin the filters across a reopen-free store:
-//! soft-deleted pages drop out, the legacy-prefix pairing and its cap, and the rebuildable rule.
+//! soft-deleted pages drop out, the legacy-prefix pairing and its cap, and the rebuildable rule;
+//! and the twin-merge conflict read: which moving rows land on a key the survivor already holds.
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::links::AddLinkOptions;
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use serde_json::{Value, json};
 
 const PRODUCER: &str = "chunker-v4.fence-v4";
 
-fn put(store: &Store, slug: &str, kind: &str, path: Option<&str>, frontmatter: Value) {
+fn put(store: &Store, slug: &str, kind: &str, path: Option<&str>, frontmatter: Value) -> u64 {
     let input = serde_json::from_value(json!({
         "type": "note", "title": slug, "compiled_truth": "body", "timeline": "tl",
         "frontmatter": frontmatter, "page_kind": kind, "source_path": path,
     }))
     .unwrap();
     let options = serde_json::from_value(json!({})).unwrap();
-    store.put_page(slug, &input, &options).unwrap();
+    store.put_page(slug, &input, &options).unwrap()["id"]
+        .as_u64()
+        .unwrap()
 }
 
 #[test]
@@ -150,5 +155,83 @@ fn repair_scan_pages_answer_each_query_shape() {
     assert_eq!(
         store.count_live_file_backed_pages("default", true).unwrap(),
         1
+    );
+}
+
+fn link(store: &Store, from: &str, to: &str, context: &str) {
+    let options = AddLinkOptions {
+        context: Some(context.into()),
+        link_type: Some("mentions".into()),
+        link_source: Some("markdown".into()),
+        ..AddLinkOptions::default()
+    };
+    store.add_link(from, to, &options).unwrap();
+}
+
+fn event(store: &Store, slug: &str, detail: &str) {
+    let entry = TimelineInput {
+        date: Some("2026-01-02".into()),
+        source: Some("notes".into()),
+        summary: Some("met".into()),
+        detail: Some(detail.into()),
+    };
+    store
+        .add_timeline_entry(slug, &entry, &AddTimelineOptions::default())
+        .unwrap();
+}
+
+#[test]
+fn twin_merge_losers_name_each_landing_row() {
+    let dir = TempDir::new("twin-merge-losers");
+    let store = open(&dir);
+    let survivor = put(&store, "s", "markdown", Some("s.md"), json!({}));
+    let twin = put(&store, "t", "markdown", Some("t.md"), json!({}));
+    put(&store, "x", "markdown", Some("x.md"), json!({}));
+    put(&store, "y", "markdown", Some("y.md"), json!({}));
+    put(&store, "z", "markdown", Some("z.md"), json!({}));
+
+    // x: same key, same context (a quiet loser); y: same key, other context; z: twin only.
+    link(&store, "s", "x", "c");
+    link(&store, "t", "x", "c");
+    link(&store, "s", "y", "c");
+    link(&store, "t", "y", "other");
+    link(&store, "t", "z", "c");
+    // Between the pair: not a moving row.
+    link(&store, "t", "s", "c");
+    event(&store, "s", "one");
+    event(&store, "t", "two");
+    store
+        .put_raw_data("s", Some("api"), Some(r#"{"a":1}"#), None)
+        .unwrap();
+    store
+        .put_raw_data("t", Some("api"), Some(r#"{"a":2}"#), None)
+        .unwrap();
+    store
+        .put_raw_data("t", Some("same"), Some(r#"{"a":1}"#), None)
+        .unwrap();
+    store
+        .put_raw_data("s", Some("same"), Some(r#"{"a":1}"#), None)
+        .unwrap();
+
+    let got = serde_json::to_value(store.list_twin_merge_losers(survivor, twin).unwrap()).unwrap();
+    let links: Vec<(Option<&str>, bool)> = got["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["link_source"].as_str(), l["same"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(
+        links,
+        vec![(Some("markdown"), true), (Some("markdown"), false)]
+    );
+    assert!(got["transitions"].as_array().unwrap().is_empty());
+    assert_eq!(got["timeline"].as_array().unwrap().len(), 1);
+    assert_eq!(got["raw_data"], json!([{ "source": "api" }]));
+
+    // The survivor's own view of a pair it is not in: nothing moves.
+    let none = serde_json::to_value(store.list_twin_merge_losers(survivor, 999).unwrap()).unwrap();
+    assert_eq!(
+        none,
+        json!({ "links": [], "transitions": [], "timeline": [], "raw_data": [] })
     );
 }

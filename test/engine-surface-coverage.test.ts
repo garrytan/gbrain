@@ -135,7 +135,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Alias targets (engine-sql/alias-orphans.ts; covered by test/engine-parity/repair-aliases.test.ts)
   'listAliasTargets', 'deleteOrphanedAliases',
   // Repair page scans (engine-sql/repair-page-scans.ts; covered by test/engine-parity/repair-page-scans.test.ts)
-  'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages', 'listRepairScanPages',
+  'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages', 'listRepairScanPages', 'listTwinMergeLosers',
   // Repair plan scans (engine-sql/repair-plan-scans.ts; covered by test/engine-parity/repair-plan-scans.test.ts)
   'listPagesByOriginPath', 'countSegmentedOriginPages', 'listUntiledSegmentedPages', 'listSourceHoldRecords',
   // Git sync hold writes (engine-sql/git-holds.ts; covered by test/engine-parity/git-holds.test.ts)

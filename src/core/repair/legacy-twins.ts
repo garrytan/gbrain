@@ -60,7 +60,7 @@ import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/pr
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { readSyncImportProvenance, recordSyncImportProvenance } from '../persistence/sync-holds.ts';
 import { bindOrigin } from '../persistence/origin-guard.ts';
-import { mergeTwinInto, twinMergeConflicts } from '../persistence/twin-merge.ts';
+import { mergeTwinInto, requireTwinMerge, twinMergeConflicts } from '../persistence/twin-merge.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import type { GhostOwner } from '../ghost-pages.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -313,6 +313,7 @@ export async function mergeLegacyTwin(ctx: OperationContext, pair: LegacyTwinPai
   const engine = ctx.engine;
   const moved = await pairNow(engine, pair, owner);
   if (moved) return changed(moved);
+  requireTwinMerge(engine, 'gbrain repair legacy-twins merge');
   if (await managedPersistenceEnabled(engine)) {
     const authority = (await maintenancePreflight(engine, pair.source_id))!;
     try {

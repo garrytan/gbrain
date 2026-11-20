@@ -11,16 +11,24 @@
  *    raw page or source read, so the three arms disagreed on the refusal.
  *  - Why existing coverage misses it: test/repair-legacy-twins-6885.test.ts, test/ghost-pages-*.test.ts and the
  *    rows-behind tests run on PGLite or Postgres only.
- *  - Seam: none. A brain with a binding is out of reach here: the binding is a persistence_journal record, which a Rust
- *    brain does not serve yet, so the owner-host path of these kinds is pinned in the persistence batch.
+ *  - Owner path: on a brain this host owns (a registered writer and a claimed worktree binding, which every engine now
+ *    serves), ghost-pages previews the page whose file is gone and its apply soft-deletes exactly that page, and
+ *    legacy-twins previews the twin pair, on every arm; its apply merges the pair on the SQL arms, and the Rust engine
+ *    refuses the merge by name (`engine_capability_missing`, raw_sql, "gbrain repair legacy-twins merge") until the
+ *    merge moves to typed members. Before batch 8 a Rust brain stopped at the raw import-record read (ghost-pages)
+ *    and the raw twin-merge conflict read (legacy-twins).
+ *  - Seam: none.
  */
-import { describe } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
@@ -29,21 +37,26 @@ const { parityTest } = parityArms(testBackends());
 
 const quiet = { info() {}, warn() {}, error() {} } as never;
 
-function shape(result: RepairResult) {
+function shape(result: RepairResult, root?: string) {
   const { scope, ...rest } = result;
-  return JSON.parse(JSON.stringify({ ...rest, scope: { brain_id: typeof scope.brain_id, source_ids: scope.source_ids } })
-    .replace(/\b[0-9a-f]{64}\b/g, '<sha256>'));
+  let text = JSON.stringify({ ...rest, scope: { brain_id: typeof scope.brain_id, source_ids: scope.source_ids } })
+    .replace(/\b[0-9a-f]{64}\b/g, '<sha256>');
+  if (root) text = text.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<uuid>');
+  // Postgres sequences keep counting across cases (harness reset), so a page id in a detail is not comparable.
+  if (root) text = text.replace(/\(id \d+,/g, '(id <id>,');
+  if (root) text = text.split(root).join('<root>');
+  return JSON.parse(text);
 }
 
 /** A preview, then an apply of what it printed; a refusal is kept as its code and message. */
-async function run(engine: BrainEngine, kind: RepairKind) {
+async function run(engine: BrainEngine, kind: RepairKind, root?: string) {
   const attempt = async (apply: boolean, expect?: string) => {
     try {
       const scope = await resolveRepairScope(engine);
-      return shape(await (await repairRunner(engine, { apply, noEmbed: true, logger: quiet })).run(kind, scope, { explicit: true, ...(expect ? { expect } : {}) }));
+      return shape(await (await repairRunner(engine, { apply, noEmbed: true, logger: quiet })).run(kind, scope, { explicit: true, ...(expect ? { expect } : {}) }), root);
     } catch (err) {
       const e = err as { code?: string; message?: string };
-      return { refused: e.code ?? 'unknown', message: e.message };
+      return { refused: e.code ?? 'unknown', message: root ? e.message?.split(root).join('<root>') : e.message };
     }
   };
   const preview = await attempt(false);
@@ -70,4 +83,80 @@ describe('engine parity: repair kinds that need the owner host', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  /** A brain this host owns: a registered writer, the default source attached to a Git checkout and claimed. */
+  async function ownedBrain<T>(engine: BrainEngine, seed: (root: string) => Promise<void>, body: (root: string) => Promise<T>): Promise<T> {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-repair-owner-path-'));
+    const root = join(dir, 'brain');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    try {
+      return await withEnv({ GBRAIN_HOME: join(dir, 'home'), DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        await engine.attachSourcePath('default', root);
+        await registerLocalWriter(engine, 'cli');
+        await claimWorktree(engine, 'default', root);
+        await seed(root);
+        execFileSync('git', ['add', '-A'], { cwd: root });
+        execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'seed'], { cwd: root });
+        return await body(root);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const body = (title: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${title} body.\n`;
+  async function put(engine: BrainEngine, root: string, slug: string, sourcePath: string | null, file: boolean, title = slug) {
+    if (file && sourcePath) writeFileSync(join(root, sourcePath), body(title));
+    await engine.putPage(slug, { type: 'note', title, compiled_truth: `${title} body.`, timeline: '', ...(sourcePath ? { source_path: sourcePath } : {}) }, { sourceId: 'default' });
+  }
+
+  parityTest('on a brain this host owns, ghost-pages previews the page whose file is gone and the apply soft-deletes only it', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listRepairScanPages', 'readOpCheckpointRecord', 'listPages'],
+    timeout: 60_000,
+  }, async (engine) => ownedBrain(engine, async (root) => {
+    for (let i = 0; i < 12; i++) await put(engine, root, `notes/keep-${i}`, `notes/keep-${i}.md`, true);
+    await put(engine, root, 'notes/ghost', 'notes/ghost.md', false);
+  }, async (root) => {
+    const result = await run(engine, 'ghost-pages', root);
+    const live = (await engine.listPages({ sourceId: 'default', limit: 100 })).map(page => page.slug).sort();
+    return { ...result, live };
+  }));
+
+  async function seedTwins(engine: BrainEngine, root: string) {
+    for (let i = 0; i < 12; i++) await put(engine, root, `notes/keep-${i}`, `notes/keep-${i}.md`, true);
+    await put(engine, root, 'notes/foo bar', null, false);
+    await put(engine, root, 'notes/foo-bar', 'notes/Foo Bar.md', true, 'notes/foo bar');
+  }
+
+  parityTest('on a brain this host owns, legacy-twins previews the twin pair of one file', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listRepairScanPages', 'listTwinMergeLosers'],
+    timeout: 60_000,
+  }, async (engine) => ownedBrain(engine, root => seedTwins(engine, root),
+    async (root) => ({ preview: (await run(engine, 'legacy-twins', root)).preview })));
+
+  // The merge itself (mergeTwinInto) still moves rows through raw SQL until batch 6, so the Rust engine refuses it by
+  // name at the merge step, after the same preview, instead of failing inside the first raw statement.
+  parityTest('on a brain this host owns, legacy-twins merges the twin pair, and the Rust engine refuses the merge by name', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listRepairScanPages', 'listTwinMergeLosers', 'listPages'],
+    requires: 'raw_sql',
+    timeout: 60_000,
+  }, async (engine, backend) => ownedBrain(engine, root => seedTwins(engine, root), async (root) => {
+    const scope = await resolveRepairScope(engine);
+    const attempt = async (apply: boolean, expect?: string) =>
+      (await repairRunner(engine, { apply, noEmbed: true, logger: quiet })).run('legacy-twins', scope, { explicit: true, ...(expect ? { expect } : {}) });
+    const preview = await attempt(false);
+    try {
+      const applied = shape(await attempt(true, preview.preview_hash), root);
+      const live = (await engine.listPages({ sourceId: 'default', limit: 100 })).map(page => page.slug).sort();
+      expect(live.filter(slug => slug.startsWith('notes/foo'))).toHaveLength(1);
+      return { preview: shape(preview, root), applied, live };
+    } catch (err) {
+      if (backend === 'rust') {
+        const text = JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail });
+        expect(text).toContain('gbrain repair legacy-twins merge');
+        expect(text).toContain('mergeTwinInto');
+      }
+      throw err;
+    }
+  }));
 });

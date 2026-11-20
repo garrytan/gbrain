@@ -220,6 +220,20 @@ impl Brain {
         })
     }
 
+    /// `listTwinMergeLosers(survivorId, twinId)`: resolves `TwinMergeLosers`, what moving the twin
+    /// into the survivor would land on.
+    #[napi]
+    pub fn list_twin_merge_losers<'env>(
+        &self,
+        env: &'env Env,
+        survivor_id: i64,
+        twin_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_twin_merge_losers(survivor_id.max(0) as u64, twin_id.max(0) as u64)
+        })
+    }
+
     /// `listPagesByOriginPath(sourceId)`: resolves `[{ id, slug, source_path, revision, title, head }]`
     /// by slug, the live pages of the source that record an origin.
     #[napi]

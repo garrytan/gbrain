@@ -1356,10 +1356,10 @@ export async function readSyncImportProvenances(engine: Exec, sourceId: string, 
   return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
 }
 
-export async function readSyncImportProvenance(engine: Exec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
-  const [row] = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId)]);
-  return row?.record ?? null;
+/** One page's import record, through the typed checkpoint read every engine serves (the first element of its keys). */
+export async function readSyncImportProvenance(engine: Pick<BrainEngine, 'readOpCheckpointRecord'>, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
+  const row = await engine.readOpCheckpointRecord(SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId));
+  return (Array.isArray(row?.completed_keys) ? row.completed_keys[0] ?? null : null) as SyncImportProvenance | null;
 }
 
 export interface RecoveredFrontmatter {

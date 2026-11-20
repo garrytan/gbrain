@@ -631,6 +631,14 @@ fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>>
         .collect())
 }
 
+/// Every `link_transitions` row, in every source.
+pub(crate) fn all_transitions(read: &dyn KvRead) -> Result<Vec<TransitionRecord>> {
+    Ok(scan_tag::<TransitionRecord>(read, TRANSITION)?
+        .into_iter()
+        .map(|(_, t)| t)
+        .collect())
+}
+
 pub(crate) fn iso_ms(micros: i64) -> String {
     let full = iso(micros);
     format!("{}Z", &full[..full.len() - 4])

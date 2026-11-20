@@ -244,6 +244,7 @@ export const RUST_ENGINE_MEMBERS = {
   listLiveOriginPages: 'pages',
   countLiveFileBackedPages: 'pages',
   listRepairScanPages: 'pages',
+  listTwinMergeLosers: 'pages',
   // The plan reads of repair frontmatter and segmented-tiling and the source hold listing (engine-sql/repair-plan-scans.ts).
   listPagesByOriginPath: 'pages',
   countSegmentedOriginPages: 'pages',
