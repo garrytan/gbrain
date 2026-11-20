@@ -49,6 +49,20 @@ const DIM = 1536;
 const INTERFACE_METHODS: readonly string[] = [
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
+  // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
+  'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows',
+  // CLI export and segmented-body reads (engine-sql/export-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
+  'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines', 'readSegmentedPageHead',
+  'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listForcedCutSeqs', 'readSegmentedVersionBodyBytes', 'listAccessPolicySourceIds',
+  // Belief coverage and keyword-index inventory (engine-sql/belief.ts, search-vector.ts)
+  'listCoveredSources', 'countSearchVectorRows',
+  // Minion queue health reads (engine-sql/jobs-health.ts; master text pinned by test/n3-sql-move-parity.test.ts)
+  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
+  'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
+  // Trust-tier reads (engine-sql/trust-tier-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
+  'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageTypesByIds',
+  // Withdrawal discovery (engine-sql/withdrawal-discovery.ts)
+  'readWithdrawalDiscovery',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
@@ -192,6 +206,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'searchRead',
   // N4 reads: the unscoped engine-sql executors the cli, entity and job-insight read members run through.
   'cliReads', 'rawRead',
+  // Alias fan-out reads: the unscoped engine-sql executor the alias read methods run through.
+  'aliasFanoutRead',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',

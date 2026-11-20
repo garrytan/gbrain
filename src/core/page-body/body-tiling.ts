@@ -29,12 +29,10 @@ export function assertRowsTile(rows: readonly RowSpan[], at: { slug: string; sou
  * body_bytes of generation `generation` of a segmented page: the page's when it is live, else the segmented version
  * that references it (null when none does: nothing records that generation's size).
  */
-export async function generationBodyBytes(engine: Pick<BrainEngine, 'executeRaw'>, page: { id: number; body_generation: unknown; body_bytes: unknown },
+export async function generationBodyBytes(engine: Pick<BrainEngine, 'readSegmentedVersionBodyBytes'>, page: { id: number; body_generation: unknown; body_bytes: unknown },
   generation: number): Promise<number | null> {
   if (generation === Number(page.body_generation)) return Number(page.body_bytes ?? 0);
-  const [version] = await engine.executeRaw<{ body_bytes: number | string | null }>(`SELECT body_bytes FROM page_versions
-    WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented' AND body_bytes IS NOT NULL ORDER BY id DESC LIMIT 1`, [page.id, generation]);
-  return version ? Number(version.body_bytes) : null;
+  return engine.readSegmentedVersionBodyBytes(page.id, generation);
 }
 
 /** Attempts of a live read whose generation a publish retired between its reads (`readTiledManifest`). */
@@ -50,7 +48,7 @@ export const LIVE_READ_ATTEMPTS = 3;
  * size the caller read with an explicit generation (a snapshot's body_bytes), checked instead of the size a retained
  * version records, so a generation whose version was pruned never passes on the prefix the live generation shares.
  */
-export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest'>, pageId: number,
+export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentedVersionBodyBytes'>, pageId: number,
   generation?: number, bodyBytes?: number): Promise<{ generation: number | null; rows: ManifestRow[] }> {
   const live = async () => (await engine.executeRaw<{ body_generation: unknown; body_bytes: unknown }>('SELECT body_generation, body_bytes FROM pages WHERE id=$1', [pageId]))[0];
   for (let attempt = 1; ; attempt++) {
@@ -72,7 +70,7 @@ export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' |
  * size the reader read with the generation (a live generation's page body_bytes), so a generation a publish retired
  * meanwhile, whose size nothing records any more, is still checked whole and never passes on a surviving prefix.
  */
-export async function assertGenerationTiles(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, generation: number | undefined, rows: readonly RowSpan[],
+export async function assertGenerationTiles(engine: Pick<BrainEngine, 'executeRaw' | 'readSegmentedVersionBodyBytes'>, pageId: number, generation: number | undefined, rows: readonly RowSpan[],
   bodyBytes?: number): Promise<void> {
   const [page] = await engine.executeRaw<{ id: number; slug: string; source_id: string; body_generation: unknown; body_bytes: unknown }>(
     'SELECT id, slug, source_id, body_generation, body_bytes FROM pages WHERE id=$1', [pageId]);
