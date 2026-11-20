@@ -23,9 +23,11 @@ import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-
 import { OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-op.ts';
 import { isRemoteCaller, withRemoteCaller } from '../src/core/remote-caller.ts';
-import { withSubmissionAuthority, APPLICATION_AUTHORITY, type SubmissionAuthority } from '../src/core/minions/submission-authority.ts';
+import { currentSubmissionAuthority, withSubmissionAuthority, APPLICATION_AUTHORITY, type SubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { withVerifiedLocalRegistration, type LocalRegistration, type LocalWriterEngine } from '../src/core/persistence/identity.ts';
+import { sha256 } from '../src/core/persistence/digest.ts';
 
 let dir: string;
 let server: OwnerEngineServer;
@@ -99,6 +101,42 @@ describe('a client of the owner, for a remote caller', () => {
     expect(await refusal(withRemoteCaller(true, () => forwardWholeOperation(client, 'importFromContent', ['s', 'c'])!))).toMatchObject({ code: 'engine_capability_missing' });
     expect(await forwardWholeOperation<unknown>(client, 'importFromContent', ['s', 'c'])).toEqual({ ok: true });
     expect(ran).toEqual(['fn:importFromContent']);
+  });
+});
+
+describe('a client of the owner, for a remote verified writer with no other remote marker', () => {
+  const registration = (lane: 'cli' | 'stdio'): LocalRegistration => ({ id: '20000000-0000-4000-8000-000000000001', credential: 'c'.repeat(64), lane });
+  const writerEngine = (lane: 'cli' | 'stdio') => ({
+    readLocalWriterRow: async () => ({ credential_hash: sha256(registration(lane).credential), lane, revoked_at: null,
+      grant_ceiling: { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null } }),
+  }) as unknown as LocalWriterEngine;
+
+  // Value: protects=a remote verified writer alone keeps a write and whole op off the owner; fails_when=callerIsRemote ignores the writer's remote flag; why_new=other tests set the remote-caller flag or submission authority, never the writer alone; seam=none; no_claim=other remote markers
+  test('a remote verified writer alone refuses a write and a whole operation, and a cli writer sends both', async () => {
+    ran.length = 0;
+    const out = await withVerifiedLocalRegistration(writerEngine('stdio'), registration('stdio'), async writer => {
+      // The writer's flag is the only marker: no remote-caller scope and no submission authority.
+      expect({ writer: writer.remote, flag: isRemoteCaller(), authority: currentSubmissionAuthority() ?? null }).toEqual({ writer: true, flag: false, authority: null });
+      return {
+        write: await refusal(client.putPage!('writer/page', {})),
+        whole: await refusal(forwardWholeOperation(client, 'importFromContent', ['s', 'c'])!),
+        read: await client.getPage!('writer/page'),
+      };
+    });
+    expect(out.write.code).toBe('engine_capability_missing');
+    expect(out.write.message).toContain("a remote caller's write is not sent to the brain owner");
+    expect(out.whole.code).toBe('engine_capability_missing');
+    expect(out.whole.message).toContain("a remote caller's whole operation is not sent to the brain owner");
+    expect(out.read).toEqual({ slug: 'writer/page' });
+    expect(ran).toEqual(['getPage:writer/page']);
+    // Control: a cli writer is not remote, so the same write and whole operation are sent.
+    ran.length = 0;
+    await withVerifiedLocalRegistration(writerEngine('cli'), registration('cli'), async writer => {
+      expect(writer.remote).toBe(false);
+      expect(await client.putPage!('cli/page', {})).toEqual({ slug: 'cli/page' });
+      expect(await forwardWholeOperation<unknown>(client, 'importFromContent', ['s', 'c'])).toEqual({ ok: true });
+    });
+    expect(ran).toEqual(['putPage:cli/page', 'fn:importFromContent']);
   });
 });
 

@@ -543,6 +543,75 @@ describe('an owner that exits', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  describe('the first ordinary member call after the owner dies', () => {
+    /** The owner has gone and this engine's client connection has seen it close, with no other call made yet. */
+    async function afterOwnerDeath(first: { child: ReturnType<typeof spawn> }, rust: RustEngine) {
+      const old = ownerConnectionFor(rust)!;
+      first.child.kill('SIGKILL');
+      await once(first.child, 'close');
+      for (let i = 0; i < 200 && !old.closed; i++) await Bun.sleep(10);
+      expect(old.closed).toBe(true);
+      return old;
+    }
+    /** Counts store opens, so one election for several callers shows as one open. */
+    const countedAddon = (opened: { n: number }) => ({ target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: class extends ConfigBrain { async open() { opened.n++; } } }) as never;
+    const settle = (call: Promise<unknown>) => call.then(value => value, (error: { code?: string; reason?: string }) => `${error.code}/${error.reason}`);
+
+    // Value: protects=the first ordinary call after owner death starts the rejoin, and calls at once share one election and one open; fails_when=only whole ops rejoin or each call elects; why_new=failover tests began with a whole op; seam=none; no_claim=handoff
+    test('first ordinary calls made at once after the owner dies become the owner together: one store open, results kept', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-first-call-'));
+      const db = join(dir, 'brain.rust');
+      const first = await ownerChild(db);
+      const opened = { n: 0 };
+      const rust = openRustEngine({ addon: countedAddon(opened), databasePath: db, ownerWaitMs: 5_000 });
+      try {
+        await rust.connect({});
+        expect(rust.ownerRole).toBe('client');
+        expect(opened.n).toBe(0);
+        await afterOwnerDeath(first, rust);
+        const brain = rust as unknown as BrainEngine;
+        expect(await Promise.all([brain.getConfig('who'), brain.getConfig('who'), brain.getConfig('other')].map(settle)))
+          .toEqual(['this-process', 'this-process', null]);
+        expect(opened.n).toBe(1);
+        expect(rust.ownerRole).toBe('owner');
+        expect(rust.ownerStats()).not.toBeNull();
+      } finally {
+        await rust.disconnect();
+        first.child.kill('SIGKILL');
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+
+    // Value: protects=the first ordinary call after owner death reaches a new owner in another process on a fresh connection; fails_when=it ends owner_unavailable or runs locally; why_new=failover tests began with a whole op, never an ordinary call, for a new owner elsewhere; seam=none; no_claim=takeover
+    test('a first ordinary call after the owner dies goes to the new owner on a new connection, without opening this store', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-first-handoff-'));
+      const db = join(dir, 'brain.rust');
+      const first = await ownerChild(db);
+      let second: Awaited<ReturnType<typeof ownerChild>> | undefined;
+      const opened = { n: 0 };
+      const rust = openRustEngine({ addon: countedAddon(opened), databasePath: db, ownerWaitMs: 5_000 });
+      try {
+        await rust.connect({});
+        const old = await afterOwnerDeath(first, rust);
+        second = await ownerChild(db);
+        const brain = rust as unknown as BrainEngine;
+        expect(await Promise.all([brain.getConfig('who'), brain.getConfig('who')].map(settle))).toEqual([null, null]);
+        const now = ownerConnectionFor(rust);
+        expect(now).toBeDefined();
+        expect(now).not.toBe(old);
+        expect(now!.closed).toBe(false);
+        expect(now!.hello.pid).toBe(second.pid);
+        expect(rust.ownerRole).toBe('client');
+        expect(opened.n).toBe(0);
+      } finally {
+        await rust.disconnect();
+        first.child.kill('SIGKILL');
+        second?.child.kill('SIGKILL');
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+  });
 });
 
 describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {

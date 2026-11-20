@@ -55,6 +55,26 @@ async function blockingOwner(opts: OwnerServerOptions) {
 
 const call = (id: number, member: string, args: unknown[]) => ({ t: 'call', id, member, args: encodeValue(args) });
 
+/** An owner whose getHealth ignores its abort and settles only when `release` runs; getConfig answers at once. */
+async function gatedOwner(opts: OwnerServerOptions) {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-limits-gated-'));
+  const ran: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const owner = {
+    kind: 'pglite', capabilities: new Set<string>(),
+    getHealth: async (tag: unknown) => { ran.push(`getHealth:${String(tag).slice(0, 12)}`); await gate; return 'settled'; },
+    getConfig: async (key: unknown) => { ran.push(`getConfig:${String(key)}`); return 'value'; },
+  } as unknown as BrainEngine;
+  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), opts);
+  if (!server) throw new Error('no socket');
+  cleanups.push(async () => { release(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
+  return { server, ran, release };
+}
+
+/** Polls `done` every 25 ms for up to 2 s; the caller asserts the state it waited for. */
+async function until(done: () => boolean): Promise<void> { for (let i = 0; i < 80 && !done(); i++) await Bun.sleep(25); }
+
 describe('the owner queue cap', () => {
   test('a call past maxQueued is refused with owner_busy queue_full and never runs; a cancelled call frees its slot', async () => {
     const { server, ran } = await blockingOwner({ permits: 1, maxQueued: 2 });
@@ -82,6 +102,55 @@ describe('the owner queue cap', () => {
   });
 });
 
+describe('the owner queue slot and bytes of a call that ends without running', () => {
+  for (const exit of ['its deadline passes while queued', 'its client disconnects', 'the server closes'] as const) {
+    // Value: protects=a queued call that times out, loses its client or meets close() returns its slot and bytes once; fails_when=an exit path skips or repeats the release; why_new=only a queued cancel was covered, not timeout, disconnect or close; seam=none; no_claim=running calls
+    test(`a queued call whose ${exit.replace('its ', '').replace('the ', '')} gives back its queue slot and its bytes exactly once`, async () => {
+      const { server, ran } = await blockingOwner({ permits: 1, maxQueued: 1 });
+      const running = rawSession(server.socketPath);
+      const waiting = rawSession(server.socketPath);
+      cleanups.push(() => { running.destroy(); waiting.destroy(); });
+      await running.send(hello);
+      await running.send(call(1, 'getHealth', ['running']));
+      await until(() => server.stats().active === 1);
+      const base = server.stats();
+      expect(base).toMatchObject({ active: 1, queued: 0 });
+      // The deadline case carries a deadline_at on every frame (a short one first), so each frame has the same size.
+      const queuedFrame = (id: number, ms: number) => ({ ...call(id, 'getHealth', ['q'.repeat(400)]), ...(exit === 'its deadline passes while queued' ? { deadline_at: Date.now() + ms } : {}) });
+      await waiting.send(hello);
+      await waiting.send(queuedFrame(2, 150));
+      await until(() => server.stats().queued === 1);
+      const held = server.stats().inflightBytes - base.inflightBytes;
+      expect(held).toBeGreaterThan(400);
+      expect(server.stats().queued).toBe(1);
+      if (exit === 'its deadline passes while queued') {
+        const ended = errorOf(await waiting.next(f => f.t === 'result' && f.id === 2));
+        expect({ code: ended.code, reason: ended.reason }).toMatchObject({ code: 'timeout' });
+      } else if (exit === 'its client disconnects') {
+        waiting.destroy();
+      } else {
+        await server.close();
+        // Nothing is left: a slot or byte returned twice would show as a negative count here.
+        expect(server.stats()).toMatchObject({ active: 0, queued: 0, inflightBytes: 0 });
+        expect(ran.filter(r => r.startsWith('getHealth'))).toEqual(['getHealth:running']);
+        return;
+      }
+      await until(() => server.stats().queued === 0);
+      // The slot and the bytes are back, once: the running call's bytes alone are held.
+      expect(server.stats()).toMatchObject({ active: 1, queued: 0, inflightBytes: base.inflightBytes });
+      // maxQueued is 1, so the same frame is admitted again only because the slot came back, and its bytes count again once.
+      const again = rawSession(server.socketPath);
+      cleanups.push(() => { again.destroy(); });
+      await again.send(hello);
+      await again.send(queuedFrame(3, 60_000));
+      await until(() => server.stats().queued === 1);
+      expect(server.stats()).toMatchObject({ queued: 1, inflightBytes: base.inflightBytes + held });
+      expect(again.frames.find(f => f.t === 'result')).toBeUndefined();
+      expect(ran.filter(r => r.startsWith('getHealth'))).toEqual(['getHealth:running']);
+    });
+  }
+});
+
 describe('the owner in-flight byte cap', () => {
   test('a call whose frame would pass maxInflightBytes is refused with owner_busy inflight_bytes; bytes come back when a call settles', async () => {
     const { server, ran } = await blockingOwner({ permits: 4, maxInflightBytes: 1_000 });
@@ -107,6 +176,47 @@ describe('the owner in-flight byte cap', () => {
     expect(server.stats().active).toBe(1);
     expect(raw.frames.find(f => f.id === 4)).toBeUndefined();
   });
+});
+
+describe('the owner byte budget of a running call that is timed out or cancelled', () => {
+  for (const ending of ['times out', 'is cancelled'] as const) {
+    // Value: protects=a timed-out or cancelled running call keeps its bytes until its work settles; fails_when=bytes come back at the early reply; why_new=bytes were only checked after a cancel that ends the work at once; seam=none; no_claim=queued calls
+    test(`a running call that ${ending} while its work ignores the abort keeps its bytes: owner_busy until the work settles, then admitted`, async () => {
+      const { server, ran, release } = await gatedOwner({ permits: 4, maxInflightBytes: 1_000 });
+      const raw = rawSession(server.socketPath);
+      cleanups.push(() => { raw.destroy(); });
+      const big = 'x'.repeat(600);
+      await raw.send(hello);
+      await raw.send(ending === 'times out' ? { ...call(1, 'getHealth', [big]), deadline_at: Date.now() + 300 } : call(1, 'getHealth', [big]));
+      await until(() => server.stats().active === 1);
+      expect(server.stats().active).toBe(1);
+      const held = server.stats().inflightBytes;
+      expect(held).toBeGreaterThan(600);
+      if (ending === 'times out') {
+        const ended = errorOf(await raw.next(f => f.t === 'result' && f.id === 1));
+        expect(ended.code).toBe('timeout');
+        expect(ended.reason).toBe('outcome_unknown');
+      } else {
+        await raw.send({ t: 'cancel', id: 1 });
+        await Bun.sleep(100);
+        expect(raw.frames.find(f => f.id === 1)).toBeUndefined();
+      }
+      // The caller was answered or dropped, but the engine call still runs, so its permit and bytes are still held.
+      expect(server.stats()).toMatchObject({ active: 1, inflightBytes: held });
+      await raw.send(call(2, 'getHealth', [big]));
+      const refused = errorOf(await raw.next(f => f.t === 'result' && f.id === 2));
+      expect({ code: refused.code, reason: refused.reason }).toEqual({ code: 'owner_busy', reason: 'inflight_bytes' });
+      expect(ran.filter(r => r.startsWith('getHealth'))).toHaveLength(1);
+      // Once the delayed work settles its bytes are free and the same frame is admitted and answered.
+      release();
+      await until(() => server.stats().active === 0);
+      expect(server.stats()).toMatchObject({ active: 0, inflightBytes: 0 });
+      await raw.send(call(3, 'getHealth', [big]));
+      const admitted = await raw.next(f => f.t === 'result' && f.id === 3);
+      expect(admitted?.ok).toBe(true);
+      expect(ran.filter(r => r.startsWith('getHealth'))).toHaveLength(2);
+    });
+  }
 });
 
 describe('the owner connection cap', () => {

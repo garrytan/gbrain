@@ -19,7 +19,7 @@ import { stageBatchBytes, STAGE_BATCH_BYTES } from '../src/core/page-body/limits
 import { CODES } from '../src/core/error-registry.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
+import { connectOwner, installOwnerClient, ownerConnectionFor } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { ownerLockPath, ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -310,6 +310,50 @@ describe('openRustEngine', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // Value: protects=a client that takes over its brain but fails the store open ends disconnected, frees the owner lock and socket, and reconnects; fails_when=the failed takeover keeps the role or stays connected; why_new=only fresh connects and early calls covered, never a takeover whose open fails; seam=none; no_claim=owner success
+  test('a client promoted to owner whose store open fails ends disconnected, gives up the owner role and lock, and an explicit reconnect succeeds', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-takeover-'));
+    const db = join(dir, 'brain.rust');
+    const config = { engine: 'pglite', database_path: db } as const;
+    const first = openRustEngine({ addon, databasePath: db });
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: db, ownerWaitMs: 3_000 });
+    try {
+      await first.connect(config);
+      expect(first.ownerRole).toBe('owner');
+      await engine.connect(config);
+      expect(engine.ownerRole).toBe('client');
+      expect(engine.connected).toBe(true);
+      // The owner goes away; the client's next call runs the election, wins it, and its store open fails.
+      await first.disconnect();
+      for (let i = 0; i < 200 && !ownerConnectionFor(engine)?.closed; i++) await Bun.sleep(10);
+      expect(ownerConnectionFor(engine)?.closed).toBe(true);
+      const call = engine.getConfig('k').then(() => 'resolved', (error: { code?: string }) => error.code ?? 'rejected');
+      await gate.opening();
+      expect(engine.ownerRole).toBe('owner');
+      gate.failOpen();
+      expect(await call).not.toBe('resolved');
+      expect({ connected: engine.connected, role: engine.ownerRole, stats: engine.ownerStats() }).toEqual({ connected: false, role: null, stats: null });
+      expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
+      // The lock and the socket were given up: another process can take the brain, and nothing answers there.
+      const lock = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(lock).not.toBeNull();
+      await lock?.release();
+      const answered = await connectOwner(ownerSocketPath(db), { timeoutMs: 200 }).then(connection => { connection.close(); return true; }, () => false);
+      expect(answered).toBe(false);
+      // An explicit reconnect takes the brain again.
+      gate.finishOpenNow();
+      await engine.reconnect();
+      expect(engine.connected).toBe(true);
+      expect(engine.ownerRole).toBe('owner');
+      expect(gate.brains.at(-1)!.isOpen).toBe(true);
+    } finally {
+      await engine.disconnect();
+      await first.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test('a partial or unknown outcome says what may have been written', () => {
     expect(capabilityMissing('raw_sql', 'x', 'partial').detail).toContain('written=partial');
