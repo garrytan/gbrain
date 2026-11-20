@@ -15,6 +15,7 @@ test/engine-parity/cli-reads-export.test.ts	14	1
 test/engine-parity/cli-reads-import.test.ts	16	0
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
+test/engine-parity/concept-rebuild.test.ts	0	3
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
@@ -53,6 +54,7 @@ test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/forget-commit.test.ts	3	0
 test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-remember.test.ts	2	0
+test/engine-parity/graduation-catalog.test.ts	1	2
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0
@@ -123,6 +125,7 @@ test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
 test/engine-parity/transaction-settings.test.ts	9	1
 test/engine-parity/traversal-cache.test.ts	5	2
+test/engine-parity/trust-backfill.test.ts	0	1
 test/engine-parity/trust-fence.test.ts	7	0
 test/engine-parity/trust-proposals.test.ts	5	0
 test/engine-parity/trust-reads.test.ts	13	0
