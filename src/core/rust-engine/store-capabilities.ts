@@ -21,11 +21,18 @@ export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = 
     'segmentedGateEvidence (persistence/writer-versions.ts): the segmented-storage gate evidence answers no writer here',
     'queuePublicationEffects (persistence/effect-journal.ts): the publication effects insert, where a forwarded put stops',
   ],
+  managed_persistence: [
+    'claimWorktree and the worktree binding tables (persistence_worktrees, persistence_source_bindings): no worktree binding is stored, so readWorktreeAdmission reads none',
+    'admitWriteGroupInTransaction (persistence/journal.ts): the grouped admission still reads and writes its request rows through executeRaw',
+    'the refresh writer (persistence/worktree-refresh.ts): gbrain sources refresh writes no refresh row here',
+  ],
 };
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {
   persistence_journal: ['transactions'],
+  // A managed worktree's writes go through the write journal; without it a worktree could be claimed but never written.
+  managed_persistence: ['persistence_journal', 'transactions'],
 };
 
 export function servedCapabilities(): EngineCapabilities {

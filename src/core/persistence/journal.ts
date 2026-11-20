@@ -27,7 +27,7 @@ import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { ownerWidened } from '../search/private-visibility.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear, RELEASED_DEFERRED } from './worktree-refresh-schema.ts';
+import { refreshFenceClear, RELEASED_DEFERRED } from './worktree-refresh-schema.ts';
 import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, declarePersistenceProtocol, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertGraduationAdmission } from './graduation-custody.ts';
@@ -143,13 +143,9 @@ async function outstandingRefusal(tx: Pick<BrainEngine, 'countOutstandingBySourc
  * no slot; the importer can pass a cap by at most what they hold. Writes waiting on another source's sync, and released ones
  * about to settle, keep their slots (#8759). Read only when the plain check would refuse.
  */
-async function heldBehindImport(tx: SqlEngine, principal: Principal | null, sourceId: string): Promise<{ count: number; bytes: number }> {
+async function heldBehindImport(tx: Pick<BrainEngine, 'countHeldBehindImport'>, principal: Principal | null, sourceId: string): Promise<{ count: number; bytes: number }> {
   requireManagedPersistence(tx, 'heldBehindImport', 'it counts the writes held behind a managed import or refresh');
-  const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(r.intent_bytes),0) AS bytes
-    FROM persistence_requests r WHERE r.state='deferred' AND NOT ${RELEASED_DEFERRED('r')} AND ((r.deferred_import_from IS NOT NULL AND r.source_id=$1)
-      OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NULL AND $1=ANY(f.source_ids)))${principal ? ' AND r.principal_kind=$2 AND r.principal_id=$3' : ''}`,
-  principal ? [sourceId, principal.kind, principal.id] : [sourceId]);
-  return { count: Number(row?.count ?? 0), bytes: Number(row?.bytes ?? 0) };
+  return tx.countHeldBehindImport(sourceId, principal ? { kind: principal.kind, id: principal.id } : null);
 }
 /** A managed sync job: the import itself, never deferred or refused behind a refresh that waits on it. */
 const managedSyncJob = (input: Pick<WriteAdmission, 'operation' | 'intent'>) => input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
@@ -602,20 +598,12 @@ async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, r
   // Sent together: the server takes the share lock before it reads the fence and the binding. PR B: with the barrier on, the
   // active refresh row is locked right after the worktree (protocol.ts lock order), so a deferral and the refresh's terminal
   // transition serialize on it, and the syncing completion below upgrades no lock.
-  const [[worktree], [state]] = await pipelined(tx, [
-    () => tx.executeRaw<{ state: string; owner_epoch: string }>('SELECT state,owner_epoch::text AS owner_epoch FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]),
-    () => tx.executeRaw<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>(`SELECT
-      (SELECT row_to_json(f) FROM (SELECT id,state,source_ids FROM persistence_worktree_refreshes
-        WHERE worktree_id=$3::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1${barrier ? ' FOR NO KEY UPDATE' : ''}) f) AS refresh,
-      EXISTS (SELECT 1 FROM persistence_source_bindings WHERE source_id=$1
-        AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4) AS bound`,
-    [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]),
-  ]) as [Array<{ state: string; owner_epoch: string }>, Array<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>];
-  const refresh = typeof state?.refresh === 'string' ? JSON.parse(state.refresh) as { id: string; state: string; source_ids: string[] } : state?.refresh ?? null;
+  const { worktree, refresh, bound } = await tx.readWorktreeAdmission({ worktreeId: input.worktreeId!, sourceId: input.sourceId,
+    sourceIncarnation: input.sourceIncarnation!, topologyGeneration: input.topologyGeneration }, { lockRefresh: barrier });
   const deferTo = refresh ? await assertWorktreeNotRefreshing(tx, input, refresh, replayable, barrier) : null;
   // #6741 C: a background producer never takes a permanent request id against a worktree in recovery (a draining owner still replays).
   if (worktree?.state === 'recovering' && resolveAdmissionOrigin(input.origin) === 'background') throw backgroundWorktreeInactive(input.sourceId, worktree.state, ownerStatusFix(input.sourceId));
-  if (!state?.bound || input.ownerEpoch != null && worktree && worktree.owner_epoch !== String(input.ownerEpoch)) throw opError('source_changed', 'The source binding changed during admission.',
+  if (!bound || input.ownerEpoch != null && worktree && worktree.owner_epoch !== String(input.ownerEpoch)) throw opError('source_changed', 'The source binding changed during admission.',
     `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
     { fix: ownerStatusFix(input.sourceId) });
   return deferTo;
@@ -638,22 +626,15 @@ async function readRefreshBarrier(engine: BrainEngine): Promise<boolean> {
  * Every live consumer of the worktree's owner host can drain a deferred write. GST-1582: there is no per-refresh cap; the
  * journal's outstanding and byte limits bound deferred writes like queued ones.
  */
-export async function deferralRoom(tx: SqlEngine, worktreeId: string, capability: string = REFRESH_BARRIER_CAPABILITY): Promise<boolean> {
-  const [row] = await tx.executeRaw<{ incapable: boolean }>(`SELECT
-    EXISTS (SELECT 1 FROM persistence_consumers c JOIN persistence_worktrees w ON w.owner_host_id=c.host_id WHERE w.id=$1::uuid
-      AND c.renewed_at>now()-($2::integer*interval '1 millisecond') AND NOT ($3=ANY(c.capabilities))) AS incapable`,
-  [worktreeId, CONSUMER_LIVE_MS, capability]);
-  return !!row && !row.incapable;
+export async function deferralRoom(tx: Pick<BrainEngine, 'hasDeferralRoom'>, worktreeId: string, capability: string = REFRESH_BARRIER_CAPABILITY): Promise<boolean> {
+  return tx.hasDeferralRoom(worktreeId, capability, CONSUMER_LIVE_MS);
 }
 /** The refresh to defer this write behind, or null when it is admitted normally; otherwise refuses. */
 async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean,
   barrier: boolean): Promise<string | null> {
   if (refresh.state === 'syncing' && managedSyncJob(input)) return null;
   if (refresh.state === 'syncing') {
-    const completed = await tx.executeRaw(`UPDATE persistence_worktree_refreshes f SET state='completed',completed_at=now(),updated_at=now()
-      WHERE f.id=$1::uuid AND f.state='syncing' AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids)
-        AND s.last_commit IS DISTINCT FROM f.target_head) RETURNING f.id`, [refresh.id]);
-    if (completed.length) return null;
+    if (await tx.completeSyncedRefresh(refresh.id)) return null;
   }
   // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
   // receipt instead; a group admission never bypasses, since its other items may be new. GST-1623: checked before any

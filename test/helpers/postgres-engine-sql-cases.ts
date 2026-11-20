@@ -758,7 +758,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'attributionReads': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
   'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal, 'listFenceHoldRows': OOS.journal,
-  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
+  'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'readWorktreeAdmission': OOS.journal, 'completeSyncedRefresh': OOS.journal, 'hasDeferralRoom': OOS.journal, 'readRefreshTiming': OOS.journal, 'countHeldBehindImport': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal, 'lockPersistenceCounters': OOS.journal,
   'readOAuthClientWriteGrant': OOS.journal, 'readAccessTokenWriteGrant': OOS.journal, 'shareLockWriteCredential': OOS.journal,
   'insertWriteRequest': OOS.journal, 'stampWriteClaim': OOS.journal, 'lockWriteRequest': OOS.journal, 'completeWriteRow': OOS.journal,
   'insertPublicationEffects': OOS.journal,

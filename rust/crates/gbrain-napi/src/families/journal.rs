@@ -394,6 +394,67 @@ impl Brain {
         })
     }
 
+    /// `readWorktreeAdmission(worktreeId, sourceIncarnation)`: `{ worktree, refresh, bound }`.
+    #[napi]
+    pub fn read_worktree_admission<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+        source_incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_worktree_admission(&worktree_id, &source_incarnation)
+        })
+    }
+
+    /// `completeSyncedRefresh(refreshId)`: true when a `syncing` refresh was completed.
+    #[napi]
+    pub fn complete_synced_refresh<'env>(
+        &self,
+        env: &'env Env,
+        refresh_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.complete_synced_refresh(&refresh_id))
+    }
+
+    /// `hasDeferralRoom(worktreeId, liveMs)`: whether no live consumer on the owner host lacks the capability.
+    #[napi]
+    pub fn has_deferral_room<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+        live_ms: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_deferral_room(&worktree_id, live_ms as i64)
+        })
+    }
+
+    /// `readRefreshTiming(refreshId)`: `{ elapsed_ms, typical_ms }` or null.
+    #[napi]
+    pub fn read_refresh_timing<'env>(
+        &self,
+        env: &'env Env,
+        refresh_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_refresh_timing(&refresh_id))
+    }
+
+    /// `countHeldBehindImport(sourceId, principalKind, principalId)`: `{ count, bytes }`; a null principal counts every one.
+    #[napi]
+    pub fn count_held_behind_import<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        principal_kind: Option<String>,
+        principal_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let principal = principal_kind.as_deref().zip(principal_id.as_deref());
+            s.count_held_behind_import(&source_id, principal)
+        })
+    }
+
     #[napi]
     pub fn read_source_membership<'env>(
         &self,

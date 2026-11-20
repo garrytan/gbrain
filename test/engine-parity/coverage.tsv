@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 905/906
+# covered: 910/911
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 83/83
+# persistence_journal: 88/88
 # entity_reads: 10/10
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -419,6 +419,11 @@ readWriteRequestById	persistence_journal	yes	9	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
 countOutstandingBySource	persistence_journal	yes	2	no	yes	yes	serves
+readWorktreeAdmission	persistence_journal	yes	1	no	yes	yes	serves
+completeSyncedRefresh	persistence_journal	yes	1	no	yes	yes	serves
+hasDeferralRoom	persistence_journal	yes	1	no	yes	yes	serves
+readRefreshTiming	persistence_journal	yes	1	no	yes	yes	serves
+countHeldBehindImport	persistence_journal	yes	1	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
