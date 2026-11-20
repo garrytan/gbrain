@@ -82,12 +82,13 @@ export function changeKey(op: string, parts: Array<string | undefined>): string 
 export async function runAppleContacts(engine: BrainEngine, args: string[]): Promise<void> {
   const asJson = args.includes('--json');
   const [sub, verb] = args;
-  const config = async (key: string) => String(await engine.getConfig(key).catch(() => null) ?? '').trim().toLowerCase();
+  const norm = (value: string | null) => String(value ?? '').trim().toLowerCase();
   if (!sub || sub === '--help' || sub === '-h' || args.includes('--help')) { console.log(HELP); return; }
   if (sub === 'status') {
     const source = await resolveSource(engine, flag(args, '--source'));
-    const state = { source: source.id, helper: source.cfg.helperHost + ':' + source.cfg.helperPort, write: (await config(WRITE_CONFIG_KEY)) || 'off',
-      destructive_writes: (await config(DESTRUCTIVE_CONFIG_KEY)) || 'off', owner_key_file_set: !!(await config(OWNER_KEY_FILE_CONFIG_KEY)) };
+    const state = { source: source.id, helper: source.cfg.helperHost + ':' + source.cfg.helperPort, write: norm(await engine.getConfig(WRITE_CONFIG_KEY).catch(() => null)) || 'off',
+      destructive_writes: norm(await engine.getConfig(DESTRUCTIVE_CONFIG_KEY).catch(() => null)) || 'off',
+      owner_key_file_set: !!norm(await engine.getConfig(OWNER_KEY_FILE_CONFIG_KEY).catch(() => null)) };
     console.log(asJson ? JSON.stringify(state) : Object.entries(state).map(([k, v]) => k + ': ' + v).join('\n'));
     return;
   }
@@ -95,12 +96,12 @@ export async function runAppleContacts(engine: BrainEngine, args: string[]): Pro
     throw appleContactsError('apple_contacts_bad_request', 'Unknown apple-contacts command. Nothing was changed.', HELP);
   }
   const op = ADDITIVE[verb] ?? DESTRUCTIVE[verb]!;
-  const mode = (await config(WRITE_CONFIG_KEY)) || 'off';
+  const mode = norm(await engine.getConfig(WRITE_CONFIG_KEY).catch(() => null)) || 'off';
   if (mode !== 'on' && mode !== 'dry_run') {
     throw appleContactsError('apple_contacts_write_off', 'Apple Contacts writes are off on this brain (' + WRITE_CONFIG_KEY + ' = ' + mode + '). Nothing was changed.',
       'The brain operator turns them on with: gbrain config set ' + WRITE_CONFIG_KEY + ' on');
   }
-  if (verb in DESTRUCTIVE && (await config(DESTRUCTIVE_CONFIG_KEY)) !== 'on') {
+  if (verb in DESTRUCTIVE && norm(await engine.getConfig(DESTRUCTIVE_CONFIG_KEY).catch(() => null)) !== 'on') {
     throw appleContactsError('apple_contacts_destructive_off', 'Changing or removing what is on a card (' + verb + ') is off on this brain (' + DESTRUCTIVE_CONFIG_KEY + ' is not on). Nothing was changed.',
       'It stays off until the owner-sender guard is live on this host; then the operator runs: gbrain config set ' + DESTRUCTIVE_CONFIG_KEY + ' on');
   }
