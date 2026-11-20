@@ -537,6 +537,28 @@
         ],
         "flagOnScopes": []
       },
+      "countRetypeCandidates#bare": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countRetypeCandidates#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countSoftDeletedAliasTargets#default": {
         "flagOffLanes": [
           "pool"
@@ -3166,6 +3188,17 @@
         ],
         "flagOnScopes": []
       },
+      "listLiveSlugSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listLocalPathSources#default": {
         "flagOffLanes": [
           "pool"
@@ -3614,6 +3647,28 @@
         ],
         "flagOnScopes": []
       },
+      "listRetypeSampleSlugs#bare": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listRetypeSampleSlugs#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listRootPageSlugsAfter#default": {
         "flagOffLanes": [
           "pool"
@@ -3692,6 +3747,17 @@
         "flagOnScopes": []
       },
       "listSourceRoutingRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceTypePageBodies#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3958,6 +4024,28 @@
         "flagOnScopes": []
       },
       "listTypeOrphanPages#sourceIds": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listTypePageBodies#anySource": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listTypePageBodies#sourceScoped": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7408,6 +7496,7 @@
         "countReferrerRows": "none",
         "countRelinkCandidates": "none",
         "countRepoBoundSources": "none",
+        "countRetypeCandidates": "none",
         "countSearchVectorRows": "none",
         "countSegmentedTimelinePages": "none",
         "countSoftDeletedAliasTargets": "none",
@@ -7730,6 +7819,7 @@
         "listLinkSources": "direct",
         "listLivePageSummaries": "none",
         "listLivePagesAtOrigin": "none",
+        "listLiveSlugSources": "none",
         "listLocalPathSources": "none",
         "listManagedRootBindings": "none",
         "listMarkdownPageSlugs": "none",
@@ -7774,6 +7864,7 @@
         "listRestatedPrivateCopies": "none",
         "listResumableRefreshes": "none",
         "listRetiredDeactivations": "none",
+        "listRetypeSampleSlugs": "none",
         "listRootPageSlugsAfter": "none",
         "listSessionFactTwins": "none",
         "listSessionFactsForClassification": "none",
@@ -7787,6 +7878,7 @@
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
         "listSourceRoutingRows": "none",
+        "listSourceTypePageBodies": "none",
         "listSourceWantedMarkers": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
@@ -7824,6 +7916,7 @@
         "listTrustProposals": "none",
         "listTrustScanRows": "none",
         "listTypeOrphanPages": "none",
+        "listTypePageBodies": "none",
         "listUnarchivedSlugSources": "none",
         "listUnarchivedSourceIds": "none",
         "listUnattributedFacts": "none",

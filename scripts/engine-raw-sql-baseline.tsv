@@ -152,7 +152,7 @@ src/commands/jobs/work.ts	execute_raw	1
 src/commands/loops.ts	execute_raw	1
 src/commands/mcp-provision.ts	sql_template	4
 src/commands/migrate-embeddings.ts	execute_raw	6
-src/commands/migrate-engine.ts	execute_raw	26
+src/commands/migrate-engine.ts	execute_raw	25
 src/commands/migrations/v0_14_0.ts	execute_raw	2
 src/commands/migrations/v0_16_0.ts	execute_raw	1
 src/commands/migrations/v0_18_0-storage-backfill.ts	execute_raw	6
