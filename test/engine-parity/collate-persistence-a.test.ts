@@ -234,6 +234,36 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
     return { pages, producers };
   }));
 
+  parityTest('auditDriftConflicts keeps byte-distinct slugs that a locale ranks as near-equal in separate groups', {
+    methods: ['executeRaw'], requires: 'raw_sql',
+  }, async (engine) => inHome(async () => {
+    // A soft hyphen (U+00AD) that a locale ignores, and NFC `é` beside NFD `e` + U+0301: distinct bytes that en_US ranks
+    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v333): each slug must stay its own
+    // group with its own receipt count, its exact bytes and its byte position, as the default-collation grouping gave.
+    const counts = new Map<string, number>([['notes/ab', 1], ['notes/a\u00adb', 2], ['notes/caf\u00e9', 3], ['notes/cafe\u0301', 4]]);
+    const incarnation = await addSource(engine, 'ab');
+    for (const [slug, receipts] of counts) {
+      for (let n = 0; n < receipts; n++) await seedRequest(engine, { source: 'ab', incarnation, slug, state: 'conflict', errorCode: 'source_changed' });
+    }
+    const access = { trusted: true, excludePrivate: false };
+    const rows: Array<{ slug: string; receipts: number }> = [];
+    let cursor: string | undefined;
+    let totals: { slugs: number; receipts: number } | undefined;
+    for (let guard = 0; guard < 6; guard++) {
+      const report = await auditDriftConflicts(engine, 'ab', access, { limit: 1, ...(cursor ? { cursor } : {}) });
+      totals ??= { slugs: report.totals.slugs, receipts: report.totals.receipts };
+      rows.push(...report.conflicts.map(row => ({ slug: row.slug, receipts: row.receipts })));
+      if (!report.next) { expect(report.complete).toBe(true); break; }
+      cursor = report.next;
+    }
+    const expected = byteOrder([...counts.keys()]);
+    expect(expected).toEqual(['notes/ab', 'notes/a\u00adb', 'notes/cafe\u0301', 'notes/caf\u00e9']);
+    expect(rows.map(row => Buffer.from(row.slug, 'utf8').toString('hex'))).toEqual(expected.map(slug => Buffer.from(slug, 'utf8').toString('hex')));
+    expect(rows.map(row => row.receipts)).toEqual(expected.map(slug => counts.get(slug)!));
+    expect(totals).toEqual({ slugs: 4, receipts: 10 });
+    return { rows, totals };
+  }));
+
   parityTest('readStalledCatchups lists stalled sources by byte id', {
     methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
   }, async (engine) => {

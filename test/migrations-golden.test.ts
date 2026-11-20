@@ -33,10 +33,10 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 322-325 are master's migrations. This branch numbers its own migration 326 so it does not
-    // collide with them, and it has not merged master yet. The merge with master closes these gaps;
-    // drop them from this list in that merge.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 322, 323, 324, 325]);
+    // 322-325 and 327-330 are master's migrations; 331 (this branch's 326, renumbered) and 332 are the
+    // trunk's. This branch numbers its own migrations 326 and 333 so they do not collide with them, and
+    // it has not merged master yet. The merge with master closes these gaps; drop them from this list in that merge.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 322, 323, 324, 325, 327, 328, 329, 330, 331, 332]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

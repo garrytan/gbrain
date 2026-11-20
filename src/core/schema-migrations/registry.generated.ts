@@ -323,6 +323,7 @@ import { v319 } from './v319-principal-private-facts.ts';
 import { v320 } from './v320-owner-only-lineage.ts';
 import { v321 } from './v321-unbacked-entity-keys-guards.ts';
 import { v326 } from './v326-projection-jobs-byte-order-index.ts';
+import { v333 } from './v333-byte-order-slug-indexes.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -644,4 +645,5 @@ export const MIGRATIONS: Migration[] = [
   v320,
   v321,
   v326,
+  v333,
 ];

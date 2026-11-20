@@ -371,6 +371,7 @@ test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
 test/large-pages/append-mention-links.test.ts
+test/large-pages/byte-order-slug-indexes.test.ts
 test/large-pages/chunk-retirement-plan.test.ts
 test/large-pages/chunk-visibility.test.ts
 test/large-pages/contextual-reembed-segmented.test.ts
