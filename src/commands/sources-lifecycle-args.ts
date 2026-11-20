@@ -16,7 +16,7 @@ import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.t
 import { CALENDAR_FUTURE_DAYS_MAX, CALENDAR_HORIZON_DAYS } from '../core/google/calendar-window.ts';
 import { parseExcludeLabelTokens } from '../core/google/loops-exclusion.ts';
 import { parseContactsDir } from '../core/google/source-config.ts';
-import { parseHelperHost, parseHelperPort, parseSocksProxy } from '../core/apple-contacts/source-config.ts';
+import { parseAppleContactsDir, parseHelperHost, parseHelperPort, parseSocksProxy } from '../core/apple-contacts/source-config.ts';
 import { APPLE_CONTACTS_DEFAULT_DIR, APPLE_CONTACTS_DEFAULT_PORT } from '../core/apple-contacts/types.ts';
 
 export const SOURCE_LIFECYCLE_COMMANDS = ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'] as const;
@@ -245,9 +245,9 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     const tokenFile = values.get('token-file');
     if (!tokenFile) throw invalid('Apple Contacts requires --token-file.',
       'Pass --token-file with the path of the 0600 JSON file {"accessToken":"..."} that holds the helper\'s read:contacts token; the token itself is never passed on the command line.');
-    const contactsDir = values.has('contacts-dir') ? parseContactsDir(values.get('contacts-dir')) : undefined;
-    if (contactsDir === null) throw invalid('--contacts-dir must be a relative directory of lower-case segments.',
-      `Pass --contacts-dir as one or more segments of a-z, 0-9, - and _ (default ${APPLE_CONTACTS_DEFAULT_DIR}).`);
+    const contactsDir = values.has('contacts-dir') ? parseAppleContactsDir(values.get('contacts-dir')) : undefined;
+    if (contactsDir === null) throw invalid('--contacts-dir must be a relative directory of lower-case segments, outside people/.',
+      `Pass --contacts-dir as one or more segments of a-z, 0-9, - and _, not people/ or a folder under it (default ${APPLE_CONTACTS_DEFAULT_DIR}).`);
     const record = values.get('record') ?? 'auto';
     if (record !== 'auto' && record !== 'git' && record !== 'database') throw invalid('--record must be git or database.',
       'Pass --record git (pages committed to the Git checkout at --dir) or --record database (the database is the record, no directory); leave it out to choose from --dir.');

@@ -27,6 +27,12 @@ export function parseSocksProxy(raw: unknown): { url: string; host: string; port
   return host && port ? { url: `socks5h://${host}:${port}`, host: host.replace(/^\[|\]$/g, ''), port } : null;
 }
 
+/** A contacts directory parseContactsDir accepts that is not people/ or under it: contact pages carry phones and emails. */
+export function parseAppleContactsDir(raw: unknown): string | null {
+  const dir = parseContactsDir(raw);
+  return dir !== null && dir.split('/')[0] !== 'people' ? dir : null;
+}
+
 export function parseAppleContactsSourceConfig(config: Record<string, unknown>): AppleContactsSourceConfig {
   const proxy = parseSocksProxy(config.ac_proxy);
   return {
@@ -35,7 +41,7 @@ export function parseAppleContactsSourceConfig(config: Record<string, unknown>):
     // A stored proxy that does not parse is kept as written, so the client refuses it instead of going direct.
     ...(config.ac_proxy !== undefined && config.ac_proxy !== null && config.ac_proxy !== '' ? { proxy: proxy?.url ?? String(config.ac_proxy) } : {}),
     tokenFile: typeof config.ac_token_file === 'string' ? config.ac_token_file : '',
-    contactsDir: parseContactsDir(config.ac_contacts_dir) ?? APPLE_CONTACTS_DEFAULT_DIR,
+    contactsDir: parseAppleContactsDir(config.ac_contacts_dir) ?? APPLE_CONTACTS_DEFAULT_DIR,
     record: config.ac_record === 'git' ? 'git' : 'database',
     dir: config.ac_record === 'git' && typeof config.ac_dir === 'string' && config.ac_dir ? config.ac_dir : null,
     syncIntervalMin: syncIntervalMinutes(config, APPLE_CONTACTS_DEFAULT_SYNC_INTERVAL_MIN)!,

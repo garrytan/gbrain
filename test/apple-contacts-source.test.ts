@@ -226,6 +226,14 @@ describe('config', () => {
     expect(() => parseSourceLifecycleArgs(['add', 'contacts-3', '--kind', 'apple-contacts', '--helper-host', '127.0.0.1', '--proxy', 'socks5h://u:p@h:1', '--token-file', tokenFile])).toThrow();
   });
 
+  test('--contacts-dir refuses people and anything under it, on the command line and in stored config', () => {
+    const add = (dir: string) => parseSourceLifecycleArgs(['add', 'contacts-dir', '--kind', 'apple-contacts', '--helper-host', '127.0.0.1', '--token-file', tokenFile, '--contacts-dir', dir]);
+    for (const dir of ['people', 'people/', '/people/', './people', 'People', 'PEOPLE/apple', 'people/apple', 'people/apple/']) expect(() => add(dir)).toThrow();
+    expect((add('contacts/people').params.options as { appleContacts: { contactsDir: string } }).appleContacts.contactsDir).toBe('contacts/people');
+    expect((add('peoplex/').params.options as { appleContacts: { contactsDir: string } }).appleContacts.contactsDir).toBe('peoplex');
+    for (const dir of ['people', 'people/apple', '/people/']) expect(parseAppleContactsSourceConfig({ ac_contacts_dir: dir }).contactsDir).toBe('contacts/apple');
+  });
+
   test('a managed brain registers the same apple-contacts source (kind, helper, token file, owner-only), not a plain one', () => {
     const { params } = parseSourceLifecycleArgs(['add', 'contacts-managed', '--kind', 'apple-contacts', '--helper-host', 'helper.example.invalid', '--token-file', tokenFile]);
     const input = managedSourceAddInput(params.options as never);
@@ -565,6 +573,29 @@ describe('identity and person-page facts (repo-less brain)', () => {
     await deletePeople();
     await personPage('people/alice-example', { email: 'alice@example.invalid' });
     await factsScenario('default');
+  });
+
+  test('an owner fact saved with no entity that matches a connector row stays active after the connector row is retired', async () => {
+    await deletePeople();
+    await personPage('people/alice-example', { email: 'alice@example.invalid' });
+    const { operationsByName } = await import('../src/core/operations.ts');
+    await operationsByName.remember!.handler(ownerCtx('default'), { fact: 'Job title: Engineer', source_id: 'default',
+      provenance: 'owner-note', content_origin: 'user_said', infer_entity: false });
+    const ownerActive = async () => (await engine.executeRaw<{ n: number }>(
+      "SELECT count(*)::int AS n FROM facts WHERE source_id='default' AND source='owner-note' AND fact='Job title: Engineer' AND expired_at IS NULL"))[0]!.n;
+    expect(await ownerActive()).toBe(1);
+    const s = freshStub();
+    s.upsert('c-alice', ALICE);
+    for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    expect(await ourFacts(id)).toEqual(['Company: Acme Example', 'Contacts group: Harbor Club']);
+    expect(await ownerActive()).toBe(1);
+    s.remove('c-alice');
+    await run(id, cfg);
+    expect(await ourFacts(id)).toEqual([]);
+    expect(await ownerActive()).toBe(1);
+    await engine.executeRaw("DELETE FROM facts WHERE source_id='default' AND source='owner-note' AND entity_slug IS NULL");
   });
 
   test('a phone match links too; losing the match retires the rows and the curated text stays byte-identical', async () => {

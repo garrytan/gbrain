@@ -65,9 +65,10 @@ export async function syncPersonFacts(engine: BrainEngine, contactsSourceId: str
   log: (line: string) => void): Promise<PersonFactsWrite> {
   const tag = personFactSource(contactsSourceId);
   const active = await engine.executeRaw<{ id: number; fact: string; source: string | null }>(
-    'SELECT id,fact,source FROM facts WHERE source_id=$1 AND (source_markdown_slug=$2 OR entity_slug=$2) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id',
-    [person.source_id, person.slug]);
+    'SELECT id,fact,source FROM facts WHERE source_id=$1 AND (source_markdown_slug=$2 OR entity_slug=$2 OR (entity_slug IS NULL AND fact = ANY($3::text[]))) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id',
+    [person.source_id, person.slug, claims]);
   const ours = active.filter(r => r.source === tag).map(r => ({ id: Number(r.id), fact: r.fact.trim() }));
+  // An owner's copy of a claim saved with no entity counts as known: writing it linked would supersede that copy.
   const known = new Set(active.filter(r => r.source !== tag).map(r => r.fact.trim()));
   const kept = new Set<string>();
   const retire: Array<{ id: number; fact: string }> = [];
