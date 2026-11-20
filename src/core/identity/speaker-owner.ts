@@ -102,18 +102,15 @@ export async function connectorSpeakerOwnerStamp(engine: BrainEngine, sourceId: 
   return people.every(m => m.id === owner) ? { member: owner } : null;
 }
 
-/**
- * The SQL predicate: page alias `p`'s live revision was written by a trusted local importer. Joins `r` and `s`. The
- * local principals are this installation's CLI (`local_cli`) and the host itself (`application`, connector syncs).
- */
+/** The SQL predicate: page alias `p`'s live revision was written by a trusted local importer. Joins `r` and `s`. */
 function trustedWriterSql(writers: string): string {
   const connector = `s.config->>'kind' IN (${SPEAKER_OWNER_CONNECTOR_KINDS.map(k => `'${k}'`).join(',')})`;
   return `CASE WHEN p.revision_write_request_id IS NULL
                  THEN p.ingested_via IN (${writers}) OR (p.ingested_via IS NULL AND ${connector})
             WHEN r.id IS NOT NULL
-                 THEN r.principal_kind IN ('local_cli', 'application') AND (r.intent->>'ingested_via' IN (${writers})
+                 THEN r.principal_kind = 'local_cli' AND (r.intent->>'ingested_via' IN (${writers})
                       OR (r.operation = 'submit_job' AND r.intent->>'kind' = 'connector_v2_import' AND ${connector}))
-            ELSE p.revision_principal_kind IN ('local_cli', 'application')
+            ELSE p.revision_principal_kind IS NOT DISTINCT FROM 'local_cli'
                  AND (p.ingested_via IN (${writers}) OR (p.ingested_via IS NULL AND ${connector})) END`;
 }
 
