@@ -6326,6 +6326,7 @@
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "listFactProvenance": "none",
+        "factsOrAliasesMayMatch": "none",
         "readFactWithdrawalClaim": "none",
         "readFactWithdrawnBacking": "none",
         "readFactWithdrawnRow": "none",

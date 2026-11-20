@@ -36,6 +36,9 @@ export const listFactProvenance: Member<'listFactProvenance'> = async (brain, so
   return storeCall({ member: 'listFactProvenance' }, () => brain.listFactProvenance({ sourceId, ids: [...ids] }));
 };
 
+export const factsOrAliasesMayMatch: Member<'factsOrAliasesMayMatch'> = (brain, sourceId, slugTokens, aliasNorms) =>
+  storeCall({ member: 'factsOrAliasesMayMatch' }, () => brain.factsOrAliasesMayMatch({ sourceId, slugTokens: [...slugTokens], aliasNorms: [...aliasNorms] }));
+
 /** `valid_from`, `valid_until` and `expired_at` come back from PGLite as `Date`s. */
 export const listFactsForPage: Member<'listFactsForPage'> = async (brain, sourceId, slug) => {
   const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listFactsForPage' }, () => brain.listFactsForPage({ sourceId, slug }));

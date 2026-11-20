@@ -436,6 +436,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFenceRowGroups: 'facts',
   readFactSubject: 'facts',
   listFactProvenance: 'facts',
+  factsOrAliasesMayMatch: 'facts',
   listFactsForPage: 'facts',
   countLegacyFactsPending: 'facts',
   countUnconsolidatedFactsBySource: 'facts',

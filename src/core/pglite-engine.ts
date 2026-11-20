@@ -1597,6 +1597,7 @@ export class PGLiteEngine implements BrainEngine {
   listFenceRowGroups() { return factsCycleImpl.listFenceRowGroups(this.rawRead); }
   readFactSubject(id: number) { return factsCycleImpl.readFactSubject(this.rawRead, id); }
   listFactProvenance(sourceId: string, ids: readonly number[]) { return factsCycleImpl.listFactProvenance(this.rawRead, sourceId, ids); }
+  factsOrAliasesMayMatch(sourceId: string, slugTokens: readonly string[], aliasNorms: readonly string[]) { return factsCycleImpl.factsOrAliasesMayMatch(this.rawRead, sourceId, slugTokens, aliasNorms); }
   listFactsForPage(sourceId: string, slug: string) { return factsCycleImpl.listFactsForPage(this.rawRead, sourceId, slug); }
   countLegacyFactsPending(sourceId: string) { return factsCycleImpl.countLegacyFactsPending(this.rawRead, sourceId); }
   countUnconsolidatedFactsBySource(opts: { sourceId?: string; worldOnly: boolean; minPerBucket: number }) { return factsCycleImpl.countUnconsolidatedFactsBySource(this.rawRead, opts); }

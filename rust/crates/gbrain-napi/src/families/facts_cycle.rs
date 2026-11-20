@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::cycle::{
     BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FactProvenanceQuery,
-    FenceRowOccupantQuery, PageCoordinate, WorldFactCount,
+    FenceRowOccupantQuery, MayMatchQuery, PageCoordinate, WorldFactCount,
 };
 
 #[napi]
@@ -68,6 +68,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: FactProvenanceQuery = required(args, "listFactProvenance args")?;
             s.list_fact_provenance(&a)
+        })
+    }
+
+    /// `factsOrAliasesMayMatch({ sourceId, slugTokens, aliasNorms })`: resolves a boolean.
+    #[napi]
+    pub fn facts_or_aliases_may_match<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: MayMatchQuery = required(args, "factsOrAliasesMayMatch args")?;
+            s.facts_or_aliases_may_match(&a)
         })
     }
 

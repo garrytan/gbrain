@@ -169,7 +169,6 @@ src/commands/migrations/v0_32_2.ts	execute_raw	2
 src/commands/onboard.ts	execute_raw	1
 src/commands/pages-status.ts	execute_raw	2
 src/commands/quarantine.ts	execute_raw	1
-src/commands/recall.ts	execute_raw	1
 src/commands/reconcile-links.ts	execute_raw	1
 src/commands/reindex-code.ts	execute_raw	2
 src/commands/reindex-multimodal.ts	sql_template	5

@@ -251,6 +251,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFactForOwnerAction': OOS.factsTrust,
   'readFactSubject': OOS.factsCycle,
   'listFactProvenance': OOS.factsCycle,
+  'factsOrAliasesMayMatch': OOS.factsCycle,
   'cliReads': OOS.helper,
   'listAccessPolicySourceIds': OOS.cliReadsExport,
   'listExportPageKeys': OOS.cliReadsExport,

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 905/905
+# covered: 906/906
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -45,7 +45,7 @@
 # embedding_catalog: 5/5
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
-# facts_cycle: 13/13
+# facts_cycle: 14/14
 # facts_purge: 18/18
 # facts_repair: 10/10
 # facts_trust: 10/10
@@ -93,7 +93,7 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	544	yes	yes	yes	serves
+putPage	pages	yes	545	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -335,7 +335,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	63	yes	yes	yes	serves
+insertFact	facts	yes	64	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
@@ -383,7 +383,7 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	20	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	20	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	21	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
@@ -685,6 +685,7 @@ listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
 listFactProvenance	facts_cycle	yes	1	no	yes	yes	serves
+factsOrAliasesMayMatch	facts_cycle	yes	1	no	yes	yes	serves
 listFactsForPage	facts_cycle	yes	8	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves

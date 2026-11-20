@@ -3503,6 +3503,8 @@ export interface BrainEngine {
   readFactSubject(id: number): Promise<FactsCycleSql.FactSubjectRow | null>;
   /** context_pack and delta: `{ id, source }` (the stored provenance) of each listed fact of the source, by id (engine-sql/facts-cycle.ts). */
   listFactProvenance(sourceId: string, ids: readonly number[]): Promise<FactsCycleSql.FactProvenanceRow[]>;
+  /** recall's name-and-topic split: a fact slug segment of the source starts with a token, or an alias of the source is listed (engine-sql/facts-cycle.ts). */
+  factsOrAliasesMayMatch(sourceId: string, slugTokens: readonly string[], aliasNorms: readonly string[]): Promise<boolean>;
   /** The fence-owned rows of a page coordinate, by row number then id; `valid_from`, `valid_until` and `expired_at` are dates. */
   listFactsForPage(sourceId: string, slug: string): Promise<FactsCycleSql.PageFactRow[]>;
   /** Per entity page of the source, its unexpired unfenced rows (a live page in a source with a checkout). No set order. */

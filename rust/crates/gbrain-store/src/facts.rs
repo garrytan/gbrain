@@ -725,6 +725,25 @@ pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<Fact
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
 }
 
+/// Whether some fact of the source is keyed under an entity slug `pred` accepts (the `BY_ENTITY` index).
+pub(crate) fn any_entity_slug(
+    read: &dyn KvRead,
+    source_id: &str,
+    pred: &dyn Fn(&str) -> bool,
+) -> Result<bool> {
+    let prefix = text_key(BY_ENTITY, &[source_id]);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // `prefix entity_slug \0 id`: the id is the last 8 bytes.
+        let entity = k
+            .get(prefix.len()..k.len().saturating_sub(9))
+            .unwrap_or_default();
+        found = pred(&String::from_utf8_lossy(entity));
+        !found
+    })?;
+    Ok(found)
+}
+
 pub(crate) fn entity_rows(
     read: &dyn KvRead,
     source_id: &str,
