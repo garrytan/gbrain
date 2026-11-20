@@ -1,0 +1,6 @@
+**The source-list, link-metadata, timeline-row, mention-pass, exact-basename and job-insight reads now sit behind engine members, and the job-insight read runs on the opt-in Rust engine.**
+
+### Changed
+- Eleven read queries now live in `src/core/engine-sql/` and are called through new `BrainEngine` members on PGLite and Postgres: the source list and one-source profile reads, the database clock, the link page metadata, the stored timeline rows, the pages-at-revision filter, the next-live-page read of the exact-phrase scan, the mention pass time, the exact basename candidates, and the six reads behind the job insight of `gbrain jobs list` and the jobs operations (queue position, slot holders, children, cycle-lock leases and foreign tokens). The callers call the members instead of running the SQL themselves. The statement text is unchanged, so PGLite and Postgres brains return the same rows as before.
+- On the Rust engine the job-insight read works on the same queue the Rust addon serves. The other ten members refuse there as raw SQL until its store wiring lands, instead of guessing.
+- No write, schema, privacy or visibility filter, or composed statement moved. Those reads stay where they are until a later slice.
