@@ -99,6 +99,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listVersionTrustTiers': OOS.trustTierReads,
   'listVersionReasonWriters': OOS.trustTierReads,
   'listPageRefsByIds': OOS.trustTierReads,
+  'listPageTrustTiersByKey': OOS.trustTierReads,
+  'lockLivePagesByKey': OOS.trustTierReads,
   'listValidTimeIdentities': OOS.trustTierReads,
   'pickValidTimeEdition': OOS.trustTierReads,
   'listAmendmentsNotApplied': OOS.trustTierReads,

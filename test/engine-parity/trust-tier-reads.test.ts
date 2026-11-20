@@ -11,7 +11,9 @@
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
  *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
- *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads;
+ *    listPageTrustTiersByKey reads each named page's stored tier (deleted pages included) and lockLivePagesByKey names
+ *    the live ones, so a page's own timeline lands through addProjectedPageTimeline and a missing page refuses. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
  *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
@@ -33,6 +35,8 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
 import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
 import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
+import { addProjectedPageTimeline } from '../../src/core/trust/timeline-projection.ts';
+import { PageMissingError } from '../../src/core/engine-errors.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
@@ -703,5 +707,41 @@ describe('engine parity: typed trust tier reads', () => {
     const quoted = await quoteTimelineRows({ engine, remote: true }, 'quote/chat', rows);
     expect(quoted.map(r => ('quoted' in r ? r.quoted : null))).toEqual(['transcript', null]);
     return { byName, refs, quoted: quoted.map(r => ({ quoted: 'quoted' in r ? r.quoted : null, summary: r.summary })) };
+  });
+
+  parityTest('listPageTrustTiersByKey and lockLivePagesByKey read pages by source and slug; a page timeline projects through them', {
+    methods: ['putPage', 'softDeletePage', 'transaction', 'listPageTrustTiersByKey', 'lockLivePagesByKey', 'addTimelineEntriesBatch', 'getTimeline'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await declared(engine, 'operator_curated', tx => tx.putPage('tier/curated', { type: 'note', title: 'Curated', compiled_truth: 'curated body', timeline: '' }));
+    await engine.putPage('tier/plain', { type: 'note', title: 'Plain', compiled_truth: 'plain body', timeline: '' });
+    await engine.putPage('tier/gone', { type: 'note', title: 'Gone', compiled_truth: 'gone body', timeline: '' });
+    await engine.putPage('tier/curated', { type: 'note', title: 'Elsewhere', compiled_truth: 'other body', timeline: '' }, { sourceId: 'other' });
+    await engine.softDeletePage('tier/gone', { sourceId: 'default' });
+    const keys = [
+      { source_id: 'default', slug: 'tier/curated' }, { source_id: 'default', slug: 'tier/plain' }, { source_id: 'default', slug: 'tier/gone' },
+      { source_id: 'other', slug: 'tier/curated' }, { source_id: 'default', slug: 'tier/missing' }, { source_id: 'default', slug: 'tier/plain' },
+    ];
+    const byKey = <R extends { source_id: string; slug: string }>(rows: R[]): R[] => [...rows].sort((a, b) => `${a.source_id}/${a.slug}`.localeCompare(`${b.source_id}/${b.slug}`));
+    const tiers = byKey(await engine.listPageTrustTiersByKey(keys));
+    for (const row of tiers) expect(Number.isInteger(row.id)).toBe(true);
+    const tierView = tiers.map(r => ({ key: `${r.source_id}/${r.slug}`, tier: r.trust_tier ?? 'unknown' }));
+    // A key named twice answers twice: the read joins the keys as given (the callers pass each page once).
+    expect(tierView.map(r => r.key)).toEqual(['default/tier/curated', 'default/tier/gone', 'default/tier/plain', 'default/tier/plain', 'other/tier/curated']);
+    expect(tierView[0]!.tier).toBe('operator_curated');
+    expect(await engine.listPageTrustTiersByKey([])).toEqual([]);
+    const live = await engine.transaction(async tx => byKey(await tx.lockLivePagesByKey(keys)));
+    expect(live.map(r => `${r.source_id}/${r.slug}`)).toEqual(['default/tier/curated', 'default/tier/plain', 'default/tier/plain', 'other/tier/curated']);
+    const projected = await addProjectedPageTimeline(engine, 'default', [
+      { slug: 'tier/curated', date: '2026-01-02', summary: 'second' },
+      { slug: 'tier/curated', date: '2026-01-01', summary: 'first' },
+    ]);
+    expect(projected).toEqual({ created: 2 });
+    const timeline = (await engine.getTimeline('tier/curated', { sourceId: 'default' })).map(t => String(t.summary)).sort();
+    expect(timeline).toEqual(['first', 'second']);
+    let refused: unknown = null;
+    try { await addProjectedPageTimeline(engine, 'default', [{ slug: 'tier/gone', date: '2026-01-01', summary: 'late' }]); } catch (e) { refused = e; }
+    expect(refused).toBeInstanceOf(PageMissingError);
+    return { tierView, live, projected, timeline };
   });
 });

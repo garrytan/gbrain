@@ -971,6 +971,19 @@ const PINS: Pin[] = [
         FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`],
   },
   {
+    from: 'src/core/trust/timeline-projection.ts:22 pageInputs (at 1a12510b10)',
+    case: { method: 'listPageTrustTiersByKey', variant: 'default', run: e => e.listPageTrustTiersByKey([{ source_id: 'default', slug: 'a' }]) },
+    texts: [`SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
+      JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`],
+  },
+  {
+    from: 'src/core/trust/timeline-projection.ts:59 addProjectedTimelineBatch requirePages (at 1a12510b10)',
+    case: { method: 'lockLivePagesByKey', variant: 'default', run: e => e.lockLivePagesByKey([{ source_id: 'default', slug: 'a' }]) },
+    texts: [`SELECT p.source_id,p.slug FROM pages p
+          JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug
+          WHERE p.deleted_at IS NULL FOR SHARE OF p`],
+  },
+  {
     from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
     case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default') },
     texts: [`SELECT DISTINCT o.slug FROM links l

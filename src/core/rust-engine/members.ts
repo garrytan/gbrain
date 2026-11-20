@@ -887,6 +887,8 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionTrustTiers: 'page_versions',
   listVersionReasonWriters: 'page_versions',
   listPageRefsByIds: 'pages',
+  listPageTrustTiersByKey: 'pages',
+  lockLivePagesByKey: 'pages',
   listValidTimeIdentities: 'pages',
   pickValidTimeEdition: 'page_versions',
   listAmendmentsNotApplied: 'links',
