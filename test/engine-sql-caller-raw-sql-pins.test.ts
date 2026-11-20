@@ -182,10 +182,10 @@ const PINS: Pin[] = [
     texts: [`SELECT id, content_hash, knowledge_revision::text AS revision,\n        CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, '')) END AS body_bytes\n       FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
   },
   {
-    from: 'src/core/trust/taint.ts:127 lowerToDerivedTier (at d7fb3a97b7)',
+    from: 'src/core/trust/taint.ts:127 lowerToDerivedTier (at d7fb3a97b7; the values bind through sqlFragment, so the placeholders follow text order and the compared tier binds as its rank)',
     case: { method: 'lowerTrustTier', variant: 'pages', run: e => e.lowerTrustTier('pages', [3, 1], 'external_untrusted', { channel: 'derive:test' }) },
-    texts: [`UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb
-      WHERE id=ANY($1::bigint[]) AND ${trustRankSql('trust_tier')}>${trustRankSql('$2::text')} RETURNING id`],
+    texts: [`UPDATE pages SET trust_tier=$1,write_origin=$2::text::jsonb
+      WHERE id=ANY($3::bigint[]) AND ${trustRankSql('trust_tier')}>$4::int RETURNING id`],
   },
   {
     from: 'src/core/trust/taint.ts:235 readDerivedTaintShare (at d7fb3a97b7)',

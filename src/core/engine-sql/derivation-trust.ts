@@ -1,7 +1,9 @@
 /**
  * The trust writes of a derivation as typed engine members: the statements trust/taint.ts,
  * persistence/derived-retirement-hold.ts and the atom generation adapter sent through `executeRaw`, byte for byte, with
- * the same parameters.
+ * the same parameters. `lowerTrustTier` is the exception: it binds its values through `sqlFragment`, so its placeholders
+ * are renumbered in text order and the tier it compares against binds as a rank (`TRUST_TIER_RANK`, 0 for an unknown
+ * tier, as the CASE expression gave).
  *
  * - `lowerTrustTier`: lowers rows of one taint table to a derivation's tier and origin, never raising.
  * - `countDerivedRowTaint`: how many take, timeline or page rows carry `taint_inputs`, and how many of those are
@@ -21,9 +23,12 @@
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { KEEP_HIDDEN_AT } from './facts-purge.ts';
-import { trustRankSql, trustTierFromRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { TRUST_TIER_RANK, trustRankSql, trustTierFromRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
 
 const TAINT_TABLES: readonly TaintTable[] = ['facts', 'takes', 'pages', 'timeline_entries'];
+/** The table text of each taint table, so a statement splices a constant (check:engine-sql-dynamic). */
+const TAINT_TABLE_SQL = { facts: 'facts', takes: 'takes', pages: 'pages', timeline_entries: 'timeline_entries' } as const;
 const TAINT_SHARE_TABLES = ['takes', 'timeline_entries', 'pages'] as const;
 
 /** A table `countDerivedRowTaint` counts. */
@@ -52,10 +57,9 @@ export async function lowerTrustTier(raw: EngineRawRead, table: TaintTable, ids:
   origin: WriteOrigin | null): Promise<number[]> {
   const name = taintTable('lowerTrustTier', table);
   if (!ids.length) return [];
-  const rows = await raw<{ id: number | string }>(
-    `UPDATE ${name} SET trust_tier=$2,write_origin=$3::text::jsonb
-      WHERE id=ANY($1::bigint[]) AND ${trustRankSql('trust_tier')}>${trustRankSql('$2::text')} RETURNING id`,
-    [[...ids], tier, origin ? JSON.stringify(origin) : null]);
+  const { text, params } = renderFragment(sqlFragment`UPDATE ${trustedSql(TAINT_TABLE_SQL[name])} SET trust_tier=${tier},write_origin=${origin ? JSON.stringify(origin) : null}::text::jsonb
+      WHERE id=ANY(${[...ids]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))}>${TRUST_TIER_RANK[tier] ?? 0}::int RETURNING id`);
+  const rows = await raw<{ id: number | string }>(text, params);
   return rows.map(row => Number(row.id));
 }
 
@@ -81,9 +85,14 @@ export async function stampPageFrontmatter(raw: EngineRawRead, stamp: PageFrontm
   }
 }
 
-const numericId = (column: string) => `(CASE WHEN ${column} ~ '^[0-9]+$' THEN ${column}::bigint END)`;
-const sourceOf = (table: TaintTable) => table === 'facts' || table === 'pages' ? 'x.source_id' : '(SELECT p.source_id FROM pages p WHERE p.id = x.page_id)';
-const WRITABLE = (source: string) => `(NOT $3::boolean OR COALESCE(NULLIF(current_setting('gbrain.write_sources', true), ''), '[]')::jsonb ? ${source})`;
+/** `di.input_id` and `low.derived_id` as a bigint when numeric, else null. */
+const INPUT_ID_SQL = "(CASE WHEN di.input_id ~ '^[0-9]+$' THEN di.input_id::bigint END)";
+const DERIVED_ID_SQL = "(CASE WHEN low.derived_id ~ '^[0-9]+$' THEN low.derived_id::bigint END)";
+/** The source of a derived row `x`: its own column, or its page's for a take or timeline entry. */
+const SOURCE_OF_SQL = {
+  facts: 'x.source_id', pages: 'x.source_id',
+  takes: '(SELECT p.source_id FROM pages p WHERE p.id = x.page_id)', timeline_entries: '(SELECT p.source_id FROM pages p WHERE p.id = x.page_id)',
+} as const;
 const INPUT_TIER = 'COALESCE(f.trust_tier, k.trust_tier, p.trust_tier, t.trust_tier)';
 
 /**
@@ -95,30 +104,34 @@ const INPUT_TIER = 'COALESCE(f.trust_tier, k.trust_tier, p.trust_tier, t.trust_t
 export async function lowerDerivedDependents(raw: EngineRawRead, table: TaintTable, ids: readonly string[], managed: boolean): Promise<LoweredDependent[]> {
   const name = taintTable('lowerDerivedDependents', table);
   if (!ids.length) return [];
-  const candidates = await raw<{ id: number; source_id: string | null; from_tier: string; to_tier: string; writable: boolean }>(`WITH low AS (
-      SELECT di.derived_id, min(${trustRankSql(INPUT_TIER)}) AS r FROM derivation_inputs di
-        LEFT JOIN facts f ON di.input_table = 'facts' AND f.id = ${numericId('di.input_id')}
-        LEFT JOIN takes k ON di.input_table = 'takes' AND k.id = ${numericId('di.input_id')}
-        LEFT JOIN pages p ON di.input_table = 'pages' AND p.id = ${numericId('di.input_id')}
-        LEFT JOIN timeline_entries t ON di.input_table = 'timeline_entries' AND t.id = ${numericId('di.input_id')}
-      WHERE di.derived_table = $1 AND di.derived_id = ANY($2::text[]) AND ${INPUT_TIER} IS NOT NULL
+  const tableSql = trustedSql(TAINT_TABLE_SQL[name]), source = trustedSql(SOURCE_OF_SQL[name]), inputId = trustedSql(INPUT_ID_SQL);
+  const select = renderFragment(sqlFragment`WITH low AS (
+      SELECT di.derived_id, min(${trustedSql(trustRankSql(INPUT_TIER))}) AS r FROM derivation_inputs di
+        LEFT JOIN facts f ON di.input_table = 'facts' AND f.id = ${inputId}
+        LEFT JOIN takes k ON di.input_table = 'takes' AND k.id = ${inputId}
+        LEFT JOIN pages p ON di.input_table = 'pages' AND p.id = ${inputId}
+        LEFT JOIN timeline_entries t ON di.input_table = 'timeline_entries' AND t.id = ${inputId}
+      WHERE di.derived_table = ${name} AND di.derived_id = ANY(${[...ids]}::text[]) AND ${trustedSql(INPUT_TIER)} IS NOT NULL
       GROUP BY di.derived_id)
-    SELECT x.id, ${sourceOf(name)} AS source_id, x.trust_tier AS from_tier, ${trustTierFromRankSql('low.r')} AS to_tier, ${WRITABLE(sourceOf(name))} AS writable
-      FROM low JOIN ${name} x ON x.id = ${numericId('low.derived_id')} WHERE low.r < ${trustRankSql('x.trust_tier')}
-      ORDER BY x.id FOR UPDATE OF x`, [name, [...ids], managed]);
+    SELECT x.id, ${source} AS source_id, x.trust_tier AS from_tier, ${trustedSql(trustTierFromRankSql('low.r'))} AS to_tier, (NOT ${managed}::boolean OR COALESCE(NULLIF(current_setting('gbrain.write_sources', true), ''), '[]')::jsonb ? ${source}) AS writable
+      FROM low JOIN ${tableSql} x ON x.id = ${trustedSql(DERIVED_ID_SQL)} WHERE low.r < ${trustedSql(trustRankSql('x.trust_tier'))}
+      ORDER BY x.id FOR UPDATE OF x`);
+  const candidates = await raw<{ id: number; source_id: string | null; from_tier: string; to_tier: string; writable: boolean }>(select.text, select.params);
   const writable = candidates.filter(c => c.writable);
   const deferred = candidates.filter(c => !c.writable);
   if (writable.length) {
-    await raw(`UPDATE ${name} x SET trust_tier = c.to_tier,
+    const rows = JSON.stringify(writable.map(c => ({ id: Number(c.id), from_tier: c.from_tier, to_tier: c.to_tier })));
+    const update = renderFragment(sqlFragment`UPDATE ${tableSql} x SET trust_tier = c.to_tier,
           write_origin = COALESCE(x.write_origin, '{}'::jsonb) || jsonb_build_object('input_lowered', jsonb_build_object('from', c.from_tier, 'at', now()::text))
-        FROM jsonb_to_recordset($1::text::jsonb) AS c(id bigint, from_tier text, to_tier text) WHERE x.id = c.id`,
-    [JSON.stringify(writable.map(c => ({ id: Number(c.id), from_tier: c.from_tier, to_tier: c.to_tier })))]);
+        FROM jsonb_to_recordset(${rows}::text::jsonb) AS c(id bigint, from_tier text, to_tier text) WHERE x.id = c.id`);
+    await raw(update.text, update.params);
   }
   if (deferred.length) {
-    await raw(`INSERT INTO needs_rederive(derived_table, derived_id, source_id, reason)
-      SELECT d.derived_table, d.derived_id, d.source_id, 'input_lowered' FROM jsonb_to_recordset($1::text::jsonb) AS d(derived_table text, derived_id text, source_id text)
-      ON CONFLICT (derived_table, derived_id) DO UPDATE SET reason = EXCLUDED.reason, marked_at = ${KEEP_HIDDEN_AT}`,
-    [JSON.stringify(deferred.map(d => ({ derived_table: name, derived_id: String(d.id), source_id: d.source_id })))]);
+    const marks = JSON.stringify(deferred.map(d => ({ derived_table: name, derived_id: String(d.id), source_id: d.source_id })));
+    const mark = renderFragment(sqlFragment`INSERT INTO needs_rederive(derived_table, derived_id, source_id, reason)
+      SELECT d.derived_table, d.derived_id, d.source_id, 'input_lowered' FROM jsonb_to_recordset(${marks}::text::jsonb) AS d(derived_table text, derived_id text, source_id text)
+      ON CONFLICT (derived_table, derived_id) DO UPDATE SET reason = EXCLUDED.reason, marked_at = ${trustedSql(KEEP_HIDDEN_AT)}`);
+    await raw(mark.text, mark.params);
   }
   return writable.map(c => ({ id: Number(c.id), from_tier: c.from_tier, to_tier: c.to_tier }));
 }

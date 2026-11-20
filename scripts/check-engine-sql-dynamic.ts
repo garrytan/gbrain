@@ -52,6 +52,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
+  KEEP_HIDDEN_AT: 'src/core/engine-sql/facts-purge.ts: constant marked_at CASE of an ON CONFLICT update of needs_rederive (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
@@ -93,6 +94,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   getFtsLanguage: 'src/core/fts-language.ts: the brain full-text config name; passes VALID_CONFIG_NAME ([a-z][a-z0-9_]*) or falls back to the default',
   grantedPrivateFactSql: 'src/core/access/member-facts.ts: private-facts grant predicate over a caller alias; granted source ids passed isValidSourceId, so they embed as literals',
   trustRankSql: 'src/core/trust/tier.ts: CASE mapping a caller column expression to a rank from the constant tier table; callers pass a column, never a value',
+  trustTierFromRankSql: 'src/core/trust/tier.ts: CASE mapping a caller rank expression back to a tier name from the constant tier table; callers pass a column, never a value',
   claimPendingSql: 'src/core/trust/claim-state.ts: constant claim-pending predicate over a caller sources alias; config keys are module constants',
   conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
   savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',
