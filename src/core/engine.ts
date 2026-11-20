@@ -1462,8 +1462,7 @@ export interface BrainEngine {
    * Deletes the source (only an expired archive when `expiredArchiveOnly`) with its pages and every row that names it
    * outside a foreign key (binding, managed-sync cursors, write gate holds with their receipts, eval candidate slugs);
    * `stranded` counts the pages when the pages would not cascade, and then nothing is deleted. A RESTRICT foreign key
-   * (an OAuth client of the source, revoked or not) fails it with 23503. source-delete.ts `deleteSourceRow` wraps it
-   * (engine-sql/sources.ts).
+   * (an OAuth client of the source, revoked or not) fails it with 23503. Wrapped by `deleteSourceRow` (engine-sql/sources.ts).
    */
   deleteSourceRecord(sourceId: string, opts?: { expiredArchiveOnly?: boolean }): Promise<SourceDeleteResult>;
   /** The id, name and page/chunk/embedding/file/fact counts a source delete would remove, or null (engine-sql/sources.ts). */

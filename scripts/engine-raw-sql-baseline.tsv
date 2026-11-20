@@ -205,7 +205,7 @@ src/commands/sources-strategy.ts	execute_raw	3
 src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
-src/commands/sources.ts	execute_raw	10
+src/commands/sources.ts	execute_raw	9
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
 src/commands/sync/full.ts	execute_raw	2

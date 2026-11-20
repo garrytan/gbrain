@@ -112,7 +112,7 @@ describe('engine parity: source delete', () => {
     });
 
   parityTest('sources remove refuses while an OAuth client names the source, and deletes nothing',
-    { methods: ['listOauthClients', 'insertOauthClient', 'getSource'], timeout: 120_000 },
+    { methods: ['listSourceOAuthClients', 'insertOauthClient', 'getSource'], timeout: 120_000 },
     async (engine, backend) => {
       await seedDoomed(engine, backend);
       await engine.insertOauthClient({ client_id: 'client-live', client_name: 'Live client', source_id: SRC });

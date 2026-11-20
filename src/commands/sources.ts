@@ -75,6 +75,7 @@ import {
 } from '../core/sources-load.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
@@ -836,8 +837,9 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   class SourceReferencedError extends Error {}
   try {
     await engine.transaction(async (tx) => {
-      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
-      if (cols.has('source_id')) {
+      // A Rust store always has oauth_clients.source_id and runs no raw SQL; the SQL engines preflight the column.
+      const hasSourceColumn = !hasCapability(tx, 'raw_sql') || (await preflightOauthClientColumns(sqlQueryForEngine(tx))).has('source_id');
+      if (hasSourceColumn) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
         if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();
       }
