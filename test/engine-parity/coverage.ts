@@ -266,6 +266,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listPagelessEntityFacts', 'listSourceIncarnations', 'listClosedConsolidationTies'],
   // slug_reads: slug reads that order by byte (engine-sql/collate-slug-reads.ts)
   slug_reads: ['resolveLiveSlugByPath', 'listLiveSlugSources', 'listUnarchivedSlugSources', 'countLivePageTypes', 'listTypeOrphanPages', 'readExportPageRows'],
+  // facts_home_reads: the facts-home scan's reads (engine-sql/collate-facts-home-reads.ts)
+  facts_home_reads: ['scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'readPageFileOrigin'],
   // type_page_reads: the schema-pack conversions' page reads (engine-sql/collate-type-page-reads.ts)
   type_page_reads: ['listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',

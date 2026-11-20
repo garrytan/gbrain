@@ -42,6 +42,7 @@ mod embedding;
 mod fence;
 mod fence_overlay;
 mod held_cells;
+mod home_reads;
 pub mod loops;
 pub(crate) mod privacy;
 pub mod provenance;

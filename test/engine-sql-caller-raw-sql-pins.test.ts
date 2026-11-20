@@ -18,6 +18,7 @@ import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
+import { holdingSlugSql } from '../src/core/facts-fence.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
@@ -950,6 +951,32 @@ SELECT source_id, type FROM pairs`],
       ORDER BY w.weight ASC, w.source_id COLLATE "C", w.element_key COLLATE "C" LIMIT 10`, `SELECT source_id, element_key AS slug, weight FROM retrieval_weights
       WHERE element_kind = 'page' AND weight > 0.5
       ORDER BY weight DESC, source_id COLLATE "C", element_key COLLATE "C" LIMIT 10`],
+    from: 'src/core/facts/facts-home.ts:77 scanFactsHome, at dded7edc51',
+    case: { method: 'scanUnfencedFactRows', variant: 'default', run: e => e.scanUnfencedFactRows('default') },
+    texts: [`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
+  f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, f.dimension, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists,
+    EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`],
+  },
+  {
+    from: 'src/core/facts/facts-home.ts:94 scanFactsHome, at dded7edc51',
+    case: { method: 'listHeldFactRows', variant: 'default', run: e => e.listHeldFactRows('default', '30') },
+    texts: [`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
+  f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
+      to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
+     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
+      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug COLLATE "C", f.id`],
+  },
+  {
+    from: 'src/core/facts/facts-home.ts:112 scanFactsHome, at dded7edc51',
+    case: { method: 'listFencedFactsOfMissingPages', variant: 'default', run: e => e.listFencedFactsOfMissingPages('default') },
+    texts: [`SELECT f.id, f.source_markdown_slug AS slug FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
+      AND f.expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL) ORDER BY f.id`],
+  },
+  {
+    from: 'src/core/facts/facts-home.ts:136 scanFactsHome, at dded7edc51',
+    case: { method: 'readPageFileOrigin', variant: 'default', run: e => e.readPageFileOrigin('default', 'notes/a') },
+    texts: [`SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
@@ -2260,4 +2287,12 @@ describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
       expect(member.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual(template);
     });
   }
+});
+
+describe('listHeldFactRows writes the holding-slug tests out', () => {
+  test('the statement holds holdingSlugSql for the page slug and the entity slug', async () => {
+    const text = await Bun.file(new URL('../src/core/engine-sql/collate-facts-home-reads.ts', import.meta.url)).text();
+    expect(text).toContain(`hp.source_id = $1 AND ${holdingSlugSql('hp.slug')}`);
+    expect(text).toContain(`AND NOT ${holdingSlugSql('f.entity_slug')}`);
+  });
 });

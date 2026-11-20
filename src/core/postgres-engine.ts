@@ -293,6 +293,7 @@ import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import * as collateRepairReadsImpl from './engine-sql/collate-repair-reads.ts';
+import * as collateFactsHomeReadsImpl from './engine-sql/collate-facts-home-reads.ts';
 import * as collateTypePageReadsImpl from './engine-sql/collate-type-page-reads.ts';
 import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
@@ -1231,6 +1232,10 @@ export class PostgresEngine implements BrainEngine {
   countRetypeCandidates(opts: collateTypePageReadsImpl.RetypeProbeOpts) { return collateTypePageReadsImpl.countRetypeCandidates(this.executeRaw.bind(this), opts); }
   listRetypeSampleSlugs(opts: collateTypePageReadsImpl.RetypeProbeOpts) { return collateTypePageReadsImpl.listRetypeSampleSlugs(this.executeRaw.bind(this), opts); }
   listClosedConsolidationTies(sourceIds: readonly string[]) { return collateRepairReadsImpl.listClosedConsolidationTies(this.executeRaw.bind(this), sourceIds); }
+  scanUnfencedFactRows(sourceId: string) { return collateFactsHomeReadsImpl.scanUnfencedFactRows(this.executeRaw.bind(this), sourceId); }
+  listHeldFactRows(sourceId: string, days: string) { return collateFactsHomeReadsImpl.listHeldFactRows(this.executeRaw.bind(this), sourceId, days); }
+  listFencedFactsOfMissingPages(sourceId: string) { return collateFactsHomeReadsImpl.listFencedFactsOfMissingPages(this.executeRaw.bind(this), sourceId); }
+  readPageFileOrigin(sourceId: string, slug: string) { return collateFactsHomeReadsImpl.readPageFileOrigin(this.executeRaw.bind(this), sourceId, slug); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.executeRaw.bind(this), opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.executeRaw.bind(this), opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.executeRaw.bind(this), opts, timeoutMs); }

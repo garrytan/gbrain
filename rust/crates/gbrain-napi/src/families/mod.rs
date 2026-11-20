@@ -66,6 +66,7 @@ mod extraction;
 mod facts;
 mod facts_cycle;
 mod facts_doctor;
+mod facts_home_reads;
 mod facts_loops;
 mod facts_provenance;
 mod facts_purge;

@@ -86,6 +86,7 @@ import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as repairReads from './repair-reads.ts';
+import * as factsHomeReads from './facts-home-reads.ts';
 import * as slugReads from './slug-reads.ts';
 import * as typePageReads from './type-page-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
@@ -138,6 +139,7 @@ export const STORE_MEMBERS = {
   // Alias fan-out reads (rust/docs/store/alias_fanout_reads.md).
   ...aliasFanoutReads,
   ...repairReads,
+  ...factsHomeReads,
   ...slugReads,
   ...typePageReads,
   ...entityIdentities,

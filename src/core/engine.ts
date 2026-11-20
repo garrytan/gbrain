@@ -127,6 +127,7 @@ import type {
 } from './engine-sql/jobs-subagent.ts';
 import type * as CollateRepairReads from './engine-sql/collate-repair-reads.ts';
 import type * as CollateTypePageReads from './engine-sql/collate-type-page-reads.ts';
+import type * as CollateFactsHomeReads from './engine-sql/collate-facts-home-reads.ts';
 import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3481,6 +3482,14 @@ export interface BrainEngine {
   listSourceIncarnations(sourceIds: string[]): Promise<Array<{ id: string; incarnation: string }>>;
   /** The facts the pre-#6023 writeback closed at their own instant, with their partners, in (source, id) order (repair/consolidate-ties.ts). */
   listClosedConsolidationTies(sourceIds: readonly string[]): Promise<CollateRepairReads.ClosedTieRow[]>;
+  /** The source's unexpired facts with no fence row, by entity slug in byte order (null first) then id, with page-existence flags (facts/facts-home.ts). */
+  scanUnfencedFactRows(sourceId: string): Promise<CollateFactsHomeReads.UnfencedScanRow[]>;
+  /** The source's unexpired fence rows on a holding page that name another entity, by entity slug in byte order then id; `days` is the age cutoff as text. */
+  listHeldFactRows(sourceId: string, days: string): Promise<CollateFactsHomeReads.HeldFactRow[]>;
+  /** The source's fenced, unexpired facts whose page is missing or soft-deleted, by id, with the page slug they sit on. */
+  listFencedFactsOfMissingPages(sourceId: string): Promise<Array<{ id: number; slug: string }>>;
+  /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page. */
+  readPageFileOrigin(sourceId: string, slug: string): Promise<CollateFactsHomeReads.PageFileOrigin | null>;
   /** The live pages of a type (in one source when given), by slug then id in byte order, up to `limit` (page-to-link phase, schema-pack/page-to-link.ts). */
   listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }): Promise<CollateTypePageReads.TypePageBody[]>;
   /** The live pages of a type in one source, by slug in byte order, up to `limit` (page-to-alias phase, schema-pack/page-to-alias.ts). */
