@@ -74,16 +74,20 @@ does not serve these members now stops at connect. Refusing is the safer answer:
 connect during a graduation.
 
 `src/core/rust-engine/store-members/sync-status-reads.ts` answers the reads of `gbrain sync status` (SQL for PGLite
-and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps no managed write request, effect,
-worktree refresh or derived generation, so each part of a read that joins those tables gives its empty answer:
+and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps write request, effect, worktree,
+source binding, worktree refresh and derived generation rows, but nothing on this engine yet writes the ones these reads
+join: managed writes (worktree-bound and managed-sync requests and their Git effects) are held until the
+managed-persistence capability flip, and no refresh, request-recovery or derived-generation writer has landed. A writer
+claim can store a source binding, but no unfinished request names its worktree. So each part of a read that joins those
+rows gives its empty answer, and must become a real read at the flip:
 
 | Member | Answer | Why |
 | --- | --- | --- |
-| `readSyncStatusSourceRow(sourceId)` | the source's incarnation, last commit and sync time, whether the drain lock row exists, the pass and withheld-delete rows, and the admission setting; `null` for an archived or missing source | While the stored admission reads as normal the two probes are `null`. Otherwise `admission_pinned` is whether the pass row is `open`, carries the live drain lease's token and started before the dated `set_at`, and `admission_destructive` is `false`. `writeback_failed` and `refresh` are `null`. |
-| `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed write committed, and no effect or fence generation is held. |
+| `readSyncStatusSourceRow(sourceId)` | the source's incarnation, last commit and sync time, whether the drain lock row exists, the pass and withheld-delete rows, and the admission setting; `null` for an archived or missing source | While the stored admission reads as normal the two probes are `null`. Otherwise `admission_pinned` is whether the pass row is `open`, carries the live drain lease's token and started before the dated `set_at`, and `admission_destructive` is `false` (no managed delete or keep_db reconcile is admitted while managed writes are held). `writeback_failed` and `refresh` are `null`: no managed Git effect and no refresh row is written. |
+| `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed-sync request commits, and no Git effect or fence generation is written, while managed writes are held. |
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
-| `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No write request exists to give a receipt. |
-| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No managed write request exists. |
+| `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No managed-sync request is admitted to give a receipt while managed writes are held. |
+| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No unfinished request names a bound worktree while managed writes are held, and no request-recovery writer has landed. |
 | `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
