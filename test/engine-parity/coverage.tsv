@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 951/958
+# covered: 953/960
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -70,7 +70,7 @@
 # page_visibility: 4/4
 # large_page: 1/1
 # relational_reads: 3/3
-# trust_fence: 1/1
+# trust_fence: 3/3
 # trust_proposals: 7/7
 # connect_gate: 4/4
 # jobs_wake: 21/21
@@ -80,7 +80,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	95	no	yes	yes	serves
+transaction	lifecycle	yes	97	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -88,7 +88,7 @@ getPage	pages	yes	108	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	504	yes	yes	yes	serves
+putPage	pages	yes	508	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -288,9 +288,9 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	40	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	42	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
-getTimeline	timeline	yes	19	yes	yes	yes	serves
+getTimeline	timeline	yes	21	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
@@ -308,9 +308,9 @@ upsertFile	raw_files	yes	3	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	38	yes	yes	yes	serves
+addTakesBatch	takes	yes	40	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	15	no	yes	yes	serves
+listTakes	takes	yes	17	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	1	no	yes	yes	refuses:takes
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -403,7 +403,7 @@ readPersistenceBrainId	import_guards	yes	7	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	8	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	10	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	50	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	52	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -1001,12 +1001,14 @@ readAdmittedPageRefs	relational_reads	yes	2	no	yes	yes	serves
 readPageSynopses	relational_reads	yes	2	no	yes	yes	serves
 readSeedTitleSlugs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	4	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	6	no	yes	yes	serves
+listHeldTimelineRows	trust_fence	yes	2	no	yes	yes	serves
+listHeldTakeRows	trust_fence	yes	2	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	8	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	2	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
 updatePendingTrustProposalAfter	trust_proposals	yes	1	no	yes	yes	serves
-transitionTrustProposal	trust_proposals	yes	1	no	yes	yes	serves
+transitionTrustProposal	trust_proposals	yes	3	no	yes	yes	serves
 listPendingContradictions	trust_proposals	yes	2	no	yes	yes	serves
 hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
 listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves

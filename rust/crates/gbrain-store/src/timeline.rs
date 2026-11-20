@@ -28,9 +28,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod held;
 mod receipt;
 mod tier;
 pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
+pub use held::HeldTimelineSpec;
 pub(crate) use tier::TimelineTrust;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";

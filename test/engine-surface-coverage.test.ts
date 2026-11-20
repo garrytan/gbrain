@@ -173,7 +173,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The entity resolver's page reads (engine-sql/entity-reads.ts, entities/resolve.ts).
   'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readNamedEntitySlugs',
   // The fence guard's reads of a page's fact rows (engine-sql/facts.ts, engine-sql/trust-fence.ts).
-  'listFenceRetireCandidates', 'listFenceFactRows',
+  'listFenceRetireCandidates', 'listFenceFactRows', 'listHeldTimelineRows', 'listHeldTakeRows',
   // The trust decision queue (engine-sql/trust-proposals.ts).
   'insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor', 'updatePendingTrustProposalAfter',
   'transitionTrustProposal',

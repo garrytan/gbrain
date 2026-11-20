@@ -1,8 +1,8 @@
 //! Takes and synthesis evidence: the `takes` and `synthesis_evidence` tables of the PGLite engine.
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
-//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, and the
-//! reads of `takes/reads.rs`.
+//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the
+//! reads of `takes/reads.rs`, and the fence guard's held takes (`takes/held.rs`).
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -34,8 +34,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod held;
 mod reads;
 
+pub use held::HeldTakeSpec;
 pub use reads::{McpResolvedInput, PurgeTakesInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
@@ -502,7 +504,6 @@ fn list_texts<'a>(name: &'a str, list: &'a Option<Vec<Option<String>>>) -> Vec<(
 // Record access.
 
 /// The take at `id`.
-#[allow(dead_code)]
 pub(crate) fn read_take(read: &dyn KvRead, id: u64) -> Result<Option<TakeRecord>> {
     get_json(read, &take_key(id))
 }

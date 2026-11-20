@@ -257,7 +257,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   large_page: ['readStoredBodyBytes'],
   // relational_reads: the relational recall arm's page reads (engine-sql/relational-reads.ts)
   relational_reads: ['readAdmittedPageRefs', 'readPageSynopses', 'readSeedTitleSlugs'],
-  trust_fence: ['listFenceFactRows'],
+  trust_fence: ['listFenceFactRows', 'listHeldTimelineRows', 'listHeldTakeRows'],
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
     'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions'],
   connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],

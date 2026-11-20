@@ -44,6 +44,22 @@ the record as it is.
 | `brain.addSynthesisEvidence(rows)` | number of new rows (an existing key is skipped). `int4` checks for every row first, then `NOT NULL` per row, then the two foreign keys over the inserted rows | `addSynthesisEvidence` |
 | `brain.matchTakeRows(pageId, rows, limit)` | the row numbers of the page's takes whose claim, kind or holder differs from the fence row of the same number (`IS DISTINCT FROM`: a null fence field differs), ascending, at most `limit` (null is no limit, negative is `invalid_argument`). A take that two fence rows of its number both differ from is listed twice, as the join lists it | `matchTakeRows` |
 | `brain.deleteTakeRows(pageId, rowNums)` | null. Deletes the page's takes at those row numbers with the evidence rows that cite them and their vectors; a null entry or a number with no take deletes nothing, an empty list writes nothing | `deleteTakeRows` |
+| `brain.listHeldTakeRows({ ids, writer?, pending? })` | `{ id, trust_tier }[]` by id: of the listed takes, those a write may not delete or overwrite; see "Held takes" | `listHeldTakeRows` |
+
+## Held takes
+
+`listHeldTakeRows({ ids, writer?, pending? })` (capability `takes`; reference `engine-sql/trust-fence.ts`; code
+`takes/held.rs`, napi `families/trust_fence.rs`, member `store-members/trust-fence.ts`) is the fence guard's read of
+the takes a write may not delete or overwrite (`trust/fence-guard.ts` `heldRows` for `takes`, called by the takes
+reconcile in `cycle/extract-takes.ts`). Of the listed ids, a take is held when its stored tier (stamped by
+`store_take`) ranks above the writer, or, with `pending`, when a pending `forget` proposal targets it
+(`trust/proposals.rs` `pending_forget` on table `takes`; a take that is only the related row, or a proposal on another
+table with the same id, holds nothing). The writer is the named tier, a name that is no tier ranking 0 as the SQL rank
+`CASE` does, else the store's write trust context (`fence_context()`, `unknown` when undeclared). Takes are keyed by
+id, so each listed id is one lookup; `FOR UPDATE` needs nothing in a store with one writer. An id with no take, and an
+empty list, read nothing. On PGLite and Postgres the statement is the one `heldRows` sent through `executeRaw`, byte
+for byte (pinned by `test/engine-sql-held-take-rows-golden.test.ts`). Parity case:
+`test/engine-parity/take-held-rows.test.ts`.
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
 whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge

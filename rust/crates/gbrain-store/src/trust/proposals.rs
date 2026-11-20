@@ -346,6 +346,24 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
+/// The open contest of one row (fence-guard.ts `OPEN_CONTEST`): a pending `forget` proposal
+/// targets `(table, row_id)`.
+pub(crate) fn pending_forget(read: &dyn KvRead, table: &str, row_id: i64) -> Result<bool> {
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && p.action == "forget"
+            && p.target_table == table
+            && p.target_id == row_id
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
 /// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
 /// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
