@@ -56,7 +56,18 @@ export function validateSlug(slug: string): string {
   if (/%2e|%2f|%5c/i.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". URL-encoded path separators are not allowed in slugs.`);
   }
-  return slug.toLowerCase();
+  return normalizeSlug(slug);
+}
+
+/**
+ * The one slug normal form: lowercase, then Unicode NFC. Writes store slugs in
+ * this form (validateSlug) and every read that takes a slug from a caller
+ * normalizes it the same way, so `People/Alice-Example` and a decomposed
+ * `café` find the page `people/alice-example` / `café` was stored as.
+ * NFC runs last because lowercasing can leave a sequence that is not composed.
+ */
+export function normalizeSlug(slug: string): string {
+  return slug.toLowerCase().normalize('NFC');
 }
 
 /**

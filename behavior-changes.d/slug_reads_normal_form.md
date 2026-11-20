@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Slug reads now normalize a slug the way writes do: lowercase, with accented letters composed (Unicode NFC). Writes already lowercased slugs, but reads did not, so gbrain get People/Alice-Example answered page not found for the page stored as people/alice-example. Every command and tool that takes a slug now reads it in the stored form, so a capitalised slug, or an accented slug typed or copied in decomposed form (as macOS file names are), finds the page. A put with the decomposed spelling of an existing accented slug now updates that page instead of creating a second page that prints the same name. A body link written in decomposed form now links the existing page instead of being listed as a wanted page, and a fact saved for an accented entity before its page exists keeps the accented slug, so the entity card shows it once the page is created. Pages stored in decomposed form before this release still open with the spelling gbrain list prints.
