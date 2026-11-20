@@ -115,6 +115,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   readPolicyFragment: 'src/core/search/private-visibility.ts: accessAllowedForAllSql (readers identities checked by validIdentity before they are quoted in) AND the constant privacyPartSql or TRUE over a caller page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
   callerAccessAllowedSql: 'src/core/search/private-visibility.ts: the member-access part of privatePagesFilterForCaller alone (callerAccessSql); readers identities pass validIdentity before they are quoted in, and a satisfied rule id that is not a valid qualified id empties the set (fail closed); no values',
+  privatePagesFilterFragmentFast: 'src/core/search/private-visibility.ts: the no-caller page policy (privatePagesFilterFragment) behind a constant frontmatter pre-filter, over a caller page alias; no values',
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',
   privateTimelineEventFilterForCaller: 'src/core/search/private-visibility.ts: constant timeline-event predicate ORed with isValidSourceId-checked private-readable source ids',

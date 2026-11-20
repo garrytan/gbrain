@@ -1334,6 +1334,14 @@ export class PostgresEngine implements BrainEngine {
   listStaleMentionLinks(limit: number) { return collatePageReadsImpl.listStaleMentionLinks(this.executeRaw.bind(this), limit); }
   listPoolEntityPairs(scope: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[1], filters: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[2]) { return collatePageReadsImpl.listPoolEntityPairs(this.executeRaw.bind(this), scope, filters); }
   listPoolUnbackedKeys(scope: Parameters<typeof collatePageReadsImpl.listPoolUnbackedKeys>[1], keys: readonly string[], limit: number) { return collatePageReadsImpl.listPoolUnbackedKeys(this.executeRaw.bind(this), scope, keys, limit); }
+  readPageSizeRows(sourceId: string, maxBytes: number, slugs: readonly string[] | null) { return collatePageReadsImpl.readPageSizeRows(this.executeRaw.bind(this), sourceId, maxBytes, slugs); }
+  listChatChannelCensus(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean) { return collatePageReadsImpl.listChatChannelCensus(this.executeRaw.bind(this), sourceIds, chatTypes, dmTypes, hidePrivate); }
+  listLinkPageMetadataForSlugs(sourceId: string, slugs: readonly string[]) { return collatePageReadsImpl.listLinkPageMetadataForSlugs(this.executeRaw.bind(this), sourceId, slugs); }
+  listAttendedOriginSlugs(sourceId: string, slugs: readonly string[] | null) { return collatePageReadsImpl.listAttendedOriginSlugs(this.executeRaw.bind(this), sourceId, slugs); }
+  readCompanyBrainEvidenceRows(sourceId: string) { return collatePageReadsImpl.readCompanyBrainEvidenceRows(this.executeRaw.bind(this), sourceId); }
+  listShelfPageRows(sourceId: string) { return collatePageReadsImpl.listShelfPageRows(this.executeRaw.bind(this), sourceId); }
+  listLiveSourceIncarnations(sourceIds: readonly string[]) { return collatePageReadsImpl.listLiveSourceIncarnations(this.executeRaw.bind(this), sourceIds); }
+  listAttendanceScanWindow(sourceId: string, afterSlug: string, limit: number) { return collatePageReadsImpl.listAttendanceScanWindow(this.executeRaw.bind(this), sourceId, afterSlug, limit); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }

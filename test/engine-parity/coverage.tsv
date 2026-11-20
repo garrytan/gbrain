@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 997/1006
+# covered: 1005/1014
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -22,6 +22,7 @@
 # timeline: 19/19
 # ontology: 4/4
 # collate_reads: 9/9
+# collate_sets: 8/8
 # raw_files: 7/7
 # takes: 24/24
 # dream: 3/3
@@ -315,6 +316,14 @@ listStaleMentionPages	collate_reads	yes	1	no	yes	yes	serves
 listStaleMentionLinks	collate_reads	yes	1	no	yes	yes	serves
 listPoolEntityPairs	collate_reads	yes	1	no	yes	yes	serves
 listPoolUnbackedKeys	collate_reads	yes	1	no	yes	yes	serves
+readPageSizeRows	collate_sets	yes	1	no	yes	yes	serves
+listChatChannelCensus	collate_sets	yes	1	no	yes	yes	serves
+listLinkPageMetadataForSlugs	collate_sets	yes	1	no	yes	yes	serves
+listAttendedOriginSlugs	collate_sets	yes	1	no	yes	yes	serves
+readCompanyBrainEvidenceRows	collate_sets	yes	1	no	yes	yes	serves
+listShelfPageRows	collate_sets	yes	1	no	yes	yes	serves
+listLiveSourceIncarnations	collate_sets	yes	2	no	yes	yes	serves
+listAttendanceScanWindow	collate_sets	yes	2	no	yes	yes	serves
 putRawData	raw_files	yes	5	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	5	no	yes	yes	serves
@@ -359,7 +368,7 @@ insertFacts	facts	yes	76	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	29	no	yes	yes	serves
 listFactsByEntity	facts	yes	31	yes	yes	yes	serves
-listFactsSince	facts	yes	21	yes	yes	yes	serves
+listFactsSince	facts	yes	23	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
 listFactsBySession	facts	yes	12	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -822,7 +831,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	43	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	36	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -883,7 +892,7 @@ listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	10	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	3	no	yes	yes	serves
-readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
+readDatabaseClock	cli_reads_import	yes	3	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves

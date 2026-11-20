@@ -415,15 +415,9 @@ export function pageSizeState(bytes: number, frontmatter: Record<string, unknown
  * pageSizeState for stored pages of one source with a non-null state: the given slugs, or (null) every
  * such page in the source, as a full sync walked them all.
  */
-export async function readPageSizeStates(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string; source_id?: string } & PageSizeState>> {
+export async function readPageSizeStates(engine: Pick<BrainEngine, 'readPageSizeRows'>, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string; source_id?: string } & PageSizeState>> {
   if (slugs?.length === 0) return [];
-  const bytes = `(CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)`;
-  const rows = await engine.executeRaw<{ slug: string; bytes: number; segmented: boolean; frontmatter: Record<string, unknown> | null; state: PageBudgetState | null; reason: string | null }>(
-    `SELECT p.slug, ${bytes}::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
-       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL${slugs ? ' AND p.slug = ANY($3::text[])' : ''}
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR ${bytes} > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`,
-    slugs ? [sourceId, PAGE_INLINE_MAX_BYTES, [...slugs]] : [sourceId, PAGE_INLINE_MAX_BYTES]);
+  const rows = await engine.readPageSizeRows(sourceId, PAGE_INLINE_MAX_BYTES, slugs);
   return rows.flatMap(row => {
     const state = pageSizeState(Number(row.bytes), row.frontmatter, row.state ? { state: row.state, reason: row.reason } : null, row.segmented === true);
     return state ? [{ slug: row.slug, ...(state.embedding === 'held' ? { source_id: sourceId } : {}), ...state }] : [];
@@ -431,7 +425,7 @@ export async function readPageSizeStates(engine: Pick<BrainEngine, 'executeRaw'>
 }
 
 /** The receipt field for one written page: `{ size_state }` for a large or embed_skip page, else nothing (no query). */
-export async function sizeStateField(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string,
+export async function sizeStateField(engine: Pick<BrainEngine, 'readPageSizeRows'>, sourceId: string, slug: string,
   page: { body_storage?: BodyStorage | null; body_bytes?: number | null; compiled_truth?: string | null; timeline?: string | null; frontmatter?: Record<string, unknown> | null } | null | undefined): Promise<{ size_state?: PageSizeState }> {
   if (!page) return {};
   const bytes = pageBodyBytes(page);

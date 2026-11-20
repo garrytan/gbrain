@@ -37,6 +37,14 @@ pub(crate) fn budget_key(page_id: u64) -> Vec<u8> {
     key
 }
 
+/// The `(state, reason)` of a page's ledger row, or `None` when it has none (`readPageSizeRows`'s left join).
+pub(crate) fn budget_state(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<(String, Option<String>)>> {
+    Ok(get_json::<BudgetRecord>(read, &budget_key(page_id))?.map(|r| (r.state, r.reason)))
+}
+
 /// One ledger row: PGLite's columns, `reserved_at` and `updated_at` in microseconds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BudgetRecord {

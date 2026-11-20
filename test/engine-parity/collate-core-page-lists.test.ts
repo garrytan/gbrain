@@ -65,14 +65,14 @@ describe('attendance repair scan window', () => {
   const preview = (engine: BrainEngine, limit: number, afterSlug?: string) =>
     previewAttendanceRepair(engine, { remote: false, sourceId: 'att-example', limit, ...(afterSlug === undefined ? {} : { afterSlug }) } as never);
 
-  parityTest('previewAttendanceRepair lists its scan window by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('previewAttendanceRepair lists its scan window by slug byte', { methods: ['putPage', 'listLiveSourceIncarnations', 'readDatabaseClock', 'listAttendanceScanWindow'] }, async (engine, backend) => {
     await seed(engine, backend);
     const slugs = (await preview(engine, 10)).window.map(p => p.slug);
     expect(slugs).toEqual([...BYTE_SLUGS]);
     return slugs;
   });
 
-  parityTest('the attendance-repair after-slug keyset pages through the pages without a skip or a repeat', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('the attendance-repair after-slug keyset pages through the pages without a skip or a repeat', { methods: ['putPage', 'listLiveSourceIncarnations', 'readDatabaseClock', 'listAttendanceScanWindow'] }, async (engine, backend) => {
     await seed(engine, backend);
     const walked: string[] = [];
     let after: string | undefined;
@@ -103,7 +103,7 @@ describe('core and company-brain lists', () => {
     return notices;
   });
 
-  parityTest('readCompanyBrainEvidence picks the first page, owner and decision by byte', { methods: ['putPage', 'addLinksBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readCompanyBrainEvidence picks the first page, owner and decision by byte', { methods: ['putPage', 'addLinksBatch', 'readCompanyBrainEvidenceRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'brain-example');
     const put = (slug: string, type: string) => engine.putPage(slug, { type, title: `Title ${slug}`, compiled_truth: `${slug} body`, timeline: '' } as never, { sourceId: 'brain-example' });
     const link = (from: string, to: string, link_type: string) => ({ from_slug: from, to_slug: to, link_type, context: '', link_source: 'markdown',
@@ -125,7 +125,7 @@ describe('core and company-brain lists', () => {
 });
 
 describe('census, size states and file lists', () => {
-  parityTest('chatChannelCensus names the chat sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('chatChannelCensus names the chat sources by byte', { methods: ['putPage', 'listChatChannelCensus'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       await engine.putPage('chat/day-one', note('Day one', { type: 'dm' }), { sourceId: id });
@@ -135,7 +135,7 @@ describe('census, size states and file lists', () => {
     return census.chat_sources;
   });
 
-  parityTest('readPageSizeStates lists the pages that carry a size state by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readPageSizeStates lists the pages that carry a size state by slug byte', { methods: ['putPage', 'readPageSizeRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'size-example');
     for (const slug of MIXED_SLUGS) await engine.putPage(slug, note(slug, { frontmatter: { embed_skip: true } }), { sourceId: 'size-example' });
     const states = (await readPageSizeStates(engine, 'size-example', null)).map(s => s.slug);
@@ -143,7 +143,7 @@ describe('census, size states and file lists', () => {
     return states;
   });
 
-  parityTest('fileLinkOwnership lists the scoped pages by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('fileLinkOwnership lists the scoped pages by slug byte', { methods: ['putPage', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'link-example');
     for (const slug of MIXED_SLUGS) await engine.putPage(slug, note(slug), { sourceId: 'link-example' });
     const { metadata } = await fileLinkOwnership(engine, 'link-example', { slugs: MIXED_SLUGS });
@@ -198,7 +198,7 @@ describe('storage shelf and fact pool lists', () => {
     return ids;
   });
 
-  parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'listShelfPageRows'] }, async (engine, backend) => {
     await seedShelf(engine, backend);
     const ids = (await readShelfCards(engine)).map(c => c.id);
     expect(ids).toEqual([...BYTE_SLUGS]);

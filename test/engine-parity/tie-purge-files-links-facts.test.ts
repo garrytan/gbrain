@@ -19,7 +19,10 @@
  *  - Why existing coverage misses it: the cases seeded one row per key (distinct distances, one request per id, distinct
  *    file names, one source per slug), so no limit ever cut through a tie.
  *  - Seam: every reader runs raw SQL, so the Rust arm stops on its raw_sql refusal at the first raw call. Facts go in
- *    through insertFacts; requests, files and the page rewrite are harness-only SQL (no engine writer).
+ *    through insertFacts and are read back through listFactsSince, so the two fact cases seed on the Rust arm too and reach
+ *    their first raw read: planFactPurge (purge.ts:167, then withdrawal-discovery.ts:117) for the purge probe, and
+ *    factsEmbeddingColumn (fact-relevance.ts:156) for the nearest arm. Requests, files and the page rewrite are
+ *    harness-only SQL (no engine writer); the facts' heap-order rewrite is rewriteFactRows in the harness.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -30,7 +33,7 @@ import { planFactPurge } from '../../src/core/facts/purge.ts';
 import { collectFactCandidates } from '../../src/core/search/fact-relevance.ts';
 import { getEmbeddingModel } from '../../src/core/ai/gateway.ts';
 import { runPageToLinkCore } from '../../src/core/schema-pack/page-to-link.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, rewriteFactRows, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -52,18 +55,18 @@ function ctxFor(engine: BrainEngine): OperationContext {
  * order. The rows at odd positions are then rewritten, so heap order is not id order: ordered by distance alone, the
  * tied rows come back out of id order on PGLite and Postgres (seen: positions 7, 2, 4, 6, 1 and 6, 4, 1).
  */
-async function seedTiedFacts(engine: BrainEngine, model: string, tied: number[]): Promise<number[]> {
+async function seedTiedFacts(engine: BrainEngine, backend: ParityBackend, model: string, tied: number[]): Promise<number[]> {
   const rows = Array.from({ length: 8 }, (_, i) => ({ fact: `Ana keeps tied bee colony ${i}`, entity_slug: null, kind: 'fact', visibility: 'world',
     source: 'test', embedding: tied.includes(i) ? SAME : FAR, embedding_model: model }));
   await engine.insertFacts(rows as never, { source_id: SRC });
-  const ids = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 ORDER BY id`, [SRC])).map(r => Number(r.id));
-  await engine.executeRaw(`UPDATE facts SET source = 'test' WHERE id = ANY($1::bigint[])`, [ids.filter((_, i) => i % 2 === 1)]);
+  const ids = (await engine.listFactsSince(SRC, new Date(0), { limit: 100 })).map(f => Number(f.id)).sort((a, b) => a - b);
+  await rewriteFactRows(engine, backend, ids.filter((_, i) => i % 2 === 1));
   return ids;
 }
 
 describe('a limit over tied sort keys cuts the same rows on every engine arm', () => {
-  parityTest('the purge receipt probe lists tied nearest facts by fact id', { methods: ['insertFacts', 'loadPurgeTarget', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const ids = await seedTiedFacts(engine, 'test:model', [1, 2, 4, 6, 7]);
+  parityTest('the purge receipt probe lists tied nearest facts by fact id', { methods: ['insertFacts', 'listFactsSince', 'loadPurgeTarget', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+    const ids = await seedTiedFacts(engine, backend, 'test:model', [1, 2, 4, 6, 7]);
     const target = (await engine.loadPurgeTarget(ids[7]!, SRC))!;
     const plan = await planFactPurge(engine, target, false);
     const receipt = await verifyFactPurge(engine, { target, plan, dryRun: true }) as unknown as { vector_probe: { status: string; candidates: Array<{ fact_id: number }> } };
@@ -121,8 +124,8 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return { would_convert: rule.would_convert, converted: rule.converted, unresolved: rule.unresolved };
   });
 
-  parityTest('the fact pool nearest arm lists tied nearest facts by fact id', { methods: ['insertFacts', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const ids = await seedTiedFacts(engine, getEmbeddingModel(), [1, 4, 6]);
+  parityTest('the fact pool nearest arm lists tied nearest facts by fact id', { methods: ['insertFacts', 'listFactsSince', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+    const ids = await seedTiedFacts(engine, backend, getEmbeddingModel(), [1, 4, 6]);
     const pool = await collectFactCandidates(engine, 'zzqx', { sourceIds: [SRC], worldOnly: true, excludePrivate: false }, SAME,
       { depth: { keyword: 5, cosine: 3, entity: 5 } });
     const ranks = pool.candidates.map(c => ids.indexOf(c.id));

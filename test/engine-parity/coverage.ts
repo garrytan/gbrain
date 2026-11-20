@@ -88,6 +88,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'listTimelineOrphanPages'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   collate_reads: ['listPageTypePairs', 'countPagesWithMentionLinks', 'listGazetteerSourceIds', 'listGazetteerPages', 'listGazetteerAliasRows', 'listStaleMentionPages', 'listStaleMentionLinks', 'listPoolEntityPairs', 'listPoolUnbackedKeys'],
+  collate_sets: ['readPageSizeRows', 'listChatChannelCensus', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'readCompanyBrainEvidenceRows', 'listShelfPageRows', 'listLiveSourceIncarnations', 'listAttendanceScanWindow'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles', 'listReadableFileRows'],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',

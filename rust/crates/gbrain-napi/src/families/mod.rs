@@ -17,6 +17,7 @@ mod collate_identity_downgrades;
 mod collate_phantom_redirect;
 mod collate_reads;
 mod collate_take_proposals;
+mod collate_sets;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;

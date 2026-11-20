@@ -18,6 +18,7 @@ pub mod chunks;
 pub mod cli_reads;
 pub mod collate_command_reads;
 pub mod collate_reads;
+pub mod collate_sets;
 pub mod config;
 pub mod cycle_window;
 pub mod env;

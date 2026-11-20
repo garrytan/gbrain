@@ -83,8 +83,7 @@ export async function listCards(engine: BrainEngine, opts: { limit: number; offs
 
 /** Every live page on the shelf, sorted by id, with the card it stores (null when its page holds none) and the page's access labels. Trusted local readers only. */
 export async function readShelfCards(engine: BrainEngine): Promise<Array<{ id: string; card: Card | null; labels: AccessLabels }>> {
-  const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; frontmatter: unknown }>(
-    'SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug COLLATE "C"', [STORAGE_SOURCE_ID]);
+  const rows = await engine.listShelfPageRows(STORAGE_SOURCE_ID);
   return rows.map((row) => {
     const frontmatter = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) as Record<string, unknown> : (row.frontmatter ?? {}) as Record<string, unknown>;
     return { id: row.slug, card: row.type === STORED_OBJECT_TYPE ? cardFromPage({ slug: row.slug, title: row.title, frontmatter }) : null, labels: accessLabels(frontmatter) };

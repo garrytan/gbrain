@@ -97,8 +97,7 @@ export function validateAttendanceRepairScope(sourceId: string, limit = ATTENDAN
 }
 
 async function identity(engine: BrainEngine, sourceId: string) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND archived IS NOT TRUE AND archived_at IS NULL', [[sourceId, 'default']]);
+  const sources = await engine.listLiveSourceIncarnations([sourceId, 'default']);
   const source = sources.find(row => row.id === sourceId);
   const brain = sources.find(row => row.id === 'default');
   if (!source || !brain) throw new Error(`Attendance repair requires an existing live source and brain identity: ${!source
@@ -241,13 +240,12 @@ export async function previewAttendanceRepair(engine: BrainEngine, options: Atte
   const limit = options.limit ?? ATTENDANCE_REPAIR_LIMIT;
   const afterSlug = options.afterSlug ?? '';
   validateAttendanceRepairScope(options.sourceId, limit, afterSlug);
-  const [{ issued_at }] = await engine.executeRaw<{ issued_at: string }>(
-    'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS issued_at');
+  // The database clock to the millisecond (floor(extract(epoch FROM clock_timestamp())*1000)).
+  const issued_at = Date.parse(await engine.readDatabaseClock());
   const selected = await identity(engine, options.sourceId);
   selected.brain = attendanceRepairHash([selected.brain, options.brainIdentity ?? null]);
   const schema = await ontology(engine, options.sourceId);
-  const window = await engine.executeRaw<ScanPage>(`SELECT ${PAGE_PIN_SQL}, deleted_at IS NOT NULL AS deleted
-    FROM pages WHERE source_id=$1 AND slug COLLATE "C">$2 ORDER BY slug COLLATE "C" LIMIT $3`, [options.sourceId, afterSlug, limit]);
+  const window: ScanPage[] = await engine.listAttendanceScanWindow(options.sourceId, afterSlug, limit);
   const origins: AttendanceOriginPreview[] = [];
   let retainedBytes = 0;
   for (const page of window.filter(page => page.type === 'meeting' && !page.deleted)) {
@@ -267,7 +265,7 @@ export async function previewAttendanceRepair(engine: BrainEngine, options: Atte
     counts.skipped += origin.skipped; counts.ambiguous += origin.ambiguous;
     counts.pack_semantics_preserved += Number(origin.reason === 'pack_semantics_preserved');
   }
-  const preview: AttendanceRepairPreview = { version: 2, approvalId: randomUUID(), issuedAt: Number(issued_at), parser: ATTENDANCE_REPAIR_PARSER, ...selected,
+  const preview: AttendanceRepairPreview = { version: 2, approvalId: randomUUID(), issuedAt: issued_at, parser: ATTENDANCE_REPAIR_PARSER, ...selected,
     sourceId: options.sourceId, ontology: schema.hash, pack: schema.name, direction: schema.direction, afterSlug, limit,
     frontmatter: 'report_only', nextAfterSlug: window.at(-1)?.slug ?? afterSlug, complete: window.length < limit,
     window, origins, counts, diagnostics: origins.filter(origin => origin.reason).slice(0, 20)

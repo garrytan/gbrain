@@ -296,6 +296,24 @@ export async function seedBeliefLifetimes(engine: BrainEngine, backend: ParityBa
   else await enableBeliefLedger(engine, sourceId);
 }
 
+/**
+ * Fixture: rewrite fact rows in place (`UPDATE facts SET source = 'test'`), so a SQL heap no longer holds them in id order.
+ * BrainEngine has no such write; the SQL arms use harness-only SQL. The Rust store keeps facts by id, so its arm has no heap
+ * order to disturb and does nothing.
+ */
+export async function rewriteFactRows(engine: BrainEngine, backend: ParityBackend, ids: readonly number[]): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(`UPDATE facts SET source = 'test' WHERE id = ANY($1::bigint[])`, [[...ids]]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
 export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
   switch (backend) {

@@ -3678,6 +3678,22 @@ export interface BrainEngine {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The pool's (source_id, entity_slug) pairs among `keys` with no live page at that slug, at most `limit`, by byte. */
   listPoolUnbackedKeys(scope: FactsTrustSql.FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>>;
+  /** The live pages of one source (only `slugs` when given) a size-state read reports, by slug (by byte): embed_skip, over `maxBytes`, segmented, or with a budget row. */
+  readPageSizeRows(sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<CollatePageReadsSql.PageSizeRow[]>;
+  /** The chat pages and distinct channels of each source among `sourceIds`, by source (by byte); `hidePrivate` leaves out the pages the caller cannot read. */
+  listChatChannelCensus(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<CollatePageReadsSql.ChatCensusRow[]>;
+  /** The live pages of one source named in `slugs` as the link resolver reads them, by slug (by byte). */
+  listLinkPageMetadataForSlugs(sourceId: string, slugs: readonly string[]): Promise<CollatePageReadsSql.LinkPageMetadataForSlugsRow[]>;
+  /** The slugs of one source's pages (only `slugs` when given) that carry a canonical attendance edge to themselves, in no promised order. */
+  listAttendedOriginSlugs(sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string }>>;
+  /** The company-brain evidence of one source: its first ownership link, first decision supersession and first page, by byte. */
+  readCompanyBrainEvidenceRows(sourceId: string): Promise<CollatePageReadsSql.CompanyBrainEvidenceRows>;
+  /** Every live page of one source with its title, type and frontmatter, by slug (by byte). */
+  listShelfPageRows(sourceId: string): Promise<CollatePageReadsSql.ShelfPageRow[]>;
+  /** The id and incarnation of each of `sourceIds` that exists and is not archived, in no promised order. */
+  listLiveSourceIncarnations(sourceIds: readonly string[]): Promise<Array<{ id: string; incarnation: string }>>;
+  /** The first `limit` pages of one source (soft-deleted included) after `afterSlug` by byte, in slug (byte) order. */
+  listAttendanceScanWindow(sourceId: string, afterSlug: string, limit: number): Promise<CollatePageReadsSql.AttendanceScanRow[]>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

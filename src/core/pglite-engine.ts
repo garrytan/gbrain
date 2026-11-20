@@ -1659,6 +1659,14 @@ export class PGLiteEngine implements BrainEngine {
   listStaleMentionLinks(limit: number) { return collatePageReadsImpl.listStaleMentionLinks(this.rawRead, limit); }
   listPoolEntityPairs(scope: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[1], filters: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[2]) { return collatePageReadsImpl.listPoolEntityPairs(this.rawRead, scope, filters); }
   listPoolUnbackedKeys(scope: Parameters<typeof collatePageReadsImpl.listPoolUnbackedKeys>[1], keys: readonly string[], limit: number) { return collatePageReadsImpl.listPoolUnbackedKeys(this.rawRead, scope, keys, limit); }
+  readPageSizeRows(sourceId: string, maxBytes: number, slugs: readonly string[] | null) { return collatePageReadsImpl.readPageSizeRows(this.rawRead, sourceId, maxBytes, slugs); }
+  listChatChannelCensus(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean) { return collatePageReadsImpl.listChatChannelCensus(this.rawRead, sourceIds, chatTypes, dmTypes, hidePrivate); }
+  listLinkPageMetadataForSlugs(sourceId: string, slugs: readonly string[]) { return collatePageReadsImpl.listLinkPageMetadataForSlugs(this.rawRead, sourceId, slugs); }
+  listAttendedOriginSlugs(sourceId: string, slugs: readonly string[] | null) { return collatePageReadsImpl.listAttendedOriginSlugs(this.rawRead, sourceId, slugs); }
+  readCompanyBrainEvidenceRows(sourceId: string) { return collatePageReadsImpl.readCompanyBrainEvidenceRows(this.rawRead, sourceId); }
+  listShelfPageRows(sourceId: string) { return collatePageReadsImpl.listShelfPageRows(this.rawRead, sourceId); }
+  listLiveSourceIncarnations(sourceIds: readonly string[]) { return collatePageReadsImpl.listLiveSourceIncarnations(this.rawRead, sourceIds); }
+  listAttendanceScanWindow(sourceId: string, afterSlug: string, limit: number) { return collatePageReadsImpl.listAttendanceScanWindow(this.rawRead, sourceId, afterSlug, limit); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }

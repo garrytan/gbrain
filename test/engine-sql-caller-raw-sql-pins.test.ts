@@ -21,7 +21,7 @@ import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { holdingSlugSql } from '../src/core/facts-fence.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
-import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterFragmentFast, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
 import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
@@ -38,6 +38,11 @@ import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { HANDLE_FRONTMATTER_KEYS } from '../src/core/by-mention.ts';
 import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 import { poolWhere, type FactPoolScope } from '../src/core/engine-sql/facts-trust.ts';
+
+/** page-embedding-budget.ts readPageSizeStates `bytes` at dded7edc51, verbatim. */
+const PAGE_SIZE_BYTES = `(CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)`;
+/** attendance-repair.ts PAGE_PIN_SQL at dded7edc51, verbatim. */
+const ATTENDANCE_PAGE_PIN_SQL = 'id::text, slug, source_id, type, knowledge_revision::text AS revision';
 
 const POOL_SCOPE: FactPoolScope = { sourceIds: ['default'], worldOnly: true, excludePrivate: false };
 
@@ -655,6 +660,79 @@ SELECT source_id, type FROM pairs`],
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
      ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT $${n + 2}`];
     },
+  },
+  // page-embedding-budget.ts readPageSizeStates composed the text with `bytes` and an optional slug filter; the member sends one constant per form.
+  ...([
+    ['all', null, ''],
+    ['slugs', ['notes/a'], ' AND p.slug = ANY($3::text[])'],
+  ] as const).map(([variant, slugs, slugFilter]): Pin => ({
+    from: 'src/core/page-embedding-budget.ts:418 readPageSizeStates, at dded7edc51',
+    case: { method: 'readPageSizeRows', variant, run: e => e.readPageSizeRows('default', 1048576, slugs ? [...slugs] : null) },
+    texts: [`SELECT p.slug, ${PAGE_SIZE_BYTES}::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL${slugFilter}
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR ${PAGE_SIZE_BYTES} > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`],
+  })),
+  ...([['open', false], ['hide-private', true]] as const).map(([variant, hidePrivate]): Pin => ({
+    from: 'src/core/grants/shared-exposure.ts:99 chatChannelCensus, at dded7edc51',
+    case: { method: 'listChatChannelCensus', variant, run: e => e.listChatChannelCensus(['default'], ['chat', 'dm'], ['dm'], hidePrivate) },
+    texts: () => [`SELECT p.source_id, count(*) AS chat_pages,
+            count(DISTINCT CASE WHEN p.type = ANY($3::text[]) THEN 'dm:' || p.slug
+              ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
+                lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
+       FROM pages p
+      WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
+        ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
+      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`],
+  })),
+  {
+    from: 'src/core/link-reconciliation.ts:220 fileLinkOwnership (scoped pages), at dded7edc51',
+    case: { method: 'listLinkPageMetadataForSlugs', variant: 'default', run: e => e.listLinkPageMetadataForSlugs('default', ['people/alice-example']) },
+    texts: [`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug COLLATE "C"`],
+  },
+  ...([['all', null, ''], ['slugs', ['meetings/a'], ' AND o.slug = ANY($2::text[])']] as const).map(([variant, slugs, slugFilter]): Pin => ({
+    from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership (attendance origins), at dded7edc51',
+    case: { method: 'listAttendedOriginSlugs', variant, run: e => e.listAttendedOriginSlugs('default', slugs ? [...slugs] : null) },
+    texts: [`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id${slugFilter}`],
+  })),
+  {
+    from: 'src/core/company-brain/evidence.ts:10 readCompanyBrainEvidence (owner, decision and first page), at dded7edc51',
+    case: { method: 'readCompanyBrainEvidenceRows', variant: 'default', run: e => e.readCompanyBrainEvidenceRows('default') },
+    texts: [
+      `SELECT f.slug AS from_slug,f.title AS from_title,t.slug AS to_slug,t.title AS to_title
+     FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+     WHERE f.source_id=$1 AND t.source_id=$1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+       AND l.link_type='owned_by' AND l.link_source IN ('frontmatter','markdown')
+       AND (l.origin_page_id=f.id OR (l.origin_page_id IS NULL AND l.link_source='markdown'))
+     ORDER BY CASE WHEN f.type='customer' THEN 0 ELSE 1 END,f.slug COLLATE "C",t.slug COLLATE "C" LIMIT 1`,
+      `SELECT f.slug AS from_slug,f.title AS from_title,t.slug AS to_slug,t.title AS to_title
+     FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+     WHERE f.source_id=$1 AND t.source_id=$1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+       AND f.type='decision' AND t.type='decision' AND l.link_type='supersedes'
+       AND l.link_source IN ('frontmatter','markdown')
+       AND (l.origin_page_id=f.id OR (l.origin_page_id IS NULL AND l.link_source='markdown'))
+     ORDER BY f.slug COLLATE "C",t.slug COLLATE "C" LIMIT 1`,
+      'SELECT slug,title FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug COLLATE "C" LIMIT 1',
+    ],
+  },
+  {
+    from: 'src/core/storage-manifest/find.ts:86 readShelfCards, at dded7edc51',
+    case: { method: 'listShelfPageRows', variant: 'default', run: e => e.listShelfPageRows('default') },
+    texts: ['SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug COLLATE "C"'],
+  },
+  {
+    from: 'src/core/attendance-repair.ts:100 identity, at dded7edc51',
+    case: { method: 'listLiveSourceIncarnations', variant: 'default', run: e => e.listLiveSourceIncarnations(['default']) },
+    texts: ['SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND archived IS NOT TRUE AND archived_at IS NULL'],
+  },
+  {
+    from: 'src/core/attendance-repair.ts:249 previewAttendanceRepair (scan window), at dded7edc51',
+    case: { method: 'listAttendanceScanWindow', variant: 'default', run: e => e.listAttendanceScanWindow('default', '', 10) },
+    texts: [`SELECT ${ATTENDANCE_PAGE_PIN_SQL}, deleted_at IS NOT NULL AS deleted
+    FROM pages WHERE source_id=$1 AND slug COLLATE "C">$2 ORDER BY slug COLLATE "C" LIMIT $3`],
   },
   {
     from: 'src/core/destructive-guard.ts:104 clientsReferencingSource, at dded7edc51',

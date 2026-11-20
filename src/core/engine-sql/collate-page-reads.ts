@@ -7,7 +7,7 @@
  * Placeholders that a caller numbered by hand (`$1` the limit, `$2` the slug) stay hand-numbered inside `trustedSql`
  * string literals of a fragment with no bound values, so the text is the caller's byte for byte.
  */
-import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, privatePagesFilterFragmentFast } from '../search/private-visibility.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { poolWhere, type FactPoolFilters, type FactPoolScope } from './facts-trust.ts';
@@ -183,4 +183,125 @@ export async function listPoolUnbackedKeys(raw: EngineRawRead, scope: FactPoolSc
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
      ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT ${limit}`);
   return raw<{ source_id: string; entity_slug: string }>(text, params);
+}
+
+/** A stored page a size-state read reports (`readPageSizeRows`); `state` and `reason` are its page_embedding_budget row. */
+export interface PageSizeRow { slug: string; bytes: number | string | null; segmented: boolean; frontmatter: Record<string, unknown> | null; state: 'held' | 'capped' | null; reason: string | null }
+
+const PAGE_SIZE_ROWS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
+const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($3::text[])
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
+
+/**
+ * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are segmented or
+ * have a page_embedding_budget row, by slug (by byte): the rows page-embedding-budget.ts readPageSizeStates maps.
+ */
+export async function readPageSizeRows(raw: EngineRawRead, sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]> {
+  return slugs
+    ? raw<PageSizeRow>(PAGE_SIZE_ROWS_FOR_SLUGS_SQL, [sourceId, maxBytes, [...slugs]])
+    : raw<PageSizeRow>(PAGE_SIZE_ROWS_SQL, [sourceId, maxBytes]);
+}
+
+/** One source's chat census: its chat pages and the distinct channels they come from (`listChatChannelCensus`). */
+export interface ChatCensusRow { source_id: string; chat_pages: number | string; channels: number | string }
+
+/**
+ * The chat pages of each of `sourceIds` (page types `chatTypes`) and how many distinct channels they come from, by source (by byte).
+ * A DM page (a type in `dmTypes`) is its own channel; with `hidePrivate` the pages the caller cannot read are left out.
+ */
+export async function listChatChannelCensus(raw: EngineRawRead, sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<ChatCensusRow[]> {
+  const hide = hidePrivate ? sqlFragment`AND ${trustedSql(privatePagesFilterFragmentFast('p'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.source_id, count(*) AS chat_pages,
+            count(DISTINCT CASE WHEN p.type = ANY(${trustedSql('$3')}::text[]) THEN 'dm:' || p.slug
+              ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
+                lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
+       FROM pages p
+      WHERE p.deleted_at IS NULL AND p.type = ANY(${trustedSql('$1')}::text[]) AND p.source_id = ANY(${trustedSql('$2')}::text[])
+        ${hide}
+      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`);
+  if (params.length !== 0) throw new Error('listChatChannelCensus: the statement binds no value of its own');
+  return raw<ChatCensusRow>(text, [[...chatTypes], [...sourceIds], [...dmTypes]]);
+}
+
+/** A live page of one source as the link resolver reads it (`listLinkPageMetadataForSlugs`). */
+export interface LinkPageMetadataForSlugsRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
+
+/** The live pages of `sourceId` named in `slugs` with their frontmatter aliases and knowledge revision, by slug (by byte). */
+export async function listLinkPageMetadataForSlugs(raw: EngineRawRead, sourceId: string, slugs: readonly string[]): Promise<LinkPageMetadataForSlugsRow[]> {
+  return raw<LinkPageMetadataForSlugsRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug COLLATE "C"`, [sourceId, [...slugs]]);
+}
+
+const ATTENDED_ORIGINS_SQL = `SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id`;
+const ATTENDED_ORIGINS_FOR_SLUGS_SQL = `SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`;
+
+/** The slugs of the pages of `sourceId` (only `slugs` when given) that carry a canonical attendance edge to themselves, in no promised order. */
+export async function listAttendedOriginSlugs(raw: EngineRawRead, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string }>> {
+  return slugs
+    ? raw<{ slug: string }>(ATTENDED_ORIGINS_FOR_SLUGS_SQL, [sourceId, [...slugs]])
+    : raw<{ slug: string }>(ATTENDED_ORIGINS_SQL, [sourceId]);
+}
+
+/** One link the company-brain evidence read picked: both pages' slug and title. */
+export interface CompanyBrainLinkRow { from_slug: string; from_title: string; to_slug: string; to_title: string }
+
+/** What `readCompanyBrainEvidence` reads of one source: the first ownership link, the first decision supersession and the first page. */
+export interface CompanyBrainEvidenceRows { owner: CompanyBrainLinkRow | null; decision: CompanyBrainLinkRow | null; page: { slug: string; title: string } | null }
+
+/**
+ * The company-brain evidence of one source: the first `owned_by` link (a customer page's first), the first `supersedes` link
+ * between decision pages, and the first live page, each by slug (by byte) then target slug.
+ */
+export async function readCompanyBrainEvidenceRows(raw: EngineRawRead, sourceId: string): Promise<CompanyBrainEvidenceRows> {
+  const [owner] = await raw<CompanyBrainLinkRow>(
+    `SELECT f.slug AS from_slug,f.title AS from_title,t.slug AS to_slug,t.title AS to_title
+     FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+     WHERE f.source_id=$1 AND t.source_id=$1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+       AND l.link_type='owned_by' AND l.link_source IN ('frontmatter','markdown')
+       AND (l.origin_page_id=f.id OR (l.origin_page_id IS NULL AND l.link_source='markdown'))
+     ORDER BY CASE WHEN f.type='customer' THEN 0 ELSE 1 END,f.slug COLLATE "C",t.slug COLLATE "C" LIMIT 1`, [sourceId]);
+  const [decision] = await raw<CompanyBrainLinkRow>(
+    `SELECT f.slug AS from_slug,f.title AS from_title,t.slug AS to_slug,t.title AS to_title
+     FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+     WHERE f.source_id=$1 AND t.source_id=$1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+       AND f.type='decision' AND t.type='decision' AND l.link_type='supersedes'
+       AND l.link_source IN ('frontmatter','markdown')
+       AND (l.origin_page_id=f.id OR (l.origin_page_id IS NULL AND l.link_source='markdown'))
+     ORDER BY f.slug COLLATE "C",t.slug COLLATE "C" LIMIT 1`, [sourceId]);
+  const [page] = await raw<{ slug: string; title: string }>(
+    'SELECT slug,title FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug COLLATE "C" LIMIT 1', [sourceId]);
+  return { owner: owner ?? null, decision: decision ?? null, page: page ?? null };
+}
+
+/** A live page of the storage shelf as the card reader reads it. */
+export interface ShelfPageRow { slug: string; title: string; type: string | null; frontmatter: unknown }
+
+/** Every live page of one source with its title, type and frontmatter, by slug (by byte). */
+export async function listShelfPageRows(raw: EngineRawRead, sourceId: string): Promise<ShelfPageRow[]> {
+  return raw<ShelfPageRow>(
+    'SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug COLLATE "C"', [sourceId]);
+}
+
+/** The id and incarnation of each of `sourceIds` that exists and is not archived, in no promised order. */
+export async function listLiveSourceIncarnations(raw: EngineRawRead, sourceIds: readonly string[]): Promise<Array<{ id: string; incarnation: string }>> {
+  return raw<{ id: string; incarnation: string }>(
+    'SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND archived IS NOT TRUE AND archived_at IS NULL', [[...sourceIds]]);
+}
+
+/** A page of the attendance-repair scan window (soft-deleted pages included): its pin and whether it is deleted. */
+export interface AttendanceScanRow { id: string; slug: string; source_id: string; type: string; revision: string; deleted: boolean }
+
+/** The first `limit` pages of `sourceId` whose slug sorts after `afterSlug` by byte, in slug (byte) order. */
+export async function listAttendanceScanWindow(raw: EngineRawRead, sourceId: string, afterSlug: string, limit: number): Promise<AttendanceScanRow[]> {
+  return raw<AttendanceScanRow>(`SELECT id::text, slug, source_id, type, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted
+    FROM pages WHERE source_id=$1 AND slug COLLATE "C">$2 ORDER BY slug COLLATE "C" LIMIT $3`, [sourceId, afterSlug, limit]);
 }

@@ -231,7 +231,7 @@ src/core/ai/decide/egress.ts	execute_raw	1
 src/core/ai/decide/proposals-store.ts	execute_raw	16
 src/core/ai/decide/review-lane.ts	execute_raw	17
 src/core/analyze-lock.ts	execute_raw	1
-src/core/attendance-repair.ts	execute_raw	17
+src/core/attendance-repair.ts	execute_raw	14
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
@@ -276,7 +276,6 @@ src/core/code-graph-readiness.ts	execute_raw	1
 src/core/code-intel/recursive-walk.ts	execute_raw	2
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
-src/core/company-brain/evidence.ts	execute_raw	3
 src/core/company-brain/profile.ts	execute_raw	2
 src/core/company-brain/receipts.ts	execute_raw	9
 src/core/company-brain/runtime.ts	execute_raw	14
@@ -460,7 +459,6 @@ src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
 src/core/grants/rescope.ts	sql_template	7
 src/core/grants/service.ts	sql_template	11
-src/core/grants/shared-exposure.ts	execute_raw	1
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
@@ -477,7 +475,7 @@ src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
-src/core/link-reconciliation.ts	execute_raw	4
+src/core/link-reconciliation.ts	execute_raw	2
 src/core/link-single-value.ts	execute_raw	1
 src/core/link-source-check-repair.ts	execute_raw	3
 src/core/links-fence-projection.ts	execute_raw	8
@@ -555,7 +553,7 @@ src/core/page-body/segment-rewrite.ts	execute_raw	9
 src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
-src/core/page-embedding-budget.ts	execute_raw	6
+src/core/page-embedding-budget.ts	execute_raw	5
 src/core/page-embedding-lease.ts	execute_raw	1
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
@@ -950,7 +948,7 @@ src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
-src/core/storage-manifest/find.ts	execute_raw	4
+src/core/storage-manifest/find.ts	execute_raw	3
 src/core/storage-manifest/source.ts	execute_raw	4
 src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	5
