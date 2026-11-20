@@ -1,7 +1,8 @@
 /**
  * A hermetic GBrain Helper Contacts route for tests (plan GST-3256, route contract with ALPH-138, 11-20): a local HTTP
  * server on 127.0.0.1 serving `GET /v1/contacts/changes?cursor=&limit=` from an in-memory Contacts store with a change
- * history, plus a minimal SOCKS5 proxy (no authentication, CONNECT only) for the proxy path. Synthetic contacts only.
+ * history, in the route's wire format (gbrain#9850: `{data, meta: {next_cursor, more, full}}`, every scalar a string, Problem
+ * bodies with a `code`), plus a minimal SOCKS5 proxy (no authentication, CONNECT only) for the proxy path. Synthetic contacts only.
  *
  * Cursors: a snapshot page cursor is `snap:<offset>:<seq>` (the snapshot frozen at history seq), and the change
  * cursor the last snapshot page (or any change page) hands out is `seq:<n>`. `expire()` makes every cursor older
@@ -49,7 +50,7 @@ export class ContactsStub {
 
   private item(id: string): Record<string, unknown> {
     const contact = this.contacts.get(id);
-    return contact ? { op: 'upsert', id, contact: { emails: [], phones: [], groups: [], ...contact } } : { op: 'delete', id };
+    return contact ? { op: 'upsert', id, contact: { given_name: '', family_name: '', nickname: '', organization: '', job_title: '', emails: [], phones: [], groups: [], ...contact } } : { op: 'delete', id };
   }
 
   answer(req: Request): Response {
@@ -68,7 +69,7 @@ export class ContactsStub {
       const ids = [...this.contacts.keys()].sort();
       const slice = ids.slice(offset, offset + limit);
       const more = offset + limit < ids.length;
-      return this.json({ items: slice.map(id => this.item(id)), meta: { next_cursor: more ? `snap:${offset + limit}:${at}` : `seq:${at}`, more, full: !more && this.full } });
+      return this.json({ data: slice.map(id => this.item(id)), meta: { next_cursor: more ? `snap:${offset + limit}:${at}` : `seq:${at}`, more, full: !more && this.full } });
     }
     const after = Number(cursor.replace(/^seq:/, ''));
     if (!Number.isSafeInteger(after) || after < this.expiredBefore) return this.json({ code: 'cursor_expired' }, 410);
@@ -76,7 +77,7 @@ export class ContactsStub {
     const more = this.history.filter(h => h.seq > after).length > entries.length;
     const last = entries.at(-1)?.seq ?? after;
     const ids = [...new Set(entries.map(e => e.id))];
-    return this.json({ items: ids.map(id => this.item(id)), meta: { next_cursor: `seq:${last}`, more, full: false } });
+    return this.json({ data: ids.map(id => this.item(id)), meta: { next_cursor: `seq:${last}`, more, full: false } });
   }
 }
 

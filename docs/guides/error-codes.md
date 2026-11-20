@@ -350,9 +350,19 @@ More: [docs/guides/apple-contacts.md#apple_contacts_config](../../docs/guides/ap
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An Apple Contacts snapshot was empty, or would have deleted more than 20% of the contacts the source owns, so nothing was written and the saved cursor is unchanged. | A revoked Contacts grant or a half-synced Contacts store looks like mass deletion; the run refuses it whole instead of retiring pages. GBRAIN_ALLOW_MASS_RECONCILE=1 lets a real large deletion through; an empty snapshot never passes. | Check Contacts on the Mac and that GBrain Helper can read it, then run gbrain sync --source <id> again; if the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
+| An Apple Contacts run would have deleted more than 20% of the contacts the source owns, or all of them, so no contact was deleted: a full read wrote nothing and kept its cursor, an incremental run kept the deletions pending. | A revoked Contacts grant or a half-synced Contacts store looks like mass deletion; the run refuses the deletions whole instead of retiring pages. Pending deletions cancel when the contacts come back. GBRAIN_ALLOW_MASS_RECONCILE=1 lets a real large deletion through; deleting every contact never passes. | Check Contacts on the Mac and that GBrain Helper can read it, then run gbrain sync --source <id> again; if the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/apple-contacts.md#apple_contacts_delete_floor](../../docs/guides/apple-contacts.md#apple_contacts_delete_floor)
+
+### apple_contacts_disabled
+
+<a id="apple_contacts_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper has its Contacts source turned off, so nothing was imported. | The helper serves a source only while its config enables it; only the Mac owner changes that config. | On the Mac, set sources.contacts.enabled to true in GBrain Helper's config.json, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_disabled](../../docs/guides/apple-contacts.md#apple_contacts_disabled)
 
 ### apple_contacts_helper_error
 

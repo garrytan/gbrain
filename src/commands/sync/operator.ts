@@ -250,6 +250,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
     console.log(`    ... ${listing.matched - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
       + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `gbrain sync status --source ${sourceId} --detail --json`} lists them`);
   }
+  if (status.held_deletes) console.log(`    deletions held (${status.held_deletes.code}) NEEDS HUMAN: ${status.held_deletes.human_reason}`);
   for (const review of status.identity_reviews ?? []) {
     console.log(`    ${review.contact_slug}: identity review${review.needs_human ? ` NEEDS HUMAN: ${review.human_reason} Next: ${review.fix.argv!.join(' ')}` : ` (decided: ${review.human_reason})`}`);
   }

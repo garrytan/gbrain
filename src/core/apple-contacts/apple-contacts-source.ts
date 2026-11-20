@@ -9,11 +9,16 @@
  * that page's `next_cursor` only after the page is applied. Upserts are idempotent: an unchanged contact (its
  * fingerprint) writes nothing.
  *
- * Deletes. `op: delete` retires only the page that contact owns (soft delete, restorable for the purge window).
- * Absence from a snapshot counts as a delete only when the snapshot's last page had `full: true`. The delete floor
- * writes nothing at all and stops with apple_contacts_delete_floor when the snapshot is empty while the source owns
- * contacts, or would delete more than 20% of them (GBRAIN_ALLOW_MASS_RECONCILE=1 lets an operator take a real
- * large deletion through; it never applies to an empty snapshot).
+ * Deletes. A deletion retires only the page that contact owns (soft delete, restorable for the purge window). Absence
+ * from a snapshot counts as a delete only when the snapshot's last page had `full: true`. The delete floor: a snapshot
+ * that is empty while the source owns contacts, or would delete more than 20% of them, writes nothing at all and stops
+ * with apple_contacts_delete_floor. An incremental run applies each page's upserts and records its `op: delete` items
+ * as pending deletions in the database before it sends the page's cursor back (the helper commits a page when its
+ * cursor is presented, so a held page is never re-sent); at the run's end the pending deletions pass the same floor
+ * together, against the contacts the source owns, or stay pending and the run ends with apple_contacts_delete_floor. A
+ * later upsert of a pending contact cancels its deletion; a complete snapshot settles them all.
+ * GBRAIN_ALLOW_MASS_RECONCILE=1 takes a real large deletion through; it never applies to an empty snapshot or to every
+ * contact the source owns.
  *
  * Identity (identity-match.ts) links a contact page to the one person page with the same email or phone; two or more
  * are an identity review for the owner. Person pages get only the person-block.ts block (company, job title, groups).
@@ -41,6 +46,7 @@ import { appleContactsError, appleContactsHelper, AppleContactsCursorExpiredErro
 import { appleBaseSlug, appleContactFingerprint, appleContactRender, appleTombstoneSlugs, renderAppleContactPage } from './render.ts';
 import { APPLE_CONTACTS_LINK_ORIGIN, decidedDifferent, exactPersonMatches, linkContactPage, readIdentityReviews, unlinkContact, writeIdentityReviews, type IdentityReview } from './identity-match.ts';
 import { blockKey, personBlockInterior, readPersonBlocks, safePersonFields, syncPersonBlock, writePersonBlocks, type PersonBlockFields } from './person-block.ts';
+import { readPendingDeletes, writePendingDeletes, type HeldDeletes } from './review-status.ts';
 import { APPLE_CONTACT_ID_KEY, APPLE_CONTACTS_DELETE_FLOOR, APPLE_CONTACTS_KIND, appleContactHoldKey, type AppleContact, type AppleContactChange, type AppleContactsSourceConfig } from './types.ts';
 
 export interface AppleContactsState extends Record<string, unknown> {
@@ -66,9 +72,10 @@ export interface AppleContactsSyncDeps {
 
 interface Summary extends PublishSummary { status: 'synced' | 'partial'; failedFiles: number }
 
-function deleteFloor(sourceId: string, why: string): OperationError {
+function deleteFloor(sourceId: string, why: string, held = false): OperationError {
   return appleContactsError('apple_contacts_delete_floor',
-    `Apple Contacts source ${sourceId}: ${why} Nothing was written and the saved cursor is unchanged, so a revoked grant or a half-empty Contacts store cannot wipe the source.`,
+    `Apple Contacts source ${sourceId}: ${why} ${held ? 'No contact was deleted: the deletions are kept pending (gbrain sync status lists them) and apply on a later run once they are under the floor, or cancel when the contacts come back.'
+      : 'Nothing was written and the saved cursor is unchanged.'} A revoked grant or a half-empty Contacts store cannot wipe the source.`,
     `Check Contacts on the Mac (and that GBrain Helper can read it), then run gbrain sync --source ${sourceId} again. If the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1 (it never lets an empty snapshot through).`);
 }
 
@@ -106,6 +113,11 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
   const blockTargets = new Map<string, { person: { source_id: string; slug: string }; fields: PersonBlockFields } | null>();
   const touched = new Set<string>();
   const deferred = new Set(state.deferred ?? []);
+  /** Contacts the helper reported deleted whose deletion waits for the end of the run (the delete floor), kept in the database. */
+  const pendingRow = await readPendingDeletes(engine, sourceId);
+  const pending = new Set(pendingRow.ids);
+  const persistPending = (held: HeldDeletes | null) => writePendingDeletes(engine, sourceId, [...pending].sort(), held);
+  const floor: { refusal: OperationError | null } = { refusal: null };
   let blocked = false;
 
   const save = async (final: boolean) => {
@@ -167,6 +179,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
   };
 
   const applyUpsert = async (contact: AppleContact) => {
+    pending.delete(contact.id);
     const render = appleContactRender(contact);
     let written: string | null = null;
     await applyContactPage(contact.id, false, io(contact.id, render, relPath => { written = relPath; }));
@@ -228,6 +241,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
       throw deleteFloor(sourceId, `the snapshot would delete ${deletes.size} of the ${owned.size} contacts the source owns (more than ${APPLE_CONTACTS_DELETE_FLOOR * 100}%).`);
     }
     if (!meta.full) log(`[apple-contacts] ${sourceId}: the snapshot did not end with full:true; nothing is deleted for being absent and no person-page block is removed`);
+    for (const change of upserts) pending.delete(change.id);
     for (const change of upserts) {
       if (signal?.aborted) return meta.full;
       if (!opts.full && owned.has(change.id) && state.fps[change.id] === appleContactFingerprint(change.contact)) continue;
@@ -235,6 +249,9 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     }
     for (const id of deletes) await handle({ op: 'delete', id });
     if (meta.full) for (const id of Object.keys(state.fps)) if (!items.has(id) && !owned.has(id)) delete state.fps[id];
+    // A complete snapshot settles every pending deletion: what it does not hold was deleted above, under its own floor.
+    if (meta.full && !blocked) pending.clear();
+    await persistPending(pending.size ? pendingRow.held : null);
     if (!blocked) state.cursor = meta.nextCursor;
     return meta.full;
   };
@@ -246,17 +263,45 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
       let page;
       try { page = await helper.changes(cursor, signal); } catch (error) {
         if (!(error instanceof AppleContactsCursorExpiredError)) throw error;
-        log(`[apple-contacts] ${sourceId}: the helper no longer knows the saved cursor (410 cursor_expired); reading a full snapshot`);
+        log(`[apple-contacts] ${sourceId}: the helper no longer knows the saved cursor (410 cursor_expired, or 400 bad_param); reading a full snapshot`);
         state.cursor = null;
         return snapshot();
       }
-      for (const change of page.items) await handle(change);
+      for (const change of page.items) {
+        if (change.op === 'upsert') { await handle(change); continue; }
+        // A deletion is recorded, not applied: the run's deletions pass the delete floor together at the end.
+        if (await existingPath(change.id) !== null) pending.add(change.id);
+        else delete state.fps[change.id];
+      }
       if (blocked || signal?.aborted) return true;
+      // The page is applied (upserts written, deletions pending in the database) before its cursor goes back.
+      await persistPending(pendingRow.held);
       state.cursor = page.meta.nextCursor ?? cursor;
       cursor = state.cursor;
       await save(false);
-      if (!page.meta.more) return true;
+      if (!page.meta.more) break;
     }
+    await settlePending();
+    return true;
+  };
+
+  /** The end of an incremental run: apply the pending deletions when they pass the delete floor, else keep them. */
+  const settlePending = async () => {
+    const owned = await ownedContacts();
+    for (const id of [...pending]) if (!owned.has(id)) pending.delete(id);
+    if (!pending.size) { if (pendingRow.ids.length || pendingRow.held) await persistPending(null); return; }
+    const { massReconcileAllowed } = await import('../../commands/sync.ts');
+    const all = pending.size >= owned.size;
+    if (all || (pending.size > owned.size * APPLE_CONTACTS_DELETE_FLOOR && !massReconcileAllowed())) {
+      await persistPending({ code: 'apple_contacts_delete_floor', contacts: pending.size, owned: owned.size, since: pendingRow.held?.since ?? new Date(now()).toISOString() });
+      floor.refusal = deleteFloor(sourceId, all ? `the helper reported every one of the ${owned.size} contacts the source owns as deleted.`
+        : `the helper reported ${pending.size} of the ${owned.size} contacts the source owns as deleted (more than ${APPLE_CONTACTS_DELETE_FLOOR * 100}%).`, true);
+      log(`[apple-contacts] ${floor.refusal.message}`);
+      return;
+    }
+    for (const id of [...pending]) await handle({ op: 'delete', id });
+    for (const id of [...pending]) if (await existingPath(id) === null) pending.delete(id);
+    await persistPending(null);
   };
 
   try {
@@ -305,7 +350,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     if (!state.deferred.length) delete state.deferred;
     await writePersonBlocks(engine, sourceId, blocks);
 
-    if (summary.failedFiles > 0 || blocked) summary.status = 'partial';
+    if (summary.failedFiles > 0 || blocked || floor.refusal) summary.status = 'partial';
     state.item_holds = holds.finish();
     await save(true);
     await holds.complete();
@@ -319,6 +364,8 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
 
   // Contact cards are structured fields, not prose: no fact extraction; embeddings as every connector page gets them.
   await afterConnectorPublish(ctx, { ...opts, noExtract: true });
+  // Deletions the floor held: the run's other changes are applied and its cursor saved; the named error is the result.
+  if (floor.refusal) throw floor.refusal;
   return {
     status: summary.status === 'partial' ? 'partial' : summary.added + summary.modified + summary.deleted > 0 ? 'synced' : 'up_to_date',
     fromCommit: null, toCommit: '', added: summary.added, modified: summary.modified, deleted: summary.deleted, renamed: 0,

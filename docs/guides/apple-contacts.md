@@ -58,7 +58,11 @@ written without a country code are read as `identity.phone_country_code` (defaul
 - A full re-read (the first run, `gbrain sync --source <id> --full`, or the helper forgetting the cursor) deletes a page
   for a missing contact only when the helper says the snapshot was complete.
 - **Delete floor.** A full re-read that comes back empty, or would delete more than 20% of the source's contacts,
-  writes nothing and stops with `apple_contacts_delete_floor`. Person-page blocks are never removed by such a run.
+  writes nothing and stops with `apple_contacts_delete_floor`. An incremental pull applies its changes but keeps the
+  deletions it was sent pending until the end of the run; if they are more than 20% of the source's contacts, or all
+  of them, none is applied, they stay pending (`gbrain sync status --source <id>` shows them under `held_deletes`) and the
+  run ends with the same error. A contact that comes back cancels its pending deletion. Nothing on a person page is
+  removed by a held run.
 
 ## Errors
 
@@ -91,9 +95,15 @@ Check that GBrain Helper and gbrain are both current; if it repeats, report it w
 
 ### apple_contacts_delete_floor
 
-The full re-read was empty, or would have deleted more than 20% of the source's contacts. Nothing was written. Check
-Contacts on the Mac and that the helper can read it, then sync again. If the deletions are real, run the sync once
-with `GBRAIN_ALLOW_MASS_RECONCILE=1`; an empty address book never passes.
+The run would have deleted more than 20% of the source's contacts, or all of them. No contact was deleted: a full
+re-read wrote nothing, and an incremental pull kept the deletions pending. Check Contacts on the Mac and that the
+helper can read it, then sync again; contacts that come back cancel their deletions. If the deletions are real, run
+the sync once with `GBRAIN_ALLOW_MASS_RECONCILE=1`; deleting every contact never passes.
+
+### apple_contacts_disabled
+
+GBrain Helper has its Contacts source turned off. On the Mac, set `sources.contacts.enabled` to `true` in the helper's
+`config.json` (the running helper picks it up on its next request), then sync again.
 
 ### apple_contacts_config
 

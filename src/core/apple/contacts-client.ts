@@ -8,10 +8,13 @@
  * log line or any output. A token file that is a symlink, not a regular file, or readable or writable by group or
  * others is refused before it is read.
  *
- * Responses: 200 a page (`items`, or `data`, plus `meta: {next_cursor, more, full}`); 410 `cursor_expired`
- * (the caller starts a full snapshot); 403 `contacts_not_allowed` (the owner has not granted Contacts); 401 and 403
- * `insufficient_scope` (a token problem); 503, a timeout or no connection retries with bounded backoff, then stops;
- * anything else stops and is reported.
+ * Responses (the helper's Contacts route, gbrain#9850): 200 a page `{data: [...], meta: {next_cursor, more, full}}`, every
+ * scalar a string (possibly empty, never null); errors are Problem bodies whose `code` names them. 410 `cursor_expired`,
+ * and 400 `bad_param` on a request that carried a cursor (the helper did not issue it), start a full snapshot; 403
+ * `contacts_not_allowed` (the owner has not granted Contacts) and `source_disabled` (the helper's Contacts source is off);
+ * 401 and 403 `insufficient_scope` (a token problem); 503, a timeout or no connection retries with bounded backoff,
+ * then stops; anything else stops and is reported. Presenting a page's `next_cursor` commits that page on the helper, so
+ * the caller sends it back only after the page is applied.
  */
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
@@ -136,10 +139,14 @@ export function appleContactsHelper(opts: AppleContactsHelperOpts): AppleContact
       try { body = res.text ? JSON.parse(res.text) as Record<string, unknown> : {}; } catch { body = {}; }
       if (res.status === 200) return parsePage(body);
       const code = errorCode(body);
-      if (res.status === 410) throw new AppleContactsCursorExpiredError();
+      if (res.status === 410 || (res.status === 400 && code === 'bad_param' && cursor)) throw new AppleContactsCursorExpiredError();
       if (res.status === 403 && code === 'contacts_not_allowed') {
         throw appleContactsError('apple_contacts_not_allowed', `GBrain Helper cannot read Contacts for Apple Contacts source ${sourceId}: the owner has not allowed it yet. Nothing was imported.`,
           `Ask the user to click OK on the Mac's "GBrain Helper would like to access your contacts" prompt, or switch GBrain Helper on in System Settings > Privacy & Security > Contacts, then run: gbrain sync --source ${sourceId}`);
+      }
+      if (res.status === 403 && code === 'source_disabled') {
+        throw appleContactsError('apple_contacts_disabled', `GBrain Helper has its Contacts source turned off, so Apple Contacts source ${sourceId} imported nothing.`,
+          `On the Mac, set sources.contacts.enabled to true in GBrain Helper's config.json (the running helper sees it on its next request), then run: gbrain sync --source ${sourceId}`);
       }
       if (res.status === 401 || (res.status === 403 && code === 'insufficient_scope')) {
         throw appleContactsError('apple_contacts_unauthorized', `GBrain Helper refused the token of Apple Contacts source ${sourceId} (${res.status === 401 ? '401' : '403 insufficient_scope'}). Nothing was imported.`,
@@ -151,11 +158,9 @@ export function appleContactsHelper(opts: AppleContactsHelperOpts): AppleContact
   };
 }
 
+/** The Problem body's `code` (Problem.swift), or null. */
 function errorCode(body: Record<string, unknown>): string | null {
-  for (const value of [body.code, body.error, typeof body.type === 'string' ? body.type.split('/').pop() : undefined]) {
-    if (typeof value === 'string' && /^[a-z0-9_]{1,64}$/.test(value)) return value;
-  }
-  return null;
+  return typeof body.code === 'string' && /^[a-z0-9_]{1,64}$/.test(body.code) ? body.code : null;
 }
 
 const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null);
@@ -171,7 +176,7 @@ function labeled(raw: unknown, what: string): AppleLabeledValue[] {
 }
 
 function parseContact(id: string, raw: unknown): AppleContact {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AppleContactsShapeDriftError('items[].contact');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AppleContactsShapeDriftError('data[].contact');
   const c = raw as Record<string, unknown>;
   const groups = c.groups === undefined || c.groups === null ? [] : Array.isArray(c.groups) ? c.groups : null;
   if (!groups) throw new AppleContactsShapeDriftError('contact.groups[]');
@@ -184,8 +189,8 @@ function parseContact(id: string, raw: unknown): AppleContact {
 }
 
 export function parsePage(body: Record<string, unknown>): AppleContactsPage {
-  const items = body.items ?? body.data;
-  if (!Array.isArray(items)) throw new AppleContactsShapeDriftError('items');
+  const items = body.data;
+  if (!Array.isArray(items)) throw new AppleContactsShapeDriftError('data');
   const meta = body.meta as Record<string, unknown> | undefined;
   if (!meta || typeof meta !== 'object' || typeof meta.more !== 'boolean') throw new AppleContactsShapeDriftError('meta.more');
   const nextCursor = meta.next_cursor ?? null;
@@ -194,10 +199,10 @@ export function parsePage(body: Record<string, unknown>): AppleContactsPage {
   const changes = items.map((raw: unknown): AppleContactChange => {
     const item = raw as Record<string, unknown> | null;
     const id = text(item?.id);
-    if (!id) throw new AppleContactsShapeDriftError('items[].id');
+    if (!id) throw new AppleContactsShapeDriftError('data[].id');
     if (item!.op === 'delete') return { op: 'delete', id };
     if (item!.op === 'upsert') return { op: 'upsert', id, contact: parseContact(id, item!.contact) };
-    throw new AppleContactsShapeDriftError('items[].op upsert or delete');
+    throw new AppleContactsShapeDriftError('data[].op upsert or delete');
   });
   return { items: changes, meta: { nextCursor, more: meta.more, full: meta.full === true } };
 }

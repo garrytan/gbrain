@@ -54,7 +54,7 @@ import { GIT_PUSH_CODES, readGitPushHolds, type GitPushHold } from './git-push-h
 import { holderStalled, readDrainLease, type DrainHolder } from './sync-lease.ts';
 import { syncLockId } from '../db-lock.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
-import { APPLE_CONTACTS_REVIEW_OP, identityReviewStatus, type IdentityReviewStatus } from '../apple-contacts/review-status.ts';
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP, heldDeletesStatus, identityReviewStatus, type HeldDeletesStatus, type IdentityReviewStatus } from '../apple-contacts/review-status.ts';
 
 export interface SyncStatusHold extends SyncFaultVerdict {
   code: string;
@@ -131,6 +131,8 @@ export interface SyncStatus {
   source_id: string;
   /** GST-3256: apple-contacts contacts whose email or phone matches two or more people (absent when there are none). */
   identity_reviews?: IdentityReviewStatus[];
+  /** GST-3256: apple-contacts deletions the delete floor holds pending (absent when none are held). */
+  held_deletes?: HeldDeletesStatus;
   /** #7243: the commit the source's sync applied through (`sources.last_commit`, stamped when a sync converges), or null before the first. */
   last_commit: string | null;
   /**
@@ -363,7 +365,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const admissionSql = syncAdmissionSettingSql(4);
   const [source] = await engine.executeRaw<{ incarnation: string; last_commit: string | null; last_sync_at: Date | string | null; drain_lock: boolean; pass_value: PassRow['value'] | null; pass_updated_at: Date | string | null; pass_read_at: Date | string; withheld: DeletesWithheld | null;
     admission_stored: string | null; admission_row_value: string | null; admission_set_at: string | null; admission_pinned: boolean | null; admission_destructive: boolean | null;
-    writeback_failed: string | null; refresh: RefreshProbeRow | string | null; identity_reviews: unknown }>(
+    writeback_failed: string | null; refresh: RefreshProbeRow | string | null; identity_reviews: unknown; held_deletes: unknown }>(
     `SELECT s.incarnation::text AS incarnation, s.last_commit, s.last_sync_at, EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE l.id=$7) AS drain_lock,
       p.completed_keys->0 AS pass_value, p.updated_at AS pass_updated_at, now() AS pass_read_at, w.completed_keys->0 AS withheld, ${admissionSql.columns}, ${syncAdmissionEffectSql(7, 's')},
       (SELECT r.request_id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND e.state='failed' AND NOT (e.data ? 'settled')
@@ -371,7 +373,8 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
           THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
       (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.barrier_sequence,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
         LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
-      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews FROM sources s
+      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews,
+      (SELECT hd.completed_keys FROM op_checkpoints hd WHERE hd.op='${APPLE_CONTACTS_PENDING_DELETES_OP}' AND hd.fingerprint=s.id) AS held_deletes FROM sources s
       LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
       LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
       ${admissionSql.joins}
@@ -461,7 +464,8 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const human = moving ?? holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
   // GST-3256: an apple-contacts contact that matches two or more people waits for the owner; the source keeps syncing.
   const identityReviews = identityReviewStatus(sourceId, source.identity_reviews);
-  const reviewWaiting = identityReviews.find(review => review.needs_human);
+  const heldDeletes = heldDeletesStatus(sourceId, source.held_deletes);
+  const reviewWaiting = heldDeletes ?? identityReviews.find(review => review.needs_human);
   const refreshRow = typeof source.refresh === 'string' ? JSON.parse(source.refresh) as RefreshProbeRow : source.refresh;
   const worktreeRefresh = refreshRow ? { refresh_id: refreshRow.id, state: refreshRow.state, updated_at: new Date(refreshRow.updated_at).toISOString(),
     ...await (await import('./worktree-refresh.ts')).refreshHolderReport(engine, refreshRow) } : null;
@@ -519,7 +523,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     interrupted: interrupted && passRow ? { pass_id: passRow.value.telemetry.pass_id, since: passRow.updated_at, holder: lease?.holder ?? null } : null, run_id: header?.runId ?? null,
     cursor: header ? { index: Number(header.index), total: Number(header.total), pinned_target: header.target ?? null, last_advance_at: p ? new Date(p.lastAt).toISOString() : null, done: !!header.done } : null,
     committed_last_10m: Number(committed?.n ?? 0), ...estimate, live_job_id: liveJob ?? holderJob, holds, ...(carriedHolds(records).length ? { carried: carriedHolds(records) } : {}), identity_downgrades: await withIdentityRemedies(engine, await listIdentityDowngrades(engine, [sourceId])), last_error: lastError, needs_human: (passLeads && passNext ? passNext.ask_user === true : !!human) || !!reviewWaiting,
-    ...(human ? { human_reason: human.human_reason } : reviewWaiting ? { human_reason: reviewWaiting.human_reason } : {}), ...(identityReviews.length ? { identity_reviews: identityReviews } : {}),
+    ...(human ? { human_reason: human.human_reason } : reviewWaiting ? { human_reason: reviewWaiting.human_reason } : {}), ...(identityReviews.length ? { identity_reviews: identityReviews } : {}), ...(heldDeletes ? { held_deletes: heldDeletes } : {}),
     needs_human_from: !human ? null : 'path' in human && 'held_since' in human ? { kind: 'hold', path: human.path, slug: human.slug, code: human.code } : { kind: 'last_error', code: human.code },
     resume_argv: resume, ...blockers, cursors: detail ? await liveCursors(engine, sourceId, source.incarnation, selected?.key ?? null, failures) : [],
     terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: (passLeads && passNext ? passNext : next) ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,

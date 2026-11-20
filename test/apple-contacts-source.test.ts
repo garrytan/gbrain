@@ -205,8 +205,7 @@ describe('sync (repo-less brain)', () => {
 
   test('an upsert rewrites the page once; op:delete soft-deletes it and it can be restored', async () => {
     const s = freshStub();
-    s.upsert('c1', contact(1));
-    s.upsert('c2', contact(2));
+    for (let i = 1; i <= 5; i++) s.upsert('c' + i, contact(i));
     const { id, cfg } = await contactsSource(s);
     await run(id, cfg);
     s.upsert('c1', { ...contact(1), job_title: 'Captain' });
@@ -219,7 +218,7 @@ describe('sync (repo-less brain)', () => {
     const gone = (await contactPages(id)).find(r => r.id === 'c2')!;
     expect(gone.deleted).toBe(true);
     expect(await engine.restorePage(gone.slug, { sourceId: id })).toBe(true);
-    expect((await live(id)).map(r => r.id).sort()).toEqual(['c1', 'c2']);
+    expect((await live(id)).map(r => r.id).sort()).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
   });
 
   test('410 cursor_expired reads a full snapshot; absence deletes only when the snapshot says full:true', async () => {
@@ -268,14 +267,87 @@ describe('sync (repo-less brain)', () => {
     expect((await live(id)).length).toBe(7);
   });
 
+  test('incremental deletions pass the floor together at the end of the run: more than 20% is held and a contact that comes back cancels it', async () => {
+    const s = freshStub();
+    for (let i = 1; i <= 10; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    for (const i of [1, 2, 3]) s.remove('c' + i);
+    s.upsert('c4', { ...contact(4), job_title: 'Changed' });
+    await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    expect((await live(id)).length).toBe(10);
+    expect((await live(id)).find(r => r.id === 'c4')!.fm.role).toBe('Changed');
+    expect(await savedCursor(id)).toBe('seq:' + s.seq);
+    const held = await readSyncStatus(engine, id);
+    expect(held.held_deletes).toMatchObject({ code: 'apple_contacts_delete_floor', contacts: 3, owned: 10, needs_human: true });
+    expect(held.needs_human).toBe(true);
+    await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    expect((await live(id)).length).toBe(10);
+    s.upsert('c1', contact(1));
+    const settled = await run(id, cfg);
+    expect(settled.deleted).toBe(2);
+    expect((await live(id)).map(r => r.id).sort()).toEqual(['c1', 'c10', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']);
+    expect((await readSyncStatus(engine, id)).held_deletes).toBeUndefined();
+  });
+
+  test('an incremental run deleting every contact is held, even with GBRAIN_ALLOW_MASS_RECONCILE=1', async () => {
+    const s = freshStub();
+    for (let i = 1; i <= 5; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    for (let i = 1; i <= 5; i++) s.remove('c' + i);
+    await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    await withEnv({ GBRAIN_ALLOW_MASS_RECONCILE: '1' }, async () => {
+      await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    });
+    expect((await live(id)).length).toBe(5);
+    expect((await readSyncStatus(engine, id)).held_deletes).toMatchObject({ contacts: 5, owned: 5 });
+  });
+
+  test('an incremental run under the floor applies its deletions; a held run applies with GBRAIN_ALLOW_MASS_RECONCILE=1', async () => {
+    const s = freshStub();
+    for (let i = 1; i <= 10; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    s.remove('c1');
+    expect((await run(id, cfg)).deleted).toBe(1);
+    expect((await contactPages(id)).find(r => r.id === 'c1')!.deleted).toBe(true);
+    for (const i of [2, 3, 4]) s.remove('c' + i);
+    await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    expect((await live(id)).length).toBe(9);
+    await withEnv({ GBRAIN_ALLOW_MASS_RECONCILE: '1' }, async () => {
+      expect((await run(id, cfg)).deleted).toBe(3);
+    });
+    expect((await live(id)).length).toBe(6);
+    expect((await readSyncStatus(engine, id)).held_deletes).toBeUndefined();
+  });
+
+  test('a full re-read after 410 settles held deletions under the full-read floor', async () => {
+    const s = freshStub();
+    for (let i = 1; i <= 10; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    for (const i of [1, 2, 3]) s.remove('c' + i);
+    await expect(run(id, cfg)).rejects.toMatchObject({ code: 'apple_contacts_delete_floor' });
+    s.upsert('c1', contact(1));
+    s.upsert('c2', contact(2));
+    s.expire();
+    expect((await run(id, cfg)).deleted).toBe(1);
+    expect((await live(id)).map(r => r.id)).not.toContain('c3');
+    expect((await live(id)).length).toBe(9);
+    expect((await readSyncStatus(engine, id)).held_deletes).toBeUndefined();
+  });
+
   test('refusals stop the run with their own codes before anything is written; the token never shows', async () => {
     const s = freshStub();
     s.upsert('c1', contact(1));
     for (const [answer, code] of [
       [{ status: 403, body: { code: 'contacts_not_allowed' } }, 'apple_contacts_not_allowed'],
-      [{ status: 401, body: { error: 'unauthorized' } }, 'apple_contacts_unauthorized'],
-      [{ status: 403, body: { type: 'https://example.invalid/errors/insufficient_scope' } }, 'apple_contacts_unauthorized'],
-      [{ status: 200, body: { items: 'nope', meta: { more: false } } }, 'connector_shape_drift'],
+      [{ status: 403, body: { code: 'source_disabled' } }, 'apple_contacts_disabled'],
+      [{ status: 401, body: { code: 'unauthorized' } }, 'apple_contacts_unauthorized'],
+      [{ status: 403, body: { code: 'insufficient_scope' } }, 'apple_contacts_unauthorized'],
+      [{ status: 400, body: { code: 'bad_param' } }, 'apple_contacts_helper_error'],
+      [{ status: 200, body: { items: [], meta: { next_cursor: 'x', more: false, full: true } } }, 'connector_shape_drift'],
     ] as const) {
       const { id, cfg } = await contactsSource(s);
       s.queue = [answer];
@@ -289,12 +361,24 @@ describe('sync (repo-less brain)', () => {
     for (const r of s.requests) { expect(r.path).not.toContain(STUB_TOKEN); expect(r.authorization).toBe(`Bearer ${STUB_TOKEN}`); }
   });
 
-  test('a page under "data" instead of "items" is read the same', async () => {
+  test('empty strings are absent values; a cursor the helper calls bad_param starts a full read', async () => {
     const s = freshStub();
     const { id, cfg } = await contactsSource(s);
-    s.queue = [{ status: 200, body: { data: [{ op: 'upsert', id: 'c1', contact: { given_name: 'Dana', family_name: 'Sample', emails: [{ label: null, value: 'dana@example.invalid' }] } }], meta: { next_cursor: 'seq:9', more: false, full: true } } }];
+    s.queue = [{ status: 200, body: { data: [{ op: 'upsert', id: 'c1', contact: { given_name: 'Dana', family_name: '', nickname: '', organization: '', job_title: '',
+      emails: [{ label: '', value: 'dana@example.invalid' }], phones: [{ label: '', value: '' }], groups: [] } }], meta: { next_cursor: 'seq:9', more: false, full: true } } }];
     expect((await run(id, cfg)).added).toBe(1);
+    const [page] = await live(id);
+    expect(page!.fm).toMatchObject({ emails: ['dana@example.invalid'] });
+    expect(page!.fm).not.toHaveProperty('company');
+    expect(page!.fm).not.toHaveProperty('phones');
+    expect(page!.body).not.toContain('()');
     expect(await savedCursor(id)).toBe('seq:9');
+    s.upsert('c1', { given_name: 'Dana', emails: [{ label: '', value: 'dana@example.invalid' }] });
+    s.queue = [{ status: 400, body: { code: 'bad_param' } }];
+    const lines: string[] = [];
+    await run(id, cfg, {}, { log: (l: string) => lines.push(l) });
+    expect(lines.join('\n')).toContain('full snapshot');
+    expect(await savedCursor(id)).toBe(`seq:${s.seq}`);
   });
 
   test('503s and a helper that is not listening retry 1 s, 4 s and 15 s, then stop with apple_contacts_unreachable', async () => {
@@ -343,10 +427,11 @@ describe('identity and the person-page block (repo-less brain)', () => {
     const original = await bodyOf('people/alice-example');
     const s = freshStub();
     s.upsert('c-alice', ALICE);
+    for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
     const { id, cfg } = await contactsSource(s);
     const fmBefore = await frontmatterOf('people/alice-example');
     await run(id, cfg);
-    const page = (await live(id))[0]!;
+    const page = (await live(id)).find(r => r.id === 'c-alice')!;
     const group = (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: id })).find(m => m.slug === page.slug)!;
     expect(group.established_by).toBe('apple-contacts');
     expect((await listEntityIdentities(engine, { entityId: group.entity_id })).map(m => m.slug).sort()).toEqual([page.slug, 'people/alice-example'].sort());
