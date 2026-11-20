@@ -20,6 +20,7 @@ const OPEN_WITHOUT_DEFERRED = /'queued', ?'running', ?'recovering'/g;
 const DECIDED: Record<string, { count: number; why: string }> = {
   'src/commands/book-mirror.ts': { count: 1, why: 'receipt state (a deferred row reads as queued)' },
   'src/core/engine-sql/persistence-claims.ts': { count: 2, why: 'the claimable-row test written out from journal.ts claimableWriteSql (test/persistence-journal-statements.test.ts pins the copy): its two EARLIER_HEAD lists, with the written-out EARLIER_DEFERRED probe and RELEASED_DEFERRED beside them' },
+  'src/core/engine-sql/sync-status-reads.ts': { count: 1, why: 'managed sync: the drain stall probe head-request read moved here from sync-drain.ts' },
   'src/core/engine-sql/persistence-housekeeping.ts': { count: 2, why: 'the compaction listing writes out terminal-classify.ts supersessionSql (test/persistence-journal-statements.test.ts pins the copy): the same two lists and the same decision' },
   'src/core/cycle/synthesize-postprocess.ts': { count: 1, why: 'cycle producer, never deferred' },
   'src/core/facts/absorb-log.ts': { count: 1, why: 'facts producer, never deferred' },
@@ -36,7 +37,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/schema.ts': { count: 3, why: 'the original state CHECK and partial indexes; deferred rows have their own index' },
   'src/core/persistence/sync-admission.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-cursor-key.ts': { count: 2, why: 'managed sync' },
-  'src/core/persistence/sync-drain.ts': { count: 2, why: 'managed sync' },
+  'src/core/persistence/sync-drain.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-dry-run-writer.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-movement.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-pass-batch.ts': { count: 1, why: 'managed sync' },
