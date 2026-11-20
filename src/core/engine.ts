@@ -37,6 +37,7 @@ import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
 import type * as DoctorTerminalSql from './engine-sql/doctor-terminal.ts';
 import type * as DoctorBrainSql from './engine-sql/doctor-brain.ts';
 import type * as DoctorSyncSql from './engine-sql/doctor-sync.ts';
+import type * as DoctorFactsTrustSql from './engine-sql/doctor-facts-trust.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -5402,4 +5403,9 @@ export interface BrainEngine {
   listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean): Promise<DoctorSourcesSql.OwnedContentRow[]>;
   /** Live pages of the `default` source and how many of them record a source path. */
   countDefaultSourceFiles(): Promise<DoctorSourcesSql.DefaultSourceFiles>;
+  // Doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts).
+  /** Live pages of the conversation-pipeline `types` whose slug matches none of the LIKE `slugPatterns`. */
+  countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]): Promise<number>;
+  /** Per source, the facts writes deferred for `reason` in the last 24 hours that no later completed facts-absorb job covers, when they persist (more than 10, or the oldest over an hour old). */
+  listPersistentWriterContention(reason: string): Promise<DoctorFactsTrustSql.WriterContentionRow[]>;
 }

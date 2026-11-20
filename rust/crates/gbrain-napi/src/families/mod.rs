@@ -13,6 +13,7 @@ mod cli_reads_doctor_brain;
 mod cli_reads_doctor_checkpoints;
 mod cli_reads_doctor_derived;
 mod cli_reads_doctor_derived_health;
+mod cli_reads_doctor_facts_trust;
 mod cli_reads_doctor_pages;
 mod cli_reads_doctor_persistence;
 mod cli_reads_doctor_search;

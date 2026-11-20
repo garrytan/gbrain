@@ -220,6 +220,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_brain: ['listInterimStoredObjectCounts', 'readOldestSourceCreatedAt', 'listVisibilityCandidatePages', 'countVisibilityNoncanonicalHolds', 'listContentBlockedReceipts', 'listPassAdmittedReceipts', 'listOrphanConnectorCheckpoints'],
   // doctor_terminal: Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw (engine-sql/doctor-terminal.ts)
   doctor_terminal: ['readTerminalFailureGroups', 'listTerminalFailureBatch', 'listOpenPassCheckpointBlockers', 'listWorktreeBlockerRequests'],
+  // doctor_facts_trust: the facts, fence and trust reads doctor checks ran through executeRaw (engine-sql/doctor-facts-trust.ts)
+  doctor_facts_trust: ['countConversationPipelinePages', 'listPersistentWriterContention'],
   // doctor_sources: the doctor reads over sources (engine-sql/doctor-sources.ts)
   doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'listOwnedContentRows', 'countDefaultSourceFiles'],
 
