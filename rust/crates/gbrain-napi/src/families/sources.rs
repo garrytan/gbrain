@@ -79,6 +79,24 @@ impl Brain {
         self.run(env, move |s| s.read_source_purge_epoch(&id))
     }
 
+    /// `advanceSourceCommit(id, commit, setNewest, newestContentAt)`: records the commit a git sync
+    /// reached and stamps `last_sync_at`. `newest_content_at` changes only when `set_newest` is
+    /// true; a null `newest_content_at` then clears it.
+    #[napi]
+    pub fn advance_source_commit<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        commit: String,
+        set_newest: bool,
+        newest_content_at: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let newest = set_newest.then_some(newest_content_at.as_deref());
+            s.advance_source_commit(&id, &commit, newest)
+        })
+    }
+
     /// `countRepoBoundSources()`: live sources with a non-empty local path.
     #[napi]
     pub fn count_repo_bound_sources<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

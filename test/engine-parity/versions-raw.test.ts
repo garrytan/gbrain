@@ -231,6 +231,30 @@ describe('engine parity: versions', () => {
     },
   );
 
+  // #8635 on the Rust engine: a sync import passes the (commit, path) its reason came from; a purge that tombstoned that
+  // pair drops the reason on every arm (page-state/versions.ts stampableReason; the store reads the tombstone in its write).
+  parityTest(
+    'createVersion stores the import reason and drops one whose commit and path a purge tombstoned',
+    { methods: ['putPage', 'createVersion', 'getVersions', 'writeReasonPurgeTombstones'] },
+    async (engine) => {
+      await engine.writeReasonPurgeTombstones('default', [{ commit_sha: 'b'.repeat(40), path: 'notes/why.md' }]);
+      const write = (title: string) => engine.putPage('notes/why', { type: 'note', title, compiled_truth: `${title}.`, timeline: '' });
+      const source = (commit: string) => ({ commit: commit.repeat(40), path: 'notes/why.md' });
+      await write('First');
+      const first = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Add the first note', reasonSource: source('a') });
+      await write('Second');
+      const purged = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Name a private deal', reasonSource: source('b') });
+      await write('Third');
+      const empty = await engine.createVersion('notes/why', { sourceId: 'default', reason: '', reasonSource: source('b') });
+      await write('Live');
+      const created = [first, purged, empty].map((v) => (v as { change_reason?: string | null }).change_reason ?? null);
+      expect(created).toEqual(['Add the first note', null, '']);
+      const history = (await engine.getVersions('notes/why')).map((v) => [v.title, v.replaced_because ?? null]);
+      expect(history).toEqual([['Third', ''], ['Second', null], ['First', 'Add the first note']]);
+      return { created, history };
+    },
+  );
+
   /** A page whose snapshots differ in privacy: private, named readers, world, pinned question, then a world live page. */
   async function privateHistory(engine: Parameters<Parameters<typeof parityTest>[2]>[0]): Promise<void> {
     const edits: Array<[string, Record<string, unknown>]> = [
@@ -278,6 +302,36 @@ describe('engine parity: versions', () => {
       expect(teamLive).toEqual([]);
       const reasons = (await engine.getVersions('notes/hist', { excludePrivate: true })).map((v) => v.replaced_because ?? null);
       return { open, hidden, limited, meta, privateLive, teamLive, reasons };
+    },
+  );
+
+  parityTest(
+    'getVersions under excludePrivate withholds a snapshot\'s reason when the next snapshot is private or names readers',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const edits: Array<[string, Record<string, unknown>, string]> = [
+        ['World one', {}, 'before a private edit'],
+        ['Private two', { visibility: 'private' }, 'private edit'],
+        ['World three', {}, 'before a reader-named edit'],
+        ['Team four', { readable_by: ['alice-example'] }, 'reader-named edit'],
+        ['World five', {}, 'before a world edit'],
+        ['World six', {}, 'before the live page'],
+      ];
+      for (const [title, frontmatter, reason] of edits) {
+        await engine.putPage('notes/succ', { type: 'note', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+        await engine.createVersion('notes/succ', { reason });
+      }
+      await engine.putPage('notes/succ', { type: 'note', title: 'Live', compiled_truth: 'Live.', timeline: '' });
+      const read = async (excludePrivate: boolean) =>
+        (await engine.getVersions('notes/succ', { excludePrivate })).map((v) => [v.title, v.replaced_because ?? null]);
+      const trusted = await read(false);
+      const world = await read(true);
+      expect(trusted).toContainEqual(['World one', 'before a private edit']);
+      expect(world).toContainEqual(['World one', null]);
+      expect(world).toContainEqual(['World three', null]);
+      expect(world).toContainEqual(['World five', 'before a world edit']);
+      expect(world).toContainEqual(['World six', 'before the live page']);
+      return { trusted, world };
     },
   );
 

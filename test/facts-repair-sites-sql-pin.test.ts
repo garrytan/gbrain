@@ -279,8 +279,8 @@ FROM f n JOIN f o
   },
   {
     from: 'src/core/facts/claim-conflicts.ts:125 runClaimConflicts',
-    member: 'listUnarchivedSourceIds',
-    runs: [{ run: e => e.listUnarchivedSourceIds(), params: undefined }],
+    member: 'listUnarchivedSourceRows',
+    runs: [{ run: e => e.listUnarchivedSourceRows(), params: undefined }],
     text: `SELECT id FROM sources WHERE NOT archived ORDER BY id`,
   },
 ];

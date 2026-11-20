@@ -165,6 +165,11 @@ pub const KEYSPACES: &[Keyspace] = &[
         "code traversal cache",
     ),
     ks(
+        keys::EMBEDDING_HOLD,
+        "embedding_holds",
+        "page embedding holds",
+    ),
+    ks(
         keys::ENTITY_IDENTITY,
         "entity_identities",
         "entity identity groups",
@@ -187,6 +192,12 @@ pub const KEYSPACES: &[Keyspace] = &[
     ),
     ks(keys::RELATION_CATALOG, "relations", "relation catalog"),
     ks(keys::LOCK_QUEUE, "transactions", "lock queue"),
+    ks(
+        keys::REASON_TOMBSTONE,
+        "reason_tombstones",
+        "purged change reasons",
+    ),
+    ks(keys::ACCESS_RULES, "access_rules", "folder access rules"),
 ];
 
 /// The catalog the addon returns: the store format it describes and every keyspace.

@@ -411,7 +411,7 @@ doctor and write-path callers stop on that refusal instead of the `raw_sql` refu
 
 | Member | Reads or writes | What the store would need |
 | --- | --- | --- |
-| `listActiveSourceIds`, `listUnarchivedSourceIds` | `sources` | The source ids in byte order; `archived` is false or unset. |
+| `listActiveSourceIds`, `listUnarchivedSourceRows` | `sources` | The source ids in byte order; `archived` is false or unset. |
 | `readRepairBrainId` | `persistence_brain` | The brain id row, or null (callers fall back to `host`). |
 | `listAgentSessionTakeCandidates`, `retireSessionTakes`, `listInactiveTakeIds` | `takes`, `facts` | The `consolidated_into` and `consolidated_at` columns of facts and the take columns `kind`, `holder`, `active`, `resolved_at`, `created_at`. |
 | `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |

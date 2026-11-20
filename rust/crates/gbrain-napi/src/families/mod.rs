@@ -23,6 +23,7 @@ mod journal;
 mod keyspaces;
 mod large_page;
 mod links;
+mod notifier;
 mod op_checkpoint;
 mod page_visibility;
 mod pages;
@@ -34,10 +35,12 @@ mod trust;
 mod trust_fence;
 mod trust_proposals;
 mod versions;
+mod worktrees;
 mod write_attribution;
 mod write_guards;
 mod write_misc;
 mod write_trust;
+mod writer_status;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;
@@ -67,6 +70,7 @@ mod facts_trust_owner;
 mod facts_trust_reads;
 mod jobs;
 mod keyword;
+mod label_door;
 mod link_queries;
 mod link_temporal;
 mod memory_mutation_reads;

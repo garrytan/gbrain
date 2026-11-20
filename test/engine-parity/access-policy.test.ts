@@ -19,7 +19,7 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { folderAccessFor } from '../../src/core/access/caller.ts';
 import type { FolderRule } from '../../src/core/access/folder-rules.ts';
-import { applyApproved, coverageRows, listRevisions, policySeams, policyStatus, previewApply, proposeRevision } from '../../src/core/access/policy.ts';
+import { applyApproved, coverageRows, listRevisions, policySeams, policyStatus, previewApply, proposeRevision, restampSource } from '../../src/core/access/policy.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -158,5 +158,40 @@ describe('access policy members (engine-sql/access-policy.ts)', () => {
     expect(rules).toEqual(won);
     expect(revisions).toEqual([{ revision: 1, digest: won[0] }]);
     return { fulfilled: won.length, rejected: outcomes.length - won.length, rulesMatchWinner: rules.join() === won.join(), revisions: revisions.length };
+  });
+
+  parityTest('a page written or renamed under an applied rule is stamped as it is written, so a restamp counts no page', { methods: ['putPage', 'updateSlug', 'restampAccessWindow', 'finishAccessRestamp'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    const page = (slug: string, body: string) => engine.putPage(slug, { type: 'note', title: 'Acme Example', compiled_truth: body, timeline: '' }, { sourceId: SRC });
+    await page('private/acme-new', 'a new page under the rule');
+    await page('private/acme-diary', 'the diary, edited');
+    await page('notes/acme-later', 'a new open page');
+    const written = await restampSource(engine, SRC);
+    await engine.updateSlug('notes/acme-open', 'private/acme-moved', { sourceId: SRC });
+    await engine.updateSlug('private/acme-new', 'notes/acme-out', { sourceId: SRC });
+    const renamed = await restampSource(engine, SRC);
+    const carol = await served(engine, 'carol-example');
+    expect(written).toEqual({ pages_scanned: 4, pages_restamped: 0 });
+    expect(renamed).toEqual({ pages_scanned: 4, pages_restamped: 0 });
+    expect(carol).toEqual(['notes/acme-later', 'notes/acme-out']);
+    return { written, renamed, carol };
+  });
+
+  parityTest('a reader the rule names is served the folder, except while its prefix is still pending', { methods: ['findPagesByTitles', 'readFolderAccess', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    const pending: unknown[] = [];
+    policySeams.afterInstall = async () => {
+      pending.push({ alice: await folderAccessFor(engine, ['member:alice-example']), served: await served(engine, 'alice-example') });
+    };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    const applied = { alice: await folderAccessFor(engine, ['member:alice-example']), served: await served(engine, 'alice-example'), carol: await served(engine, 'carol-example') };
+    expect(pending).toEqual([{ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [{ source_id: SRC, prefix: 'private/' }] }, served: ['notes/acme-open'] }]);
+    expect(applied).toEqual({ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [] }, served: ['notes/acme-open', 'private/acme-diary'], carol: ['notes/acme-open'] });
+    return { pending, applied };
   });
 });

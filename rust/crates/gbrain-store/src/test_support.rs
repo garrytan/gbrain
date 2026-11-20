@@ -50,8 +50,13 @@ pub(crate) fn mem_kv() -> Arc<dyn crate::kv::Kv> {
 
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
+    store_on(Arc::new(SystemEnv))
+}
+
+/// `store()` with the given clock and identifier source.
+pub(crate) fn store_on(env: Arc<dyn crate::env::Env>) -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
-    Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+    Store::open_kv(Arc::new(kv), env, OpenOptions::default()).unwrap()
 }
 
 /// The concurrent-writer engine (`OccKv`) on an in-memory file, with no brain in it.

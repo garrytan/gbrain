@@ -465,8 +465,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
+      // shared_skills_sources is gone from this list: the source view reads readSourceState, which Rust serves, so
+      // with no opted-out or parked source the check returns nothing, as it does on PGLite.
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
+        'quarantined_changes', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.

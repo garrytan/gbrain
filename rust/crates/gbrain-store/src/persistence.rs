@@ -17,6 +17,12 @@
 //! | `d 0x05 <request id> 0x00 <kind>` | one `persistence_effects` row (`effects.rs`), JSON |
 //! | `d 0x06 <id, 8 bytes big-endian>` | the effect claim-order index (`effects.rs`), JSON |
 //! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
+//! | `d 0x09 0x01 <worktree_id>` | one `persistence_worktrees` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x02 <worktree_id> 0x00 <host_id>` | one `persistence_host_bindings` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x03 <source_id>` | one `persistence_source_bindings` row (`worktrees.rs`), JSON |
 //!
 //! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
 //! family here uses them.
@@ -38,8 +44,9 @@
 //! `*_in` function over one `KvWrite`, so a store write transaction can run several of them.
 //!
 //! Every request row on this engine has a null `worktree_id` (the insert refuses another value:
-//! no worktree binding exists here), so the worktree terms of the claim statements are answered
-//! as Postgres answers them for a null worktree.
+//! a worktree binding is claimed here only on an unmanaged brain, `worktrees.rs`, and only the
+//! managed write path names a worktree on a request), so the worktree terms of the claim
+//! statements are answered as Postgres answers them for a null worktree.
 
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
@@ -53,12 +60,15 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod checkpoint_rows;
 mod effect_scans;
 mod effect_worker;
 mod effects;
+mod head_blocker;
 mod housekeeping;
 mod idle_probe;
 mod noop_settle;
+mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
@@ -67,12 +77,19 @@ mod purge_effects;
 mod receipt_list;
 mod topology;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
+mod worktrees;
+mod writer_status;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
+pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
+pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
+pub use notifier::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
@@ -85,6 +102,7 @@ pub use purge_effects::{
 };
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
+pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;
@@ -97,6 +115,11 @@ const QUEUE: u8 = 0x04;
 /// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
 /// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
 const CHECKPOINT_PATH: u8 = 0x07;
+/// The byte after `keys::PERSISTENCE` of a commit notifier row (persistence/notifier.rs). 0x05 to
+/// 0x07 are reserved for effect rows and operation checkpoint paths.
+const NOTIFIER: u8 = 0x08;
+/// The byte after `keys::PERSISTENCE` of a worktree binding row (persistence/worktrees.rs).
+const WORKTREES: u8 = 0x09;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -655,7 +678,7 @@ pub(crate) fn insert_write_request_in(
     };
     if input.worktree_id.is_some() {
         return Err(violation(
-            "no persistence worktree exists on this engine, so worktree_id cannot be set",
+            "only the managed write path names a worktree, and it does not run on this engine, so worktree_id cannot be set",
         ));
     }
     if input.deferred_refresh_id.is_some() {

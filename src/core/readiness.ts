@@ -633,7 +633,7 @@ const workerProbe: Prober = {
       why: `${waiting} job(s) are waiting and no worker is running${pglite ? ' (PGLite has no background worker; jobs run with --follow or while a worker holds the brain)' : ''}.`,
       fix: pglite
         ? { argv: ['gbrain', 'jobs', 'work'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Runs the waiting jobs in this process; stop it once the queue drains.', verify: VERIFY('queue_health') }
-        : { argv: ['gbrain', 'jobs', 'supervisor', 'start'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Starts the job supervisor, which keeps a worker running for this Postgres brain.', verify: VERIFY('queue_health') },
+        : { argv: ['gbrain', 'jobs', 'supervisor', 'start'], consent: [], actor: 'agent', requires_exclusive: false, why: `Starts the job supervisor, which keeps a worker running for this ${engine.kind === 'rust' ? 'brain' : 'Postgres brain'}.`, verify: VERIFY('queue_health') },
     };
   },
 };

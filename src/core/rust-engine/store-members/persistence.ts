@@ -1,6 +1,6 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
- * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
+ * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
@@ -16,11 +16,9 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
-import type { GitHoldRecordsQuery, GitHoldReportInputs } from '../../engine-sql/sync-hold-reads.ts';
-import type { ReasonPurgeTombstone } from '../../engine-sql/sync-reason-reads.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
 import type { SourceDetailRow } from '../../engine.ts';
@@ -72,32 +70,6 @@ export const readJournalLimitRows: StoreMember<[], Array<{ key: string | null; v
   rows.push({ key: null, value: null });
   return rows;
 };
-
-/** Sync holds are written only by the git sync path, which this engine refuses: no page is ever held. */
-export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: never; revision: string | null }>> = async () => [];
-
-/** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
-export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
-
-/** No hold rows exist on this engine (see readHeldPageRows), so no source has a hold record. */
-export const readGitHoldRecords: StoreMember<[opts?: GitHoldRecordsQuery], Array<{ record: never }>> = async () => [];
-
-/** No retry request exists on this engine: `gbrain sources retry-held` writes it through caller raw SQL, which refuses. */
-export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], null> = async () => null;
-
-/**
- * No hold summary exists on this engine (see readHeldPageRows). The mirror flag is the text of the source's
- * `mirror_read_only` config key, as `config->>'mirror_read_only'` reads it; null when unset or the source is absent.
- */
-export const readGitHoldReportInputs: StoreMember<[sourceId: string, fingerprint: string], GitHoldReportInputs> = async (brain, sourceId) => {
-  const source: SourceStateRow | null = await storeCall({ member: 'readGitHoldReportInputs', sourceId }, () => brain.readSourceState(sourceId));
-  const flag = source?.config?.mirror_read_only;
-  return { summary: null, mirror: flag === undefined || flag === null ? null : typeof flag === 'string' ? flag : JSON.stringify(flag) };
-};
-
-
-/** The store keeps no change reasons and purges none, so no (commit, path) is tombstoned. */
-export const readReasonPurgeTombstones: StoreMember<[sourceId: string], ReasonPurgeTombstone[]> = async () => [];
 
 /** The source's stored purge epoch (0 until a purge raises it); an unknown source has none (null). */
 export const readSourcePurgeEpoch: StoreMember<[sourceId: string], string | number | null> = async (brain, sourceId) =>
@@ -272,8 +244,11 @@ export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { 
 export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
 /** The heartbeat's row delete; there is no row. */
 export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
-/** The worktree heartbeat stamp; this engine has no worktrees. */
-export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The worktree heartbeat stamp: `heartbeat_at` now on every worktree the host owns (the claims an unmanaged brain keeps). */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async (brain, hostId, opts) => {
+  opts?.signal?.throwIfAborted();
+  await storeCall({ member: 'stampWorktreeHeartbeats' }, () => brain.stampWorktreeHeartbeats(hostId));
+};
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
 export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>

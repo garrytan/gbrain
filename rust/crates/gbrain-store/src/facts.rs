@@ -86,8 +86,9 @@ pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, chronicle_depth, concept_inputs,
+    declared_slugs, hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows,
+    version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
@@ -213,9 +214,6 @@ impl FactRecord {
         TrustTier::stored(Some(&self.trust_tier))
     }
 
-    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
-    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
-    /// value, event_type, dimension and context.
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
     /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
@@ -289,6 +287,9 @@ impl FactRecord {
             || float_distinct(a.claim_value, b.claim_value)
     }
 
+    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
+    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
+    /// value, event_type, dimension and context.
     fn trust_content_changed(&self, new: &FactRecord) -> bool {
         let float = |a: Option<f64>, b: Option<f64>| match (a, b) {
             (Some(a), Some(b)) => !(a == b || (a.is_nan() && b.is_nan())),

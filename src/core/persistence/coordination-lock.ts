@@ -4,7 +4,6 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { sha256 } from './digest.ts';
 import { localHostId, persistenceHome } from './identity.ts';
-import type { SqlEngine } from './model.ts';
 import { acquireNativeLock } from './native-lock.ts';
 import { coordinationPathInsideRoot, physicalRootError, readWedgedPhysicalRootReservation, repairReservationCoordinationPath,
   reservationRepairGuardPath } from './physical-root-record.ts';
@@ -84,6 +83,12 @@ export function coordinationHomeIgnored(root: string, recordedPath: string): Coo
       + 'No gbrain command relocates a recorded lock yet (docs/architecture/topologies.md#coordination-lock).' };
 }
 
+/** The database facts a reservation repair checks: this brain's id, and whether a worktree row exists for an id. */
+export interface ReservationRepairFacts {
+  brainId(): Promise<string | null>;
+  worktree(id: string): Promise<unknown>;
+}
+
 /** How long a repair waits for another repairer of the same root before refusing. */
 const REPAIR_GUARD_WAIT_MS = 2000;
 
@@ -92,9 +97,10 @@ const REPAIR_GUARD_WAIT_MS = 2000;
  * reservation and then refused it, so every later claim failed closed. A first claim on the reserving host rewrites only
  * the reservation's coordinationPath, under a guard beside the reservation (independent of any env), when the brain and
  * host match and no worktree row exists for it. A missing or healthy reservation returns before taking the guard, so a
- * caller inside a database transaction never waits on it for a healthy root.
+ * caller inside a database transaction never waits on it for a healthy root. The brain and worktree facts come from the
+ * caller's claim store or physical-root facts (physical-root.ts `PhysicalRootFacts`), so every engine answers them.
  */
-export async function repairWedgedReservation(engine: SqlEngine, root: string, hostId: string): Promise<void> {
+export async function repairWedgedReservation(facts: ReservationRepairFacts, root: string, hostId: string): Promise<void> {
   if (!readWedgedPhysicalRootReservation(root)) return;
   const guard = await acquireNativeLock(reservationRepairGuardPath(root), { timeoutMs: REPAIR_GUARD_WAIT_MS });
   if (!guard) throw opError('writer_lock_unavailable', 'Another process is repairing this checkout\'s reservation.',
@@ -103,11 +109,9 @@ export async function repairWedgedReservation(engine: SqlEngine, root: string, h
   try {
     const wedged = readWedgedPhysicalRootReservation(root);
     if (!wedged) return;
-    const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-    if (wedged.brainId !== brain?.brain_id) throw physicalRootError('This checkout\'s reservation (its lock inside the checkout) belongs to another brain, so it was left unchanged.');
+    if (wedged.brainId !== await facts.brainId()) throw physicalRootError('This checkout\'s reservation (its lock inside the checkout) belongs to another brain, so it was left unchanged.');
     if (wedged.hostId !== hostId) throw physicalRootError('Another host reserved this physical checkout with its lock inside the checkout; only a claim on that host repairs it.');
-    const owned = await engine.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid', [wedged.worktreeId]);
-    if (owned.length) throw physicalRootError('An owned checkout requires verified writer recovery; its recorded coordination lock is never moved by a claim.');
+    if (await facts.worktree(wedged.worktreeId)) throw physicalRootError('An owned checkout requires verified writer recovery; its recorded coordination lock is never moved by a claim.');
     const lock = resolveCoordinationLock(root, wedged.worktreeId, {}, hostId).path;
     repairReservationCoordinationPath(root, wedged, lock);
     process.stderr.write(`[persistence] reservation of ${root} recorded its coordination lock inside the checkout (${wedged.coordinationPath}); moved it to ${lock}, identity unchanged.\n`);

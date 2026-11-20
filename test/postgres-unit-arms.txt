@@ -145,9 +145,11 @@ test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/access-flag.test.ts
 test/engine-parity/access-policy.test.ts
+test/engine-parity/access-setup.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
+test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/calibration-profiles.test.ts
@@ -170,6 +172,7 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
+test/engine-parity/delete-page.test.ts
 test/engine-parity/dream-config-members.test.ts
 test/engine-parity/dream-cycle-sites.test.ts
 test/engine-parity/effect-scans.test.ts
@@ -215,6 +218,8 @@ test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-rebuild.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/git-durability-credential.test.ts
+test/engine-parity/git-holds.test.ts
 test/engine-parity/graduation-catalog.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/holding-page-purges.test.ts
@@ -241,6 +246,8 @@ test/engine-parity/links.test.ts
 test/engine-parity/mcp-get-tags.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
+test/engine-parity/notifier-freshness.test.ts
+test/engine-parity/notifier.test.ts
 test/engine-parity/oauth-clients.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
@@ -262,6 +269,7 @@ test/engine-parity/purge-slug-stores.test.ts
 test/engine-parity/purge-verify.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/relational-reads.test.ts
 test/engine-parity/remember-meta.test.ts
 test/engine-parity/remember-whole.test.ts
@@ -284,6 +292,8 @@ test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
+test/engine-parity/sync-route.test.ts
+test/engine-parity/sync-status-reads.test.ts
 test/engine-parity/take-proposals.test.ts
 test/engine-parity/take-purge-ledger.test.ts
 test/engine-parity/take-purge-overlay.test.ts
@@ -310,6 +320,8 @@ test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/wanted-markers.test.ts
+test/engine-parity/wedged-reservation.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-parity/withdrawal-fence.test.ts
 test/engine-parity/withdrawal-forget.test.ts
@@ -319,7 +331,9 @@ test/engine-parity/write-misc.test.ts
 test/engine-parity/write-outcome-order.test.ts
 test/engine-parity/write-request-cancel.test.ts
 test/engine-parity/write-request-reads.test.ts
+test/engine-parity/writer-admin.test.ts
 test/engine-parity/writer-registration.test.ts
+test/engine-parity/writer-status.test.ts
 test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts

@@ -108,6 +108,13 @@ pub struct PageQuoteTierQuery {
     pub source_ids: Option<Vec<String>>,
 }
 
+/// A page named by source and slug (`listPageTrustTiersByKey`, `lockLivePagesByKey`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PageKeyRef {
+    pub source_id: String,
+    pub slug: String,
+}
+
 /// The scan's table: `pages` or `facts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScanTable {
@@ -458,5 +465,40 @@ impl Store {
                 json!({ "id": page.id, "type": page.page_type, "trust_tier": page_tier(page).as_str() })
             })
             .collect())
+    }
+
+    /// `listPageTrustTiersByKey`: the id and stored trust tier of each named page, deleted or not,
+    /// in key order, a key named twice answering twice as the SQL join does (the join has no set
+    /// order). A key no page has answers nothing. Timeline projection stamps each row with its page's tier.
+    pub fn list_page_trust_tiers_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for PageKeyRef { source_id, slug } in refs {
+            if let Some(page) = read_page(&*read, source_id, slug)? {
+                out.push(json!({
+                    "id": page.id,
+                    "source_id": page.source_id,
+                    "slug": page.slug,
+                    "trust_tier": TrustTier::stored(page.trust_tier.as_deref()).as_str(),
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `lockLivePagesByKey`: the named pages that are live (not soft-deleted), in key order, a key
+    /// named twice answering twice as the SQL join does. The SQL engines hold each row `FOR SHARE` until the transaction ends; a
+    /// store transaction is serialized already, so no other write can delete one in between.
+    pub fn lock_live_pages_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for PageKeyRef { source_id, slug } in refs {
+            if let Some(page) = read_page(&*read, source_id, slug)?
+                && page.deleted_at_us.is_none()
+            {
+                out.push(json!({ "source_id": page.source_id, "slug": page.slug }));
+            }
+        }
+        Ok(out)
     }
 }

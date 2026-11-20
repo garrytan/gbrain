@@ -15,6 +15,7 @@ same state under key tag `z` (`crates/gbrain-store/src/access_rules.rs`). The by
 | `z 0x03 <source> \0 <prefix> \0 <reason>` | `{ source_id, prefix, reason, revision }` | `access_pending_coverage` |
 | `z 0x04 <source> \0 <revision u64 BE>` | `{ source_id, revision, applied, rules, digest, change_kind, origin, operation_id, proposed_by, approved_by, created_at_us, applied_at_us, approved_at_us }` | `access_policy_revisions` |
 | `z 0x05 <source> \0 <page id u64 BE>` | the sorted rule ids the last restamp gave the page | `pages.folder_rule_ids` |
+| `z 0x06 <source> \0 <id>` | `{ id, source_id, direction, phase, receipts, created_at_us, created_seq, updated_at_us }` | `access_policy_migrations` |
 
 The writes mirror the v283 and v303 checks: a rule id matches `^[a-z0-9][a-z0-9._-]{0,63}$`, a prefix is a folder
 (segments that each end in `/`) or one page (the same segments without the final `/`), at most 512 bytes with no `..`,
@@ -61,9 +62,12 @@ other and the second sees the first's revision. A second write of one revision n
 | `brain.readAccessPolicyMarks(sourceId, operationId?)` | `{ applied, approved, operation? }` | `POLICY_MARKS_SQL`, `OPERATION_MARKS_SQL` |
 | `brain.replaceAccessInvalidCoverage(sourceId, prefixes, detail)` | replaces the invalid prefixes; an empty list clears them | `DELETE_INVALID_SQL`, `INSERT_INVALID_SQL` |
 
-The store does not stamp a page when it is written, so `pages_restamped` counts a page written under an existing rule
-on a later restamp where PGLite does not. What a caller can read does not change: the store judges each read against
-the rules it holds.
+The store stamps a page when it is written, as the trigger `pages_access_stamp_folder_rules` does: a page record put
+under a key that held no record of the same page (an insert, a rename or a move) takes the `0x05` rule ids that cover
+it now when its source has access state, and none otherwise, in the same write (`FlaggingWriter`,
+`access_policy::stamp_page_put`). A put over the same page keeps its ids, as an UPDATE that names no slug, source or
+stamp column does. So `pages_restamped` counts the same pages as on PGLite and Postgres. What a caller can read does
+not depend on the stamps: the store judges each read against the rules it holds.
 
 The store has no row-level security, so `readFolderAccess` never returns the `'!unreadable'` row and the unreadable
 part of `isFolderRestricted` is always false.
@@ -79,9 +83,11 @@ every put of a `z 0x02` or `z 0x03` key, whatever code path made it ([access-fla
 The store's privacy filter (`crates/gbrain-store/src/facts/privacy.rs`) applies these records to the pages a served
 caller reads:
 
-- a page whose slug is under a rule of its source is stamped (`pages.folder_rule_ids IS NOT NULL`). A served caller
-  satisfies no rule (the TypeScript members refuse a caller-access record with satisfied rule ids or folder coverage),
-  so a stamped page is hidden from it, in the full form and in the unrestricted short form;
+- a page whose slug is under a rule of its source is stamped (`pages.folder_rule_ids IS NOT NULL`). The policy carries
+  the caller's satisfied rule ids (`satisfiedRuleIds`, `source:rule_id`) and its record's coverage (`folderCoverage`).
+  A stamped page passes the full form only when the caller satisfies every rule that covers it and no coverage entry
+  covers it; the unrestricted short form passes no stamped page. The satisfied rules count only for the caller's own
+  identity, never for the empty identity that judges a provenance page;
 - a page under a pending prefix is hidden in the full form, as the coverage conjuncts of `folderRulesAllowedSql` hide
   it;
 - as a fact's origin or a derivative's input, a rule stored with `covers_derived: false` does not count
@@ -91,25 +97,66 @@ One difference remains: PGLite stamps `folder_rule_ids` when a page is written a
 the store judges a page against the rules it holds when the read runs. The two agree after `restampSource`, which is
 the state a finished policy change leaves.
 
-The folder test has no `PrivacyPolicy` field: it reads the store's rules and pending prefixes,
-and `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).
+The folder test reads the store's rules and pending prefixes, and the policy's `satisfiedRuleIds` and `folderCoverage`
+(both default to empty). `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).
 So a policy with every defaulted field missing still hides a folder-restricted page, and no
 owner-only form reopens one (`a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page`).
+
+The store also hides a page under a pending prefix when the caller's record has no coverage entries, where the
+Postgres text renders no pending conjunct for such a record. That hides more than Postgres hides, never less.
+
+## Setup and policy-store members
+
+`src/commands/access-serves.ts` (`gbrain access serves` and `sources unfederate`), `src/core/access/policy-migrate.ts`
+(the policy-store move), `src/core/access/policy-transfer.ts` (export) and `src/core/access/serves.ts` run fourteen
+typed BrainEngine members (`src/core/engine-sql/access-setup.ts` on PGLite and Postgres,
+`src/core/rust-engine/store-members/access-setup.ts` here). The store keeps no access tokens and no OAuth clients
+(minting and the bearer check are raw SQL this engine refuses), so the token members answer what PGLite and Postgres
+answer on a brain with none, and the two token writes match no token. The policy-store migration journal is
+`crates/gbrain-store/src/access_migrations.rs`; each write is one `Store::write`.
+
+| JS member | Rust answers | Mirrors |
+| --- | --- | --- |
+| `listUnboundTokenNames()` / `listUnboundClientIds()` | `[]` | `UNBOUND_TOKEN_NAMES_SQL`, `UNBOUND_CLIENT_IDS_SQL` |
+| `readLiveAccessToken(name)` / `listKeysReadingSource(sourceId)` | `null` / `[]` | `LIVE_TOKEN_SQL`, `KEYS_READING_SOURCE_SQL` |
+| `recordTokenSetupReads(name, reads)` / `revokeAccessTokenById(id)` | nothing | `RECORD_SETUP_READS_SQL`, `REVOKE_TOKEN_SQL` |
+| `listUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
+| `countCompanyPages(sourceId)` | `{ pages, calls }`: the live pages of the source and those under `company/calls/` (`listAccessPrefixSlugs`) | `COMPANY_PAGE_COUNTS_SQL` |
+| `listAccessPolicySources()` | every source with access state, archived ones too, by id in code-unit order | `POLICY_STATE_SOURCES_SQL` |
+| `countPeopleFolderPages()` | `{ source_id, folder, pages }` for each `people/<folder>/` holding live pages, by source then folder in code-unit order | `PEOPLE_FOLDER_PAGES_SQL` |
+| `brain.readUnfinishedAccessMigration(sourceId)` | `{ id, phase, direction, receipts }` of the newest migration of the source that has not switched, or null | `UNFINISHED_MIGRATION_SQL` |
+| `brain.insertAccessMigration(id, sourceId, direction)` | starts a migration at `started` with `{}` receipts; a source with no access state, a direction other than `to_git` or `to_database`, or a used id refuses | `INSERT_MIGRATION_SQL` |
+| `brain.recordAccessMigrationPhase(id, phase, receipts)` | sets the phase and receipts (`switchAccessMigration` sends `switched`); a missing id changes nothing, a phase the table does not allow refuses | `RECORD_MIGRATION_PHASE_SQL`, `SWITCH_MIGRATION_SQL` |
+
+A migration is a `z 0x06 <source> \0 <id>` record `{ id, source_id, direction, phase, receipts, created_at_us,
+created_seq, updated_at_us }`; `created_seq` orders two migrations made in one microsecond. Postgres sorts
+`ORDER BY source_id` and `ORDER BY 1, 2` in the database collation, so on a server whose collation is not `C` two ids
+that differ only in punctuation or case can come back in another order than PGLite and the store give.
 
 ## Tests
 
 - `crates/gbrain-store/src/access_rules.rs` (unit tests): reads in key order, the flag on a rule or pending put, the
   newest applied revision per source, folder restriction and stamping, and the writes the v283 checks refuse.
-- `crates/gbrain-store/src/facts/privacy.rs` (unit test): a folder rule and a pending prefix hide pages from every
-  served caller; a raw-only rule does not close an origin.
+- `crates/gbrain-store/src/facts/privacy.rs` (unit tests): a folder rule and a pending prefix hide pages from a
+  caller that satisfies no rule; a raw-only rule does not close an origin; a reader a rule names is served the folder
+  unless its record covers the prefix or the prefix is invalid, and only for its own identity.
 - `test/engine-parity/write-misc.test.ts` and `test/engine-parity/import-path.test.ts`: `readFolderAccess`,
   `folderAccessForAll`, `appliedAccessSummary`, `isFolderRestricted` and `listAppliedPolicyRevisions` on every arm, and
   a private folder that refuses a caller its rule does not name (no rule satisfied, the folder's page hidden from
   `findPagesByTitles`). The `restrictFolder` and `seedAccessPolicy` fixtures (`test/engine-parity/harness.ts`) write
   the state.
 - `crates/gbrain-store/src/access_policy.rs` (unit tests): a revision number or operation id refuses a second write,
-  a refused rule change leaves no rule, the restamp counts drifted pages, page prefixes cover one page, and invalid
-  coverage is replaced and cleared.
+  a refused rule change leaves no rule, the restamp counts drifted pages, a page written or renamed under a rule is
+  stamped in its write, page prefixes cover one page, and invalid coverage is replaced and cleared.
 - `test/engine-parity/access-policy.test.ts`: on every arm, a rule added through `policy.ts` hides the folder, a
   removal waits for approval and then shows it, the pending prefix between install and restamp, the revision count, a
-  rule change refused part way, and two concurrent rule changes that cannot both apply against one revision.
+  rule change refused part way, two concurrent rule changes that cannot both apply against one revision, a page
+  written or renamed under an applied rule that a later restamp does not count, and a reader a rule names that
+  `findPagesByTitles` serves the folder, except while its prefix is pending.
+- `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
+  switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
+  allow, a used id) writes nothing.
+- `test/engine-parity/access-setup.test.ts`: on every arm, a brain with no access tokens has nothing unbound, no live
+  key and no key reading a source, the unarchived source ids, the company and people-folder page counts, the sources
+  with access state, and a policy-store migration from its start until it switches.
+  `test/engine-sql-caller-raw-sql-pins.test.ts` pins each Postgres statement to the text its caller ran.

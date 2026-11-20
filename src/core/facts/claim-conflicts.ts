@@ -97,7 +97,7 @@ export async function runClaimConflicts(engine: BrainEngine, opts: { sourceIds?:
   const knob = await readPhaseConfigNumber(engine, CLAIM_CONFLICTS_MAX_PAIRS_KEY);
   const maxPairs = knob.value ?? CLAIM_CONFLICTS_DEFAULT_MAX_PAIRS;
   const dryRun = opts.dryRun === true;
-  const sourceIds = opts.sourceIds ?? (await engine.listUnarchivedSourceIds()).map(r => r.id);
+  const sourceIds = opts.sourceIds ?? (await engine.listUnarchivedSourceRows()).map(r => r.id);
   const sources: ClaimConflictSourceResult[] = [];
   let pairIndex = 0;
   for (const sourceId of sourceIds) {

@@ -62,34 +62,6 @@ impl Brain {
         self.run(env, move |s| s.find_exact_slug(&source_id, &slugs, retired))
     }
 
-    /// `findFuzzyEntityCandidates(sourceId, title, fragment)`: up to five `{ slug, title, type,
-    /// score }` rows, best pg_trgm score first.
-    #[napi]
-    pub fn find_fuzzy_entity_candidates<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        title: String,
-        fragment: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.find_fuzzy_entity_candidates(&source_id, &title, &fragment)
-        })
-    }
-
-    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two live slugs, in slug byte order.
-    #[napi]
-    pub fn find_exact_basename_candidates<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slugs: Vec<String>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.find_exact_basename_candidates(&source_id, &slugs)
-        })
-    }
-
     /// `readLiveSlugs(sourceId, slugs, limit)`: the live pages among `slugs`, each once; a `null`
     /// `limit` reads them all.
     #[napi]
@@ -209,6 +181,34 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_prefix_title_matches(&source_id, &patterns, &title)
+        })
+    }
+
+    /// `findFuzzyEntityCandidates(sourceId, title, fragment)`: up to five `{ slug, title, type,
+    /// score }` rows, best pg_trgm score first.
+    #[napi]
+    pub fn find_fuzzy_entity_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        title: String,
+        fragment: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_fuzzy_entity_candidates(&source_id, &title, &fragment)
+        })
+    }
+
+    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two live slugs, in slug byte order.
+    #[napi]
+    pub fn find_exact_basename_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_exact_basename_candidates(&source_id, &slugs)
         })
     }
 

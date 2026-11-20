@@ -371,3 +371,12 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+## Label guards (`trust::label_guards`)
+
+The `page_label_guards` table (GST-2521): the trust tier an owner label write set on a page. One record per page:
+
+`t 0x0e page_id` (8 bytes, big-endian; `t 0x0a` is the belief ledger's page lifetimes) -> `{"tier": <tier>, "set_at_us": <i64>}`
+
+`writePageLabelGuard` ([label_door.md](label_door.md)) writes and deletes it. A hard page delete removes it (the
+table's `ON DELETE CASCADE`, through `cascade::remove_page_rows`). The guard's readers (`labelGuardTier` and the
+deletion and graduation inventories) still read the table through `executeRaw`, which the Rust engine refuses.

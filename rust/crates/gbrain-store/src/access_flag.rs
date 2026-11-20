@@ -142,7 +142,9 @@ pub(crate) fn assumed_config(assumed: bool, key: &str, stored: Option<String>) -
 /// A store write handle that sets the flag on every put of a page record with a top-level
 /// `readable_by` key, and on every put of a folder rule or a pending prefix (`access_rules.rs`,
 /// the triggers `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted`), in
-/// the same write. `Store::write` hands every write closure one.
+/// the same write. It also stamps a page record put under a new key with the folder rules that
+/// cover it (`access_policy::stamp_page_put`, the trigger `pages_access_stamp_folder_rules`).
+/// `Store::write` hands every write closure one.
 pub(crate) struct FlaggingWriter<'a>(pub(crate) &'a mut dyn KvWrite);
 
 impl KvRead for FlaggingWriter<'_> {
@@ -163,10 +165,19 @@ impl KvRead for FlaggingWriter<'_> {
 
 impl KvWrite for FlaggingWriter<'_> {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        let page = is_page_record(key);
+        let prior = if page {
+            self.0
+                .get(key)?
+                .and_then(|v| crate::access_policy::page_record_id(&v))
+        } else {
+            None
+        };
         self.0.put(key, value)?;
-        if (is_page_record(key) && record_names_readers(value))
-            || crate::access_rules::marks_restricted(key)
-        {
+        if page {
+            crate::access_policy::stamp_page_put(self.0, prior, value)?;
+        }
+        if (page && record_names_readers(value)) || crate::access_rules::marks_restricted(key) {
             set_flag(self.0)?;
         }
         Ok(())
@@ -439,9 +450,7 @@ mod tests {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     walk(&path, root, out);
-                } else if path.extension().is_some_and(|e| e == "rs")
-                    && path.file_name().is_some_and(|n| n != "tests.rs")
-                {
+                } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = std::fs::read_to_string(&path).unwrap();
                     // The unit tests open their own handles; only the module code counts.
                     let code = text
@@ -465,45 +474,66 @@ mod tests {
         out
     }
 
-    /// `bumpPageRetrievals` and the hard-delete cascade (`cascade::remove_page_rows`) write through
-    /// the flagging handle: `bump_page_retrievals` writes with `Store::write`, `Store::write` wraps
-    /// both of its arms in `FlaggingWriter`, and no module outside this list opens a raw write
-    /// handle, so the `tx` the cascade gets is always a wrapped one. A new raw `begin_write` fails
-    /// here until it is reviewed and listed.
+    /// `bumpPageRetrievals` and the hard-delete cascade (`cascade::remove_page_rows`) write
+    /// through the flagging handle: `bump_page_retrievals` writes with `Store::write`, both arms of
+    /// `Store::write` run the closure through `write_chain`, `write_chain` wraps the handle in
+    /// `FlaggingWriter`, and no module outside this list opens a raw write handle, so the `tx` the
+    /// cascade gets is always a wrapped one. A new raw `begin_write`, `begin_write_locked` or
+    /// `begin_write_exclusive` fails here until it is reviewed and listed.
     #[test]
     fn every_store_write_handle_stays_wrapped_in_the_flagging_writer() {
         let sources = crate_sources();
         let code = |name: &str| &sources.iter().find(|(n, _)| n == name).unwrap().1;
 
-        // Raw write handles, each reviewed: the kv layer itself (the `Kv` trait and its default
-        // methods in kv.rs, and the redb, fjall and optimistic-concurrency backends), the
-        // brain-create write and `Store::write` (lib.rs), a transaction's counter flush (its
-        // statements run through the bound arm of `Store::write`), this module's open-time scan,
-        // and job admission (no page records). Split-out `tests.rs` modules are not counted.
+        // Raw write handles, each reviewed:
+        // - the kv backends and their trait: `kv.rs` (the trait and its two defaults),
+        //   `redb_kv.rs` (the table create on first open and the writable backend's `begin_write`),
+        //   `fjall_kv.rs`, and
+        //   `occ_kv.rs` (its trait methods and the commit onto the base store);
+        // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
+        //   the format upgrade (no page records);
+        // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
+        //   the bound arm of `Store::write`) and its counter flush;
+        // - this module's open-time scan, job admission (no page records), and the keyword index
+        //   repair (`keyword/index_build.rs`, postings only);
+        // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
+        //   whole files under `#[cfg(test)]`.
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
             ("jobs.rs", 1),
-            ("kv.rs", 3),
-            ("lib.rs", 2),
-            ("occ_kv.rs", 2),
+            ("keyword/index_build.rs", 1),
+            ("keyword/index_build/tests.rs", 1),
+            ("keyword/index_writer/tests.rs", 2),
+            ("kv.rs", 5),
+            ("lib.rs", 4),
+            ("occ_kv.rs", 4),
             ("redb_kv.rs", 4),
-            ("transactions.rs", 1),
+            ("transactions.rs", 2),
         ];
+        let opens = |c: &str| {
+            [
+                "begin_write(",
+                "begin_write_locked(",
+                "begin_write_exclusive(",
+            ]
+            .iter()
+            .map(|p| c.matches(p).count())
+            .sum::<usize>()
+        };
         let raw: Vec<(&str, usize)> = sources
             .iter()
-            .map(|(n, c)| (n.as_str(), c.matches("begin_write(").count()))
+            .map(|(n, c)| (n.as_str(), opens(c)))
             .filter(|(_, count)| *count > 0)
             .collect();
         assert_eq!(raw, allowed, "a raw write handle skips the flagging writer");
 
-        // Both arms of `Store::write` run the closure on the write handle chain, and the chain
-        // wraps the handle in a `FlaggingWriter`.
+        // Both arms of `Store::write` hand the closure to `write_chain`, which wraps it.
         let lib = code("lib.rs");
         let write = &lib[lib.find("pub(crate) fn write<T>").unwrap()..];
         let write = &write[..write.find("\n    }\n").unwrap()];
         assert_eq!(write.matches("write_chain(").count(), 2);
-        let chain = &lib[lib.find("fn write_chain<T>(").unwrap()..];
+        let chain = &lib[lib.find("fn write_chain<T>").unwrap()..];
         let chain = &chain[..chain.find("\n}\n").unwrap()];
         assert!(chain.contains("access_flag::FlaggingWriter(inner)"));
 
@@ -519,5 +549,6 @@ mod tests {
 
         // The cascade takes the caller's handle; it opens none of its own.
         assert!(code("cascade.rs").contains("crate::page_ops::remove_page_rows(tx, page)?"));
+        assert!(code("page_ops.rs").contains("pub(crate) use retrievals::remove_page_rows;"));
     }
 }

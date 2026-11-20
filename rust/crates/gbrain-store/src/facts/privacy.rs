@@ -20,10 +20,15 @@
 //!
 //! Folder rules and pending prefixes come from `access_rules.rs`. A page counts as stamped
 //! (`folder_rule_ids IS NOT NULL`) when its source holds access state and a rule covers its slug,
-//! judged against the rules as they are now. The TypeScript member serves only a caller that
-//! satisfies no folder rule and holds no pending prefix in its record, so a stamped page fails
-//! the member-access part, a page under a pending prefix fails the full form, and the provenance
-//! test (`derived`) counts only rules that cover derived pages (`gbrain_access_lineage_rules`).
+//! judged against the rules as they are now. A page read's policy can carry the rule ids the
+//! caller satisfies (`satisfied_rule_ids`) and the pending prefixes its record holds
+//! (`folder_coverage`), which the member sends only for the caller's own identity
+//! ([`FolderAccess`]): a stamped page passes the member-access part when the caller satisfies
+//! every rule over it and no prefix in the record covers its slug. With none of them, a stamped
+//! page fails the member-access part and a page under a pending prefix fails the full form. The
+//! store checks the live pending prefixes as well, so it hides at least what PGLite hides. The
+//! provenance test (`derived`) counts only rules that cover derived pages
+//! (`gbrain_access_lineage_rules`).
 //! The row-level-security part (`gbrain_access_state_unreadable()`) is always false. Slug aliases and rename history come from `aliases.rs`
 //! ([`read_slug_alias`], [`renamed_to`]), so an origin a rename moved is followed as PGLite
 //! follows it, for the fact rules and for `page_hidden` alike.
@@ -43,7 +48,9 @@
 use super::FactRecord;
 use crate::Result;
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
-use crate::access_rules::{AccessRuleRecord, folder_rules, pending_covers, stamped};
+use crate::access_rules::{
+    AccessRuleRecord, folder_rules, pending_covers, rule_covers, stamped, valid_prefix,
+};
 use crate::aliases::{read_slug_alias, renamed_to};
 use crate::keys;
 use crate::kv::KvRead;
@@ -95,6 +102,54 @@ pub struct PrivacyPolicy {
     /// stale), the full form's origin walk applies too. See [`readers_allowed`].
     #[serde(default)]
     pub open: bool,
+    /// The folder rules the caller satisfies (`CallerAccess.satisfiedRuleIds`, `source:rule_id`).
+    /// A page whose stamped rules are all in it passes the folder test (`folderRulesAllowedSql`),
+    /// judged for `identity` only, as `satisfiedFor` does. Empty for the no-caller rendering.
+    #[serde(default)]
+    pub satisfied_rule_ids: Vec<String>,
+    /// The prefixes the caller's record reads as nobody (`CallerAccess.folderCoverage`,
+    /// `coverageSql`): a page under one is hidden, as a page under a pending prefix the store
+    /// holds is. An entry with an invalid source id or prefix hides every page.
+    #[serde(default)]
+    pub folder_coverage: Vec<FolderCoverage>,
+}
+
+/// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FolderCoverage {
+    pub source_id: String,
+    pub prefix: String,
+}
+
+/// The caller's folder access for one judged identity: the rules it satisfies and the prefixes
+/// its record reads as nobody.
+#[derive(Clone, Copy, Default)]
+struct FolderAccess<'a> {
+    satisfied: &'a [String],
+    coverage: &'a [FolderCoverage],
+}
+
+impl FolderAccess<'_> {
+    /// `folderRulesAllowedSql`'s rule test: every rule in `rules` is satisfied.
+    fn satisfies_all<'r>(&self, mut rules: impl Iterator<Item = &'r AccessRuleRecord>) -> bool {
+        rules.all(|r| {
+            self.satisfied
+                .iter()
+                .any(|id| id.split_once(':') == Some((r.source_id.as_str(), r.rule_id.as_str())))
+        })
+    }
+
+    /// `coverageSql` over the record's prefixes: a page under one, or any page when an entry is
+    /// not valid, reads as nobody.
+    fn covers(&self, page: &PageRecord) -> bool {
+        self.coverage.iter().any(|c| {
+            !crate::sources::valid_source_id(&c.source_id)
+                || (!c.prefix.is_empty() && !valid_prefix(&c.prefix))
+                || (c.source_id == page.source_id
+                    && (c.prefix.is_empty() || rule_covers(&page.slug, &c.prefix)))
+        })
+    }
 }
 
 /// The owner-only sources of one read, found on the first page the read judges and kept for the rest (a read that
@@ -246,8 +301,8 @@ fn hidden_by_provenance_page_with(
             &page,
             provenance_identity(policy, slug),
             policy,
-            owner_only,
             true,
+            owner_only,
         )?
     } else {
         !names_readers(&page)
@@ -287,7 +342,7 @@ pub(crate) fn page_hidden_with(
     policy: &PrivacyPolicy,
     owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
-    let allowed = member_access_allows(read, page, &policy.identity, policy, owner_only, false)?
+    let allowed = member_access_allows(read, page, &policy.identity, policy, false, owner_only)?
         && (!policy.entity_privacy
             || private_source_open(page, policy)
             || privacy_allows(read, page, policy.honor_aliases)?);
@@ -307,11 +362,22 @@ fn member_access_allows(
     page: &PageRecord,
     identity: &[String],
     policy: &PrivacyPolicy,
-    owner_only: &OwnerOnlySources,
     derived: bool,
+    owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
-    Ok(readers_allowed(read, page, identity, policy.open, derived)?
-        && !owner_only.page_hidden(read, page, policy.owner_only)?)
+    // `satisfiedFor(identity)`: the record's folder access holds for the record's own identity.
+    let folders = if !identity.is_empty() && identity == policy.identity.as_slice() {
+        FolderAccess {
+            satisfied: &policy.satisfied_rule_ids,
+            coverage: &policy.folder_coverage,
+        }
+    } else {
+        FolderAccess::default()
+    };
+    Ok(
+        readers_allowed(read, page, identity, folders, policy.open, derived)?
+            && !owner_only.page_hidden(read, page, policy.owner_only)?,
+    )
 }
 
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
@@ -394,7 +460,7 @@ pub(crate) fn concept_inputs(read: &dyn KvRead, page: &PageRecord) -> Result<Vec
 
 /// The slugs a page names in `derived_from` (a list, or one string), each without a trailing
 /// `.md`; `None` when the field is neither.
-fn declared_slugs(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
+pub(crate) fn declared_slugs(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
     let items: Vec<&Value> = match frontmatter.get("derived_from")? {
         Value::Array(items) => items.iter().collect(),
         one @ Value::String(_) => vec![one],
@@ -551,6 +617,7 @@ fn readers_allowed(
     read: &dyn KvRead,
     page: &PageRecord,
     identity: &[String],
+    folders: FolderAccess<'_>,
     open: bool,
     derived: bool,
 ) -> Result<bool> {
@@ -558,12 +625,17 @@ fn readers_allowed(
     if open && (names_readers(page) || !restrictions_present(read)?) {
         return Ok(!names_readers(page) && rules.is_empty());
     }
-    let folder_closed = if derived && !open {
-        rules.iter().any(|r| r.covers_derived)
-    } else {
+    let folder_closed = if open {
         !rules.is_empty()
+    } else if derived {
+        !folders.satisfies_all(rules.iter().filter(|r| r.covers_derived))
+    } else {
+        !folders.satisfies_all(rules.iter())
     };
-    if folder_closed || pending_covers(read, &page.source_id, &page.slug)? {
+    if folder_closed
+        || (!open && folders.covers(page))
+        || pending_covers(read, &page.source_id, &page.slug)?
+    {
         return Ok(false);
     }
     if names_readers(page)
@@ -633,7 +705,7 @@ fn life_chronicle(page: &PageRecord) -> bool {
 }
 
 /// `frontmatter -> 'event' ->> 'depth'`.
-fn chronicle_depth(page: &PageRecord) -> Option<String> {
+pub(crate) fn chronicle_depth(page: &PageRecord) -> Option<String> {
     page.frontmatter
         .get("event")
         .and_then(Value::as_object)
@@ -642,7 +714,11 @@ fn chronicle_depth(page: &PageRecord) -> Option<String> {
 }
 
 /// `privacyPartSql`: the page's own fields, its derived origin and its declared lineage.
-fn privacy_allows(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> Result<bool> {
+pub(crate) fn privacy_allows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
     Ok(snapshot_allows(page, honor_aliases)
         && !derived_origin_private(read, page, honor_aliases)?
         && !declared_lineage_private(read, page)?)
@@ -812,7 +888,15 @@ mod tests {
         let read = store.read().unwrap();
         let identity = ["member:alice-example".to_string()];
         let allowed = |page: &PageRecord, open: bool, derived: bool| {
-            readers_allowed(&*read, page, &identity, open, derived).unwrap()
+            readers_allowed(
+                &*read,
+                page,
+                &identity,
+                FolderAccess::default(),
+                open,
+                derived,
+            )
+            .unwrap()
         };
         assert!(allowed(&open_page, false, false) && allowed(&open_page, true, false));
         for open in [false, true] {
@@ -830,6 +914,76 @@ mod tests {
         assert!(!origin_closed(&*read, &raw).unwrap());
         assert!(origin_closed(&*read, &queued).unwrap());
         assert!(!origin_closed(&*read, &open_page).unwrap());
+    }
+
+    #[test]
+    fn a_reader_a_rule_names_is_served_the_folder_unless_its_record_covers_the_prefix() {
+        let store = store();
+        let private = put(&store, "private/diary");
+        let raw = put(&store, "raw/log");
+        store.put_access_policy_state("default").unwrap();
+        store
+            .put_access_rule(rule("private", "private/", true))
+            .unwrap();
+        store.put_access_rule(rule("raw", "raw/", false)).unwrap();
+        let read = store.read().unwrap();
+        let identity = ["member:alice-example".to_string()];
+        let satisfied = ["default:private".to_string()];
+        let coverage = [FolderCoverage {
+            source_id: "default".into(),
+            prefix: "private/".into(),
+        }];
+        let bad = [FolderCoverage {
+            source_id: "default".into(),
+            prefix: "../x".into(),
+        }];
+        let allowed = |page: &PageRecord, folders: FolderAccess<'_>, open: bool, derived: bool| {
+            readers_allowed(&*read, page, &identity, folders, open, derived).unwrap()
+        };
+        let named = FolderAccess {
+            satisfied: &satisfied,
+            coverage: &[],
+        };
+        assert!(allowed(&private, named, false, false));
+        assert!(
+            !allowed(&raw, named, false, false),
+            "an unsatisfied rule still closes its folder"
+        );
+        assert!(
+            !allowed(&private, named, true, false),
+            "the short form passes no stamped page"
+        );
+        assert!(allowed(&private, named, false, true));
+        assert!(allowed(&raw, FolderAccess::default(), false, true));
+        let covered = FolderAccess {
+            satisfied: &satisfied,
+            coverage: &coverage,
+        };
+        assert!(!allowed(&private, covered, false, false));
+        let invalid = FolderAccess {
+            satisfied: &satisfied,
+            coverage: &bad,
+        };
+        assert!(!allowed(&private, invalid, false, false));
+        let policy = PrivacyPolicy {
+            identity: identity.to_vec(),
+            satisfied_rule_ids: satisfied.to_vec(),
+            owner_only: OwnerOnlyForm::Off,
+            ..PrivacyPolicy::default()
+        };
+        assert!(!page_hidden(&*read, &private, &policy).unwrap());
+        // A provenance page judged by the empty identity takes no satisfied rule (`satisfiedFor`).
+        assert!(
+            !member_access_allows(
+                &*read,
+                &private,
+                &[],
+                &policy,
+                false,
+                &super::OwnerOnlySources::read(&*read).unwrap()
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -870,6 +1024,41 @@ mod tests {
             readers(json!([format!("a{}", "b".repeat(63))])).map(|r| r[0].len()),
             Some("member:".len() + 64)
         );
+    }
+
+    /// The owner-only contract reads an absent `ownerOnly` as `closed`. The folder-rule filter has
+    /// no policy field: it reads the store's rules, and `member_access_allows` ANDs it with the
+    /// owner-only test, so a policy with every defaulted field missing still hides a
+    /// folder-restricted page, and an open owner-only form does not reopen it.
+    #[test]
+    fn a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page() {
+        use super::{PrivacyPolicy, page_hidden};
+        use crate::owner_only::OwnerOnlyForm;
+        let store = store();
+        let open_page = put(&store, "notes/open");
+        let private = put(&store, "private/diary");
+        store.put_access_policy_state("default").unwrap();
+        store
+            .put_access_rule(rule("private", "private/", true))
+            .unwrap();
+        let read = store.read().unwrap();
+        let minimal: PrivacyPolicy =
+            serde_json::from_str(r#"{"honorAliases":false,"entityPrivacy":false}"#).unwrap();
+        assert_eq!(minimal.owner_only, OwnerOnlyForm::Closed);
+        assert!(!minimal.open && minimal.identity.is_empty());
+        assert!(page_hidden(&*read, &private, &minimal).unwrap());
+        assert!(!page_hidden(&*read, &open_page, &minimal).unwrap());
+        for form in ["off", "fn", "closed"] {
+            let named: PrivacyPolicy = serde_json::from_str(&format!(
+                r#"{{"honorAliases":false,"entityPrivacy":false,"identity":["member:alice-example"],"ownerOnly":"{form}","open":true}}"#
+            ))
+            .unwrap();
+            assert!(
+                page_hidden(&*read, &private, &named).unwrap(),
+                "owner-only form {form} must not reopen a folder-restricted page"
+            );
+            assert!(!page_hidden(&*read, &open_page, &named).unwrap());
+        }
     }
 
     /// The owner-only rules of `privateProvenanceFilterUnderPolicy` (its last term, `ownerOnlyFactAllowedSql`, and the
@@ -932,40 +1121,5 @@ mod tests {
         source("vault", json!({}));
         assert!(hidden(OwnerOnlyForm::Closed, &open) && hidden(OwnerOnlyForm::Closed, &bare));
         assert!(!hidden(OwnerOnlyForm::Fn, &open) && !hidden(OwnerOnlyForm::Fn, &in_vault));
-    }
-
-    /// The owner-only contract reads an absent `ownerOnly` as `closed`. The folder-rule filter has
-    /// no policy field: it reads the store's rules, and `member_access_allows` ANDs it with the
-    /// owner-only test, so a policy with every defaulted field missing still hides a
-    /// folder-restricted page, and an open owner-only form does not reopen it.
-    #[test]
-    fn a_policy_missing_its_defaulted_fields_still_hides_a_folder_restricted_page() {
-        use super::{PrivacyPolicy, page_hidden};
-        use crate::owner_only::OwnerOnlyForm;
-        let store = store();
-        let open_page = put(&store, "notes/open");
-        let private = put(&store, "private/diary");
-        store.put_access_policy_state("default").unwrap();
-        store
-            .put_access_rule(rule("private", "private/", true))
-            .unwrap();
-        let read = store.read().unwrap();
-        let minimal: PrivacyPolicy =
-            serde_json::from_str(r#"{"honorAliases":false,"entityPrivacy":false}"#).unwrap();
-        assert_eq!(minimal.owner_only, OwnerOnlyForm::Closed);
-        assert!(!minimal.open && minimal.identity.is_empty());
-        assert!(page_hidden(&*read, &private, &minimal).unwrap());
-        assert!(!page_hidden(&*read, &open_page, &minimal).unwrap());
-        for form in ["off", "fn", "closed"] {
-            let named: PrivacyPolicy = serde_json::from_str(&format!(
-                r#"{{"honorAliases":false,"entityPrivacy":false,"identity":["member:alice-example"],"ownerOnly":"{form}","open":true}}"#
-            ))
-            .unwrap();
-            assert!(
-                page_hidden(&*read, &private, &named).unwrap(),
-                "owner-only form {form} must not reopen a folder-restricted page"
-            );
-            assert!(!page_hidden(&*read, &open_page, &named).unwrap());
-        }
     }
 }

@@ -3,7 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
- *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
+ *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listLinkPageMetadataForSlugs,
+ *    listAttendedOriginSlugs, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and so do the page labels pageActivationVerdicts builds
  *    from readPageTrustRows for `gbrain delta`, the turn context and the retrieval reflex.
@@ -379,6 +380,51 @@ describe('engine parity: CLI import reads', () => {
     const work = view(await engine.listLinkPageMetadata('work'));
     expect(work.map(r => r.slug)).toEqual(['a']);
     return { all, work };
+  });
+
+  parityTest('listLinkPageMetadataForSlugs reads only the named live pages of one source, by slug', { methods: ['putPage', 'softDeletePage', 'listLinkPageMetadataForSlugs'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await note(engine, 'b', 'default', { aliases: ['Bee'] });
+    await note(engine, 'a');
+    await note(engine, 'c');
+    await note(engine, 'b', 'work');
+    await note(engine, 'gone');
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const rows = await engine.listLinkPageMetadataForSlugs('default', ['b', 'a', 'gone', 'missing', 'a']);
+    for (const r of rows) expect(String(r.knowledge_revision)).toMatch(UUID);
+    const view = rows.map(r => ({ slug: r.slug, source_id: r.source_id, type: r.type, title: r.title, aliases: r.aliases ?? null }));
+    expect(view.map(r => `${r.source_id}/${r.slug}`)).toEqual(['default/a', 'default/b']);
+    expect(view[1]!.aliases).toEqual(['Bee']);
+    expect(await engine.listLinkPageMetadataForSlugs('default', [])).toEqual([]);
+    return view;
+  });
+
+  parityTest('listAttendedOriginSlugs names the pages of one source with a body or frontmatter self attended link', { methods: ['putPage', 'addLinksBatch', 'softDeletePage', 'listAttendedOriginSlugs'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    for (const slug of ['a', 'b', 'c', 'd', 'e', 'gone']) await note(engine, slug);
+    await note(engine, 'a', 'work');
+    const self = (slug: string, link_type: string, link_source: string, sourceId = 'default') => ({ from_slug: slug, to_slug: slug,
+      link_type, link_source, origin_slug: slug, from_source_id: sourceId, to_source_id: sourceId, origin_source_id: sourceId,
+      ...(link_source === 'frontmatter' ? { origin_field: 'attendees' } : {}) });
+    await engine.addLinksBatch([
+      self('a', 'attended', 'markdown'),
+      self('b', 'attended', 'frontmatter'),
+      self('c', 'mentions', 'markdown'),
+      self('e', 'attended', 'manual'),
+      { from_slug: 'd', to_slug: 'a', link_type: 'attended', link_source: 'markdown', origin_slug: 'd' },
+      self('gone', 'attended', 'wikilink-resolved'),
+      self('a', 'attended', 'markdown', 'work'),
+    ]);
+    // The origin join has no live filter: a soft-deleted page that authored the link still counts.
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const all = [...await engine.listAttendedOriginSlugs('default')].sort();
+    expect(all).toEqual(['a', 'b', 'gone']);
+    const scoped = [...await engine.listAttendedOriginSlugs('default', ['b', 'c', 'missing'])].sort();
+    expect(scoped).toEqual(['b']);
+    expect(await engine.listAttendedOriginSlugs('default', [])).toEqual([]);
+    const work = await engine.listAttendedOriginSlugs('work');
+    expect(work).toEqual(['a']);
+    return { all, scoped, work };
   });
 
   parityTest('listStoredTimelineRows returns the stored timeline rows of one page with dates as YYYY-MM-DD', { methods: ['putPage', 'addTimelineEntry', 'listStoredTimelineRows'] }, async (engine) => {

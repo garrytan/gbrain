@@ -8,6 +8,8 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::{Map, Value};
 
+use gbrain_store::reason_tombstones::ReasonTombstone;
+
 use crate::store_binding::{Brain, required};
 
 #[napi]
@@ -51,6 +53,115 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.count_source_pages(&source_id, include_deleted)
+        })
+    }
+
+    /// `readPageSizeRows(sourceId, maxBytes, slugs)`: the source's live pages a sync size-state
+    /// read reports; `slugs` null reads every such page.
+    #[napi]
+    pub fn read_page_size_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        max_bytes: i64,
+        slugs: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_size_rows(&source_id, max_bytes, slugs.as_deref())
+        })
+    }
+
+    /// `holdPageEmbedding(pageId, reason)`: sets the page's embedding hold; resolves null.
+    #[napi]
+    pub fn hold_page_embedding<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        reason: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.hold_page_embedding(page_id as u64, &reason))
+    }
+
+    /// `readReasonPurgeTombstones(sourceId, pair)`: `{ commit_sha, path }[]`, every pair of the
+    /// source, or only `pair` when it is given and stored.
+    #[napi]
+    pub fn read_reason_purge_tombstones<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        pair: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let only: Option<ReasonTombstone> = if pair.is_null() {
+                None
+            } else {
+                Some(required(pair, "readReasonPurgeTombstones pair")?)
+            };
+            s.read_reason_purge_tombstones(&source_id, only.as_ref())
+        })
+    }
+
+    /// `writeReasonPurgeTombstones(sourceId, pairs)`: the number of pairs it added.
+    #[napi]
+    pub fn write_reason_purge_tombstones<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        pairs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pairs: Vec<ReasonTombstone> = required(pairs, "writeReasonPurgeTombstones pairs")?;
+            s.write_reason_purge_tombstones(&source_id, &pairs)
+        })
+    }
+
+    /// `listSourcePathPages(sourceId)`: the source's live pages that have a `source_path`.
+    #[napi]
+    pub fn list_source_path_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_path_pages(&source_id))
+    }
+
+    /// `listQuarantinedSlugs(sourceId)`: the slugs of the source's live quarantined pages.
+    #[napi]
+    pub fn list_quarantined_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_quarantined_slugs(&source_id))
+    }
+
+    /// `readRenameIdentityRows(sourceId, paths, slugs)`: the source's live pages a rename's
+    /// identity check compares.
+    #[napi]
+    pub fn read_rename_identity_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        paths: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_rename_identity_rows(&source_id, &paths, &slugs)
+        })
+    }
+
+    /// `readLiveIdentityHolders(sourceId, ids, titles)`: the source's live pages that hold one of
+    /// the frontmatter ids or titles.
+    #[napi]
+    pub fn read_live_identity_holders<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        ids: Vec<String>,
+        titles: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_identity_holders(&source_id, &ids, &titles)
         })
     }
 
