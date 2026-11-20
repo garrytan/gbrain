@@ -408,8 +408,10 @@ export async function copyMigrationConfig(
   source: BrainEngine,
   target: BrainEngine,
 ): Promise<{ copied: number; skipped: string[] }> {
-  const rows = await source.executeRaw<{ key: string; value: string }>(
-    'SELECT key, value FROM config ORDER BY key COLLATE "C"');
+  // Every stored row in byte order of key: the keys come from listConfigKeys (byte order), the values from the table itself.
+  const keys = await source.listConfigKeys('');
+  const stored = new Map((await source.getConfigValues(keys)).map(r => [r.key, r.value]));
+  const rows = keys.filter(key => stored.has(key)).map(key => ({ key, value: stored.get(key)! }));
   const skipped: string[] = [];
   let copied = 0;
   for (const row of rows) {
