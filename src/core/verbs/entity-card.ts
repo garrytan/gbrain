@@ -798,7 +798,7 @@ async function assembleCard(
     open_threads: openThreads,
     edges,
     backlink_count: backlinkCount,
-    active_fact_count: activeFactCount === null ? facts.length : Math.max(facts.length, activeFactCount - endedFacts),
+    active_fact_count: activeFactCount === null ? facts.length : Math.max(0, activeFactCount - endedFacts),
     ...(relationshipNote ? { relationship_note: relationshipNote } : {}),
     ...(facts.length ? { recent_facts: facts.slice(0, RECENT_FACTS_CAP).map(f => ({
       id: String(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from ? toIso(f.valid_from as Date | string) : null,
