@@ -76,14 +76,10 @@ function parseTtl(raw: string | null | undefined): number | null {
 
 async function readGeneration(engine: BrainEngine): Promise<{ configGeneration: string; pageClock: string; configTtl: number | null } | null> {
   try {
-    const rows = await engine.executeRaw<{ k: string; v: string | null }>(
-      `SELECT key AS k, value AS v FROM config
-        WHERE key IN (${[...GENERATION_CONFIG_KEYS, HEALTH_CACHE_TTL_KEY].map(k => `'${k}'`).join(', ')})
-       UNION ALL
-       SELECT '${PAGE_CLOCK_ROW}' AS k, COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS v
-       UNION ALL
-       SELECT '${BRAIN_ID_ROW}' AS k, (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS v`,
-    );
+    // The statement is in engine-sql/admin-reads.ts. An engine with no page generation clock (Rust) answers null, so
+    // nothing is memoized there: every call computes, as it did when the raw read failed.
+    const rows = await engine.readHealthMemoRows();
+    if (rows === null) return null;
     const byKey = new Map(rows.map(r => [r.k, r.v]));
     const generation = GENERATION_CONFIG_KEYS.map(k => [k, byKey.get(k) ?? null]);
     generation.push(['env:GBRAIN_SCHEMA_PACK', process.env.GBRAIN_SCHEMA_PACK ?? null]);

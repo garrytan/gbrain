@@ -3588,6 +3588,7 @@ export class PostgresEngine implements BrainEngine {
   // The admin operations' statements (engine-sql/admin-reads.ts).
   listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: adminReadsImpl.PagePolicyPart) { return adminReadsImpl.listVisiblePageSlugs(this.executeRaw.bind(this), slugs, sourceIds, policy); }
   readPagesForVersionHistory(pageIds: number[]) { return adminReadsImpl.readPagesForVersionHistory(this.executeRaw.bind(this), pageIds); }
+  readHealthMemoRows() { return adminReadsImpl.readHealthMemoRows(this.executeRaw.bind(this)); }
   // The `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts).
   pageTypeTotals(sourceId: string) { return schemaDetectImpl.pageTypeTotals(this.executeRaw.bind(this), sourceId); }
   pagePrefixSamples(sourceId: string, minPages: number, limit: number) { return schemaDetectImpl.pagePrefixSamples(this.executeRaw.bind(this), sourceId, minPages, limit); }

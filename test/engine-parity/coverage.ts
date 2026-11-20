@@ -129,7 +129,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
   versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'stampVersionChangeReason', 'pruneHoldingPageVersions'],
-  stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog', 'listVisiblePageSlugs', 'readPagesForVersionHistory'],
+  stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog', 'listVisiblePageSlugs', 'readPagesForVersionHistory', 'readHealthMemoRows'],
   sync_aliases: ['updateSlug', 'rewriteLinks', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveAliases',
     'setPageAliases', 'replaceDerivedAliases', 'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical'],
   config: ['getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'getAllConfig', 'getConfigValues'],

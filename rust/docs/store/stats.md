@@ -94,3 +94,11 @@ no member changes behaviour. What the store would need to serve them:
 | `readPagesForVersionHistory` | `id`, `slug`, `source_id` and `frontmatter` for each page id; the statement does not filter soft-deleted pages | the page record by id |
 
 The policy text is Postgres text only; the store reads the typed arguments, never the statement.
+
+## The health memo on a Rust brain
+
+`get_health` memoizes its counters per engine, scope, config generation and page clock (`src/core/health-memo.ts`).
+The generation rows come from `readHealthMemoRows` (SQL in `src/core/engine-sql/admin-reads.ts`). The store keeps no
+page generation clock, so the Rust member answers null without a store call and nothing is memoized: every
+`get_health` call on a Rust brain computes its counters, and `computed_at` is always the time of that call. PGLite and
+Postgres serve a repeat call within `health.cache_ttl_ms` from the memo.

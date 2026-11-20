@@ -14,6 +14,7 @@ local writer registration it already keeps; it adds no keys.
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
 | `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is `false` (the store keeps no access members). `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`; the store keeps no folder rules). `owner_only_source` and `owner_only_any`: the source, or any source, has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true` | `readWriteVisibilityProbe` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
+| `brain.listVisiblePageSlugs({ slugs, sourceIds }, policy)` | the distinct `slugs` that name a live page of a source in `sourceIds` (every source when it is `null`) that passes `policy`, in byte order; PGLite sets no order. `get_health` runs it for a remote caller's `most_connected` (`src/core/ops/admin.ts`, SQL in `src/core/engine-sql/admin-reads.ts`) | `listVisiblePageSlugs` |
 
 `policy` is the store `PrivacyPolicy` of `facts/privacy.rs` (`page_hidden`). With `entityPrivacy` false it is the
 member-access part alone (the page's readers, and the origin of a derived page): the `access` part of the members.
@@ -22,7 +23,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 `src/core/rust-engine/store-members/page-visibility.ts` answers the three BrainEngine members on a Rust brain.
 
-- `readPageHiddenFromCaller` and `readCallerPageAccess` take `{ policy: 'read' | 'access' }`. The `read` part
+- `readPageHiddenFromCaller`, `readCallerPageAccess` and `listVisiblePageSlugs` take the page policy part `'read' | 'access'`. The `read` part
   renders `privatePagesFilterForCaller('p')` and maps it through `storePageTextPolicy`, as the other page reads do.
   The `access` part renders `callerAccessAllowedSql('p')` in the current access record and serves it only when it
   equals the no-caller rendering or the rendering of a fresh record with only the caller's reader identity and
@@ -54,6 +55,11 @@ member-access part alone (the page's readers, and the origin of a derived page):
 - **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
   or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
   `engine_capability_missing` before any read.
+- **Restricted brains, remote callers.** Once a page names its readers, a remote caller's record carries the folder
+  access read (`access/caller.ts` `folderAccessForAll`), which still runs raw SQL and fails closed on a Rust brain.
+  The rendered policy then reads `FALSE`, which the store does not render, so `listVisiblePageSlugs` refuses and so
+  does `get_health` for that caller. The typed `readFolderAccess` member (rust-engine/caller-raw-sql, b93fac23d8)
+  removes this stop.
 - **OAuth clients.** The store keeps no OAuth clients, so `readWriterSlugFence` for an `oauth_client` principal
   refuses with `engine_capability_missing`.
 - **Writer ids.** PGLite casts the writer id to `uuid` and fails on an id that is not one. The store looks the

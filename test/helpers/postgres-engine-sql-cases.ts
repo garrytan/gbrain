@@ -776,6 +776,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'pagePrefixSamples': OOS.schemaDetect,
   'countPagesByTypeForSource': OOS.schemaDetect,
   'readPagesForVersionHistory': OOS.adminReads,
+  'readHealthMemoRows': OOS.adminReads,
   // chunks
   'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',

@@ -1,6 +1,7 @@
 /**
- * The two reads of the admin operations (src/core/ops/admin.ts) that ran through `executeRaw`: which of the
- * `most_connected` slugs a remote caller may see, and the live pages the version history of a page belongs to.
+ * The reads of the admin operations (src/core/ops/admin.ts) that ran through `executeRaw`: which of the
+ * `most_connected` slugs a remote caller may see, the live pages the version history of a page belongs to, and the
+ * generation rows of get_health's memo (src/core/health-memo.ts).
  * The text and binds are the ones the operations built inline; the page policy part is picked by the caller
  * (`resolveExcludePrivatePages`) and rendered here in the caller's access record (search/private-visibility.ts).
  */
@@ -31,4 +32,23 @@ export interface VersionPageRow { id: number | string; slug: string; source_id: 
 /** The live pages with these ids: slug, source and frontmatter, which the version history uses to hide quarantined bodies. */
 export async function readPagesForVersionHistory(raw: EngineRawRead, pageIds: number[]): Promise<VersionPageRow[]> {
   return raw<VersionPageRow>('SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', [pageIds]);
+}
+
+/** One generation row of the health memo: a config value, the page clock or the brain id (`k`), and its text (`v`). */
+export interface HealthMemoRow { k: string; v: string | null }
+
+/**
+ * The health memo's generation rows (health-memo.ts readGeneration): the config values the health counters depend on,
+ * the TTL key, the page generation clock and the brain id. The text is the statement readGeneration composed from its
+ * constants, spelled out (test/family-tail-sites-sql-pin.test.ts pins it).
+ */
+const HEALTH_MEMO_ROWS_SQL = `SELECT key AS k, value AS v FROM config
+        WHERE key IN ('orphans.exclude_prefixes', 'orphans.exclude_slugs', 'search_embedding_column', 'embedding_columns', 'schema_pack', 'health.cache_ttl_ms')
+       UNION ALL
+       SELECT '__page_clock__' AS k, COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS v
+       UNION ALL
+       SELECT '__brain_id__' AS k, (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS v`;
+
+export async function readHealthMemoRows(raw: EngineRawRead): Promise<HealthMemoRow[]> {
+  return raw<HealthMemoRow>(HEALTH_MEMO_ROWS_SQL);
 }

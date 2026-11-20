@@ -1,6 +1,6 @@
 /**
  * The page visibility guards (BrainEngine readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe,
- * readWriterSlugFence): the reads a remote page write runs to learn whether the caller may see a page, which of a list
+ * readWriterSlugFence) and the admin read listVisiblePageSlugs: the reads a remote page write runs to learn whether the caller may see a page, which of a list
  * of pages the caller reads, what its visibility check opens with, and whether a stored writer carries a slug fence
  * (engine-sql/page-visibility.ts on the SQL engines).
  *
@@ -49,6 +49,19 @@ export const readCallerPageAccess: StoreMember<[pages: readonly { source_id: str
     if (pages.length === 0) return [];
     return storeCall({ member: 'readCallerPageAccess' }, () =>
       brain.readCallerPageAccess(pages.map(p => ({ sourceId: p.source_id, slug: p.slug })), policy));
+  };
+
+/**
+ * `listVisiblePageSlugs` (engine-sql/admin-reads.ts), the read get_health runs for a remote caller's `most_connected`:
+ * the slugs that name a live page of a scoped source the caller's page policy part admits. The policy is judged as for
+ * the two reads above, and a caller the store cannot render refuses before any read.
+ */
+export const listVisiblePageSlugs: StoreMember<[slugs: string[], sourceIds: string[] | null, policy: PagePolicyPart], string[]> =
+  async (brain, slugs, sourceIds, part) => {
+    const policy = callerPolicy('listVisiblePageSlugs', part);
+    if (slugs.length === 0) return [];
+    return storeCall({ member: 'listVisiblePageSlugs' }, () =>
+      brain.listVisiblePageSlugs({ slugs: [...slugs], sourceIds: sourceIds === null ? null : [...sourceIds] }, policy));
   };
 
 /**

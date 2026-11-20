@@ -2,7 +2,8 @@
 //! the page it names and which of a list of pages the caller reads (the TypeScript
 //! `engine-sql/page-visibility.ts`).
 //!
-//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe. The TypeScript member turns the
+//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe, and listVisiblePageSlugs (the
+//! admin read of `get_health`'s `most_connected` for a remote caller). The TypeScript member turns the
 //! caller's rendered page policy into a [`PrivacyPolicy`] (or refuses), so both reads judge a page
 //! with `page_hidden` (facts/privacy.rs): `entity_privacy` false is the member-access part alone.
 //! A soft-deleted page still has its row, so `readPageHiddenFromCaller` judges it too, and
@@ -29,6 +30,7 @@ use std::collections::BTreeSet;
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::owner_only::{any_owner_only, source_owner_only};
 use crate::pages::read_page;
+use crate::sources::all_sources;
 use crate::{Result, Store};
 
 /// One (source, slug) a caller asks about.
@@ -45,6 +47,16 @@ pub struct CallerPageAccessRow {
     pub source_id: String,
     pub slug: String,
     pub readable: bool,
+}
+
+/// `listVisiblePageSlugs({ slugs, sourceIds })`'s arguments; the policy comes beside them.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VisibleSlugsQuery {
+    pub slugs: Vec<String>,
+    /// The source scope; `None` admits every source.
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
 }
 
 /// The answer of `readWriteVisibilityProbe`, in the SQL's column names.
@@ -123,5 +135,98 @@ impl Store {
             });
         }
         Ok(rows)
+    }
+
+    /// `listVisiblePageSlugs(slugs, sourceIds, policy)`: the distinct slugs among `slugs` that name a live page of a
+    /// source in the scope (every source when `source_ids` is `None`) that passes `policy`, in byte order; the SQL sets
+    /// no order. A slug or source id with a NUL byte names no page.
+    pub fn list_visible_page_slugs(
+        &self,
+        q: &VisibleSlugsQuery,
+        policy: &PrivacyPolicy,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let sources: BTreeSet<String> = match &q.source_ids {
+            Some(ids) => ids.iter().cloned().collect(),
+            None => all_sources(&*read)?.into_iter().map(|s| s.id).collect(),
+        };
+        let wanted: BTreeSet<&str> = q.slugs.iter().map(String::as_str).collect();
+        let mut out = Vec::new();
+        for slug in wanted {
+            for source_id in &sources {
+                let Some(page) = read_page(&*read, source_id, slug)? else {
+                    continue;
+                };
+                if page.deleted_at_us.is_none() && !page_hidden(&*read, &page, policy)? {
+                    out.push(slug.to_owned());
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn put(store: &Store, source: &str, slug: &str, frontmatter: serde_json::Value) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+        }))
+        .unwrap();
+        let options: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({ "sourceId": source })).unwrap();
+        store.put_page(slug, &input, &options).unwrap();
+    }
+
+    fn query(slugs: &[&str], sources: Option<&[&str]>) -> VisibleSlugsQuery {
+        VisibleSlugsQuery {
+            slugs: slugs.iter().map(|s| s.to_string()).collect(),
+            source_ids: sources.map(|s| s.iter().map(|x| x.to_string()).collect()),
+        }
+    }
+
+    /// A slug is kept once when a live page of a scoped source passes the policy; a private page, a page of another
+    /// source and a missing slug are not.
+    #[test]
+    fn visible_slugs_keep_live_pages_the_policy_admits_within_the_scope() {
+        let store = crate::test_support::store();
+        let other: crate::sources::SourceInput =
+            serde_json::from_value(json!({ "id": "other", "name": "other" })).unwrap();
+        store.upsert_source(&other).unwrap();
+        put(&store, "default", "notes/open", json!({}));
+        put(&store, "other", "notes/open", json!({}));
+        put(
+            &store,
+            "default",
+            "notes/private",
+            json!({ "visibility": "private" }),
+        );
+        put(&store, "other", "notes/elsewhere", json!({}));
+        let policy: PrivacyPolicy = serde_json::from_value(json!({
+            "honorAliases": false, "entityPrivacy": true, "ownerOnly": "off",
+        }))
+        .unwrap();
+        let slugs = [
+            "notes/private",
+            "notes/open",
+            "notes/elsewhere",
+            "notes/never",
+        ];
+        let every = store
+            .list_visible_page_slugs(&query(&slugs, None), &policy)
+            .unwrap();
+        assert_eq!(every, vec!["notes/elsewhere", "notes/open"]);
+        let scoped = store
+            .list_visible_page_slugs(&query(&slugs, Some(&["default"])), &policy)
+            .unwrap();
+        assert_eq!(scoped, vec!["notes/open"]);
+        let none = store
+            .list_visible_page_slugs(&query(&[], None), &policy)
+            .unwrap();
+        assert!(none.is_empty());
     }
 }

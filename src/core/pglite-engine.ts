@@ -3706,6 +3706,7 @@ export class PGLiteEngine implements BrainEngine {
   // The admin operations' statements (engine-sql/admin-reads.ts).
   listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: adminReadsImpl.PagePolicyPart) { return adminReadsImpl.listVisiblePageSlugs(this.rawRead, slugs, sourceIds, policy); }
   readPagesForVersionHistory(pageIds: number[]) { return adminReadsImpl.readPagesForVersionHistory(this.rawRead, pageIds); }
+  readHealthMemoRows() { return adminReadsImpl.readHealthMemoRows(this.rawRead); }
   // The `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts).
   pageTypeTotals(sourceId: string) { return schemaDetectImpl.pageTypeTotals(this.rawRead, sourceId); }
   pagePrefixSamples(sourceId: string, minPages: number, limit: number) { return schemaDetectImpl.pagePrefixSamples(this.rawRead, sourceId, minPages, limit); }

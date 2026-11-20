@@ -3189,6 +3189,8 @@ export interface BrainEngine {
   listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: AdminReadsSql.PagePolicyPart): Promise<string[]>;
   /** The live pages with these ids: slug, source and frontmatter, for the version history. Reads pages. */
   readPagesForVersionHistory(pageIds: number[]): Promise<AdminReadsSql.VersionPageRow[]>;
+  /** The health memo's generation rows (config values, page clock, brain id); null when the engine keeps no page clock. */
+  readHealthMemoRows(): Promise<AdminReadsSql.HealthMemoRow[] | null>;
 
   // Ingest log
   logIngest(entry: IngestLogInput): Promise<void>;

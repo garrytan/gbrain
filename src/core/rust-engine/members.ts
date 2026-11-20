@@ -710,6 +710,7 @@ export const RUST_ENGINE_MEMBERS = {
   // health: the admin operations' statements (engine-sql/admin-reads.ts)
   listVisiblePageSlugs: 'pages',
   readPagesForVersionHistory: 'pages',
+  readHealthMemoRows: 'health',
   listEnrichCandidates: 'health',
   findAnomalies: 'health',
   // raw_data

@@ -361,6 +361,17 @@ const PINS: Pin[] = [
     run: e => e.readPagesForVersionHistory([4, 5]),
     sent: [{ text: 'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', params: [[4, 5]] }],
   },
+  {
+    // The caller composed the key list from GENERATION_CONFIG_KEYS and HEALTH_CACHE_TTL_KEY; this is its rendered text.
+    from: 'src/core/health-memo.ts:79 readGeneration (at 34a0d21e31)',
+    run: e => e.readHealthMemoRows(),
+    sent: [{ text: `SELECT key AS k, value AS v FROM config
+        WHERE key IN ('orphans.exclude_prefixes', 'orphans.exclude_slugs', 'search_embedding_column', 'embedding_columns', 'schema_pack', 'health.cache_ttl_ms')
+       UNION ALL
+       SELECT '__page_clock__' AS k, COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS v
+       UNION ALL
+       SELECT '__brain_id__' AS k, (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS v`, params: [] }],
+  },
 ];
 
 test.each(PINS.map(pin => [pin.from, pin] as const))('%s keeps its Postgres text and params byte for byte', async (_from, pin) => {

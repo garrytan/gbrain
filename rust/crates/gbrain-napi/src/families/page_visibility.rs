@@ -64,4 +64,20 @@ impl Brain {
             )
         })
     }
+
+    /// `listVisiblePageSlugs({ slugs, sourceIds }, policy)`: resolves the slugs that name a live page the policy admits.
+    #[napi]
+    pub fn list_visible_page_slugs<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_visible_page_slugs(
+                &required(query, "listVisiblePageSlugs query")?,
+                &required(policy, "listVisiblePageSlugs policy")?,
+            )
+        })
+    }
 }

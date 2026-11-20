@@ -266,7 +266,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'markRevertedEdgeProposals', 'listLiveChunksByIds', 'listLiveTakesByIds', 'readLastContradictionsPromptVersion',
   'listEvalCandidateQueries', 'listRekeyLosers', 'repointSupersededToKept', 'clearOntologySlots',
   'deleteRekeyLosers', 'listOntologyFactCandidates', 'restoreOntologyFact',
-  'listVisiblePageSlugs', 'readPagesForVersionHistory',
+  'listVisiblePageSlugs', 'readPagesForVersionHistory', 'readHealthMemoRows',
   // `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts; test/engine-parity/schema-detect.test.ts)
   'pageTypeTotals', 'pagePrefixSamples', 'countPagesByTypeForSource',
   // Takes

@@ -81,6 +81,13 @@ interface StoreHealth {
   most_connected: Array<{ slug: string; link_count: number }>;
 }
 
+/**
+ * `readHealthMemoRows`: the store keeps no page generation clock, so it answers null and get_health's memo
+ * (health-memo.ts) stores nothing on a Rust brain: every call computes its counters, as the memo does on PGLite with
+ * the cache off. A known difference, rust/docs/store/stats.md.
+ */
+export const readHealthMemoRows: StoreMember<[], null> = async () => null;
+
 export const getHealth: StoreMember<[opts?: ScopeOpts], BrainHealth> = async (brain, opts) => {
   const scope = statsScope('getHealth', opts);
   await requireTextColumn(brain, 'getHealth');
