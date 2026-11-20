@@ -54,6 +54,8 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { runRecall } from '../src/commands/recall.ts';
+import { rmSync } from 'node:fs';
+import { emptyHome, withEnv } from './helpers/with-env.ts';
 
 const ALICE = 'people/alice-example';
 const logger = { info() {}, warn() {}, error() {} };
@@ -450,6 +452,42 @@ for (const backend of testBackends()) {
           for (const reader of ['recall', 'history', 'hot'] as const) expect({ reader, garden: r[reader][GARDEN.fact] }).toEqual({ reader, garden: null });
         }
         expect((await readers(as.member)).recall[GARDEN.fact]).toBeUndefined();
+      });
+
+      test('an ended employer never shortens a limited read, and the card counts only current facts', async () => {
+        const OLD: Said = { fact: 'Alice Example grew up near the coast.', valid: '2024-11-01' };
+        const pages: Page[] = [{ slug: 'meetings/chat-0', title: 'Chat 0', date: OLD.valid, said: [OLD] }, ...change()];
+        await putPages(pages);
+        await extract(pages);
+        const current = { [BETA.fact]: null, [GARDEN.fact]: null, [TEA.fact]: null, [OLD.fact]: null };
+        expect({ cli: await cliRecall([ALICE, '--limit', '4']), op: shown((await op(LOCAL, 'recall', { entity: ALICE, limit: 4 })).json.facts),
+          question: await Promise.all([1, 2, 3, 9].map(async limit => {
+            const facts = Object.keys(shown((await op(LOCAL, 'recall', { question: 'Where does Alice Example work?', limit })).json.facts));
+            return { n: facts.length, acme: facts.includes(ACME.fact) };
+          })),
+          count: (await op(LOCAL, 'entity', { name: 'Alice Example' })).json.card?.active_fact_count })
+          .toEqual({ cli: current, op: current, question: [1, 2, 3, 4].map(n => ({ n, acme: false })), count: 4 });
+      });
+
+      test('local recall groups the entity\'s fact keys the way the recall op does', async () => {
+        await putPages(change());
+        await extract(change());
+        await engine.executeRaw('UPDATE facts SET entity_slug = $1 WHERE source_id = $2 AND fact = $3', ['alice-example', 'default', BETA.fact]);
+        const viaOp = shown((await op(LOCAL, 'recall', { entity: ALICE })).json.facts);
+        expect(viaOp[ACME.fact]).toBeUndefined();
+        expect(await cliRecall([ALICE])).toEqual(viaOp);
+      });
+
+      test('the paged --since-last-run read marks an ended employer without dropping it', async () => {
+        await putPages(change());
+        await extract(change());
+        const home = emptyHome();
+        try {
+          expect(await withEnv({ GBRAIN_HOME: home }, () => cliRecall([ALICE, '--since-last-run'])))
+            .toEqual({ [ACME.fact]: P2, [BETA.fact]: null, [TEA.fact]: null, [GARDEN.fact]: null });
+        } finally {
+          rmSync(home, { recursive: true, force: true });
+        }
       });
 
       test('facts without slots and the facts block read exactly as before', async () => {

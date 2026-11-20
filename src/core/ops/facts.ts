@@ -494,7 +494,7 @@ const recall: Operation = {
     // engines, keyed on `source` not `fact` text) — this client-side
     // filter is belt-and-braces defense in depth, not the primary guard.
     rows = rows.filter((r) => !(AUDIT_ROW_SOURCES as readonly string[]).includes(r.source));
-    if (p.supersessions !== true) rows = await applySlotEnds(ctx.engine, factScope, rows, { activeOnly: !includeExpired, entities: entityParam ? factSources.map(src => ({ source_id: src, slugs: [...new Set(rows.flatMap(r => (r.source_id === src && r.entity_slug ? [r.entity_slug] : [])))] })) : undefined }); // GST-3170: read-time slot ends
+    if (p.supersessions !== true && !ranking) rows = await applySlotEnds(ctx.engine, factScope, rows, { activeOnly: !includeExpired, entities: entityParam ? factSources.map(src => ({ source_id: src, slugs: [...new Set(rows.flatMap(r => (r.source_id === src && r.entity_slug ? [r.entity_slug] : [])))] })) : undefined }); // GST-3170: read-time slot ends
 
     // Engines apply grep in SQL (pre-limit). This client-side pass stays only
     // as the filter for the supersessions branch, which bypasses FactListOpts.
