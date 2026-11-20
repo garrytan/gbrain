@@ -1309,6 +1309,8 @@ SELECT source_id, type FROM pairs`],
     case: { method: 'listPagesNamingReader', variant: 'live', run: e => e.listPagesNamingReader('member:alice-example', { live: true }) },
     texts: [`SELECT slug, source_id FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`],
+  },
+  {
     from: 'src/core/belief/coverage-report.ts:310 orphanLifetimes, at e6f777a30f (the moved statement binds its limit as $3 instead of splicing the number)',
     case: { method: 'listOrphanLifetimes', variant: 'default', run: e => e.listOrphanLifetimes('default', 2, false) },
     texts: [`SELECT slug, page_lifetime, reason, count(*) OVER ()::int AS total FROM (
