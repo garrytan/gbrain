@@ -2353,6 +2353,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertWriteRequestGroup#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "invalidateContentDriftEmbeddings#default": {
         "flagOffLanes": [
           "pool",
@@ -3583,6 +3594,28 @@
         ],
         "flagOnScopes": []
       },
+      "listTopologyRecoveries#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listTopologyRecoveries#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listTrueUpRequests#default": {
         "flagOffLanes": [
           "pool"
@@ -4761,6 +4794,17 @@
         ],
         "flagOnScopes": []
       },
+      "readOwnerHostBinding#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readOwnerOnlySourceConfig#default": {
         "flagOffLanes": [
           "pool"
@@ -4998,6 +5042,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSegmentedGateEvidence#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
@@ -5109,6 +5164,17 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriteRequestsByRequestIds#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6871,6 +6937,7 @@
         "insertTrustProposal": "none",
         "insertWithdrawalEffects": "none",
         "insertWriteRequest": "none",
+        "insertWriteRequestGroup": "none",
         "installChunkEmbeddings": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
@@ -7073,6 +7140,7 @@
         "listTakeSupersessionCandidates": "none",
         "listTakes": "none",
         "listTimelineOrphanPages": "none",
+        "listTopologyRecoveries": "none",
         "listTrueUpRequests": "none",
         "listTrustAllowRuleRows": "none",
         "listTrustProposals": "none",
@@ -7314,6 +7382,7 @@
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
         "readOrphanedManagedSyncFailureRows": "none",
+        "readOwnerHostBinding": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
@@ -7364,6 +7433,7 @@
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
         "readSegmentedEmbedPage": "none",
+        "readSegmentedGateEvidence": "none",
         "readSegmentedPageHead": "none",
         "readSegmentedVersionBodyBytes": "none",
         "readSourceCheckoutRoot": "none",
@@ -7406,6 +7476,7 @@
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteRequestsByRequestIds": "none",
         "readWriteVisibilityProbe": "none",
         "readWriteWatermarkRow": "none",
         "readWriterAdminState": "none",

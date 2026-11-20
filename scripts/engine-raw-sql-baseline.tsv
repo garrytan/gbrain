@@ -625,7 +625,7 @@ src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	7
-src/core/persistence/effect-journal.ts	execute_raw	9
+src/core/persistence/effect-journal.ts	execute_raw	8
 src/core/persistence/effect-links.ts	execute_raw	8
 src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	14
@@ -666,7 +666,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	36
+src/core/persistence/journal.ts	execute_raw	33
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
@@ -695,7 +695,6 @@ src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/ownership.ts	execute_raw	8
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
-src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
 src/core/persistence/page-purge.ts	execute_raw	30
@@ -788,7 +787,7 @@ src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	20
 src/core/persistence/topology-receipts.ts	execute_raw	13
-src/core/persistence/topology-recovery.ts	execute_raw	17
+src/core/persistence/topology-recovery.ts	execute_raw	16
 src/core/persistence/topology-transaction.ts	execute_raw	1
 src/core/persistence/transfer-administration.ts	execute_raw	1
 src/core/persistence/transient-retry.ts	execute_raw	1
@@ -799,7 +798,6 @@ src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/worktree-refresh.ts	execute_raw	30
 src/core/persistence/write-applied.ts	execute_raw	1
-src/core/persistence/writer-versions.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1

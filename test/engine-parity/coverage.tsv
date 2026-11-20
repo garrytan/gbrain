@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1019/1026
+# covered: 1024/1031
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 136/136
+# persistence_journal: 141/141
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -86,7 +86,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	119	no	yes	yes	serves
+transaction	lifecycle	yes	122	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -393,7 +393,7 @@ countChunksBySource	stats_ingest	yes	1	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	5	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
-logIngest	stats_ingest	yes	2	no	yes	yes	serves
+logIngest	stats_ingest	yes	3	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	24	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
@@ -421,7 +421,7 @@ applyTransactionSettings	import_guards	yes	71	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
-readLedgerSource	import_guards	yes	9	no	yes	yes	serves
+readLedgerSource	import_guards	yes	10	no	yes	yes	serves
 listCoveredSources	import_guards	yes	1	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
 claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
@@ -443,7 +443,7 @@ clearWantedMarker	persistence_journal	yes	1	no	yes	yes	serves
 settleFreshnessMarker	persistence_journal	yes	2	no	yes	yes	serves
 listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
 readFirstDue	persistence_journal	yes	1	no	yes	yes	serves
-declarePersistence	persistence_journal	yes	22	no	yes	yes	serves
+declarePersistence	persistence_journal	yes	25	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	2	no	yes	yes	serves
@@ -479,6 +479,7 @@ readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
+readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	9	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -492,20 +493,23 @@ ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
-readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
+readCounterRows	persistence_journal	yes	5	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	38	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	42	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	43	no	yes	yes	serves
+insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
+readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	20	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	15	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	48	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	50	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
+listTopologyRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
-insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
+insertTopologyChange	persistence_journal	yes	5	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseUnpublishedClaim	persistence_journal	yes	1	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
@@ -534,7 +538,7 @@ markProjectionRebuildFailed	persistence_journal	yes	1	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	4	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	8	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	9	no	yes	yes	serves
 listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
 lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
 listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
@@ -560,6 +564,7 @@ settleNoopEmbeddingRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
+readSegmentedGateEvidence	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
@@ -929,8 +934,8 @@ readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	4	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	7	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	6	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	8	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	3	no	yes	yes	serves
 writerAdminStore	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
