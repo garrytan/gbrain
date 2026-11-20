@@ -149,4 +149,59 @@ impl Brain {
             )
         })
     }
+
+    /// `listUnretiredPagesBySlugPattern(sourceId, patterns, limit)`: live, unretired pages by slug.
+    #[napi]
+    pub fn list_unretired_pages_by_slug_pattern<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+        limit: i64,
+    ) -> napi::Result<Object<'env>> {
+        let limit = u64::try_from(limit).unwrap_or(0);
+        self.run(env, move |s| {
+            s.list_unretired_pages_by_slug_pattern(&source_id, &patterns, limit)
+        })
+    }
+
+    /// `listNameVariantCandidates(sourceId, { types, slugPatterns, probes, limit })`.
+    #[napi]
+    pub fn list_name_variant_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_name_variant_candidates(
+                &source_id,
+                &required(query, "listNameVariantCandidates query")?,
+            )
+        })
+    }
+
+    /// `readPageRetirement(sourceId, slug)`: the live page's retirement, or `null`.
+    #[napi]
+    pub fn read_page_retirement<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_retirement(&source_id, &slug))
+    }
+
+    /// `countDistinctInboundLinkers(sourceIds, slugs)`: distinct inbound linkers per page.
+    #[napi]
+    pub fn count_distinct_inbound_linkers<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_distinct_inbound_linkers(&source_ids, &slugs)
+        })
+    }
 }

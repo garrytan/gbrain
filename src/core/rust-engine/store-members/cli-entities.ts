@@ -6,7 +6,10 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type {
+  EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, MentionDueQuery, NameVariantCandidateQuery,
+  NameVariantCandidateRow, PageRetirementRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow,
+} from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -85,3 +88,20 @@ export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope:
     'slugs' in scope ? { slugs: [...new Set(scope.slugs)] } : { since: scope.since })) as IgnoredLabelPageRow[];
   return rows.filter(row => ignoredPrivacyLabels(row).length > 0).slice(0, limit);
 };
+
+export const listUnretiredPagesBySlugPattern: StoreMember<[sourceId: string, patterns: readonly string[], limit: number], SlugPatternPageRow[]> =
+  (brain, sourceId, patterns, limit) => storeCall({ member: 'listUnretiredPagesBySlugPattern', sourceId }, () =>
+    brain.listUnretiredPagesBySlugPattern(sourceId, [...patterns], Math.max(0, Math.floor(limit))));
+
+export const listNameVariantCandidates: StoreMember<[sourceId: string, q: NameVariantCandidateQuery], NameVariantCandidateRow[]> = (brain, sourceId, q) => {
+  takeOptions('listNameVariantCandidates', q, ['types', 'slugPatterns', 'probes', 'limit']);
+  return storeCall({ member: 'listNameVariantCandidates', sourceId }, () => brain.listNameVariantCandidates(sourceId, {
+    types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }));
+};
+
+export const readPageRetirement: StoreMember<[sourceId: string, slug: string], PageRetirementRow | null> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readPageRetirement', sourceId }, () => brain.readPageRetirement(sourceId, slug));
+
+export const countDistinctInboundLinkers: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], InboundLinkerCountRow[]> =
+  (brain, sourceIds, slugs) => storeCall({ member: 'countDistinctInboundLinkers' }, () =>
+    brain.countDistinctInboundLinkers([...sourceIds], [...slugs]));

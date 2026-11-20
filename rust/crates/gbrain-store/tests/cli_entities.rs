@@ -5,8 +5,11 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::cli_reads::entities::{MentionDueQuery, SiblingCandidateQuery};
+use gbrain_store::cli_reads::entities::{
+    MentionDueQuery, NameVariantCandidateQuery, PageRetirementRow, SiblingCandidateQuery,
+};
 use gbrain_store::facts::PrivacyPolicy;
+use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
@@ -380,6 +383,113 @@ fn entity_card_rows_match_the_title_slugs_and_like_pattern() {
                 },
                 None,
             )
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn slug_pattern_pages_are_live_unretired_and_capped() {
+    let dir = TempDir::new("cli-slug-patterns");
+    let store = seeded(&dir);
+    let patterns = vec!["people/ada%".to_string(), "people/m%".to_string()];
+    let slugs = |limit: u64| {
+        store
+            .list_unretired_pages_by_slug_pattern("default", &patterns, limit)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(slugs(10), ["people/ada", "people/ada-2", "people/ada-q"]);
+    assert_eq!(slugs(2), ["people/ada", "people/ada-2"]);
+    assert_eq!(slugs(0), Vec::<String>::new());
+}
+
+#[test]
+fn name_variant_candidates_rank_by_probe_hits_then_title_length() {
+    let dir = TempDir::new("cli-name-variants");
+    let store = seeded(&dir);
+    let rows = store
+        .list_name_variant_candidates(
+            "default",
+            &NameVariantCandidateQuery {
+                types: vec!["company".into()],
+                slug_patterns: vec!["people/%".into()],
+                probes: vec!["%ADA%".into(), "%founder%".into()],
+                limit: 10,
+            },
+        )
+        .unwrap();
+    let got: Vec<(&str, u64)> = rows
+        .iter()
+        .map(|r| (r.slug.as_str(), r.probe_hits))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("people/ada-2", 2),
+            ("companies/ada", 1),
+            ("people/ada", 1),
+            ("people/ada-q", 1)
+        ]
+    );
+    assert_eq!(rows[2].frontmatter.get("identity"), Some(&json!("ada-1")));
+}
+
+#[test]
+fn page_retirement_reads_the_trimmed_redirect_of_a_live_page() {
+    let dir = TempDir::new("cli-retirement");
+    let store = seeded(&dir);
+    let read = |slug: &str| store.read_page_retirement("default", slug).unwrap();
+    let row = |slug: &str, retired: bool, target: Option<&str>| PageRetirementRow {
+        slug: slug.into(),
+        page_type: "person".into(),
+        retired,
+        target: target.map(String::from),
+    };
+    assert_eq!(
+        read("people/merged"),
+        Some(row("people/merged", true, Some("people/ada")))
+    );
+    assert_eq!(read("people/blank"), Some(row("people/blank", false, None)));
+    assert_eq!(read("people/old"), Some(row("people/old", true, None)));
+    assert_eq!(read("people/ada"), Some(row("people/ada", false, None)));
+    assert_eq!(read("people/nc"), None);
+    assert_eq!(read("people/ghost"), None);
+}
+
+#[test]
+fn inbound_linkers_count_each_linking_page_once() {
+    let dir = TempDir::new("cli-inbound-linkers");
+    let store = seeded(&dir);
+    for (from, link_type) in [
+        ("notes/plain", "mentions"),
+        ("notes/plain", "cites"),
+        ("notes/label", "cites"),
+    ] {
+        let opts = AddLinkOptions {
+            link_type: Some(link_type.into()),
+            link_source: Some("manual".into()),
+            ..Default::default()
+        };
+        store.add_link(from, "people/ada", &opts).unwrap();
+    }
+    let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let rows = store
+        .count_distinct_inbound_linkers(
+            &ids(&["default", "default", "default", "other"]),
+            &ids(&["people/ada", "people/ada", "people/old", "people/ada"]),
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].source_id.as_str(), rows[0].slug.as_str(), rows[0].n),
+        ("default", "people/ada", 2)
+    );
+    assert!(
+        store
+            .count_distinct_inbound_linkers(&[], &[])
             .unwrap()
             .is_empty()
     );

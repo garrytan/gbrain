@@ -769,6 +769,8 @@ export const DOMAIN_OF: Record<string, string> = {
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads, 'readPageRetirement': OOS.entityReads,
+  'countDistinctInboundLinkers': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
@@ -1656,6 +1658,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['slugs', (e) => e.readIgnoredPrivacyLabelPages(SRC, { slugs: [SLUG] })],
     ['since', (e) => e.readIgnoredPrivacyLabelPages(SRC, { since: '2000-01-01T00:00:00Z' }, { limit: 5 })],
   ]),
+  ...variants('listUnretiredPagesBySlugPattern', [['default', (e) => e.listUnretiredPagesBySlugPattern(SRC, ['people/dr-%'], 5)]]),
+  ...variants('listNameVariantCandidates', [['default', (e) => e.listNameVariantCandidates(SRC,
+    { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })]]),
+  ...variants('readPageRetirement', [['default', (e) => e.readPageRetirement(SRC, SLUG)]]),
+  ...variants('countDistinctInboundLinkers', [['default', (e) => e.countDistinctInboundLinkers([SRC], [SLUG])]]),
   ...variants('readSourceMembership', [
     ['default', (e) => e.readSourceMembership(SRC)],
     ['lock', (e) => e.transaction((tx: any) => tx.readSourceMembership(SRC, { lock: true }))],

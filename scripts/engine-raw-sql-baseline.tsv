@@ -51,7 +51,6 @@ src/commands/doctor/checks/derivation-purge-sweeps.ts	execute_raw	1
 src/commands/doctor/checks/derived-visibility.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	4
-src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	11
 src/commands/doctor/checks/facts-pages.ts	execute_raw	1

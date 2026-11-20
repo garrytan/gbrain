@@ -217,6 +217,87 @@ export async function readRetirementHop(exec: LegacyUnscopedRead, sourceId: stri
   return row ?? null;
 }
 
+export interface SlugPatternPageRow { slug: string; title: string | null }
+
+/**
+ * Live pages of one source that are not retired (`retiredPageSql`) and whose slug matches one of the LIKE `patterns`,
+ * by slug, at most `limit` (doctor's person_title_duplicates stubs).
+ */
+export async function listUnretiredPagesBySlugPattern(exec: LegacyUnscopedRead, sourceId: string, patterns: readonly string[], limit: number): Promise<SlugPatternPageRow[]> {
+  const cap = Math.max(0, Math.floor(limit));
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title FROM pages
+          WHERE source_id = ${sourceId} AND deleted_at IS NULL AND slug LIKE ANY(${[...patterns]}::text[]) AND NOT ${trustedSql(retiredPageSql('pages'))}
+          ORDER BY slug LIMIT ${cap}`);
+  return exec.executeRaw<SlugPatternPageRow>(text, params);
+}
+
+export interface NameVariantCandidateQuery {
+  /** Page types a candidate may have. */
+  types: readonly string[];
+  /** LIKE patterns a candidate's slug may match instead. */
+  slugPatterns: readonly string[];
+  /** ILIKE patterns; a candidate's title or slug matches at least one, and `probe_hits` counts the ones it matches. */
+  probes: readonly string[];
+  limit: number;
+}
+
+export interface NameVariantCandidateRow {
+  slug: string;
+  title: string | null;
+  type: string | null;
+  frontmatter: Record<string, unknown> | null;
+  probe_hits: number;
+}
+
+/**
+ * The name-variant candidates of one source (verbs/entity-variants.ts `resolveNameVariant`): live pages of one of
+ * `types` or with a slug matching `slugPatterns`, whose title or slug matches a probe, most probe hits first, then the
+ * shortest title, then by slug, at most `limit`.
+ */
+export async function listNameVariantCandidates(exec: LegacyUnscopedRead, sourceId: string, q: NameVariantCandidateQuery): Promise<NameVariantCandidateRow[]> {
+  const limit = Math.max(0, Math.floor(q.limit));
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, type, frontmatter,
+              (SELECT count(*)::int FROM unnest(${[...q.probes]}::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+         FROM pages
+        WHERE deleted_at IS NULL AND source_id = ${sourceId}
+          AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
+          AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))
+        ORDER BY probe_hits DESC, length(title), slug
+        LIMIT ${limit}`);
+  return exec.executeRaw<NameVariantCandidateRow>(text, params);
+}
+
+export interface PageRetirementRow { slug: string; type: string | null; retired: boolean; target: string | null }
+
+/**
+ * The live page at `slug` in the source, whether it is retired (`retiredPageSql`) and its trimmed `superseded_by`
+ * (else `merged_into`) value; null when no live page sits there (entities/resolve.ts `followRetirement`).
+ */
+export async function readPageRetirement(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<PageRetirementRow | null> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug, p.type, ${trustedSql(retiredPageSql('p'))} AS retired,
+              COALESCE(NULLIF(btrim(p.frontmatter->>'superseded_by'), ''), NULLIF(btrim(p.frontmatter->>'merged_into'), '')) AS target
+         FROM pages p
+        WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL
+        LIMIT 1`);
+  const [row] = await exec.executeRaw<PageRetirementRow>(text, params);
+  return row ?? null;
+}
+
+export interface InboundLinkerCountRow { source_id: string; slug: string; n: number }
+
+/**
+ * For each page at (`sourceIds[i]`, `slugs[i]`) with inbound links, the number of distinct pages linking to it, any
+ * link kind, deleted or not; pages with none are absent (doctor's person_title_duplicates link counts).
+ */
+export async function countDistinctInboundLinkers(exec: LegacyUnscopedRead, sourceIds: readonly string[], slugs: readonly string[]): Promise<InboundLinkerCountRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.source_id, p.slug, count(DISTINCT l.from_page_id)::int AS n
+           FROM pages p JOIN links l ON l.to_page_id = p.id
+          WHERE (p.source_id, p.slug) IN (SELECT * FROM unnest(${[...sourceIds]}::text[], ${[...slugs]}::text[]))
+          GROUP BY p.source_id, p.slug`);
+  const rows = await exec.executeRaw<InboundLinkerCountRow>(text, params);
+  return rows.map(row => ({ source_id: row.source_id, slug: row.slug, n: Number(row.n) }));
+}
+
 export interface ExtractionLagQuery {
   sourceId?: string;
   versionTs: string;

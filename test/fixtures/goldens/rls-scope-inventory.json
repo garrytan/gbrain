@@ -302,6 +302,17 @@
         ],
         "flagOnScopes": []
       },
+      "countDistinctInboundLinkers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -2748,6 +2759,17 @@
         ],
         "flagOnScopes": []
       },
+      "listNameVariantCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listOverdueHeldWrites#import": {
         "flagOffLanes": [
           "pool"
@@ -3265,6 +3287,17 @@
         "flagOnScopes": []
       },
       "listTrueUpRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnretiredPagesBySlugPattern#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4190,6 +4223,17 @@
         "flagOnScopes": []
       },
       "readOwnerOnlySourcesPresent#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageRetirement#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5801,6 +5845,7 @@
         "countDeadDreamSubmissionRows": "none",
         "countDefaultSourceSplit": "none",
         "countDerivedFactTaint": "none",
+        "countDistinctInboundLinkers": "none",
         "countEmbeddingHeldPages": "none",
         "countEntityPages": "none",
         "countFactEmbeddingCoverage": "none",
@@ -6161,6 +6206,7 @@
         "listLocalPathSources": "none",
         "listManagedRootBindings": "none",
         "listMemoryProposalRows": "none",
+        "listNameVariantCandidates": "none",
         "listOauthClients": "none",
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",
@@ -6242,6 +6288,7 @@
         "listUnfencedFactRows": "none",
         "listUnlinkedConversationSlugs": "none",
         "listUnpreviewedTrustFacts": "none",
+        "listUnretiredPagesBySlugPattern": "none",
         "listUnreviewedJobs": "none",
         "listUnwithdrawnFacts": "none",
         "listValidTimeIdentities": "none",
@@ -6448,6 +6495,7 @@
         "readPageHiddenFromCaller": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
+        "readPageRetirement": "none",
         "readPageRevisionAttribution": "none",
         "readPageRevisions": "none",
         "readPageSnapshot": "direct",
