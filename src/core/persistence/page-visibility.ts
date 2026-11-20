@@ -1,5 +1,5 @@
 import { OperationError, opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privacyPartSql, privatePagesFilterForCaller, readHonorAliases, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, privacyPartSql, privatePagesFilterForCaller, readHonorAliases, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
 import { hostFix } from '../ops/op-fix.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -11,6 +11,7 @@ import { catalogueError } from '../error-catalogue.ts';
 import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PagePolicyPart } from '../engine-sql/page-visibility.ts';
+import { renderWriterReadPolicy, type WriterReadPolicy } from '../engine-sql/remote-links.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
@@ -105,14 +106,17 @@ export async function authorizePageVisibility(engine: VisibilityEngine, authorit
  */
 export async function writerReadPolicySql(engine: FenceEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
   restricted?: boolean, ownerOnlyPresent?: boolean): Promise<string> {
+  return renderWriterReadPolicy(await writerReadPolicy(engine, authority, restricted, ownerOnlyPresent), pageAlias, hidePrivate);
+}
+
+/** What writerReadPolicySql renders, gathered: the writer's identities, folder access, owner record and labelled-only grant. */
+export async function writerReadPolicy(engine: FenceEngine, authority: WriteAuthority, restricted?: boolean, ownerOnlyPresent?: boolean): Promise<WriterReadPolicy> {
   restricted ??= (await readRemotePolicyNow(engine)).restricted;
   const identities = restricted ? await writerIdentities(engine, authority) : [[]];
   const folder = restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
   const owner = (ownerOnlyPresent ?? await ownerOnlySourcesPresent(engine)) && await storedOwnerSpeaksForItself(engine, authority);
-  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage, ...(owner ? { owner: true } : {}) },
-    () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
-  if (!restricted || !await anyLabelledOnlyMember(engine) || !await writerLabelledOnly(engine, authority, identities)) return fragment;
-  return `(${fragment} AND ${labelledOnlyForSql(pageAlias, identities, folder.satisfiedRuleIds)})`;
+  const labelledOnly = restricted && await anyLabelledOnlyMember(engine) && await writerLabelledOnly(engine, authority, identities);
+  return { identities, satisfiedRuleIds: folder.satisfiedRuleIds, folderCoverage: folder.folderCoverage, owner, labelledOnly };
 }
 
 /**

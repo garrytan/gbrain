@@ -18,9 +18,8 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  * `managed_persistence` is held: a worktree-bound write (a source with a claimed checkout) still reaches raw SQL while
  * it is prepared, published and recovered, so on this engine its admission refuses by name (persistence/journal.ts
  * `admitWrite`) and writes no request row. A write with no worktree and a grouped admission of such writes are served,
- * except a remote write that would queue a mention-links effect: its publication still reads through raw SQL
- * (persistence/effect-links.ts, a finished batch's re-arm), so its admission refuses `raw_sql` by name
- * (rust-engine/errors.ts `requireRawSqlPublication`).
+ * a remote write that queues a mention-links effect included (its effect and a finished batch's re-arm are typed
+ * members, rust/docs/store/remote-links.md).
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
   managed_persistence: [

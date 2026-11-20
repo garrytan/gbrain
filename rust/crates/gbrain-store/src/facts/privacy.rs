@@ -713,7 +713,11 @@ fn chronicle_depth(page: &PageRecord) -> Option<String> {
 }
 
 /// `privacyPartSql`: the page's own fields, its derived origin and its declared lineage.
-fn privacy_allows(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> Result<bool> {
+pub(crate) fn privacy_allows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
     Ok(snapshot_allows(page, honor_aliases)
         && !derived_origin_private(read, page, honor_aliases)?
         && !declared_lineage_private(read, page)?)

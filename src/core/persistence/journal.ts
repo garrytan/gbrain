@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
-import { requireManagedPersistence, requireRawSqlPublication, requireTransactions } from '../rust-engine/errors.ts';
-import { REMOTE_MENTION_OPERATIONS } from './effect-model.ts';
+import { requireManagedPersistence, requireTransactions } from '../rust-engine/errors.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -284,16 +283,6 @@ export async function admitWrite(engine: BrainEngine, input: WriteAdmission, ove
 export async function admitWriteInTransaction(tx: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
   return (await prepareAdmission(tx, input, overrides)).apply(tx);
 }
-/**
- * Whether publishing `input` may queue a mention-links effect (effect-journal.ts `queuesMentionLinks`): a remote write
- * not trusted to link inline, of an operation that links its mentions. An append_page counts whatever it appends, since
- * admission cannot know yet whether it appends to the compiled truth.
- */
-function mayQueueMentionLinks(input: WriteAdmission): boolean {
-  if (input.authority.autoLinkTrusted ?? !input.authority.remote) return false;
-  return REMOTE_MENTION_OPERATIONS.includes(input.operation) || input.operation === 'append_page';
-}
-const MENTION_LINKS_WHY = 'a remote write queues a mention-links effect, which still reads through raw SQL';
 
 async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>) {
   const limits = await readJournalLimits(engine,overrides);
@@ -306,7 +295,6 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const origin = resolveAdmissionOrigin(input.origin);
   if (input.worktreeId) requireManagedPersistence(engine, 'admitWrite', 'a write to a managed worktree checks its refresh fence, owner and binding');
   if (input.targetKind === 'skill_bundle') requireManagedPersistence(engine, 'admitWrite', 'a skill bundle write publishes to the protocol-2 canonical owner of a managed checkout');
-  if (mayQueueMentionLinks(input)) requireRawSqlPublication(engine, 'admitWrite', MENTION_LINKS_WHY);
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
   const barrier = !!input.worktreeId && deferrable(input) && await readRefreshBarrier(engine);
@@ -381,7 +369,6 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
   const first = inputs[0];
   if (!first) return [];
   if (first.worktreeId) requireManagedPersistence(tx, 'admitWriteGroupInTransaction', 'a grouped admission to a managed worktree checks its refresh fence, owner and binding');
-  if (inputs.some(mayQueueMentionLinks)) requireRawSqlPublication(tx, 'admitWriteGroupInTransaction', MENTION_LINKS_WHY);
   if (inputs.some(input => input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || input.worktreeId !== first.worktreeId
     || String(input.topologyGeneration) !== String(first.topologyGeneration) || input.principal.kind !== first.principal.kind || input.principal.id !== first.principal.id
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {

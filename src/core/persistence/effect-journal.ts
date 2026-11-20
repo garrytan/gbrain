@@ -90,9 +90,8 @@ export function queuesMentionLinks(row: Partial<Pick<WriteRequest, 'operation' |
 export async function reconcileFinishedBatch(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'intent' | 'principal_kind' | 'principal_id'>>): Promise<void> {
   const batch = row.intent?.page_batch as { id?: unknown; size?: unknown } | undefined;
   if (!batch || typeof batch.id !== 'string' || typeof batch.size !== 'number' || batch.size < 2 || !row.principal_kind || !row.principal_id) return;
-  const siblings = await tx.executeRaw<{ id: string; state: string }>(`SELECT id,state FROM persistence_requests
-    WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[]) AND id<>$4::uuid AND intent->'page_batch'->>'id'=$5`,
-  [row.principal_kind, row.principal_id, pageBatchChildRequestIds(batch.id, batch.size), row.id, batch.id]);
+  const siblings = (await tx.readWriteRequestsByRequestIds(row.principal_kind, row.principal_id, pageBatchChildRequestIds(batch.id, batch.size)))
+    .filter(sibling => sibling.id !== row.id && (sibling.intent?.page_batch as { id?: unknown } | undefined)?.id === batch.id);
   if (siblings.some(sibling => !['committed', 'conflict', 'failed', 'cancelled'].includes(sibling.state))) return;
   await queueLinksReconcile(tx, { sourceId: row.source_id, requestIds: [row.id, ...siblings.filter(sibling => sibling.state === 'committed').map(sibling => sibling.id)] });
 }
@@ -106,13 +105,9 @@ export async function reconcileFinishedBatch(tx: BrainEngine, row: EffectRequest
  * Each effect is re-armed at most once (`data.batch_reconciled`), so repeated
  * status reads of a finished batch do not redo the work. Returns how many were re-armed.
  */
-export async function queueLinksReconcile(tx: SqlEngine, opts: { sourceId: string; requestIds: readonly string[]; slugs?: readonly string[] }): Promise<number> {
+export async function queueLinksReconcile(tx: Pick<BrainEngine, 'rearmLinksEffects'>, opts: { sourceId: string; requestIds: readonly string[]; slugs?: readonly string[] }): Promise<number> {
   if (!opts.requestIds.length) return 0;
-  const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
-    next_attempt_at=now(),error_code=NULL,outcome=NULL,updated_at=now(),data=data||'{"batch_reconciled":true}'::jsonb
-    WHERE kind='links' AND source_id=$1 AND request_id=ANY($2::uuid[]) AND ($3::text[] IS NULL OR data->>'slug'=ANY($3::text[]))
-    AND NOT (data ? 'batch_reconciled') AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [opts.sourceId, [...opts.requestIds], opts.slugs ? [...opts.slugs] : null]);
-  return rows.length;
+  return tx.rearmLinksEffects(opts);
 }
 
 /**

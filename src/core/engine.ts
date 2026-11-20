@@ -77,6 +77,7 @@ import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginCla
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
+import type { LinksRearm, LinkTargetPage, OwnedLink, WriterReadPolicy } from './engine-sql/remote-links.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
@@ -3372,8 +3373,23 @@ export interface BrainEngine {
   readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]>;
   /** The opening read of a remote page write's visibility check: labelled-only members, what a reader identity could open on the page the empty-identity policy hides, owner-only sources. */
   readWriteVisibilityProbe(sourceId: string, slug: string): Promise<WriteVisibilityProbe | undefined>;
-  /** A stored writer's slug fence now (an OAuth client's bound prefixes, a local writer's grant ceiling), or null. */
-  readWriterSlugFence(principal: { kind: string; id: string }): Promise<unknown>;
+  /** A stored writer's slug fence now (an OAuth client's bound prefixes, or its delegated ones for a delegated write; a local writer's grant ceiling), or null. */
+  readWriterSlugFence(principal: { kind: string; id: string }, opts?: { delegated?: boolean }): Promise<unknown>;
+  // The remote links effect and its batch re-arm (engine-sql/remote-links.ts).
+  /** The links effect transaction's settings: synchronous commit, a 1s lock wait and a 5s statement limit. */
+  setEffectTransactionLimits(): Promise<void>;
+  /** The edges `linkSource` owns from page `originPageId`, with each target's slug. */
+  readOwnedLinks(linkSource: string, originPageId: number | string): Promise<OwnedLink[]>;
+  /** Removes the edges among `ids` that `linkSource` owns from page `originPageId`; returns how many. */
+  deleteOwnedLinks(originPageId: number | string, linkSource: string, ids: readonly (number | string)[]): Promise<number>;
+  /** The live pages of the source among `slugs`: readable under the writer's policy (null: every page) and shown by the privacy part. */
+  readLinkTargetPages(sourceId: string, slugs: readonly string[], policy: WriterReadPolicy | null): Promise<LinkTargetPage[]>;
+  /** Re-arms, once each, the `links` effects of requests published together; returns how many. */
+  rearmLinksEffects(opts: LinksRearm): Promise<number>;
+  /** Whether page `pageId` has a queued or running facts backstop effect, or a facts-absorb job in `jobStates` (engine-sql/facts-backstop.ts). */
+  hasPendingFactsExtraction(pageId: number | string, jobStates: readonly string[]): Promise<boolean>;
+  /** Whether a facts-absorb job for page `pageId` completed without being skipped (engine-sql/facts-backstop.ts). */
+  hasCompletedFactsExtraction(pageId: number | string): Promise<boolean>;
   /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
   readStoredBodyBytes(slug: string, sourceId: string): Promise<number | null>;
   // Relational recall arm page reads (engine-sql/relational-reads.ts).

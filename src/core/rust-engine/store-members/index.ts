@@ -105,6 +105,8 @@ import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as synopsisTier from './synopsis-tier.ts';
 import * as sourceCrMode from './source-cr-mode.ts';
+import * as remoteLinks from './remote-links.ts';
+import * as factsBackstop from './facts-backstop.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -191,6 +193,10 @@ export const STORE_MEMBERS = {
   ...synopsisTier,
   // A source's own contextual-retrieval mode (rust/docs/store/source-cr-mode.md).
   ...sourceCrMode,
+  // The remote links effect's edge reads and writes and its batch re-arm (rust/docs/store/remote-links.md).
+  ...remoteLinks,
+  // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
+  ...factsBackstop,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

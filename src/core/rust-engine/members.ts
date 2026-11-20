@@ -657,6 +657,15 @@ export const RUST_ENGINE_MEMBERS = {
   setWriteContext: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
   readWriterSlugFence: 'persistence_journal',
+  // The remote links effect and its batch re-arm (engine-sql/remote-links.ts).
+  setEffectTransactionLimits: 'persistence_journal',
+  readOwnedLinks: 'persistence_journal',
+  deleteOwnedLinks: 'persistence_journal',
+  readLinkTargetPages: 'persistence_journal',
+  rearmLinksEffects: 'persistence_journal',
+  // The facts backstop effect's two extraction reads (engine-sql/facts-backstop.ts).
+  hasPendingFactsExtraction: 'persistence_journal',
+  hasCompletedFactsExtraction: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',
   readJournalLimitRows: 'persistence_journal',
   readHeldPageRows: 'persistence_journal',

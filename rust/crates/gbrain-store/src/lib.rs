@@ -74,6 +74,7 @@ pub mod persistence;
 pub mod raw_files;
 pub mod reason_tombstones;
 pub mod relations;
+pub mod remote_links;
 pub mod salience;
 pub mod source_cr_mode;
 pub mod stats;

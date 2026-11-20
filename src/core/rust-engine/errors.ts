@@ -61,16 +61,6 @@ export function requireManagedPersistence(engine: object, step: string, why: str
 }
 
 /**
- * The named refusal of a write whose publication still reads through raw SQL, on an engine without `raw_sql` (the Rust
- * engine): a remote write that queues a mention-links effect (persistence/effect-links.ts runs it, and a finished
- * put_pages batch re-arms it, through executeRaw). The admission calls it before it reads or writes, so no request row
- * and no counter charge exist. PGLite, Postgres and transaction handles (no capability set) pass.
- */
-export function requireRawSqlPublication(engine: object, step: string, why: string): void {
-  if (!reports(engine, 'raw_sql')) throw capabilityMissing('raw_sql', `${step} (${why})`);
-}
-
-/**
  * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
  * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
  * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.
