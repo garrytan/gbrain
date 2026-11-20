@@ -162,8 +162,9 @@ context only while the row is still as planned: on the given page with the given
 (not expired, `valid_until` unset or later), with no entity or on the unbacked name key `from`,
 user or unattributed, written by a conversation extractor, and the target page is live. Both
 return false and write nothing when the row does not match. The purge guard of the Postgres
-`UPDATE` runs, as on every fact write ("The fact purge ledger"); the withdrawal trigger is not
-modeled there.
+`UPDATE` runs, as on every fact write ("The fact purge ledger"), and so does the withdrawal guard
+(`withdrawal_guard.rs`, "Captured-facts and rehome repair"): both set `entity_slug`, so a row they
+leave active that a withdrawal of its claim reaches on the new entity is saved expired.
 
 `listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
@@ -400,8 +401,12 @@ visibility whose claim fingerprint (current or v1) and subject reach the row exp
 the withdrawal time when that is earlier. A row on a `memory/members/` page matches only a withdrawal of its own page
 slug; any other row matches subject `*`, its entity, or (when it is unbacked and not an owned memory subject) any
 subject. So `insertFact`, `insertFacts` and the ontology inserts run it on every row they insert, after the purge
-refusal. Of the updates, only these repair writes apply it; the other fact updates still do not run the update trigger
-(see "Not modeled").
+refusal. Of the updates, every member whose Postgres `UPDATE` sets a watched column (`fact`, `source_id`, `visibility`,
+`entity_slug`, `expired_at`) on a row it can leave active applies it before `write_fact`: these repair writes,
+`restoreOntologyFact`, `placeRelinkedFact`, `linkConversationFact`, `restoreSupersededFact`, `restoreFactPreimage` and
+`migrateFactsToCanonical`. The other update members the store serves set no watched column, or set `expired_at` to a
+time, so the trigger has nothing to do there. `test/engine-parity/fact-update-guard.test.ts` and
+`rust/crates/gbrain-store/tests/facts_update_guard.rs` pin the five later members.
 
 The six ontology re-key and repair members (`listRekeyLosers` and its four write companions, `listOntologyFactCandidates`,
 `restoreOntologyFact`) are `facts/ontology_repair.rs`; `restoreOntologyFact` also applies the withdrawal guard. See
@@ -1060,7 +1065,5 @@ by running without error. `insertHoldingPagePurges` is compared by the claim che
 
 ## Not modeled
 
-The withdrawal update guard (`gbrain_preserve_fact_withdrawal` on `UPDATE`) for the fact updates other than the
-captured-facts, rehome and ontology repair writes ("Captured-facts and rehome repair"); every insert runs the guard
-(`write_fact`). The write-attribution trigger. Inputs whose PGLite outcome the store cannot
+The write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

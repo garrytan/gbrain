@@ -111,8 +111,9 @@ Rust guesses and gaps (1x parity):
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
 the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
-request, the single-fact prepare, the repair and review lanes), the meta-hook watermark, and the `facts` insert guard
-`gbrain_preserve_fact_withdrawal` (the facts family's insert calls it once the facts family lands on this line; `facts/withdrawal_guard.rs` runs it for the captured-facts and rehome repair writes only).
+request, the single-fact prepare, the repair and review lanes) and the meta-hook watermark. The `facts` guard
+`gbrain_preserve_fact_withdrawal` is built (`facts/withdrawal_guard.rs`): every fact insert runs it, and so does every
+update member that sets a watched column on a row it can leave active (facts.md, "Captured-facts and rehome repair").
 
 Rust guesses and gaps (1x parity):
 

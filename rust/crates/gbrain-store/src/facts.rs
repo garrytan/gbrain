@@ -1874,7 +1874,8 @@ impl Store {
     /// `migrateFactsToCanonical(phantom, canonical, sourceId)`: the phantom page's unexpired rows
     /// move onto the canonical slug (entity and page), their `row_num` offset past the canonical
     /// page's largest. First the ontology observations the move would duplicate are dropped
-    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`).
+    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`). The withdrawal guard runs on each moved row
+    /// (`entity_slug` is in the `SET` list): a withdrawal of the claim on the canonical entity expires it.
     pub fn migrate_facts_to_canonical(
         &self,
         phantom: &str,
@@ -1922,6 +1923,7 @@ impl Store {
                         })?),
                         None => None,
                     };
+                withdrawal_guard::preserve_withdrawal(&*tx, &mut new)?;
                 write_fact(tx, trust, Some(old), &new)?;
             }
             Ok(moving.len() as u64)

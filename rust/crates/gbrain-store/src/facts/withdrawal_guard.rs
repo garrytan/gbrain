@@ -10,8 +10,11 @@
 //! owned memory page. It then sets `expired_at` to that time and clamps `valid_until` to it.
 //!
 //! `write_fact` calls this on every insert (the withdrawal half of `gbrain_guard_inserted_facts`), after the
-//! purge refusal. Of the updates, only the members that run the guarded `UPDATE`s call it ([`super::captured`],
-//! `ontology_repair`); the other fact updates still skip it (rust/docs/store/facts.md, "Not modeled").
+//! purge refusal. Every update member whose `UPDATE` sets a watched column on a row it can leave active calls it
+//! before `write_fact`: `rehomeEntityFacts` ([`super::captured`]), `restoreOntologyFact`, `placeRelinkedFact`,
+//! `linkConversationFact`, `restoreSupersededFact`, `restoreFactPreimage` and `migrateFactsToCanonical`. The
+//! other update members the store serves set no watched column, or set `expired_at` to a time, so the guard has
+//! nothing to do.
 
 use super::purge::{owned_memory_subject, unbacked};
 use super::{FactRecord, MEMBER_PAGE_PREFIX};
