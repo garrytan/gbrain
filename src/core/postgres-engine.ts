@@ -176,6 +176,7 @@ import * as aliasOrphansImpl from './engine-sql/alias-orphans.ts';
 import * as repairPageScansImpl from './engine-sql/repair-page-scans.ts';
 import * as repairPlanScansImpl from './engine-sql/repair-plan-scans.ts';
 import * as gitHoldsImpl from './engine-sql/git-holds.ts';
+import * as repairBusyImpl from './engine-sql/repair-busy.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import type { RowAttributionTarget, VersionRef, WriteAttributionNameIds } from './engine-sql/write-attribution.ts';
@@ -1593,6 +1594,7 @@ export class PostgresEngine implements BrainEngine {
   swapGitHold(input: gitHoldsImpl.GitHoldSwap) { return gitHoldsImpl.swapGitHold(this, input); }
   readGitHoldRecord(sourceId: string, incarnation: string, path: string) { return gitHoldsImpl.readGitHoldRecord(this.repairBookkeepingReads, sourceId, incarnation, path); }
   requestGitHoldRetry(sourceId: string, incarnation: string, paths: readonly string[], requestedAt: string) { return gitHoldsImpl.requestGitHoldRetry(this, sourceId, incarnation, paths, requestedAt); }
+  readRepairBusyRows(sourceId: string, incarnation: string) { return repairBusyImpl.readRepairBusyRows(this.repairBookkeepingReads, sourceId, incarnation); }
   /** Write attribution reads (engine-sql/write-attribution.ts). */
   private get attributionReads() { return unscopedExecutor(this.engineSql, 'write attribution: get_write_attribution ran these unscoped through executeRaw'); }
   readWriteAttributionNames(ids: WriteAttributionNameIds) { return writeAttributionImpl.readWriteAttributionNames(this.attributionReads, ids); }

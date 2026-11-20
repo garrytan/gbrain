@@ -709,6 +709,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'swapGitHold': OOS.repairBookkeeping,
   'readGitHoldRecord': OOS.repairBookkeeping,
   'requestGitHoldRetry': OOS.repairBookkeeping,
+  'readRepairBusyRows': OOS.repairBookkeeping,
   'readMigrationRows': OOS.engineMigration, 'readMigrationPageColumns': OOS.engineMigration, 'readEngineMigrationHistory': OOS.engineMigration,
   'countLiveTimelineEntries': OOS.engineMigration, 'listManualLinkTransitions': OOS.engineMigration,
   // sources

@@ -261,7 +261,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listAliasTargets', 'deleteOrphanedAliases',
     'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages',
     'listPagesByOriginPath', 'countSegmentedOriginPages', 'listUntiledSegmentedPages', 'listSourceHoldRecords',
-    'swapGitHold', 'readGitHoldRecord', 'requestGitHoldRetry'],
+    'swapGitHold', 'readGitHoldRecord', 'requestGitHoldRetry', 'readRepairBusyRows'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],

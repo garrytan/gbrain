@@ -174,4 +174,17 @@ impl Brain {
             s.request_git_hold_retry(&source_id, &incarnation, &paths, &requested_at)
         })
     }
+
+    /// `readRepairBusyRows(sourceId, incarnation)`.
+    #[napi]
+    pub fn read_repair_busy_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_repair_busy_rows(&source_id, &incarnation)
+        })
+    }
 }

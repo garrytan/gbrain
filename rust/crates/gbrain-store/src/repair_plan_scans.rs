@@ -2,7 +2,7 @@
 //! listing every sync hold reader starts from (`src/core/engine-sql/repair-plan-scans.ts`).
 //!
 //! Members: listPagesByOriginPath, countSegmentedOriginPages, listUntiledSegmentedPages,
-//! listSourceHoldRecords.
+//! listSourceHoldRecords, and readRepairBusyRows (`src/core/engine-sql/repair-busy.ts`).
 //!
 //! Each member reads the records once and filters them as the SQL's `WHERE` does. A live page has
 //! no `deleted_at`; a file-backed page records a `source_path`; a segmented page has a body state
@@ -15,7 +15,7 @@ use crate::error::Result;
 use crate::kv::KvRead;
 use crate::page_body::{in_generation, manifest_rows, read_body_state, tiling};
 use crate::pages::{PageRecord, all_pages};
-use crate::persistence::list_op_checkpoint_records_in;
+use crate::persistence::{all_requests, list_op_checkpoint_records_in};
 use crate::sources::{all_sources, read_source};
 use serde::Serialize;
 use serde_json::Value;
@@ -57,6 +57,34 @@ pub struct SourceHoldRecord {
     pub record: Value,
     pub mirror_read_only: bool,
 }
+
+/// One open request of a source, as `readRepairBusyRows` reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RepairBusyPending {
+    pub slug: Option<String>,
+    pub path: Option<String>,
+    pub source_path: Option<String>,
+    pub rename_slug: Option<String>,
+    pub rename_source_path: Option<String>,
+}
+
+/// One unfinished managed sync cursor: its run id and next manifest index, as `->>` text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RepairBusyCursor {
+    pub run_id: Option<String>,
+    pub index: Option<String>,
+}
+
+/// The rows a repair's busy set is built from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RepairBusyRows {
+    pub pending: Vec<RepairBusyPending>,
+    pub cursors: Vec<RepairBusyCursor>,
+    pub held: Vec<String>,
+}
+
+/// The request states that keep a request open (`state IN (...)` of the busy read).
+const OPEN_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
 
 fn live(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none()
@@ -249,5 +277,84 @@ impl Store {
         }
         out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         Ok(out.into_iter().map(|(_, _, hold)| hold).collect())
+    }
+
+    /// `readRepairBusyRows(sourceId, incarnation)`: the open requests of the source (queued,
+    /// deferred, running or recovering, or carrying a recovery) by sequence; the unfinished
+    /// `managed-sync` cursors of the source at `incarnation`; and, when a cursor is open, the paths
+    /// of its `sync-hold` records at `incarnation`. Cursors and holds sort by fingerprint in byte
+    /// order, the key order of the scan.
+    pub fn read_repair_busy_rows(
+        &self,
+        source_id: &str,
+        incarnation: &str,
+    ) -> Result<RepairBusyRows> {
+        let read = self.read()?;
+        let mut requests: Vec<_> = all_requests(&*read)?
+            .into_iter()
+            .filter(|r| {
+                r.source_id == source_id
+                    && (OPEN_STATES.contains(&r.state.as_str())
+                        || r.extra.get("recovery").is_some_and(|v| !v.is_null()))
+            })
+            .collect();
+        requests.sort_by_key(|r| r.sequence);
+        let pending = requests
+            .into_iter()
+            .map(|r| {
+                let rename = r.intent.get("renameFrom").cloned().unwrap_or(Value::Null);
+                RepairBusyPending {
+                    path: text_of(&r.intent, "path"),
+                    source_path: text_of(&r.intent, "sourcePath"),
+                    rename_slug: text_of(&rename, "slug"),
+                    rename_source_path: text_of(&rename, "sourcePath"),
+                    slug: Some(r.slug),
+                }
+            })
+            .collect();
+        let first = |row: &Value| {
+            row.get("completed_keys")
+                .and_then(|keys| keys.get(0))
+                .cloned()
+        };
+        let mut cursors = Vec::new();
+        for row in list_op_checkpoint_records_in(&*read, "managed-sync")?
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let Some(record) = first(row) else { continue };
+            if text_of(&record, "done").as_deref().unwrap_or("false") == "true"
+                || text_of(&record, "sourceId").as_deref() != Some(source_id)
+                || text_of(&record, "incarnation").as_deref() != Some(incarnation)
+            {
+                continue;
+            }
+            cursors.push(RepairBusyCursor {
+                run_id: text_of(&record, "runId"),
+                index: text_of(&record, "index"),
+            });
+        }
+        let mut held = Vec::new();
+        if !cursors.is_empty() {
+            for row in list_op_checkpoint_records_in(&*read, "sync-hold")?
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                let Some(record) = first(row) else { continue };
+                if text_of(&record, "source_id").as_deref() == Some(source_id)
+                    && text_of(&record, "incarnation").as_deref() == Some(incarnation)
+                    && let Some(path) = text_of(&record, "path")
+                {
+                    held.push(path);
+                }
+            }
+        }
+        Ok(RepairBusyRows {
+            pending,
+            cursors,
+            held,
+        })
     }
 }

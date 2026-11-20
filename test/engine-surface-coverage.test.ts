@@ -139,6 +139,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listPagesByOriginPath', 'countSegmentedOriginPages', 'listUntiledSegmentedPages', 'listSourceHoldRecords',
   // Git sync hold writes (engine-sql/git-holds.ts; covered by test/engine-parity/git-holds.test.ts)
   'swapGitHold', 'readGitHoldRecord', 'requestGitHoldRetry',
+  // A repair's busy-set rows (engine-sql/repair-busy.ts; covered by test/engine-parity/repair-busy.test.ts)
+  'readRepairBusyRows',
   'readHealthMemoClock', 'listSynopsisSourceIds',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',

@@ -237,6 +237,7 @@ test/engine-parity/remember-whole.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/repair-aliases.test.ts
 test/engine-parity/repair-bookkeeping.test.ts
+test/engine-parity/repair-busy.test.ts
 test/engine-parity/repair-page-reads.test.ts
 test/engine-parity/repair-page-scans.test.ts
 test/engine-parity/repair-plan-scans.test.ts

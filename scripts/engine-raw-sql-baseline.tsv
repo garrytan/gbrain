@@ -731,7 +731,6 @@ src/core/persistence/recovery-resolve.ts	execute_raw	10
 src/core/persistence/refresh-barrier.ts	execute_raw	4
 src/core/persistence/refresh-retry-hint.ts	execute_raw	1
 src/core/persistence/refusal-breaker.ts	execute_raw	2
-src/core/persistence/repair-busy.ts	execute_raw	4
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	2

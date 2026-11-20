@@ -218,6 +218,24 @@ and a read-only mirror's `read_only_checkout` key sits in jsonb key order on Pos
 that skips, or a clear with no hold, no longer creates the summary row. Pinned by
 `test/engine-parity/git-holds.test.ts` and the store test `git_holds`.
 
+## Repair busy set
+
+`loadRepairBusySet` (`src/core/persistence/repair-busy.ts`) reads its rows through one member,
+`readRepairBusyRows(sourceId, incarnation)` (`src/core/engine-sql/repair-busy.ts`), and each
+cursor's frozen manifest through `readOpCheckpointRecord('managed-sync-manifest', runId)`. The
+store answers from its request and checkpoint records (`repair_plan_scans.rs`):
+
+| Rows | Store answer |
+| --- | --- |
+| `pending` | the source's requests that are queued, deferred, running or recovering, or carry a recovery, by sequence: slug, the intent's `path` and `sourcePath`, and `renameFrom`'s slug and source path |
+| `cursors` | the `managed-sync` records of the source at `incarnation` whose `done` text is not `true`, by fingerprint in byte order: `runId` and `index` as `->>` text |
+| `held` | only when a cursor is open: the `path` of each `sync-hold` record of the source at `incarnation`, by fingerprint in byte order |
+
+The read fails closed, so before this member every candidate was busy on a Rust brain and a
+frontmatter apply wrote nothing. Pending rows now keep sequence order and cursors and holds byte
+order on every engine; the busy set is a set, so no output changes. Pinned by
+`test/engine-parity/repair-busy.test.ts` and the store test `repair_plan_scans`.
+
 ## Repair kinds by batch
 
 The plan of record for moving the 67 `gbrain repair` kinds onto the engine contract. Flags are the

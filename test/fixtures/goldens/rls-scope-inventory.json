@@ -6488,6 +6488,7 @@
         "readRankCoverage": "none",
         "readReceiptBudget": "none",
         "readRemoteForgetTier": "none",
+        "readRepairBusyRows": "none",
         "readRequestEffects": "none",
         "readRetirementHop": "none",
         "readRowAttribution": "none",

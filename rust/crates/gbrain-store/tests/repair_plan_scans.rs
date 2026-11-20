@@ -1,7 +1,8 @@
 //! The plan reads of the frontmatter and segmented-tiling repairs and the source hold listing. The
 //! three-arm cases are in test/engine-parity/repair-plan-scans.test.ts; these pin what the parity
 //! cases cannot reach: a page whose live rows do not tile its body (no Rust write publishes one),
-//! archived sources, stale incarnations and the byte order of holds.
+//! archived sources, stale incarnations and the byte order of holds. The busy rows case pins the
+//! `->>` text of a numeric index and of a `done` flag, and an empty or held record with no path.
 
 mod common;
 
@@ -328,4 +329,57 @@ fn hold_records_name_a_live_incarnation() {
         ),
         vec![("two".to_owned(), false), ("mirror".to_owned(), true)]
     );
+}
+
+#[test]
+fn busy_rows_read_cursor_text_and_held_paths() {
+    let dir = TempDir::new("repair-busy-rows");
+    let store = open(&dir);
+    let a = source(&store, "a-src", json!({}));
+    let put = |op: &str, fp: &str, keys: Value| {
+        store
+            .write_op_checkpoint_record(op, fp, Some(&keys))
+            .unwrap();
+    };
+    let cursor = |run: &str, done: Value| json!([{"runId": run, "index": 3, "sourceId": "a-src", "incarnation": a, "done": done}]);
+    let busy = |source_id: &str, inc: &str| store.read_repair_busy_rows(source_id, inc).unwrap();
+    put(
+        "sync-hold",
+        "h1",
+        json!([{"source_id": "a-src", "incarnation": a, "path": "x.md"}]),
+    );
+    // No cursor is open, so the holds are not read.
+    assert!(busy("a-src", &a).held.is_empty());
+
+    put("managed-sync", "c2", cursor("r-open", json!(false)));
+    put("managed-sync", "c1", cursor("r-null", Value::Null));
+    put("managed-sync", "c3", cursor("r-bool", json!(true)));
+    put("managed-sync", "c4", cursor("r-text", json!("true")));
+    put("managed-sync", "c5", json!([]));
+    put(
+        "sync-hold",
+        "h0",
+        json!([{"source_id": "a-src", "incarnation": a}]),
+    );
+    put(
+        "sync-hold",
+        "h2",
+        json!([{"source_id": "a-src", "incarnation": "stale", "path": "y.md"}]),
+    );
+    let rows = busy("a-src", &a);
+    let runs: Vec<_> = rows
+        .cursors
+        .iter()
+        .map(|c| (c.run_id.clone().unwrap(), c.index.clone().unwrap()))
+        .collect();
+    assert_eq!(
+        runs,
+        vec![
+            ("r-null".to_owned(), "3".to_owned()),
+            ("r-open".to_owned(), "3".to_owned())
+        ]
+    );
+    assert_eq!(rows.held, vec!["x.md".to_owned()]);
+    assert!(rows.pending.is_empty());
+    assert!(busy("a-src", "stale").cursors.is_empty());
 }
