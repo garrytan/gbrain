@@ -21,7 +21,7 @@
 import { inspectGraduationPath } from '../core/persistence/graduation-custody.ts';
 import { readGraduationManifestSummary } from '../core/persistence/graduation-serve-guard.ts';
 import type { GraduationPathState } from '../core/persistence/engine-graduation.types.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationError } from '../core/ops/contract.ts';
 
@@ -216,8 +216,14 @@ async function runProbe(
   const started = Date.now();
   const engine = await createEngine(engineConfig);
   // Opening a Rust store creates it, like PGLite: a path holding no store (no records.redb) is reported after the
-  // addon check, never made.
-  if (engineKind === 'rust' && dataDir && !existsSync(join(dataDir, 'records.redb'))) return { ok: false, note: 'data_dir_missing' };
+  // addon check, never made; an empty records.redb (a first open that stopped early) is incomplete, and opening it
+  // would set it up as a new brain.
+  if (engineKind === 'rust' && dataDir) {
+    const records = join(dataDir, 'records.redb');
+    if (!existsSync(records)) return { ok: false, note: 'data_dir_missing' };
+    const stat = statSync(records);
+    if (!stat.isFile() || stat.size === 0) return { ok: false, note: 'store_incomplete' };
+  }
   try {
     // SINGLE attempt, ONE connection — the driver's connect_timeout bounds
     // it (never a custom race), and a status probe must never run the

@@ -16,7 +16,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
@@ -211,6 +211,19 @@ describe('gbrain engine status', () => {
     expect(status).toBe(1);
     expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'data_dir_missing' });
     expect(existsSync(join(dir, 'records.redb'))).toBe(false);
+    expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and an EMPTY records.redb: store_incomplete, the file stays empty, no FORMAT', () => {
+    // A first open that stopped early can leave a zero-length record file; opening it would set it up as a new brain.
+    const dir = join(home, 'incomplete-store');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'records.redb'), '');
+    writeConfig({ engine: 'rust', database_path: dir });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'store_incomplete' });
+    expect(statSync(join(dir, 'records.redb')).size).toBe(0);
     expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
   }, 60_000);
 
