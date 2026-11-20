@@ -143,14 +143,17 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/field-usage.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/pages.test.ts
+test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/search-deep-query.test.ts
@@ -167,7 +170,9 @@ test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
+test/engine-parity/traversal-cache.test.ts
 test/engine-parity/versions-raw.test.ts
+test/engine-parity/wanted-links.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
@@ -752,6 +757,9 @@ test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts
 test/sources-resolve-path.test.ts
+test/speaker-owner-connectors.test.ts
+test/speaker-owner-transcripts.test.ts
+test/speaker-owner-trust.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts

@@ -47,6 +47,9 @@ export const RUST_ENGINE_MEMBERS = {
   replaceDerivedAliases: 'pages',
   getPageSealState: 'pages',
   refreshPageOrigin: 'pages',
+  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
+  readStoredBodyBytes: 'raw_sql',
+  readPageBodySizes: 'raw_sql',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -72,6 +75,8 @@ export const RUST_ENGINE_MEMBERS = {
   applyIdentityDecisions: 'pages',
   listPrefixSampledPages: 'pages',
   listCorpusSample: 'pages',
+  // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).
+  readFieldUsageSamples: 'pages',
   getPageTimestamps: 'pages',
   getEffectiveDates: 'pages',
   getContentFlagsByPageIds: 'pages',
@@ -172,6 +177,8 @@ export const RUST_ENGINE_MEMBERS = {
   addLinksBatch: 'links',
   replaceDerivedLinks: 'links',
   replaceDerivedLinksBatch: 'links',
+  lockRegisteredSourceIds: 'links',
+  replaceWantedLinkRows: 'links',
   removeLink: 'links',
   removeLinksByPagesAndSource: 'links',
   getLinks: 'links',
@@ -188,6 +195,8 @@ export const RUST_ENGINE_MEMBERS = {
   getOnThisDay: 'timeline',
   getLastSeen: 'timeline',
   upsertEventProjection: 'timeline',
+  removeTimelineRows: 'timeline',
+  updateTimelineDetails: 'timeline',
   // graph
   traverseGraph: 'graph',
   traversePaths: 'graph',
@@ -229,16 +238,23 @@ export const RUST_ENGINE_MEMBERS = {
   getCalibrationCurve: 'takes',
   addSynthesisEvidence: 'takes',
   listActiveTakesForPages: 'takes',
+  matchTakeRows: 'takes',
+  deleteTakeRows: 'takes',
   // files
   upsertFile: 'files',
   getFile: 'files',
   listFilesForPage: 'files',
+  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
+  listFiles: 'raw_sql',
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
   getCallersOf: 'code_edges',
   getCalleesOf: 'code_edges',
   getEdgesByChunk: 'code_edges',
+  getCodeTraversalCache: 'code_edges',
+  putCodeTraversalCache: 'code_edges',
+  clearCodeTraversalCache: 'code_edges',
   // salience
   getSalienceScores: 'salience',
   batchLoadEmotionalInputs: 'salience',
@@ -292,6 +308,10 @@ export const RUST_ENGINE_MEMBERS = {
   readCycleLocks: 'minion_queue',
   deleteCycleLock: 'minion_queue',
   deleteCycleLockIfStale: 'minion_queue',
+  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
+  listSegmentedPages: 'raw_sql',
+  invalidateWithdrawnPages: 'raw_sql',
+  hasWithdrawnFenceClaim: 'raw_sql',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

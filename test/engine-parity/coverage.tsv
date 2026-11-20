@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 242/242
+# covered: 254/258
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -15,10 +15,10 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 8/8
+# timeline: 10/10
 # ontology: 4/4
-# raw_files: 5/5
-# takes: 15/15
+# raw_files: 5/6
+# takes: 17/17
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
@@ -27,12 +27,17 @@
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/6
+# withdrawal_pages: 0/2
+# withdrawal_fence: 0/1
 # import_guards: 9/9
 # cycle_locks: 6/6
 # raw_sql: 4/4
-# code_edges: 5/5
+# code_edges: 8/8
 # eval_capture: 5/5
+# large_page: 2/2
+# field_usage: 1/1
 # owner_only: 1/1
+# wanted_links: 2/2
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -40,40 +45,40 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	11	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	13	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	35	yes	yes	yes	serves
+getPage	pages	yes	40	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	1	no	yes	yes	refuses:pages
+readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	137	yes	yes	yes	serves
-findDuplicatePage	pages	yes	1	no	yes	yes	refuses:pages
-findDuplicatePages	pages	yes	1	no	yes	yes	refuses:pages
+putPage	pages	yes	157	yes	yes	yes	serves
+findDuplicatePage	pages	yes	1	no	yes	yes	serves
+findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
-deletePages	pages	yes	1	yes	yes	yes	refuses:pages
-resolveSlugsByPaths	pages	yes	1	yes	yes	yes	refuses:pages
-softDeletePage	pages	yes	36	yes	yes	yes	serves
-softDeletePages	pages	yes	1	yes	yes	yes	refuses:pages
+deletePages	pages	yes	2	yes	yes	yes	serves
+resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
+softDeletePage	pages	yes	42	yes	yes	yes	serves
+softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	1	no	yes	yes	refuses:pages
+purgeDeletedPages	pages	yes	4	no	yes	yes	serves
 listPages	pages	yes	5	yes	yes	yes	serves
-findPages	pages	yes	1	no	yes	yes	refuses:pages
-countPagesBy	pages	yes	1	no	yes	yes	refuses:pages
+findPages	pages	yes	1	no	yes	yes	serves
+countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	2	no	yes	yes	serves
-getAllSlugs	pages	yes	4	no	yes	yes	refuses:pages
+getAllSlugs	pages	yes	4	no	yes	yes	serves
 listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
 listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
-listAllPageRefs	pages	yes	1	yes	yes	yes	refuses:pages
+listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	2	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	1	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
-listPrefixSampledPages	pages	yes	1	no	yes	yes	refuses:pages
-listCorpusSample	pages	yes	1	no	yes	yes	refuses:pages
+listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
+listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	27	yes	yes	yes	serves
@@ -121,7 +126,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	29	yes	yes	yes	serves
+addLink	links	yes	34	yes	yes	yes	serves
 addLinksBatch	links	yes	1	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -140,35 +145,38 @@ getBacklinkCounts	links	yes	6	no	yes	yes	serves
 getAdjacencyBoosts	links	yes	6	no	yes	yes	serves
 getContentFlagsByPageIds	links	yes	6	no	yes	yes	serves
 getUnverifiedExtractionPageIds	links	yes	6	no	yes	yes	serves
-getPageTimestamps	links	yes	1	no	yes	yes	refuses:pages
+getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	6	no	yes	yes	serves
-getSalienceScores	links	yes	7	yes	yes	yes	serves
+getSalienceScores	links	yes	8	yes	yes	yes	serves
 findOrphanPages	links	yes	1	yes	yes	yes	serves
-addTag	tags	yes	7	yes	yes	yes	serves
+addTag	tags	yes	8	yes	yes	yes	serves
 removeTag	tags	yes	1	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	2	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	9	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	12	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
-getTimeline	timeline	yes	3	yes	yes	yes	serves
+getTimeline	timeline	yes	6	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	4	no	yes	yes	refuses:timeline
-mergeOntologyFact	ontology	yes	4	no	yes	yes	serves
-getOntology	ontology	yes	2	no	yes	yes	serves
+upsertEventProjection	timeline	yes	6	no	yes	yes	serves
+removeTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
+updateTimelineDetails	timeline	yes	1	no	yes	yes	refuses:timeline
+mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
+getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
-findOntologyConflicts	ontology	yes	1	no	yes	yes	serves
+findOntologyConflicts	ontology	yes	2	no	yes	yes	serves
 putRawData	raw_files	yes	2	yes	yes	yes	serves
 getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	21	yes	yes	yes	serves
+listFiles	raw_files	no	0	no	-	-	-
+addTakesBatch	takes	yes	23	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
-listTakes	takes	yes	12	no	yes	yes	serves
+listTakes	takes	yes	13	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -179,8 +187,10 @@ supersedeTake	takes	yes	1	no	yes	yes	serves
 resolveTake	takes	yes	5	no	yes	yes	serves
 getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
-addSynthesisEvidence	takes	yes	1	no	yes	yes	serves
+addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
+matchTakeRows	takes	yes	1	no	yes	yes	refuses:takes
+deleteTakeRows	takes	yes	1	no	yes	yes	refuses:takes
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
@@ -189,59 +199,62 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	20	yes	yes	yes	serves
-insertFacts	facts	yes	4	no	yes	yes	serves
+insertFact	facts	yes	26	yes	yes	yes	serves
+insertFacts	facts	yes	13	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
-expireFact	facts	yes	8	no	yes	yes	serves
-listFactsByEntity	facts	yes	10	yes	yes	yes	serves
-listFactsSince	facts	yes	3	yes	yes	yes	serves
+expireFact	facts	yes	9	no	yes	yes	serves
+listFactsByEntity	facts	yes	13	yes	yes	yes	serves
+listFactsSince	facts	yes	8	yes	yes	yes	serves
 listFactsKeyset	facts	yes	2	no	yes	yes	serves
-listFactsBySession	facts	yes	2	yes	yes	yes	serves
-listSupersessions	facts	yes	4	yes	yes	yes	serves
+listFactsBySession	facts	yes	3	yes	yes	yes	serves
+listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
-findCandidateDuplicates	facts	yes	3	yes	yes	yes	serves
+findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
-findTrajectory	facts	yes	1	yes	yes	yes	serves
+findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	4	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	6	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	5	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	8	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	15	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	11	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	17	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	6	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	5	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
 sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 createVersion	versions	yes	5	no	yes	yes	serves
 getVersions	versions	yes	5	no	yes	yes	serves
-revertToVersion	versions	yes	2	no	yes	yes	refuses:page_versions
+revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	7	no	yes	yes	serves
+updateSlug	sync_aliases	yes	11	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
-resolveAliases	sync_aliases	yes	10	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	3	no	yes	yes	serves
+resolveAliases	sync_aliases	yes	12	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	5	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	2	no	yes	yes	refuses:pages
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	8	no	yes	yes	serves
+setConfig	config	yes	10	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	1	no	yes	yes	serves
+listSegmentedPages	withdrawal_pages	no	0	no	-	-	-
+invalidateWithdrawnPages	withdrawal_pages	no	0	no	-	-	-
+hasWithdrawnFenceClaim	withdrawal_fence	no	0	no	-	-	-
 readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 getSourceStrictness	import_guards	yes	1	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
@@ -266,14 +279,22 @@ deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 getCallersOf	code_edges	yes	3	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
 getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
+getCodeTraversalCache	code_edges	yes	4	no	yes	yes	refuses:code_edges
+putCodeTraversalCache	code_edges	yes	4	no	yes	yes	refuses:code_edges
+clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	refuses:code_edges
 logEvalCandidate	eval_capture	yes	2	no	yes	yes	serves
 listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
+readStoredBodyBytes	large_page	yes	1	no	yes	yes	refuses:raw_sql
+readPageBodySizes	large_page	yes	1	no	yes	yes	refuses:raw_sql
+readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
+replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
-setEmotionalWeightBatch	salience_enrich	yes	4	yes	yes	yes	serves
-getRecentSalience	salience_enrich	yes	1	yes	yes	yes	serves
+setEmotionalWeightBatch	salience_enrich	yes	6	yes	yes	yes	serves
+getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
-findAnomalies	salience_enrich	yes	2	yes	yes	yes	serves
+findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves

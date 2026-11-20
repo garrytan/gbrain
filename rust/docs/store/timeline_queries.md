@@ -13,7 +13,7 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `getSince(date, { kind?, limit?, sourceId?, sourceIds? })` | served |
 | `getOnThisDay({ date?, limit?, sourceId?, sourceIds? })` | served |
 | `getLastSeen(entitySlug, { asof?, sourceId?, sourceIds? })` | served; the TypeScript member adds `days_ago` with the shared `finalizeLastSeen` |
-| `upsertEventProjection(opts)` | refused: it writes core `E`/`D`/`G` records and waits on the core timeline write helpers (`next_entry_id`, `put_entry`, `read_entry`) on `rust-engine-core-hooks` |
+| `upsertEventProjection({ depthSlug, eventSlug, date, summary, detail?, sourceId? })` | served, through the core helpers `next_entry_id`, `read_entry` and `put_entry` |
 
 `excludePrivate: true` refuses: the SQL engines apply a privacy filter for it. `requireSafeChunks`, `minTrust` and
 `suppressFlagged` are ignored, because the SQL reads ignore them too.
@@ -47,14 +47,35 @@ its jsonb text, JSON null as null).
 - `limit: 0` returns nothing and a negative limit is `invalid_argument`, as Postgres `LIMIT` is.
 - A date that the core `parse_date` refuses is `invalid_argument`.
 
+## upsertEventProjection
+
+The SQL is `INSERT ... SELECT` from the depth page and the event page of one source (`sourceId`, default `default`)
+`ON CONFLICT (event_page_id, date) DO UPDATE` of summary, detail, page and source. The store follows it:
+
+- `{ projected: false }` when either page is missing. Soft-deleted pages still project: the SQL has no `deleted_at`
+  test. A bad date fails with `invalid_argument` before the pages are looked up, as the constant cast does.
+- The entry's source is `life-chronicle:event:<eventSlug>` and its detail is `detail ?? ''`.
+- The serial is taken whenever both pages exist, the update path included; the update keeps the entry's id and
+  `created_at` and can move it to another depth page.
+- A new or updated entry whose `(page, date, summary, source)` matches another entry is `constraint_violation`
+  (`idx_timeline_dedup`), and the write keeps nothing.
+- Text with a NUL byte is `invalid_argument`.
+
 ## Keys
 
-The reads write nothing and scan every `E` record. upsertEventProjection will add the event index
-`u 0x01 <event_page_id be8> <date>` -> entry id under this family's tag, and `remove_event_projections(tx, page_id)`
-(called by the core `remove_page`) will delete the projections of a removed event page through it.
+The reads write nothing and scan every `E` record. The family keeps one index, in place of `idx_timeline_event_dedup`:
+
+`u 0x01 <event_page_id be8> <date>` -> `<page_id be8> <entry id be8>`
+
+A lookup reads the named entry back and treats the row as absent when that entry is gone or no longer names the
+event page (the hard delete of its depth page removes the entry and leaves the row). `remove_event_projections`
+(called by the core `remove_page`, `ON DELETE CASCADE`) deletes the entries an event page's rows name, with their
+`E` and `D` keys, and the rows. Entries written by any other path are not in the index.
 
 ## Known differences
 
+- The core latest-entry marker `G` only goes up. A projection moved to another depth page leaves `G` of the old page
+  where it was, while Postgres computes the newest `created_at` each time. No parity case reads that today.
 - Time zone: the store reads `current_date`, `te.date::timestamptz` and `effective_date::text` in UTC (the frozen
   contract). PGLite follows the process time zone; `bun test` pins it to UTC. Follow-up:
   `chronicle-reads-host-time-zone`.

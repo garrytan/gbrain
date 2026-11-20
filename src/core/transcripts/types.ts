@@ -21,6 +21,7 @@
  */
 
 import { createHash } from 'crypto';
+import type { SpeakerOwnerBasis } from '../identity/speaker-owner.ts';
 import type { HostSpecTarget } from '../bootstrap/host-specs.ts';
 import { slugifySegment } from '../sync.ts';
 
@@ -56,6 +57,11 @@ export interface TranscriptSessionMeta {
    * pre-stringified JSON string (the postgres.js double-encode trap).
    */
   raw?: Record<string, unknown>;
+  /**
+   * GST-3216: set only when the source itself shows the user-role turns are the brain owner's own (an interactive
+   * top-level session, the owner's own account export), with the signal it rests on. Unset means speaker-unknown.
+   */
+  ownerBasis?: SpeakerOwnerBasis;
 }
 
 export interface ParsedSession {

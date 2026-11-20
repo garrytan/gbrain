@@ -43,11 +43,11 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
 
 - Source scope: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope.
 - `takesHoldersAllowList`: honoured (see above).
-- `excludePrivate` on `getSalienceScores` is the page policy `pageReadFilter` adds, judged by `page_hidden` in
-  `facts/privacy.rs`: the input carries it as `exclude_private` (`{ honorAliases, entityPrivacy, ownerOnly }`) and a page it
-  hides, an owner-only page included, is not scored. The member sends it through `storePagePolicy`, which refuses a caller whose policy is wider
-  than the store's. On `getRecentSalience` it refuses with `engine_capability_missing`: the caller's privacy filter
-  (`privatePagesFilterForCaller`) is not applied there.
+- `excludePrivate` on `getSalienceScores` and `getRecentSalience` is the page policy `pageReadFilter` adds, judged by
+  `page_hidden` in `facts/privacy.rs`: the input carries it as `exclude_private` (`{ honorAliases, entityPrivacy, ownerOnly }`)
+  and a page it hides, an owner-only page included, is not scored, or, on `getRecentSalience`, is dropped before the
+  ranking and the limit. The members send it through `storePagePolicy`, which refuses a caller whose policy is wider
+  than the store's.
 - `minTrust` and `suppressFlagged` refuse on `getSalienceScores` (its SQL applies `pageEligibleSql`); on
   `getRecentSalience` they change nothing, as its SQL never reads them.
 - `getSalienceScores` applies the live clauses whenever a read policy object is passed (`pageReadFilter(..., !!scope)`).

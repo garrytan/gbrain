@@ -10,6 +10,89 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.752.0] - 2026-11-20
+
+**When an OpenClaw command hangs during `gbrain setup openclaw`, the error now says it timed out instead of quoting whatever the command last printed.**
+
+### Fixed
+- `gbrain setup openclaw` gives each `openclaw` call 120 seconds. A call stopped at that limit now ends its error line with "timed out after 120 s", so a stalled install, enable or inspect step reads as a stall to rerun and not as a broken command. The skill-resolver plugin and the per-turn rule plugin share this one runner.
+- The real-gateway skill-resolver test prints setup's JSON output when setup fails, so a failed nightly run names the refused step and command.
+
+**The Rust engine agent now wakes only for Capy comments, maintainer comments it didn't write, other people's pushes, merges and closes, and failed or timed-out full test runs on its own pull requests, not for every comment in the repository.**
+
+**Removing an Apple Contacts source now takes its company, job title and group rows off person pages first.**
+
+### Fixed
+- Removing or purging an `apple-contacts` source (`gbrain sources remove`, `sources purge`, the expired-archive sweep, the `sources_remove` operation and the managed remove and purge) retires the Facts rows it wrote on people pages before the source is deleted. Those rows live in the people pages' own sources, so before this they stayed behind. The remove preview says how many rows go. A refused remove changes nothing, and if a row can't be retired (no page slug, or its people source is archived) the remove stops with nothing retired and the source still registered.
+
+**Seven new engine members now hold the queries for `gbrain schema detect --fields`, the large-page check, fact withdrawal and `gbrain files list`. Only `schema detect --fields` calls one today, and nothing changes for users.**
+
+### Changed
+- Seven new engine members (`readFieldUsageSamples`, `listFiles`, `readStoredBodyBytes`, `readPageBodySizes`, `listSegmentedPages`, `invalidateWithdrawnPages`, `hasWithdrawnFenceClaim`) hold the field-usage, large-page, withdrawal-page, withdrawal-fence and file-list queries. PGLite and Postgres brains return the same results as before. `gbrain schema detect --fields` is the only command that calls one of them today, and it still reads one page type's sample bodies at a time, so its memory use is unchanged. On the Rust engine the read keeps only the sampled pages in memory, never every page body. The large-page check, fact withdrawal and `gbrain files list` still run their own queries until a later change moves them over.
+- On the opt-in Rust engine, the field-usage member works; the other six refuse with `engine_capability_missing` until the Rust engine gets native methods for them.
+
+**The PGLite and Postgres engines now share one copy of the wanted-link, timeline-write, take-fence and code-traversal-cache SQL, with no change to what they do.**
+
+### Changed
+- Nine engine methods (`lockRegisteredSourceIds`, `replaceWantedLinkRows`, `removeTimelineRows`, `updateTimelineDetails`, `matchTakeRows`, `deleteTakeRows`, `getCodeTraversalCache`, `putCodeTraversalCache`, `clearCodeTraversalCache`) now exist on both engines. Each runs a statement that is byte-identical to the one the calling code still runs, and nothing calls them yet, so default brains behave exactly as before.
+- The two mention version constants live in one small module that `mentions/pass.ts` and the graph ranking read from.
+
+## [0.60.751.0] - 2026-11-20
+
+**Conversation fact extraction keeps a page's other facts when the model declines one window, and reads transcripts whose answers list bold labels.**
+
+### Fixed
+- When the extraction model refuses a window (or stops on a content filter), gbrain retries that window once as two halves, at most two more calls over the same text. Before, one refused window failed the whole page and none of its facts were saved. Whatever still declines is listed in `--json` `declined_windows` (page, start, end, reason) and in `failed_pages`, and the page stays unfinished so the next run tries it again. On a brain without a write owner the other windows' facts are published right away, and the note says how many new facts that added. A managed brain publishes nothing for that page until a run reads every window. Every other window failure still fails the page as before.
+- Anthropic refusals now read as `refusal` in logs and outcomes instead of `content_filter`: `@ai-sdk/anthropic` reports them as finish reason `content-filter` and keeps `refusal` in `rawFinishReason`, which the gateway now reads.
+- A transcript in the documented `**Speaker** (YYYY-MM-DD h:mm AM): text` shape whose answer lists several `**Label:** text` lines was skipped as unreadable, because the label list won the parser's first pick and was then rejected as a list of labels. The parser now moves on to the next format that clears the 5% floor, and the streaming detector for segmented pages does the same.
+- Pages skipped because no speaker turns parsed now say why: `--json` adds `unparsed_pages` (first 50, each with a page and its cause), and stderr prints a matching SKIP line.
+
+**Conversation pages now record which speaker is the brain's owner, when the importer can prove it.**
+
+<!-- behavior-change: speaker_owner_marker_gst3216 -->
+
+### Added
+- Conversation pages get a `speaker_owner` frontmatter entry (`label`, `basis`, `turns`, `member`) naming the speaker label whose turns are the owner's own. It is written only from the source's own signal: a Claude Code session typed in the interactive terminal (`entrypoint: cli` on every user turn), a Codex CLI or IDE session, the owner's own ChatGPT or Claude export, an iMessage the Mac marks as sent by you (label `Me`), and a Gmail message filed as SENT (a From line alone never counts, since the sender sets it). Claude Code SDK and `claude -p` runs, worker and sub-agent sessions, headless Codex (`exec`), Hermes, Grok, OpenClaw and meeting transcripts stay speaker-unknown, and so does any page where the owner's label is not unique.
+- The marker is honored only when a local importer wrote the page's current revision, its member is the member the page's source belongs to, and its shape is valid. A `speaker_owner` written by an MCP caller, or left after a remote edit of an imported page, is ignored, and a transcript re-import never carries one forward.
+- Pages imported before this release keep no marker: a transcript re-import never adds one, and the conversation archive adds it only to a day it rewrites anyway. Nothing reads the marker yet; a later release uses it to file the owner's own statements on the owner's page.
+
+**Your Mac's address book can feed your brain: the new apple-contacts source pulls contacts from GBrain Helper every 15 minutes into private, owner-only contact pages, links each one to the matching person by exact email or phone, and adds company, job title and groups to that person's page.**
+
+### Added
+- `gbrain sources add <id> --kind apple-contacts --helper-host <host> --token-file <0600 json>` (with `--helper-port`, `--proxy socks5h://host:port`, `--contacts-dir`, `--record`, `--dir`, `--sync-interval-min`) reads `GET /v1/contacts/changes` from GBrain Helper, page by page with a saved cursor. Contact pages live under `contacts/apple/`, are `visibility: private` and stay in the database even on a brain with a Git repository.
+- A contact whose email or phone equals the one on exactly one person page is linked to that person (an identity link); a contact matching two or more people waits in `gbrain sync status` under identity reviews until `gbrain dedupe` settles it. Names never match.
+- The matched `people/` page gets company, job title and group names as rows in its `## Facts` section, marked with the source `apple-contacts:<id>`. Phones and emails stay on the owner-only contact pages. A change replaces a row; a deleted contact, a lost match or a group left retires the rows (struck, not forgotten, so they come back with the contact), and nothing outside the Facts section changes: not the text, the frontmatter or the page's trust tier. A claim you saved yourself is never touched.
+- A full re-read that holds no contact with an email or phone, would delete every contact, or would delete more than 20% of them writes nothing (`apple_contacts_delete_floor`). A contact edited down to no email and no phone counts as a deletion. An incremental pull keeps the deletions it receives pending until the end of the run and applies them only if they pass the same floor; held ones show under `held_deletes` in `gbrain sync status` and cancel when the contact comes back. Deleted contacts are soft-deleted and can be restored. `--reset-checkpoint` is refused for this source; `gbrain sync --source <id> --full` reads every contact again.
+- A helper with its Contacts source turned off stops the run with `apple_contacts_disabled`, which names the config setting to change.
+- `gbrain whois` matches phone numbers in any format.
+
+<!-- behavior-change: whois_phone_numbers_gst3256 -->
+
+## [0.60.750.0] - 2026-11-20
+
+**`gbrain check-resolvable` stops reporting three kinds of false alarm on large skill trees, and its `--fix --dry-run` preview now proposes only edits for findings the same run reports (GST-3155).**
+
+### Fixed
+- A bolded bullet in a workspace `AGENTS.md` such as `- **memory**: search first` is no longer read as a routing row for a skill named `memory`, so it no longer shows up as `missing_file skills/memory/SKILL.md`. A list row there still routes when `skills/<name>/SKILL.md` exists, and list rows in `skills/RESOLVER.md` always count.
+- A skill whose folder name differs from the `name:` in its frontmatter is no longer reported as `orphan_trigger`: the check now finds it in manifest.json by its path as well as its name.
+- A manifest.json entry whose SKILL.md was deleted is reported once as `missing_file` naming manifest.json, instead of `unreachable`.
+- `gbrain check-resolvable --fix` applies only the DRY replacements its report lists. It no longer inserts brain-first callouts, which only `gbrain doctor --fix` reports and repairs. A DRY replacement also stops at headings and code fences, so one matched line no longer replaces the whole section around it.
+
+**Fact reads now treat an employer, city or role as ended once a newer one is saved, everywhere the query facts block already did.**
+
+<!-- behavior-change: slot_ends_every_reader_gst3170 -->
+
+### Fixed
+- Recall, the entity card, hot memory, an entity's saved facts, search's saved-fact matches and local `gbrain recall` end a slot value (employer, city, role) when a later value for the same slot is saved, as the query facts block already did. The end is derived when the facts are read, from the facts that reader can see, so a fact hidden from a reader (another member's private fact, a flagged or quarantined one, one below the trust floor) never ends a fact it can see. Nothing is stored. A read with a limit still fills it after dropping ended values, and the entity card's fact count leaves them out.
+
+**A conversation fact the speaker asked to keep quiet is now saved private.**
+
+<!-- behavior-change: keep_quiet_private_gst3170 -->
+
+### Fixed
+- When someone in a conversation says "keep this quiet for now, but ...", "off the record", "don't tell anyone" or opens a sentence with "between us,", the fact that restates that claim is saved private instead of shared, so other members' credentials and unbound tokens no longer read it. The brain owner reads it exactly as before. The match is made on that window's messages, in English and never on an assistant's reply; the extraction prompt is unchanged, and the page's other facts keep their visibility. A claim that was forgotten or purged earlier stays out, as before. A cue in one extraction window does not reach a fact extracted from a neighbouring window.
+- An operator-run `gbrain repair open-facts` on the conversation lane can widen a keep-quiet fact back to world, so read its preview first.
+
 ## [0.60.749.0] - 2026-11-20
 
 **Companies that are plainly the same company in two sources are now linked by sync, and a reject keeps them apart for good.**
