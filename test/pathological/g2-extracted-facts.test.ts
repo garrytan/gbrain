@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { inferConversationSubjects } from '../../src/core/facts/conversation-subject-infer.ts';
 import { publishExtractedFacts } from '../../src/core/generations/adapters/extracted-facts.ts';
+import { derivedWriteTrust } from '../../src/core/trust/taint.ts';
 import { managedPersistenceEnabled } from '../../src/core/persistence/ownership.ts';
 import { _resetWriteThroughCacheForTest } from '../../src/core/write-through.ts';
 import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
@@ -18,6 +19,7 @@ import { withEnv } from '../helpers/with-env.ts';
 import { pathologicalArms } from './harness.ts';
 
 const CHAT = 'conversations/chat-example';
+const TRUST = derivedWriteTrust({ channel: 'derive:extracted_facts', inputs: [] });
 const ALICE = 'people/alice-example';
 
 async function withBrain(databaseUrl: string | undefined, run: (engine: BrainEngine) => Promise<void>): Promise<void> {
@@ -47,7 +49,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           fact('Alice Example plays chess every week.', 'other'), fact('Alice Example joined acme-example.')]);
         expect(inferred.map(row => row.entity_slug)).toEqual([ALICE, ALICE, ALICE]);
         const outcome = await publishExtractedFacts(engine, { sourceId: 'default', slug: CHAT, writer: 'conversation', coverage: 'whole_body',
-          input: { pin: 'chat-v1', size: 100 }, facts: inferred });
+          input: { pin: 'chat-v1', size: 100 }, facts: inferred, trust: TRUST });
         expect(outcome.state).toBe('published');
         expect(outcome.detached.map(row => [row.attributed_to, row.entity_slug])).toEqual([['assistant', ALICE], ['other', ALICE]]);
         expect(await live(engine)).toEqual([{ fact: 'Alice Example joined acme-example.', entity_slug: ALICE },
@@ -59,7 +61,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
     test('only a whole_body result retires (with before-state); appended_range is additive; an empty whole_body result is held no_proof', async () => {
       await withBrain(databaseUrl, async engine => {
         const publish = (coverage: 'whole_body' | 'appended_range', pin: string, facts: string[]) => publishExtractedFacts(engine, { sourceId: 'default', slug: CHAT,
-          writer: 'conversation', coverage, input: { pin, size: 100 }, facts: facts.map(text => fact(text)) });
+          writer: 'conversation', coverage, input: { pin, size: 100 }, facts: facts.map(text => fact(text)), trust: TRUST });
         expect((await publish('whole_body', 'v1', ['Claim A.', 'Claim B.'])).state).toBe('published');
         expect((await publish('appended_range', 'v2', ['Claim C.'])).state).toBe('published');
         expect((await live(engine)).map(row => row.fact)).toEqual(['Claim A.', 'Claim B.', 'Claim C.']);

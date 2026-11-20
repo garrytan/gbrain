@@ -15,6 +15,7 @@ import type { BrainEngine, NewFact } from '../../engine.ts';
 import { digest } from '../../persistence/digest.ts';
 import type { GenerationAdapter, GenerationKey, InputState, ItemRow, ProposedItem } from '../contract.ts';
 import { publishGeneration, type PublishOutcome } from '../publish.ts';
+import type { WriteTrust } from '../../trust/tier.ts';
 import { factPreimages, restoreFactRow, type FactPreimage } from './fact-rows.ts';
 
 export const EXTRACTED_FACTS_KIND = 'extracted_facts';
@@ -33,6 +34,8 @@ export interface ExtractedFactsRequest {
   /** The page as the producer read it (`pin` changes whenever it does); activation refuses when it moved. */
   input: InputState;
   facts: ReadonlyArray<Omit<NewFact, 'source'> & { source?: string }>;
+  /** Who wrote these rows, declared by the producer (a derived write, `derivedWriteTrust`); required, so no caller can store `unknown`. */
+  trust: WriteTrust;
   runId?: string;
 }
 
@@ -128,6 +131,6 @@ export async function publishExtractedFacts(engine: BrainEngine, request: Extrac
   const { rows, detached } = placeFacts(request);
   const items = [...new Map(rows.map(row => [itemKeyOf(row), { key: itemKeyOf(row), content: JSON.stringify(row), identityHash: identityOf(row) }])).values()];
   const outcome = await publishGeneration(engine, extractedFactsAdapter, { key: { kind: EXTRACTED_FACTS_KIND, sourceId: request.sourceId, ownerKey: ownerKey(request.slug, request.writer) },
-    items, input: request.input, partial: request.coverage === 'appended_range', runId: request.runId, context: { input: request.input } });
+    items, input: request.input, partial: request.coverage === 'appended_range', runId: request.runId, context: { input: request.input }, trust: request.trust });
   return { ...outcome, detached };
 }

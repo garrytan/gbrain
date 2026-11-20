@@ -30,6 +30,8 @@ import { withTrustKeep, withWriteTrust } from '../src/core/persistence/context.t
 import { writeReceipt } from '../src/core/extract/receipt-writer.ts';
 import { extractTimelineFromDB } from '../src/commands/extract-timeline-db.ts';
 import { agentVerbTrust } from '../src/core/trust/channel.ts';
+import { derivedWriteTrust } from '../src/core/trust/taint.ts';
+import { publishExtractedFacts, type ExtractedFactsRequest } from '../src/core/generations/adapters/extracted-facts.ts';
 import { GUEST_FAIL_CLOSED_STAMP_TIER_FUNCTION } from '../src/core/trust/schema.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { installStrictWriteTrust, isUndeclaredWriteTrust, UNDECLARED_WRITE_TRUST } from './helpers/strict-write-trust.ts';
@@ -274,6 +276,20 @@ describe('write paths outside the operations', () => {
     expect(restored.map(row => Number(row.id))).toEqual([Number(id)]);
     const [row] = await engine.executeRaw<{ trust_tier: string; fact: string }>('SELECT trust_tier, fact FROM facts WHERE id=$1', [id]);
     expect(row).toMatchObject({ trust_tier: 'operator_curated', fact: 'the original text' });
+  });
+
+  test('publishExtractedFacts takes the writer from its request: a declared trust stores that tier, and the request type requires one', async () => {
+    await seed(engine, tx => tx.putPage('paths/chat', { type: 'conversation', title: 'Chat', compiled_truth: 'Alice likes green tea.' }));
+    const request = (trust: ExtractedFactsRequest['trust']): ExtractedFactsRequest => ({ sourceId: 'default', slug: 'paths/chat', writer: 'conversation', coverage: 'whole_body',
+      input: { pin: 'chat-v1', size: 22 }, facts: [{ fact: 'Alice likes green tea.', visibility: 'world', entity_slug: null, attributed_to: 'user' }], trust });
+    const outcome = await drive('publishExtractedFacts', () => publishExtractedFacts(engine, request(derivedWriteTrust({ channel: 'derive:extracted_facts', inputs: [] }))));
+    expect(outcome.state).toBe('published');
+    const [row] = await engine.executeRaw<{ trust_tier: string }>(`SELECT trust_tier FROM facts WHERE source_markdown_slug='paths/chat' AND expired_at IS NULL`);
+    expect(row?.trust_tier).toBe('agent_written');
+    // The type is the guard for a caller that forgets: this line is a compile error if `trust` ever becomes optional.
+    // @ts-expect-error trust is required
+    const missing: ExtractedFactsRequest = { sourceId: 'default', slug: 'paths/chat', writer: 'conversation', coverage: 'whole_body', input: { pin: 'x', size: 1 }, facts: [] };
+    expect(missing.trust).toBeUndefined();
   });
 
   test('a lifecycle soft delete through keepTierTransaction leaves the page tier', async () => {

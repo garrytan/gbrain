@@ -809,6 +809,7 @@
         "importImageFile",
         "isImageFilePath",
         "loadBrainTimeZone",
+        "ownerFileTrust",
         "pLimit",
         "slugConflictHoldMessage",
         "verifyPageReadable",
