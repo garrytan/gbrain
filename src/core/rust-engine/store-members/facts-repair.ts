@@ -6,8 +6,8 @@
  * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, and countLabelFacts, whose label line this member
  * reads into literal labels (label-line.ts). loopFactDrift and closedLoopWithActiveFact are served from open-loops.ts.
  * Also served (facts/repair_gone.rs): listExtractorFactsForClassification, whose receipt is read off the write journal's
- * committed requests, and countPurgedPageFacts, which the store answers as one `purged` flag per counted fact. The store
- * keeps no `page_purges` ledger, so every flag is false: the count is ambiguous only, and evidenced is 0.
+ * committed requests, and countPurgedPageFacts, which the store answers as one `purged` flag per counted fact: true when
+ * the store's `page_purges` ledger names the fact's page at or after the fact was written (rust/docs/store/facts.md).
  * listUnwithdrawnFacts reads `derived_generations` and `derived_generation_items`, which have no Rust writer, so no
  * generation retired a fact and it answers with no row, without a store call.
  *

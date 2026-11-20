@@ -179,3 +179,38 @@ fn a_soft_deleted_page_still_holds_its_slug_and_only_active_facts_of_a_gone_page
     assert!(purged(&store, 0).is_empty());
     let _ = counted;
 }
+
+#[test]
+fn a_purge_ledger_row_written_after_the_fact_marks_it_evidenced() {
+    let dir = TempDir::new("gone-evidenced");
+    let store = open(&dir);
+    let gone = |text: &str, context: &str| {
+        fact(
+            &store,
+            text,
+            json!({ "source": "mcp:put_page", "context": context }),
+        );
+    };
+    gone("slash, purged after", "gone/purged");
+    gone("bare, purged after", "bare");
+    gone("bare, never purged", "other");
+    let hashes = |h: &str| vec![h.to_string()];
+    store
+        .record_page_purge("default", &hashes("h1"), "gone/purged", None)
+        .unwrap();
+    store
+        .record_page_purge("default", &hashes("h2"), "bare", None)
+        .unwrap();
+    store
+        .record_page_purge("default", &hashes("h3"), "gone/early", None)
+        .unwrap();
+    store
+        .record_page_purge("default", &hashes("h4"), "early", None)
+        .unwrap();
+    gone("slash, written after the purge", "gone/early");
+    gone("bare, written after the purge", "early");
+    // By fact id: the two purged after are evidenced; the slash one written after the purge is ambiguous; the bare
+    // ones with no evidence are not counted.
+    assert_eq!(purged(&store, 10), vec![true, true, false]);
+    assert_eq!(purged(&store, 1), vec![true]);
+}

@@ -6,11 +6,12 @@
 //!   fact is its receipt (the first one by sequence). A natively admitted request keeps no `consumer_version`, so that
 //!   field is null.
 //! - `countPurgedPageFacts` finds the active page-extraction facts filed on no page whose context names a page that
-//!   does not exist. The store keeps no `page_purges` ledger, so no fact is "evidenced" (a purge ledger entry written
-//!   after the fact); the ambiguous ones are those whose context head holds a `/`, as the SQL counts them when no ledger
-//!   row matches.
+//!   does not exist. A fact is "evidenced" when a `page_purges` ledger row of its source names that head and was
+//!   written at or after the fact (`purged_at >= created_at`); the others are ambiguous, and count only when their
+//!   context head holds a `/`, as the SQL counts them.
 
 use super::loops::loop_fact_ids;
+use super::page_purges::source_page_purges;
 use super::repair::posix_space;
 use super::{FactRecord, fact_fingerprint, ids_under, refs_prefix, source_rows};
 use crate::Store;
@@ -199,10 +200,11 @@ impl Store {
         Ok(out)
     }
 
-    /// `countPurgedPageFacts`, as the `purged` flag of each counted fact (at most `limit`, by (source, id)): a fact that
-    /// no ledger row can mark evidenced, so the flag is false. The facts: active, filed on no page, written by a page
-    /// extraction path, whose context head is a slug (not empty, no whitespace) that no page holds (a soft-deleted page
-    /// holds it), with a `/` in the head, and neither withdrawn, superseded, replaced by another fact nor named by a loop.
+    /// `countPurgedPageFacts`, as the `purged` flag of each counted fact (at most `limit`, by (source, id)): true when a
+    /// purge ledger row of the source names the context head at or after the fact was written. The facts: active,
+    /// filed on no page, written by a page extraction path, whose context head is a slug (not empty, no whitespace)
+    /// that no page holds (a soft-deleted page holds it), with a `/` in the head or a purge ledger row, and neither
+    /// withdrawn, superseded, replaced by another fact nor named by a loop.
     pub fn count_purged_page_facts(&self, args: &PurgedArgs) -> Result<Vec<bool>> {
         let op = "countPurgedPageFacts";
         for source in &args.source_ids {
@@ -216,6 +218,12 @@ impl Store {
         let sources: BTreeSet<&str> = args.source_ids.iter().map(String::as_str).collect();
         let mut out = Vec::new();
         for source in sources {
+            // The latest purge of each slug: `EXISTS (... pp.purged_at >= f.created_at)` holds when the latest one does.
+            let mut purged_at: HashMap<String, i64> = HashMap::new();
+            for (_, row) in source_page_purges(&*read, source)? {
+                let at = purged_at.entry(row.slug).or_insert(row.purged_at_us);
+                *at = (*at).max(row.purged_at_us);
+            }
             for f in source_rows(&*read, source)? {
                 let Some(head) = context_head(&f) else {
                     continue;
@@ -225,7 +233,6 @@ impl Store {
                     || !PAGE_EXTRACTION_SOURCES.contains(&f.source.as_str())
                     || head.is_empty()
                     || head.chars().any(posix_space)
-                    || !head.contains('/')
                     || f.superseded_by.is_some()
                     || held.contains(&f.id)
                     || read_page(&*read, source, head)?.is_some()
@@ -240,7 +247,11 @@ impl Store {
                 {
                     continue;
                 }
-                out.push(false);
+                let purged = purged_at.get(head).is_some_and(|at| *at >= f.created_at_us);
+                if !purged && !head.contains('/') {
+                    continue;
+                }
+                out.push(purged);
                 if out.len() as u64 >= args.limit {
                     return Ok(out);
                 }
