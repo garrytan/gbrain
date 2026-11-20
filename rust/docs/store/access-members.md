@@ -65,11 +65,11 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 
 ## What the store does not do
 
-- Credential binding: the store keeps access tokens and OAuth clients ([access-tokens.md](access-tokens.md),
-  [oauth-clients.md](oauth-clients.md)), but binds neither to a member. `insertAccessMember` with a `bindTokenId`
-  (`gbrain access member add --bind-token`) and the binding members (`readCredentialBindingForUpdate`,
-  `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so `bindCredential` and `gbrain auth rescope --member`)
-  refuse with `engine_capability_missing` before anything is written.
+- Credential binding lives on the token and client records, not here: `insertAccessMember` with a `bindTokenId`
+  (`gbrain access member add --bind-token`) writes the token's `member_id` in the member's write, and the binding
+  members (`readCredentialBindingForUpdate`, `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so
+  `bindCredential` and `gbrain auth rescope --member`) and `readLiveMember` through a token or client are served there
+  ([access-tokens.md](access-tokens.md) "Member binding", [oauth-clients.md](oauth-clients.md)).
 - Order: ids sort in byte order. The SQL sorts member ids, group ids and each member's groups with `COLLATE "C"`,
   so an `en_US` Postgres gives the same order (`test/engine-parity/access-sort-order.test.ts`).
 

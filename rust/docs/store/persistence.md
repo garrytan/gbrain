@@ -73,7 +73,8 @@ but has no binding.
 
 The access-grant members (`readOAuthClientReceiptGrant`, `readAccessTokenReceiptGrant`,
 `readOAuthClientMemberGrant`, `readAccessTokenMemberGrant`) refuse with `engine_capability_missing`: the store
-keeps no OAuth clients or access tokens, so a remote principal never reaches them on a Rust brain.
+keeps OAuth clients and access tokens, but does not serve these four reads yet. The write re-check reads
+`readOAuthClientWriteGrant` and `readAccessTokenWriteGrant` are served ([journal.md](journal.md)).
 `readLocalWriterMemberGrant` is `readLocalWriterRow` (the revoked row is returned with its mark; the caller
 denies it). `readSharedSkillServingEpoch` is a UUID derived from the persistence brain id (SHA-256), stable for
 the brain, and `null` when the brain has no id, so membership denies.
