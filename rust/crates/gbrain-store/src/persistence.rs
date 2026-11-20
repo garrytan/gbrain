@@ -74,6 +74,7 @@ pub(crate) mod projection_queue;
 mod receipt_list;
 mod topology;
 mod worktrees;
+mod writer_status;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};

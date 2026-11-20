@@ -30,13 +30,7 @@ export interface ReleaseEffectRow {
   effect_id: string; kind: string; state: string; source_id: string; request_id: string; error_code: string | null;
   recovering: boolean; source_live: boolean;
 }
-/** An effect in the shape `listBlockingEffects` returns (persistence/blocking-effects.ts). */
-export interface BlockingEffectRow {
-  effect_id: string; kind: string; state: string; recovering: boolean; source_id: string; slug: string; request_id: string;
-  attempts: number; next_attempt_at: string | Date | null;
-}
 export interface LiveLeaseRow { id: string; holder_host: string; holder_pid: number }
-export interface LegacyLockRow { id: string; holder_pid: number; holder_host: string; acquisition_token: string; age_ms: number }
 /** One (worktree, host root) pair; a worktree with no host binding has one row with a null root. */
 export interface WorktreeRootRow { id: string; root: string | null }
 /** One (source binding, host root) pair; a binding whose worktree has no host binding has one row with a null root. */
@@ -69,14 +63,10 @@ export interface WriterReleaseStore {
    * failed, with no recovery record and not settled (`data.settled` unset).
    */
   releaseEffects(which: 'blocking' | 'failed'): Promise<ReleaseEffectRow[]>;
-  /** The effects `listBlockingEffects` names: holding a recovery record, or (unless `recoveringOnly`) queued or running. */
-  blockingEffects(opts: { sourceId: string | null; limit: number; recoveringOnly: boolean }): Promise<BlockingEffectRow[]>;
   /** Whether any effect holds a recovery record. */
   hasRecoveringEffect(): Promise<boolean>;
   /** The unexpired cycle locks that are not page embedding leases, by id. */
   liveLeases(): Promise<LiveLeaseRow[]>;
-  /** Every cycle lock that is not a page embedding lease, by id, with its age in milliseconds. */
-  legacyLocks(): Promise<LegacyLockRow[]>;
   /** Every worktree that is not retired with each of its host roots, by worktree id then root. */
   liveWorktreeRoots(): Promise<WorktreeRootRow[]>;
   /** Every source binding with each of its worktree's host roots, by source id then root. */
@@ -125,15 +115,7 @@ const FAILED_EFFECTS_SQL = `SELECT e.id::text AS effect_id, e.kind, e.state, COA
        EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation AND NOT s.archived) AS source_live
      FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
      WHERE e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') ORDER BY e.id LIMIT 50`;
-const LIST_BLOCKING_EFFECTS_SQL = `SELECT e.id::text AS effect_id,e.kind,e.state,(e.recovery IS NOT NULL) AS recovering,
-    COALESCE(e.source_id,r.source_id) AS source_id,r.slug,r.request_id::text AS request_id,e.attempts,e.next_attempt_at
-    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-    WHERE (e.recovery IS NOT NULL OR (NOT $3::boolean AND e.state IN ('queued','running')))
-      AND ($1::text IS NULL OR COALESCE(e.source_id,r.source_id)=$1)
-    ORDER BY e.id LIMIT $2`;
 const LIVE_LEASES_SQL = 'SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND NOT starts_with(id, $1) ORDER BY id';
-const LEGACY_LOCKS_SQL = `SELECT id,holder_pid,holder_host,acquisition_token,EXTRACT(EPOCH FROM (now()-acquired_at))::double precision*1000 AS age_ms
-      FROM gbrain_cycle_locks WHERE NOT starts_with(id, $1) ORDER BY id`;
 const LIVE_WORKTREE_ROOTS_SQL = `SELECT w.id::text AS id, h.local_path AS root FROM persistence_worktrees w
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id WHERE w.state<>'retired' ORDER BY w.id, h.local_path`;
 const CLAIM_ROOTS_SQL = `SELECT b.source_id, b.worktree_id::text AS worktree_id, h.local_path AS root
@@ -174,13 +156,8 @@ export function sqlWriterReleaseStore(exec: RawSql): WriterReleaseStore {
     blockingRequests: limit => exec.executeRaw<BlockingRequestRow>(BLOCKING_REQUESTS_SQL, [limit]),
     recoveringTopologyChanges: () => exec.executeRaw<RecoveringTopologyRow>(RECOVERING_TOPOLOGY_SQL),
     releaseEffects: which => exec.executeRaw<ReleaseEffectRow>(which === 'failed' ? FAILED_EFFECTS_SQL : BLOCKING_EFFECTS_SQL),
-    async blockingEffects(opts) {
-      const rows = await exec.executeRaw<BlockingEffectRow>(LIST_BLOCKING_EFFECTS_SQL, [opts.sourceId, opts.limit, opts.recoveringOnly]);
-      return rows.map(row => ({ ...row, attempts: Number(row.attempts) }));
-    },
     async hasRecoveringEffect() { return (await exec.executeRaw('SELECT id FROM persistence_effects WHERE recovery IS NOT NULL LIMIT 1')).length > 0; },
     liveLeases: () => exec.executeRaw<LiveLeaseRow>(LIVE_LEASES_SQL, [PAGE_EMBEDDING_LEASE_PREFIX]),
-    legacyLocks: () => exec.executeRaw<LegacyLockRow>(LEGACY_LOCKS_SQL, [PAGE_EMBEDDING_LEASE_PREFIX]),
     liveWorktreeRoots: () => exec.executeRaw<WorktreeRootRow>(LIVE_WORKTREE_ROOTS_SQL),
     claimRoots: () => exec.executeRaw<ClaimRootRow>(CLAIM_ROOTS_SQL),
     async boundSourceIds() {

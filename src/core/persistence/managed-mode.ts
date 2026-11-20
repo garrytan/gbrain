@@ -97,3 +97,16 @@ export async function readPersistenceBrain(engine: RawSqlEngine, opts: ManagedMo
   const rows = await engine.executeRaw<Omit<PersistenceBrainRow, 'enabled'> & { enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal);
 }
+/**
+ * The shared-skill columns `writer status` reports (undefined when the singleton is missing). A Rust brain answers
+ * from the row `rustPersistenceBrainRows` builds; SQL engines keep the statement.
+ */
+export async function readSharedSkillsState(engine: RawSqlEngine): Promise<{ writer_protocol_floor: number; skill_bundles_enabled: boolean } | undefined> {
+  if (isRustBrain(engine)) {
+    const [row] = await rustPersistenceBrainRows(engine);
+    return row ? { writer_protocol_floor: row.writer_protocol_floor ?? 1, skill_bundles_enabled: row.skill_bundles_enabled ?? false } : undefined;
+  }
+  const [row] = await engine.executeRaw<{ writer_protocol_floor: number; skill_bundles_enabled: boolean }>(
+    'SELECT writer_protocol_floor,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+  return row;
+}

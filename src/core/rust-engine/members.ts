@@ -210,6 +210,13 @@ export const RUST_ENGINE_MEMBERS = {
   // Writer activation, deactivation and the pre-activation release; a topology receipt's counter charges.
   writerReleaseStore: 'persistence_journal',
   addPersistenceCounters: 'persistence_journal',
+  readWorktreeManifest: 'persistence_journal',
+  // Writer status (engine-sql/writer-status.ts).
+  readWriterDiagnosticRows: 'persistence_journal',
+  readWriterStatusRows: 'persistence_journal',
+  listOnboardingSources: 'persistence_journal',
+  listBlockingEffectRows: 'persistence_journal',
+  listActiveWorktreeRefreshRows: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',

@@ -198,6 +198,7 @@ test/engine-parity/field-usage.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/git-durability-credential.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
@@ -288,6 +289,7 @@ test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/wanted-markers.test.ts
+test/engine-parity/wedged-reservation.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-parity/withdrawal-fence.test.ts
 test/engine-parity/withdrawal-forget.test.ts
@@ -300,6 +302,7 @@ test/engine-parity/write-request-reads.test.ts
 test/engine-parity/writer-admin.test.ts
 test/engine-parity/writer-registration.test.ts
 test/engine-parity/writer-release.test.ts
+test/engine-parity/writer-status.test.ts
 test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts

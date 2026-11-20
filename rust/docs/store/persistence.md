@@ -438,9 +438,14 @@ store keeps the three rows and refuses what the tables' keys, foreign keys and C
 | `brain.listHostRootBindings(hostId)` | one row per source bound under a worktree `hostId` binds, `topology_generation` as text | the first half of `listManagedRootBindings` |
 | `brain.writerAdminStateText()` | the writer topology document as jsonb text, from one snapshot: see "Writer admin state" below | `readWriterAdminState` (`WRITER_ADMIN_STATE_SQL`) |
 | `brain.preparedTransferWorktree()` | the first worktree id, in key order, that is `draining` with a manifest; `null` when none is | the writer lock's prepared-transfer check |
-| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state, manifest }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.readWorktreeManifest(id)` | the worktree's manifest; `null` when it has none or is absent | `readWorktreeManifest`, the accept's read before its transaction |
 | `brain.worktreePublicationPending(id)` | whether a request on the worktree is `running` or `recovering` or holds a recovery record, or an effect on it holds one | the transfer's pending-publication check |
 | `brain.markWorktreeDraining(id, manifest)`, `brain.reactivateWorktree(id)` | the worktree is `draining` with the manifest plus `prepared_at` (now, jsonb `timestamptz` text); `active` with no manifest. A missing worktree changes nothing; a manifest that is not an object is `invalid_argument` | the transfer prepare and cancel `UPDATE`s |
+| `brain.upsertHostBinding(row)` | the host binding has the row's paths; an existing binding keeps its Git durability, a new one has none. `constraint_violation` for an unknown worktree | the accept's `INSERT … ON CONFLICT DO UPDATE` |
+| `brain.contentReceiptRows(worktreeIds, hostId, sourceIds)` | one row per source bound to one of the worktrees (only `sourceIds` when not null) at its current, unarchived incarnation, with a binding on `hostId` and a `shared_skills.content.v1.<source>.<incarnation>` config row: `{ source_id, incarnation, relative_path, local_path, brain_id, key, value }`, source ids in byte order; none for a brain without an id | the content-receipt join of `rebindContentReceipts` |
+| `brain.swapConfigValue(key, value, expected)` | sets the config row only while it holds `expected`; whether it did | the receipt's compare-and-set `UPDATE config` |
+| `brain.acceptWorktreeOwner(id, hostId)` | `hostId` owns the worktree at the next epoch, `active`, heartbeat now; the manifest is kept. A missing worktree changes nothing | the accept's `UPDATE persistence_worktrees` |
 
 A source binding has no foreign key to its source, as on Postgres: a removed or re-created source
 leaves its binding, and the readers compare incarnations. Only a writer release deletes binding rows
@@ -452,8 +457,11 @@ leaves its binding, and the readers compare incarnations. Only a writer release 
 `src/core/engine-sql/writer-admin.ts`; `writerAdminTransaction(engine, body)` there opens
 `engine.transaction` and gives the body the transaction's `writerAdminStore()`. `persistence/admin-intent.ts` hashes the state text for a
 reviewed `--expected-state` check (`writerAdminState`, `assertWriterAdminState`). The writer lock
-(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare and cancel
-(`ownership.ts`) run as a `writerAdminTransaction` body over that store. On this
+(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare, accept and cancel
+(`ownership.ts`) run as a `writerAdminTransaction` body over that store. An accept reads the
+prepared manifest with `readWorktreeManifest` before its transaction, and rebinds the content
+receipts through the store's `contentReceiptRows` and `swapConfigValue`
+(`shared-skills/receipt-root.ts`). On this
 engine the store's calls run on the transaction's store handle (`store-members/writer-admin.ts`).
 `lockBrain` and `{ lock: true }` do nothing: the store runs one write transaction at a time, so a
 state read in a transaction holds until it commits. `now()` is this process's clock in the SQL
@@ -469,7 +477,34 @@ over no rows gives. Two parts differ from a SQL brain:
 - **The digest.** Each brain has its own id, so a state reviewed on one brain never matches
   another, on any engine.
 
-`acceptWriterTransfer` still reads raw SQL and refuses here.
+A real `gbrain sources writer claim` applies on this engine, and `writer deactivate` and
+`writer activate` lift it through the writer release store ("Writer release" below).
+
+A claim that finds a wedged reservation (its coordination lock recorded inside the checkout, #6766)
+repairs it in one claim-store transaction (`persistence/coordination-lock.ts`
+`repairWedgedReservation`): the store's `brainId` and `worktree` answer the brain and worktree checks
+from the brain row and the worktree records.
+
+## Writer status
+
+`gbrain sources writer status` reads five members of `src/core/engine-sql/writer-status.ts`,
+answered here by `persistence/writer_status.rs`:
+
+- `readWriterDiagnosticRows(abandonedCutoff, excludedOrigins)`: the request, counter and claim row
+  sets of the diagnostics block. A running claim untouched since the cutoff is abandoned. A cutoff
+  that is not an ISO time refuses, as the SQL cast does.
+- `readWriterStatusRows(hostId, sourceId)`: the source bindings with the host's root, and the
+  stopped retire requests.
+- `listOnboardingSources(sourceId)`: the active sources of the onboarding preflight.
+- `listBlockingEffectRows(sourceId, limit, recoveringOnly)`: the effects that keep the brain from
+  quiescing, by id.
+- `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
+  their deferred request count and age.
+
+Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
+(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
+first two refuse and source movement reports `not_read`.
 
 ## Writer release
 
@@ -487,9 +522,8 @@ writer protocol registration exists here.
 | `brain.writerReleaseRows({ kind: 'blocking_requests', limit })` | the first `limit` requests that are outstanding or hold a recovery record, by sequence | `BLOCKING_REQUESTS_SQL` |
 | `kind: 'recovering_topology_changes'` | the first 20 topology changes `recovering` or holding a recovery record, oldest first | `RECOVERING_TOPOLOGY_SQL` |
 | `kind: 'release_effects', which` | the first 50 effects by id, `blocking` (queued, running or recovering) or `failed` (failed, no recovery record, not settled), joined to their request by its internal id | `BLOCKING_EFFECTS_SQL`, `FAILED_EFFECTS_SQL` |
-| `kind: 'blocking_effects', sourceId, limit, recoveringOnly` | the effects `listBlockingEffects` names | `LIST_BLOCKING_EFFECTS_SQL` |
 | `kind: 'has_recovering_effect'` | whether an effect holds a recovery record | the deactivation's recovery check |
-| `kind: 'live_leases'`, `'legacy_locks'` | the cycle locks that are not page embedding leases, by id (unexpired only for `live_leases`; `age_ms` for `legacy_locks`) | `LIVE_LEASES_SQL`, `LEGACY_LOCKS_SQL` |
+| `kind: 'live_leases'` | the unexpired cycle locks that are not page embedding leases, by id | `LIVE_LEASES_SQL` |
 | `kind: 'live_worktree_roots'`, `'claim_roots'` | each worktree that is not retired, or each source binding, with each host root (one null root when none) | `LIVE_WORKTREE_ROOTS_SQL`, `CLAIM_ROOTS_SQL` |
 | `kind: 'bound_source_ids'`, `'source_binding_count'`, `'live_bound_source_count'` | the bound source ids, their count, and the count whose incarnation is live | the binding reads |
 | `kind: 'configured_sources'`, `'source_local_paths'`, `'host_binding_roots'` | the sources that are not archived (`{ id, incarnation, local_path, kind }`, by id), every source local path, every host root | `SOURCES_SQL` and the path reads |

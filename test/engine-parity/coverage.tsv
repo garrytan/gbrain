@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1014/1020
+# covered: 1020/1026
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 131/131
+# persistence_journal: 136/136
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 65/71
+# write_misc: 66/72
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -404,15 +404,15 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	17	no	yes	yes	serves
-setConfig	config	yes	30	no	yes	yes	serves
+getConfig	config	yes	18	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	7	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
@@ -442,6 +442,11 @@ clearWantedMarker	persistence_journal	yes	1	no	yes	yes	serves
 settleFreshnessMarker	persistence_journal	yes	2	no	yes	yes	serves
 listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
 readFirstDue	persistence_journal	yes	1	no	yes	yes	serves
+readWriterDiagnosticRows	persistence_journal	yes	3	no	yes	yes	serves
+readWriterStatusRows	persistence_journal	yes	2	no	yes	yes	serves
+listOnboardingSources	persistence_journal	yes	2	no	yes	yes	serves
+listBlockingEffectRows	persistence_journal	yes	2	no	yes	yes	serves
+listActiveWorktreeRefreshRows	persistence_journal	yes	2	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	22	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -574,7 +579,7 @@ readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	13	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
-readCycleLocks	cycle_locks	yes	9	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	10	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
@@ -923,10 +928,11 @@ readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	4	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	10	no	yes	yes	serves
-readWriterAdminState	write_misc	yes	6	no	yes	yes	serves
-writerAdminStore	write_misc	yes	2	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	6	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	13	no	yes	yes	serves
+readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
+readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
+writerAdminStore	write_misc	yes	3	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	4	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves

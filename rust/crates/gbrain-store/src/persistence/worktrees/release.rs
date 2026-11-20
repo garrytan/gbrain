@@ -17,7 +17,7 @@ use super::{
     HOST_BINDING, HostBindingRecord, SOURCE_BINDING, SourceBindingRecord, WORKTREE, WorktreeRecord,
     kind_text, scan_records, worktree_key,
 };
-use crate::env::{Env, iso};
+use crate::env::Env;
 use crate::error::{Result, StoreError};
 use crate::jobs::release_lock_rows;
 use crate::journal::RequestRecord;
@@ -153,16 +153,8 @@ pub enum ReleaseRead {
     ReleaseEffects {
         which: String,
     },
-    BlockingEffects {
-        #[serde(rename = "sourceId")]
-        source_id: Option<String>,
-        limit: usize,
-        #[serde(rename = "recoveringOnly")]
-        recovering_only: bool,
-    },
     HasRecoveringEffect,
     LiveLeases,
-    LegacyLocks,
     LiveWorktreeRoots,
     ClaimRoots,
     BoundSourceIds,
@@ -307,39 +299,10 @@ pub(crate) fn writer_release_rows_in(
             }
             Value::Array(rows)
         }
-        ReleaseRead::BlockingEffects {
-            source_id,
-            limit,
-            recovering_only,
-        } => Value::Array(
-            joined_effects(read)?
-                .into_iter()
-                .filter(|(e, r)| {
-                    (has_value(&e.recovery)
-                        || (!recovering_only && (e.state == "queued" || e.state == "running")))
-                        && source_id.as_ref().is_none_or(|s| *s == effect_source(e, r))
-                })
-                .take(*limit)
-                .map(|(e, r)| {
-                    json!({
-                        "effect_id": e.id.to_string(),
-                        "kind": e.kind,
-                        "state": e.state,
-                        "recovering": has_value(&e.recovery),
-                        "source_id": effect_source(&e, &r),
-                        "slug": r.slug,
-                        "request_id": r.request_id,
-                        "attempts": e.attempts,
-                        "next_attempt_at": iso(e.next_attempt_at_us),
-                    })
-                })
-                .collect(),
-        ),
         ReleaseRead::HasRecoveringEffect => {
             json!(all_effects(read)?.iter().any(|e| has_value(&e.recovery)))
         }
-        ReleaseRead::LiveLeases => Value::Array(release_lock_rows(read, env.now_micros(), true)?),
-        ReleaseRead::LegacyLocks => Value::Array(release_lock_rows(read, env.now_micros(), false)?),
+        ReleaseRead::LiveLeases => Value::Array(release_lock_rows(read, env.now_micros())?),
         ReleaseRead::LiveWorktreeRoots => {
             let hosts = hosts()?;
             let mut rows = Vec::new();

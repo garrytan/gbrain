@@ -1709,38 +1709,20 @@ pub(crate) fn legacy_lock_rows(read: &dyn KvRead) -> Result<Vec<Value>> {
         .collect())
 }
 
-/// The cycle locks writer activation and deactivation name (`engine-sql/writer-release.ts`
-/// `liveLeases` / `legacyLocks`): each lock that is not a page embedding lease, by id in byte
-/// order, as `{ id, holder_host, holder_pid }` when `live_only` (and only the unexpired ones), else
-/// `{ id, holder_pid, holder_host, acquisition_token, age_ms }`.
-pub(crate) fn release_lock_rows(
-    read: &dyn KvRead,
-    now_us: i64,
-    live_only: bool,
-) -> Result<Vec<Value>> {
+/// The live cycle locks writer activation and deactivation name (`engine-sql/writer-release.ts`
+/// `liveLeases`): each unexpired lock that is not a page embedding lease, by id in byte order, as
+/// `{ id, holder_host, holder_pid }`.
+pub(crate) fn release_lock_rows(read: &dyn KvRead, now_us: i64) -> Result<Vec<Value>> {
     let mut rows: Vec<(String, LockRecord)> = all_locks(read)?
         .into_iter()
-        .filter(|(id, l)| {
-            !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX)
-                && (!live_only || l.ttl_expires_at > now_us)
-        })
+        .filter(|(id, l)| !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) && l.ttl_expires_at > now_us)
         .collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(rows
         .into_iter()
-        .map(|(id, l)| {
-            if live_only {
-                json!({ "id": id, "holder_host": l.holder_host, "holder_pid": l.holder_pid })
-            } else {
-                json!({
-                    "id": id,
-                    "holder_pid": l.holder_pid,
-                    "holder_host": l.holder_host,
-                    "acquisition_token": l.acquisition_token,
-                    "age_ms": (now_us - l.acquired_at) as f64 / 1000.0,
-                })
-            }
-        })
+        .map(
+            |(id, l)| json!({ "id": id, "holder_host": l.holder_host, "holder_pid": l.holder_pid }),
+        )
         .collect())
 }
 

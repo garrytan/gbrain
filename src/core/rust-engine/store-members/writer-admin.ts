@@ -1,5 +1,5 @@
 /**
- * Writer administration (BrainEngine readWriterAdminState and writerAdminStore; SQL in
+ * Writer administration (BrainEngine readWriterAdminState, readWorktreeManifest and writerAdminStore; SQL in
  * engine-sql/writer-admin.ts), served from the store's binding, source, config and cycle-lock records.
  *
  * - `readWriterAdminState` returns the same jsonb document as the SQL engines, built from one store snapshot
@@ -13,7 +13,8 @@
  * What each member answers and why: rust/docs/store/persistence.md ("Worktree bindings").
  */
 import type { BrainEngine } from '../../engine.ts';
-import type { WriterAdminStateOptions, WriterAdminStore, WriterAdminWorktreeRow } from '../../engine-sql/writer-admin.ts';
+import type { ContentReceiptRow, WriterAdminStateOptions, WriterAdminStore, WriterAdminWorktreeRow } from '../../engine-sql/writer-admin.ts';
+import type { StoredWorktreeManifest } from '../../persistence/worktree-manifest.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../../persistence/admin-contract.ts';
 import { assertWriterAdminState } from '../../persistence/admin-intent.ts';
 import { assertWriterAdminLockValue } from '../../persistence/admin-lock.ts';
@@ -24,10 +25,16 @@ import { readPersistenceBrainId } from './persistence-identity.ts';
 
 const STATE = 'readWriterAdminState';
 const MEMBER = 'writerAdminStore';
+const MANIFEST = 'readWorktreeManifest';
 
 export const readWriterAdminState = async function readWriterAdminState(brain: StoreBrain, opts?: WriterAdminStateOptions): Promise<string> {
   takeOptions(STATE, opts, [], ['lock']);
   return storeCall({ member: STATE }, () => brain.writerAdminStateText());
+};
+
+/** `readWorktreeManifest(worktreeId)`: the worktree's manifest, or null. */
+export const readWorktreeManifest = async function readWorktreeManifest(brain: StoreBrain, worktreeId: string): Promise<StoredWorktreeManifest | null> {
+  return storeCall({ member: MANIFEST }, () => brain.readWorktreeManifest(worktreeId));
 };
 
 /** The writer-admin store over the transaction's store handle; `tx` answers the reviewed-state check. */
@@ -46,6 +53,10 @@ function rustWriterAdminStore(brain: StoreBrain, tx: BrainEngine): WriterAdminSt
     brainId: () => readPersistenceBrainId(brain),
     async markWorktreeDraining(id, manifest) { await call(() => brain.markWorktreeDraining(id, manifest)); },
     async reactivateWorktree(id) { await call(() => brain.reactivateWorktree(id)); },
+    async upsertHostBinding(row) { await call(() => brain.upsertHostBinding(row)); },
+    async acceptWorktreeOwner(id, hostId) { await call(() => brain.acceptWorktreeOwner(id, hostId)); },
+    contentReceiptRows: (worktreeIds, hostId, sourceIds) => call<ContentReceiptRow[]>(() => brain.contentReceiptRows(worktreeIds, hostId, sourceIds ?? null)),
+    async swapConfigValue(key, value, expected) { await call(() => brain.swapConfigValue(key, value, expected)); },
   };
 }
 

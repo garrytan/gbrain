@@ -227,7 +227,6 @@ fn a_fresh_brain_has_no_retired_deactivations_and_no_blockers() {
         "retired_deactivations",
         "recovering_topology_changes",
         "live_leases",
-        "legacy_locks",
         "configured_sources",
     ] {
         let got = rows(&store, json!({ "kind": kind }));

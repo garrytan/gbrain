@@ -2,7 +2,6 @@
 import { OperationError } from '../ops/contract.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from './model.ts';
 
 export interface BlockingEffect {
   effect_id: string; kind: string; state: string; recovering: boolean; source_id: string; slug: string;
@@ -12,14 +11,9 @@ export interface BlockingEffect {
 const inspect = (sourceId: string) => `gbrain sources writer status ${sourceId} --json`;
 
 /** Effects in state queued or running, or holding a recovery record, oldest first. */
-export async function listBlockingEffects(engine: SqlEngine, opts: { sourceId?: string; limit?: number; recoveringOnly?: boolean } = {}): Promise<BlockingEffect[]> {
+export async function listBlockingEffects(engine: Pick<BrainEngine, 'listBlockingEffectRows'>, opts: { sourceId?: string; limit?: number; recoveringOnly?: boolean } = {}): Promise<BlockingEffect[]> {
   const limit = Math.max(1, Math.min(opts.limit ?? 20, 1000));
-  const rows = await engine.executeRaw<Omit<BlockingEffect, 'inspect'>>(`SELECT e.id::text AS effect_id,e.kind,e.state,(e.recovery IS NOT NULL) AS recovering,
-    COALESCE(e.source_id,r.source_id) AS source_id,r.slug,r.request_id::text AS request_id,e.attempts,e.next_attempt_at
-    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-    WHERE (e.recovery IS NOT NULL OR (NOT $3::boolean AND e.state IN ('queued','running')))
-      AND ($1::text IS NULL OR COALESCE(e.source_id,r.source_id)=$1)
-    ORDER BY e.id LIMIT $2`, [opts.sourceId ?? null, limit, opts.recoveringOnly === true]);
+  const rows = await engine.listBlockingEffectRows(opts.sourceId ?? null, limit, opts.recoveringOnly === true);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), inspect: inspect(row.source_id) }));
 }
 
@@ -31,13 +25,11 @@ export function blockingEffectHint(effect: BlockingEffect): string {
 }
 
 /** `writer_not_quiesced` naming the first blocking request, else the first blocking effect. */
-export async function notQuiescedError(tx: Pick<BrainEngine, 'writerReleaseStore'>, message: string, opts: { queuedEffects: boolean }): Promise<OperationError> {
-  const store = await tx.writerReleaseStore();
-  const [request] = await store.blockingRequests(1);
+export async function notQuiescedError(tx: Pick<BrainEngine, 'writerReleaseStore' | 'listBlockingEffectRows'>, message: string, opts: { queuedEffects: boolean }): Promise<OperationError> {
+  const [request] = await (await tx.writerReleaseStore()).blockingRequests(1);
   if (request) return new OperationError('writer_not_quiesced', message, `${WRITER_INSPECTION_HINT} Blocking request ${request.request_id} `
     + `(${request.operation}, ${request.state}) for source ${request.source_id}, page ${request.slug}. Inspect it with: ${inspect(request.source_id)}. `
     + 'Let the resident owner publish or recover it, then retry.');
-  const [row] = await store.blockingEffects({ sourceId: null, limit: 1, recoveringOnly: !opts.queuedEffects });
-  const effect = row ? { ...row, inspect: inspect(row.source_id) } : undefined;
+  const [effect] = await listBlockingEffects(tx, { limit: 1, recoveringOnly: !opts.queuedEffects });
   return new OperationError('writer_not_quiesced', message, effect ? blockingEffectHint(effect) : WRITER_INSPECTION_HINT);
 }

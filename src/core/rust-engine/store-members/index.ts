@@ -78,6 +78,7 @@ import * as writeMisc from './write-misc.ts';
 import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
+import * as writerStatus from './writer-status.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as accessPolicy from './access-policy.ts';
@@ -163,6 +164,7 @@ export const STORE_MEMBERS = {
   ...writerAdmin,
   // Writer activation, deactivation and the pre-activation release over the stored brain mode (same doc, "Writer release").
   ...writerRelease,
+  ...writerStatus,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,

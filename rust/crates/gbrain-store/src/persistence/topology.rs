@@ -104,6 +104,62 @@ fn to_row(r: &TopologyChangeRecord) -> Value {
     })
 }
 
+/// The stopped retire requests writer status lists (`readWriterStatusRows`,
+/// `engine-sql/writer-status.ts`): remove and purge changes (of `source_id`, or every source)
+/// with no recovery record that are `recovering`, or `failed` because a later lifecycle change
+/// superseded them; newest first, at most 20. `created_at` is `created_at::text`.
+pub(super) fn retire_requests_in(read: &dyn KvRead, source_id: Option<&str>) -> Result<Vec<Value>> {
+    let mut rows: Vec<TopologyChangeRecord> = Vec::new();
+    let mut bad = false;
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            match serde_json::from_slice::<TopologyChangeRecord>(v) {
+                Ok(r) => rows.push(r),
+                Err(_) => bad = true,
+            }
+            !bad
+        },
+    )?;
+    if bad {
+        return Err(StoreError::invalid(
+            "a topology change record is not readable",
+        ));
+    }
+    let error = |r: &TopologyChangeRecord| -> Option<String> {
+        match r.outcome.as_ref()?.get("error")? {
+            Value::Null => None,
+            Value::String(s) => Some(s.clone()),
+            other => Some(crate::cli_reads::pg_text::jsonb_text(other)),
+        }
+    };
+    rows.retain(|r| {
+        source_id.is_none_or(|s| r.source_id == s)
+            && (r.operation == "remove" || r.operation == "purge")
+            && r.recovery.is_none()
+            && (r.state == "recovering"
+                || r.state == "failed" && error(r).as_deref() == Some("source_retire_superseded"))
+    });
+    rows.sort_by_key(|r| std::cmp::Reverse(r.created_at_us));
+    rows.truncate(20);
+    Ok(rows
+        .iter()
+        .map(|r| {
+            json!({
+                "request_id": r.request_id,
+                "operation": r.operation,
+                "source_id": r.source_id,
+                "source_incarnation": r.source_incarnation,
+                "state": r.state,
+                "error": error(r),
+                "created_at": crate::cli_reads::pg_text::timestamptz_text(r.created_at_us),
+            })
+        })
+        .collect())
+}
+
 /// The INSERT ... RETURNING * of a lifecycle receipt. The table's CHECKs and its
 /// UNIQUE(principal_id, request_id) refuse here as Postgres refuses them.
 pub(crate) fn insert_topology_change_in(

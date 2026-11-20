@@ -91,7 +91,8 @@ describe('readManagedMode', () => {
     }
     expect(await inspectPersistenceBrain(fake([{ brain_id: 'b', enabled: false, mode_epoch: '1', skill_bundles_enabled: null, writer_protocol_floor: null }])))
       .toEqual({ row: { brain_id: 'b', enabled: false, mode_epoch: '1', skill_bundles_enabled: null, writer_protocol_floor: null }, problem: null });
-    const diagnostics = await readWriterDiagnostics({ ...fake([]), kind: 'pglite' } as unknown as BrainEngine);
+    const diagnostics = await readWriterDiagnostics({ ...fake([]), kind: 'pglite',
+      readWriterDiagnosticRows: async () => ({ worktrees: [], counters: [], blockers: [], queue: [], effects: [], failures: [] }) } as unknown as BrainEngine);
     expect(diagnostics).toMatchObject({ enabled: false, brain_id: null });
     expect((diagnostics as { persistence_mode_problem?: string }).persistence_mode_problem).toContain('missing (0 row(s))');
   });

@@ -589,10 +589,9 @@ src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/admin-lock.ts	execute_raw	2
-src/core/persistence/administration.ts	execute_raw	8
+src/core/persistence/administration.ts	execute_raw	5
 src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	4
-src/core/persistence/blocking-effects.ts	execute_raw	1
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
@@ -612,14 +611,13 @@ src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
-src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/derived-origin-hold.ts	execute_raw	10
 src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
-src/core/persistence/diagnostics.ts	execute_raw	7
+src/core/persistence/diagnostics.ts	execute_raw	1
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	7
@@ -673,7 +671,7 @@ src/core/persistence/links-preparation.ts	execute_raw	3
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	5
 src/core/persistence/maintenance.ts	execute_raw	3
-src/core/persistence/managed-mode.ts	execute_raw	3
+src/core/persistence/managed-mode.ts	execute_raw	4	the shared-skills columns writer status reports moved here from administration.ts (its row fell by 3), so a Rust brain answers them from its brain row; SQL engines keep the one statement
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
@@ -682,14 +680,13 @@ src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	3
 src/core/persistence/moved-pages.ts	execute_raw	7
 src/core/persistence/noop-kernel.ts	execute_raw	2
-src/core/persistence/onboarding.ts	execute_raw	1
 src/core/persistence/origin-guard.ts	execute_raw	2
 src/core/persistence/origin-index.ts	execute_raw	5
 src/core/persistence/origin-twins.ts	execute_raw	2
 src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	8
+src/core/persistence/ownership.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-batch.ts	execute_raw	2
@@ -700,7 +697,7 @@ src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
-src/core/persistence/physical-root.ts	execute_raw	14
+src/core/persistence/physical-root.ts	execute_raw	13
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
@@ -787,14 +784,13 @@ src/core/persistence/topology-locks.ts	execute_raw	19
 src/core/persistence/topology-receipts.ts	execute_raw	9
 src/core/persistence/topology-recovery.ts	execute_raw	17
 src/core/persistence/topology-transaction.ts	execute_raw	1
-src/core/persistence/transfer-administration.ts	execute_raw	1
 src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/twin-merge.ts	execute_raw	16
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	30
+src/core/persistence/worktree-refresh.ts	execute_raw	29
 src/core/persistence/write-applied.ts	execute_raw	1
 src/core/persistence/writer-versions.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
@@ -947,7 +943,6 @@ src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1
 src/core/shared-skills/policy.ts	execute_raw	10
 src/core/shared-skills/publication.ts	execute_raw	14
-src/core/shared-skills/receipt-root.ts	execute_raw	2
 src/core/shared-skills/restore.ts	execute_raw	27
 src/core/shared-skills/retention.ts	execute_raw	12
 src/core/shared-skills/setup.ts	execute_raw	6
