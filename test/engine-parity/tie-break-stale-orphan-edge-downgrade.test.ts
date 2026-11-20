@@ -16,7 +16,8 @@
  *    missing lifetime, inserts the relationship rows with one refreshed_at (the put_page operation cannot run on the Rust
  *    arm), and gives soft-deleted pages one source_path and one deleted_at (no typed write sets them; the Rust arm uses the
  *    test-only seed seedPageOrigin, which needs an addon built with GBRAIN_RUST_TEST_SEEDS=1). The identity-downgrade record
- *    reads through typed members, so the Rust arm answers it; the other three readers run raw SQL, so the Rust arm stops on raw_sql.
+ *    and the stale-mention scan read through typed members, so the Rust arm answers them (the scan's heap rewrite is a no-op there,
+ *    as the Rust store keeps pages by id); the other two readers run raw SQL, so the Rust arm stops on raw_sql.
  */
 import { describe, expect } from 'bun:test';
 import { orphanLifetimes } from '../../src/core/belief/coverage-report.ts';
@@ -62,7 +63,7 @@ describe('orphan lifetime sample', () => {
 });
 
 describe('stale-mention scan', () => {
-  parityTest('scanStaleMentions cuts pages that two sources share by slug at the lowest page id', { methods: ['putPage', 'addLinksBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('scanStaleMentions cuts pages that two sources share by slug at the lowest page id', { methods: ['putPage', 'addLinksBatch'] }, async (engine, backend) => {
     // Six sources each hold `dup/page`, which mentions a target of its own source and never names it, so the link is stale.
     for (const id of KEYS) await createSource(engine, backend, `src-${id}`);
     for (const id of KEYS) {
@@ -72,7 +73,8 @@ describe('stale-mention scan', () => {
         from_source_id: `src-${id}`, to_source_id: `src-${id}` }]);
     }
     // A rewrite per page, newest first, leaves the heap in reverse id order, so a tie that only the sort met first picks the newest pages.
-    await rewriteNewestFirst(engine, 'pages', 'updated_at');
+    // BrainEngine has no such write; the Rust store keeps pages by id, so its arm has no heap order to disturb and does nothing.
+    if (backend !== 'rust') await rewriteNewestFirst(engine, 'pages', 'updated_at');
     const scan = await scanStaleMentions(engine, { limit: 3 });
     expect(scan.totalPagesWithMentions).toBe(6);
     expect(scan.pagesScanned).toBe(3);
