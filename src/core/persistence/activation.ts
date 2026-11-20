@@ -108,6 +108,7 @@ const quiescence = () => new OperationError('writer_not_quiesced', 'Managed acti
 const writerStatusFix = (why: string, sourceId?: string): Action => readFix(why,
   { argv: ['gbrain', 'sources', 'writer', 'status', ...(sourceId ? ['--source', sourceId] : []), '--json'] });
 
+// Plain ORDER BY id on purpose, not COLLATE "C": with `lock` this is a row-lock order shared with sources.ts lockAllSourceRows, topology-locks.ts and core-guard.ts, so every locker must take the sources in the same order.
 async function configuredSources(engine: BrainEngine, lock = false): Promise<SourceRoot[]> {
   const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; kind: string | null }>(
     `SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id${lock ? ' FOR UPDATE' : ''}`);

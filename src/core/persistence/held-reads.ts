@@ -191,7 +191,7 @@ export async function stampHeldHits(engine: Exec, hits: Array<{ page_id?: number
   let rows: Array<{ record: GitHoldRecord | null; revision: string | null; could_affect: number | null }>;
   try {
     rows = await engine.executeRaw(`(SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision, NULL::int AS could_affect ${HOLD_PAGE_JOIN}
-        WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[]) ORDER BY h.fingerprint)
+        WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[]) ORDER BY h.fingerprint COLLATE "C")
       UNION ALL
       SELECT NULL, NULL, (SELECT count(*)::int FROM (SELECT 1 ${HOLD_PAGE_JOIN}
         WHERE h.op=$1 AND s.archived IS NOT TRUE AND s.id=ANY($3::text[])

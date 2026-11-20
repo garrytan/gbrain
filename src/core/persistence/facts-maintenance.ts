@@ -165,6 +165,7 @@ async function validateManagedFactsCompletion(engine: BrainEngine, session: Mana
 
 export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: GBrainConfig,
   lock = false): Promise<FactEmbeddingSignature | null> {
+  // The key order never reaches output: the rows are folded into an object that the decision below reads by key name.
   const rows = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config
     WHERE key IN ('embedding_model','embedding_dimensions','embedding_disabled') ORDER BY key${lock ? ' FOR SHARE' : ''}`);
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));

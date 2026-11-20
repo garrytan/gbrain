@@ -15,9 +15,9 @@ export async function writerAdminState(engine: SqlEngine): Promise<string> {
     'sources', (SELECT jsonb_agg(jsonb_build_array(id,incarnation,archived,local_path,config->>'kind') ORDER BY id COLLATE "C") FROM sources),
     'fallback', (SELECT value FROM config WHERE key='sync.repo_path'),
     'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,manifest) ORDER BY id) FROM persistence_worktrees),
-    'bindings', (SELECT jsonb_agg(jsonb_build_array(source_id,source_incarnation,worktree_id,relative_path,topology_generation::text) ORDER BY source_id) FROM persistence_source_bindings),
+    'bindings', (SELECT jsonb_agg(jsonb_build_array(source_id,source_incarnation,worktree_id,relative_path,topology_generation::text) ORDER BY source_id COLLATE "C") FROM persistence_source_bindings),
     'hosts', (SELECT jsonb_agg(jsonb_build_array(worktree_id,host_id,local_path,coordination_path,git_durability) ORDER BY worktree_id,host_id) FROM persistence_host_bindings),
-    'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id) FROM gbrain_cycle_locks
+    'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id COLLATE "C") FROM gbrain_cycle_locks
       WHERE NOT starts_with(id, $1))
   )::text AS state`, [PAGE_EMBEDDING_LEASE_PREFIX]);
   return sha256(row.state);

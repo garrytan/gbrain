@@ -30,6 +30,7 @@ const unregisteredHost = (sourceId: string, requestId: string) => opError('permi
   { fix: ownerStatusFix(sourceId) });
 
 async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
+  // The key order never reaches output: the rows are folded into an object that is read by key name, and the signature uses those values, not the row order.
   const rows = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config
     WHERE key IN ('embedding_model','embedding_dimensions','search_embedding_column','embedding_columns') ORDER BY key FOR SHARE`);
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -138,7 +139,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
   const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
     AND ((kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried'))
       OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))
-      OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind`,
+      OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind COLLATE "C"`,
   [request.id, options.parkedOnly === true, [...options.failedCodes ?? []]]);
   if (!tracked.length) return null;
   const hostId = existingHostIdFor(engine);

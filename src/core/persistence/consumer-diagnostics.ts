@@ -109,7 +109,7 @@ export async function hostIdentityMismatches(engine: BrainEngine, me: LocalHostI
   const exists = seams.exists ?? (path => { try { return existsSync(path) && statSync(path).isDirectory(); } catch { return false; } });
   const marked = seams.marked ?? hasManagedRootMarker;
   const bindings = await engine.executeRaw<OwnerBinding>(`SELECT w.id::text AS worktree_id,w.owner_host_id::text AS owner_host_id,h.local_path,w.created_at::text AS created_at,
-      (SELECT array_agg(b.source_id ORDER BY b.source_id) FROM persistence_source_bindings b WHERE b.worktree_id=w.id) AS source_ids
+      (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=w.id) AS source_ids
     FROM persistence_worktrees w JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=w.owner_host_id
     WHERE w.owner_host_id IS NOT NULL AND w.owner_host_id<>$1::uuid AND w.state<>'recovering' ORDER BY w.created_at`, [me.id]);
   if (!bindings.length) return [];

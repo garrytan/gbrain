@@ -309,7 +309,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       CASE h.git_durability WHEN 'enabled' THEN 'on' WHEN 'disabled' THEN 'off' ELSE 'unknown' END AS git_durability_state FROM persistence_source_bindings b
       JOIN persistence_worktrees w ON w.id=b.worktree_id
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
-      WHERE ($2::text IS NULL OR b.source_id=$2) ORDER BY b.source_id`, [existingHostIdFor(engine), params.source_id === undefined ? null : source(params.source_id)]);
+      WHERE ($2::text IS NULL OR b.source_id=$2) ORDER BY b.source_id COLLATE "C"`, [existingHostIdFor(engine), params.source_id === undefined ? null : source(params.source_id)]);
     let native: unknown;
     if (params.probe === true) {
       const { nativeLockCapability, tryAcquireNativeLock } = await import('./native-lock.ts');

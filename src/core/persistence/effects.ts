@@ -114,6 +114,7 @@ export async function selectedEffectPage(engine: BrainEngine, effect: Persistenc
   }
   let slug = effect.data.slug;
   if (effect.data.source_scan || effect.kind === 'withdrawal-mirror') {
+    // The slug order never reaches output: ORDER BY and `slug>$2` both use the default collation, so they agree and the cursor pages through every slug once.
     const [row] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND ($2::text IS NULL OR slug>$2) ORDER BY slug LIMIT 1',
       [effect.source_id, effect.data.after_slug ?? null]);
     slug = row?.slug;

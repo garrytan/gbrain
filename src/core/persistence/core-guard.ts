@@ -45,6 +45,7 @@ export function coreLockSources(sourceId: string): string[] {
 export async function lockCoreSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceIds: readonly string[]): Promise<void> {
   const ids = [...new Set(sourceIds)].sort();
   if (!ids.length) return;
+  // The id order never reaches output: it is the row-lock order on sources, shared with sources.ts lockAllSourceRows and topology-locks.ts, so it stays plain ORDER BY id.
   await tx.executeRaw('SELECT id FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE', [ids]);
 }
 

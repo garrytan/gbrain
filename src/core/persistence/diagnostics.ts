@@ -166,7 +166,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     (SELECT COUNT(*)::integer FROM persistence_effects e WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL) AS recovering_effects
     FROM persistence_worktrees w LEFT JOIN persistence_requests r ON r.worktree_id=w.id
     GROUP BY w.id ORDER BY w.id`);
-  const counters = await engine.executeRaw<Counter>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,terminal_bytes::text,recovery_bytes::text FROM persistence_counters ORDER BY key`);
+  const counters = await engine.executeRaw<Counter>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,terminal_bytes::text,recovery_bytes::text FROM persistence_counters ORDER BY key COLLATE "C"`);
   // #6278: the operation and intent kind say which budget applies and tell a sync member from a maintenance write; the owner process comes from the live claim's stamp.
   const blockers = await engine.executeRaw<{ id: string; request_id: string; worktree_id: string | null; source_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null;
     operation: string; intent_kind: string | null; preparation_attempts: number | null } & Omit<ClaimRow, 'state'>>(
@@ -177,10 +177,10 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
     MIN(created_at) AS oldest_request_at,
     MAX(EXTRACT(EPOCH FROM (now()-created_at))*1000)::bigint::text AS oldest_age_ms
-    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') GROUP BY state ORDER BY state`);
+    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') GROUP BY state ORDER BY state COLLATE "C"`);
   const effects = await engine.executeRaw(`SELECT e.kind,e.state,COUNT(*)::integer AS count,MIN(r.created_at) AS oldest_at
     FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-    WHERE e.state<>'committed' AND NOT (e.data ? 'settled') GROUP BY e.kind,e.state ORDER BY e.kind,e.state`);
+    WHERE e.state<>'committed' AND NOT (e.data ? 'settled') GROUP BY e.kind,e.state ORDER BY e.kind COLLATE "C",e.state COLLATE "C"`);
   // #5974: trusted-admin view of database refusals, including owner-only source ids and the executing build.
   const failures = await engine.executeRaw<{ request_id: string; operation: string; source_id: string; state: WriteRequestState;
     error_code: string | null; error_detail: Record<string, unknown>; completed_at: Date | string | null }>(

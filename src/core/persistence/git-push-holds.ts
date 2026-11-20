@@ -42,12 +42,12 @@ export async function readGitPushHolds(engine: BrainEngine, sourceIds?: string[]
          FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
         WHERE e.kind='git' AND e.state IN ('queued','running','failed') AND e.recovery IS NULL AND NOT (e.data ? 'settled')
           AND ($2::text[] IS NULL OR e.source_id=ANY($2::text[])))
-     SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path LIMIT 1) AS root,
+     SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path COLLATE "C" LIMIT 1) AS root,
             NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.source_id=h.source_id AND s.worktree_id=h.worktree_id) AS former_worktree,
             count(*) FILTER (WHERE h.state<>'failed')::int AS retrying, count(*) FILTER (WHERE h.state='failed')::int AS parked,
-            array_agg(DISTINCT h.code ORDER BY h.code) AS codes, min(h.created_at) AS oldest_at
+            array_agg(DISTINCT h.code COLLATE "C" ORDER BY h.code COLLATE "C") AS codes, min(h.created_at) AS oldest_at
        FROM held h WHERE h.code=ANY($1::text[])
-      GROUP BY h.source_id, h.worktree_id ORDER BY h.source_id`, [[...GIT_PUSH_CODES], sourceIds ?? null]);
+      GROUP BY h.source_id, h.worktree_id ORDER BY h.source_id COLLATE "C"`, [[...GIT_PUSH_CODES], sourceIds ?? null]);
   return rows.map(row => {
     const conflict = row.root ? readIntegrateConflict(row.root) : null;
     const hold = { source_id: row.source_id, root: row.root, retrying: Number(row.retrying), parked: Number(row.parked), codes: row.codes,

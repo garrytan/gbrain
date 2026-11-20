@@ -32,7 +32,7 @@ export async function readStalledCatchups(engine: BrainEngine, sourceIds?: strin
             count(*)::int AS busy, min((e.data->>'busy_since')::timestamptz) AS since, COALESCE(max((e.data->>'busy_retries')::int), 0)::int AS retries
        FROM persistence_effects e
       WHERE e.state='queued' AND e.error_code='writer_busy' AND e.data ? 'busy_since' AND ($1::text[] IS NULL OR e.source_id=ANY($1::text[]))
-      GROUP BY e.source_id ORDER BY e.source_id`, [sourceIds ?? null, stallMs]);
+      GROUP BY e.source_id ORDER BY e.source_id COLLATE "C"`, [sourceIds ?? null, stallMs]);
   return rows.filter(row => Number(row.stalled) > 0).map(row => ({
     source_id: row.source_id, stalled_effects: Number(row.stalled), busy_effects: Number(row.busy), busy_since: new Date(row.since).toISOString(),
     busy_retries: Number(row.retries),
