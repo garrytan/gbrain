@@ -22,7 +22,7 @@ import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
 import { currentStatementDeadline, deadlineFailure, StatementDeadlineError } from './statement-deadline.ts';
 
 /** The statement `getConfigValues` runs on PGLite and Postgres (engine-sql/config.ts), for a handle without it. */
-const CONFIG_VALUES_SQL = 'SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key';
+const CONFIG_VALUES_SQL = 'SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE "C"';
 
 export type ConfigReader = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfigValues'>>;
 
