@@ -94,7 +94,7 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	565	yes	yes	yes	serves
+putPage	pages	yes	573	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -180,14 +180,14 @@ listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
 listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
-readReferrerGroupRows	link_temporal	yes	1	no	yes	yes	serves
+readReferrerGroupRows	link_temporal	yes	2	no	yes	yes	serves
 readReferrerPageDetails	link_temporal	yes	1	no	yes	yes	serves
-readReferrerTargetCounts	link_temporal	yes	2	no	yes	yes	serves
+readReferrerTargetCounts	link_temporal	yes	3	no	yes	yes	serves
 listReferrerTargetSources	link_temporal	yes	3	no	yes	yes	serves
-countReferrerRows	link_temporal	yes	4	no	yes	yes	serves
-readReferrerRows	link_temporal	yes	4	no	yes	yes	serves
-readReferrerRecordCandidates	link_temporal	yes	1	no	yes	yes	serves
-readReferrerRecordPages	link_temporal	yes	1	no	yes	yes	serves
+countReferrerRows	link_temporal	yes	5	no	yes	yes	serves
+readReferrerRows	link_temporal	yes	5	no	yes	yes	serves
+readReferrerRecordCandidates	link_temporal	yes	2	no	yes	yes	serves
+readReferrerRecordPages	link_temporal	yes	2	no	yes	yes	serves
 readReferrerTypes	link_temporal	yes	1	no	yes	yes	serves
 countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
 replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
@@ -253,7 +253,7 @@ countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	117	yes	yes	yes	serves
-addLinksBatch	links	yes	21	yes	yes	yes	serves
+addLinksBatch	links	yes	24	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
@@ -346,7 +346,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	62	yes	yes	yes	serves
+insertFact	facts	yes	63	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
@@ -774,7 +774,7 @@ listSegmentedPages	withdrawal_pages	yes	1	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	1	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	15	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	24	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
