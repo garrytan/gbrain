@@ -84,7 +84,7 @@ import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTar
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
-import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
+import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
 import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef, SplitFactsPages } from './engine-sql/repair-fence-scans.ts';
 import type { OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
@@ -1707,6 +1707,8 @@ export interface BrainEngine {
   countLiveFileBackedPages(sourceId: string, opts?: { nonBlank?: boolean }): Promise<number>;
   /** The ghost-pages and legacy-twins page reads of one source, by id (engine-sql/repair-page-scans.ts `RepairScanQuery`). */
   listRepairScanPages(sourceId: string, q: RepairScanQuery): Promise<RepairScanPage[]>;
+  /** Soft-deleted pages of the source recording a non-blank file, below `q.before`, by id descending (uncommitted-deletions). */
+  listFileTombstones(sourceId: string, q: FileTombstoneQuery): Promise<FileTombstone[]>;
   /** What moving twin `twinId` into `survivorId` would land on (engine-sql/repair-page-scans.ts `TwinMergeLosers`). Read-only. */
   listTwinMergeLosers(survivorId: number, twinId: number): Promise<TwinMergeLosers>;
   /** Live inline pages of `sourceIds` with two or more contact rows, by id (contact-rows; engine-sql/repair-fence-scans.ts). */

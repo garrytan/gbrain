@@ -748,6 +748,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLiveOriginPages': OOS.repairBookkeeping,
   'countLiveFileBackedPages': OOS.repairBookkeeping,
   'listRepairScanPages': OOS.repairBookkeeping,
+  'listFileTombstones': OOS.repairBookkeeping,
   'listTwinMergeLosers': OOS.repairBookkeeping,
   'listContactRowPages': OOS.repairBookkeeping, 'listSplitFactsPages': OOS.repairBookkeeping, 'listAtomFenceCandidates': OOS.repairBookkeeping,
   'listPageTruths': OOS.repairBookkeeping,

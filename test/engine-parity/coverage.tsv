@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1088/1094
+# covered: 1089/1095
 # lifecycle: 9/9
 # pages: 62/62
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 15/15
 # wanted_links: 2/2
 # write_misc: 63/69
-# repair_bookkeeping: 47/47
+# repair_bookkeeping: 48/48
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -98,13 +98,13 @@ getPage	pages	yes	136	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	586	yes	yes	yes	serves
+putPage	pages	yes	587	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	171	yes	yes	yes	serves
+softDeletePage	pages	yes	172	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -419,7 +419,7 @@ getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	15	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	16	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
@@ -494,7 +494,7 @@ ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
-readCounterRows	persistence_journal	yes	5	no	yes	yes	serves
+readCounterRows	persistence_journal	yes	6	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	39	no	yes	yes	serves
 insertWriteRequest	persistence_journal	yes	45	no	yes	yes	serves
@@ -957,8 +957,8 @@ writeOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	4	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	11	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	11	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	12	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	13	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
@@ -1046,6 +1046,7 @@ listLegacyOriginPairs	repair_bookkeeping	yes	1	no	yes	yes	serves
 listLiveOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 countLiveFileBackedPages	repair_bookkeeping	yes	2	no	yes	yes	serves
 listRepairScanPages	repair_bookkeeping	yes	5	no	yes	yes	serves
+listFileTombstones	repair_bookkeeping	yes	1	no	yes	yes	serves
 listTwinMergeLosers	repair_bookkeeping	yes	3	no	yes	yes	serves
 listContactRowPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listSplitFactsPages	repair_bookkeeping	yes	1	no	yes	yes	serves

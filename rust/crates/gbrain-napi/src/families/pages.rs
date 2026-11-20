@@ -220,6 +220,20 @@ impl Brain {
         })
     }
 
+    /// `listFileTombstones(sourceId, { before, limit })`: resolves `FileTombstone[]`, the
+    /// soft-deleted pages recording a non-blank file below `before`, by id descending.
+    #[napi]
+    pub fn list_file_tombstones<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_file_tombstones(&source_id, &required(query, "listFileTombstones query")?)
+        })
+    }
+
     /// `listTwinMergeLosers(survivorId, twinId)`: resolves `TwinMergeLosers`, what moving the twin
     /// into the survivor would land on.
     #[napi]
@@ -269,14 +283,25 @@ impl Brain {
         query: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.list_atom_fence_candidates(&source_ids, &required(query, "listAtomFenceCandidates query")?)
+            s.list_atom_fence_candidates(
+                &source_ids,
+                &required(query, "listAtomFenceCandidates query")?,
+            )
         })
     }
 
     /// `listPageTruths(ids)`: resolves `[{ id, body }]` by id, each page's compiled truth.
     #[napi]
-    pub fn list_page_truths<'env>(&self, env: &'env Env, ids: Vec<i64>) -> napi::Result<Object<'env>> {
-        let ids: Vec<u64> = ids.into_iter().filter(|id| *id > 0).map(|id| id as u64).collect();
+    pub fn list_page_truths<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        let ids: Vec<u64> = ids
+            .into_iter()
+            .filter(|id| *id > 0)
+            .map(|id| id as u64)
+            .collect();
         self.run(env, move |s| s.list_page_truths(&ids))
     }
 

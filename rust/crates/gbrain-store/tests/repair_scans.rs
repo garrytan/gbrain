@@ -235,3 +235,61 @@ fn twin_merge_losers_name_each_landing_row() {
         json!({ "links": [], "transitions": [], "timeline": [], "raw_data": [] })
     );
 }
+
+/// listFileTombstones: soft-deleted pages recording a non-blank file, by id descending below
+/// `before`; `by_sync` follows the page's `sync-delete-tombstone` record at its `deleted_at`.
+#[test]
+fn file_tombstones_read_what_the_sql_reads() {
+    let dir = TempDir::new("file-tombstones");
+    let store = open(&dir);
+    let a = put(&store, "a", "markdown", Some("a.md"), json!({}));
+    let b = put(&store, "b", "markdown", Some("b.md"), json!({}));
+    put(&store, "blank", "markdown", Some("  "), json!({}));
+    put(&store, "none", "markdown", None, json!({}));
+    put(&store, "live", "markdown", Some("live.md"), json!({}));
+    for slug in ["a", "b", "blank", "none"] {
+        store.soft_delete_page(slug, None).unwrap();
+    }
+    let read = |before: Option<u64>, limit: u64| {
+        let q = serde_json::from_value(json!({ "before": before, "limit": limit })).unwrap();
+        store.list_file_tombstones("default", &q).unwrap()
+    };
+    let all = read(None, 10);
+    let ids: Vec<u64> = all.iter().map(|t| t.id).collect();
+    assert_eq!(ids, vec![b, a]);
+    assert!(all.iter().all(|t| !t.by_sync));
+    assert_eq!(all[0].source_path, "b.md");
+    assert_eq!(
+        read(Some(b), 10).iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![a]
+    );
+    assert_eq!(read(None, 1).len(), 1);
+    assert!(
+        store
+            .list_file_tombstones(
+                "other",
+                &serde_json::from_value(json!({ "limit": 5 })).unwrap()
+            )
+            .unwrap()
+            .is_empty()
+    );
+
+    // The record arm: a record at the page's deleted_at marks it; one at another time does not.
+    let at = all[1].deleted_at.clone();
+    store
+        .write_op_checkpoint_record(
+            "sync-delete-tombstone",
+            &a.to_string(),
+            Some(&json!([{ "deleted_at": at }])),
+        )
+        .unwrap();
+    store
+        .write_op_checkpoint_record(
+            "sync-delete-tombstone",
+            &b.to_string(),
+            Some(&json!([{ "deleted_at": "2001-01-01T00:00:00+00:00" }])),
+        )
+        .unwrap();
+    let marked: Vec<(u64, bool)> = read(None, 10).iter().map(|t| (t.id, t.by_sync)).collect();
+    assert_eq!(marked, vec![(b, false), (a, true)]);
+}

@@ -265,7 +265,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listOwnedContentRows', 'readContentReceiptBinding', 'readConfigForUpdate',
     'countPageChildOrphans', 'clearPageChildOrphans', 'probeTornPages', 'listAccessReaderDrift', 'countAccessReaderDrift', 'deriveAccessReaders', 'readOriginIndexState', 'listOriginTwinCounts',
     'listAliasTargets', 'deleteOrphanedAliases',
-    'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages', 'listRepairScanPages', 'listTwinMergeLosers',
+    'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages', 'listRepairScanPages', 'listFileTombstones', 'listTwinMergeLosers',
     'listContactRowPages', 'listSplitFactsPages', 'listAtomFenceCandidates', 'listPageTruths',
     'listPagesByOriginPath', 'countSegmentedOriginPages', 'listUntiledSegmentedPages', 'listSourceHoldRecords',
     'requestGitHoldRetry', 'readRepairBusyRows'],

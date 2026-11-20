@@ -2,7 +2,8 @@
 //! plans, and the twin-merge conflict read (`src/core/engine-sql/repair-page-scans.ts`).
 //!
 //! Members: listSafeChunksPending, listOriginTwinGroups, listLegacyOriginPairs,
-//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages, listTwinMergeLosers.
+//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages, listTwinMergeLosers, and
+//! listFileTombstones (the tombstone read of `gbrain repair uncommitted-deletions`).
 //!
 //! Each member reads every page record once and filters it as the SQL's `WHERE` does, so a brain
 //! the store never wrote through its own guards still answers what the SQL engines answer. A
@@ -13,13 +14,16 @@
 use crate::Store;
 use crate::chunks::{SAFE_FENCE_CHUNKER_VERSION, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_text};
+use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::journal::RequestRecord;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::link_queries::link_temporal::{TransitionRecord, all_transitions};
 use crate::links::{LinkRecord, in_links, origin_page_links, out_links};
 use crate::pages::{PageRecord, all_pages};
-use crate::persistence::op_checkpoint_completed_keys;
+use crate::persistence::projection_queue::parse_timestamptz;
+use crate::persistence::{all_requests, extra_bool, op_checkpoint_completed_keys};
 use crate::raw_files::page_raw_rows;
 use crate::timeline::TimelineRecord;
 use serde::{Deserialize, Serialize};
@@ -64,6 +68,33 @@ pub struct LegacyOriginPair {
 pub struct LiveOriginPage {
     pub id: u64,
     pub source_path: String,
+}
+
+/// The `op_checkpoints.op` of a managed sync deletion's tombstone record
+/// (`src/core/persistence/sync-delete-tombstones.ts`).
+const SYNC_DELETE_TOMBSTONE_OP: &str = "sync-delete-tombstone";
+
+/// A soft-deleted page recording a non-blank file (`FileTombstone`): `deleted_at` as ISO 8601,
+/// `by_sync` when a managed sync made its current tombstone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileTombstone {
+    pub id: u64,
+    pub slug: String,
+    pub source_path: String,
+    pub source_uri: Option<String>,
+    pub deleted_at: String,
+    pub revision: String,
+    pub by_sync: bool,
+}
+
+/// `listFileTombstones`'s query: the tombstones below page id `before` (all when `None`), at most
+/// `limit`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FileTombstoneQuery {
+    #[serde(default)]
+    pub before: Option<u64>,
+    #[serde(default)]
+    pub limit: u64,
 }
 
 /// A page the ghost-pages and legacy-twins repairs read (`RepairScanPage`).
@@ -353,6 +384,56 @@ impl Store {
         Ok(pages.into_iter().map(scan_page).collect())
     }
 
+    /// `listFileTombstones(sourceId, q)`: the soft-deleted pages of the source recording a
+    /// non-blank file, below `q.before`, by id descending, at most `q.limit`.
+    pub fn list_file_tombstones(
+        &self,
+        source_id: &str,
+        q: &FileTombstoneQuery,
+    ) -> Result<Vec<FileTombstone>> {
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.source_id == source_id
+                    && p.deleted_at_us.is_some()
+                    && !blank_origin(p)
+                    && q.before.is_none_or(|before| p.id < before)
+            })
+            .collect();
+        pages.sort_by_key(|p| std::cmp::Reverse(p.id));
+        pages.truncate(usize::try_from(q.limit.max(1)).unwrap_or(usize::MAX));
+        let receipts: Vec<RequestRecord> = if pages.is_empty() {
+            Vec::new()
+        } else {
+            all_requests(&*read)?
+                .into_iter()
+                .filter(|r| r.source_id == source_id && sync_delete_receipt(r))
+                .collect()
+        };
+        pages
+            .into_iter()
+            .map(|p| {
+                let deleted_at_us = p.deleted_at_us.unwrap_or_default();
+                let by_sync = tombstone_recorded(&*read, p.id, deleted_at_us)?
+                    || receipts.iter().any(|r| {
+                        r.slug == p.slug
+                            && r.page_id == Some(p.id)
+                            && r.completed_at_us.is_some_and(|at| at >= deleted_at_us)
+                    });
+                Ok(FileTombstone {
+                    id: p.id,
+                    slug: p.slug,
+                    source_path: p.source_path.unwrap_or_default(),
+                    source_uri: p.source_uri,
+                    deleted_at: iso(deleted_at_us),
+                    revision: p.knowledge_revision,
+                    by_sync,
+                })
+            })
+            .collect()
+    }
+
     /// `listTwinMergeLosers(survivorId, twinId)`: what moving the twin into the survivor would land
     /// on (`TwinMergeLosers`). Read-only.
     pub fn list_twin_merge_losers(
@@ -362,6 +443,32 @@ impl Store {
     ) -> Result<TwinMergeLosers> {
         let read = self.read()?;
         twin_merge_losers(&*read, survivor_id, twin_id)
+    }
+}
+
+/// A committed, uncompacted `managed_sync_delete` receipt (`syncDeleteOrigin`'s receipt arm,
+/// less the page match).
+fn sync_delete_receipt(r: &RequestRecord) -> bool {
+    r.state == "committed"
+        && !r.intent.is_null()
+        && !extra_bool(r, "compacted")
+        && r.intent.get("kind").and_then(Value::as_str) == Some("managed_sync_delete")
+}
+
+/// `syncDeleteOrigin`'s record arm: the page's `sync-delete-tombstone` record names its current
+/// `deleted_at`. A record whose `deleted_at` is not a time is refused, as the SQL's cast refuses it.
+fn tombstone_recorded(read: &dyn KvRead, page_id: u64, deleted_at_us: i64) -> Result<bool> {
+    let Some(keys) =
+        op_checkpoint_completed_keys(read, SYNC_DELETE_TOMBSTONE_OP, &page_id.to_string())?
+    else {
+        return Ok(false);
+    };
+    match keys.get(0).and_then(|k| k.get("deleted_at")) {
+        None | Some(Value::Null) => Ok(false),
+        Some(at) => {
+            let text = at.as_str().map_or_else(|| jsonb_text(at), str::to_string);
+            Ok(parse_timestamptz(&text, "sync-delete-tombstone deleted_at")? == deleted_at_us)
+        }
     }
 }
 

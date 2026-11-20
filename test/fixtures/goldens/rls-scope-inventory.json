@@ -7049,6 +7049,7 @@
         "listFenceHoldRows": "none",
         "listFenceRetireCandidates": "none",
         "listFenceRowGroups": "none",
+        "listFileTombstones": "none",
         "listFiles": "none",
         "listFilesForPage": "none",
         "listForcedCutSeqs": "none",

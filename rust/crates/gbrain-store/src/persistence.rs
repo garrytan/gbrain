@@ -259,7 +259,7 @@ fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
     record.extra.get(column).is_none_or(Value::is_null)
 }
 
-fn extra_bool(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_bool(record: &RequestRecord, column: &str) -> bool {
     record
         .extra
         .get(column)

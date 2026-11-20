@@ -1,13 +1,15 @@
 /**
  * The page scans of the `safe-chunks`, `origin-twins`, `ghost-pages` and `legacy-twins` repair plans, moved here from
  * their repair modules (and ghost-pages.ts), and the twin-merge conflict read (from persistence/twin-merge.ts), so the
- * Rust engine can serve them as typed members. PGLite and Postgres read unscoped through
+ * Rust engine can serve them as typed members, and the tombstone read of `gbrain repair uncommitted-deletions` (from
+ * uncommitted-deletions.ts). PGLite and Postgres read unscoped through
  * executeRaw, as before. The Rust engine scans its page records (rust/crates/gbrain-store/src/repair_scans.rs;
  * rust/docs/store/repair-bookkeeping.md, "Repair page scans").
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { CREDENTIAL_RESEAL_HELD } from '../page-state/credential-reseal-hold.ts';
+import { syncDeleteOrigin } from '../persistence/sync-delete-tombstones.ts';
 
 /** One page `gbrain repair safe-chunks` re-seals (`rebuildable`) or reports. */
 export interface SafeChunksPendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number }
@@ -46,6 +48,15 @@ export interface TwinMergeLosers {
   timeline: Array<{ id: number }>;
   raw_data: Array<{ source: string }>;
 }
+
+/**
+ * A soft-deleted page of one source that records a non-blank file: `deleted_at` as ISO 8601 (milliseconds), `by_sync`
+ * when a managed sync made its current tombstone (persistence/sync-delete-tombstones.ts `syncDeleteOrigin`).
+ */
+export interface FileTombstone { id: number; slug: string; source_path: string; source_uri: string | null; deleted_at: string; revision: string; by_sync: boolean }
+
+/** Which tombstones `listFileTombstones` reads: those below page id `before` (all when null), descending, at most `limit`. */
+export interface FileTombstoneQuery { before: number | null; limit: number }
 
 const BLANK_ORIGIN = `COALESCE(btrim(source_path), '')=''`;
 
@@ -95,6 +106,14 @@ export async function listLiveOriginPages(exec: LegacyUnscopedRead, sourceId: st
   const rows = await exec.executeRaw<LiveOriginPage>('SELECT id, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) ORDER BY id',
     [sourceId, [...paths]]);
   return rows.map(row => ({ id: Number(row.id), source_path: row.source_path }));
+}
+
+/** The soft-deleted pages of the source recording a non-blank file, below `q.before`, by id descending. */
+export async function listFileTombstones(exec: LegacyUnscopedRead, sourceId: string, q: FileTombstoneQuery): Promise<FileTombstone[]> {
+  const rows = await exec.executeRaw<Omit<FileTombstone, 'deleted_at'> & { deleted_at: Date | string }>(`SELECT p.id, p.slug, p.source_path, p.source_uri, p.deleted_at, p.knowledge_revision::text AS revision, ${syncDeleteOrigin('p')} AS by_sync
+    FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NOT NULL AND NULLIF(btrim(p.source_path), '') IS NOT NULL AND ($2::bigint IS NULL OR p.id < $2::bigint)
+    ORDER BY p.id DESC LIMIT ${Math.max(1, Math.floor(q.limit))}`, [sourceId, q.before ?? null]);
+  return rows.map(row => ({ ...row, id: Number(row.id), source_uri: row.source_uri ?? null, deleted_at: new Date(row.deleted_at).toISOString(), by_sync: row.by_sync === true }));
 }
 
 /** The live pages of the source that record an origin; `nonBlank` skips a blank one. */

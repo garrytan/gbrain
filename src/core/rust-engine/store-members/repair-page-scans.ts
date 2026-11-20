@@ -3,7 +3,7 @@
  * listTwinMergeLosers, the statements of engine-sql/repair-page-scans.ts). The store scans its page records as the
  * SQL filters its rows (rust/crates/gbrain-store/src/repair_scans.rs).
  */
-import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from '../../engine-sql/repair-page-scans.ts';
+import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from '../../engine-sql/repair-page-scans.ts';
 import { CREDENTIAL_RESEAL_PRODUCER } from '../../page-state/credential-reseal-hold.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -30,6 +30,12 @@ export const listRepairScanPages: StoreMember<[sourceId: string, q: RepairScanQu
     ids: 'ids' in q ? q.ids.map(Number) : null, slugs: 'slugs' in q ? [...q.slugs] : null,
     after_id: 'afterId' in q ? Math.max(0, Math.floor(q.afterId)) : 0, limit: 'afterId' in q ? cap(q.limit) : 0, legacy: 'afterId' in q && q.legacy === true,
   })) as RepairScanPage[];
+
+/** The store reads `deleted_at` as microseconds; the SQL engines' Date keeps milliseconds, so it is cut the same way. */
+export const listFileTombstones: StoreMember<[sourceId: string, q: FileTombstoneQuery], FileTombstone[]> = async (brain, sourceId, q) =>
+  (await storeCall({ member: 'listFileTombstones', sourceId }, () => brain.listFileTombstones(sourceId, {
+    before: q.before === null ? null : Math.floor(q.before), limit: cap(q.limit),
+  })) as FileTombstone[]).map(row => ({ ...row, deleted_at: new Date(row.deleted_at).toISOString() }));
 
 /** The twin-merge conflict read: the store reads the pair's links, link transitions, timeline and raw data. */
 export const listTwinMergeLosers: StoreMember<[survivorId: number, twinId: number], TwinMergeLosers> = async (brain, survivorId, twinId) => {

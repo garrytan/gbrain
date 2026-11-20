@@ -142,6 +142,10 @@ describe('engine parity: the repair runner', () => {
       .then(shape, (e: { code?: string }) => ({ refused: e.code ?? String(e) }));
     return { preview: shape(preview), applied };
   });
+  // The Rust store keeps no SQL indexes, so every online-built request index reads as built there (batch 8).
+  parityTest('gbrain repair request-indexes finds every request index built and applies nothing', {
+    methods: ['readOpCheckpointRecord', 'writeOpCheckpointRecord', 'readPersistenceBrainId', 'readCounterRows'], timeout: 60_000,
+  }, previewThenApply('request-indexes'));
   for (const kind of B1_KINDS) {
     if (REFUSED_APPLY.has(kind)) {
       parityTest(`gbrain repair ${kind} previews, and its apply refuses with the same code`, {

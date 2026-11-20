@@ -244,6 +244,7 @@ export const RUST_ENGINE_MEMBERS = {
   listLiveOriginPages: 'pages',
   countLiveFileBackedPages: 'pages',
   listRepairScanPages: 'pages',
+  listFileTombstones: 'pages',
   listTwinMergeLosers: 'pages',
   listContactRowPages: 'pages',
   listSplitFactsPages: 'pages',

@@ -13,7 +13,8 @@
  *    `countLiveFileBackedPages({ nonBlank })` now answer each of their query shapes (a page after an id, a legacy page
  *    with no origin, live file pages by slug, pages in any state by id). Merging a twin read what it would land on
  *    (links, link transitions, timeline entries and raw data already on the survivor) through `executeRaw` as well;
- *    `listTwinMergeLosers` answers it.
+ *    `listTwinMergeLosers` answers it. The uncommitted-deletions scan read its tombstones (and whether a managed sync
+ *    made each one) through `executeRaw` too; `listFileTombstones` answers it, by id descending below a page id.
  *  - Why existing coverage misses it: test/repair-safe-chunks*.test.ts and test/origin-twins*.test.ts run on PGLite
  *    or Postgres only.
  *  - Seam: none. The safe-chunks apply re-seals chunks, a write that moves in batch 6, so this case previews it only.
@@ -161,6 +162,33 @@ describe('engine parity: repair page scans', () => {
       timeline: losers.timeline.map(r => typeof r.id),
       raw_data: losers.raw_data,
       noPair: await engine.listTwinMergeLosers(ids[s]!, 999_999),
+    };
+  }));
+
+  parityTest('uncommitted-deletions reads the same file tombstones on every engine', {
+    methods: ['putPage', 'softDeletePage', 'writeOpCheckpointRecord', 'listFileTombstones'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    await put(engine, 'notes/a-example', 'markdown', 'notes/a-example.md');
+    await put(engine, 'notes/b-example', 'markdown', 'notes/b-example.md');
+    await put(engine, 'notes/blank-example', 'markdown', '  ');
+    await put(engine, 'notes/none-example', 'markdown');
+    await put(engine, 'notes/live-example', 'markdown', 'notes/live-example.md');
+    for (const slug of ['notes/a-example', 'notes/b-example', 'notes/blank-example', 'notes/none-example']) {
+      await engine.softDeletePage(slug, { sourceId: 'default' });
+    }
+    const all = await engine.listFileTombstones('default', { before: null, limit: 10 });
+    // A tombstone record at another time than the page's deleted_at does not mark it as a sync deletion.
+    await engine.writeOpCheckpointRecord('sync-delete-tombstone', String(all[0]!.id), [{ deleted_at: '2001-01-01T00:00:00+00:00' }]);
+    const row = (r: (typeof all)[number]) => ({ ...r, id: typeof r.id, revision: typeof r.revision, deleted_at: typeof r.deleted_at });
+    return {
+      all: (await engine.listFileTombstones('default', { before: null, limit: 10 })).map(row),
+      descending: all.every((r, i) => i === 0 || all[i - 1]!.id > r.id),
+      isoMs: all.every(r => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(r.deleted_at)),
+      below: (await engine.listFileTombstones('default', { before: all[0]!.id, limit: 10 })).map(r => r.slug),
+      capped: (await engine.listFileTombstones('default', { before: null, limit: 1 })).map(r => r.slug),
+      otherSource: await engine.listFileTombstones('other-example', { before: null, limit: 10 }),
+      preview: shape(await preview(engine, 'uncommitted-deletions')),
     };
   }));
 });
