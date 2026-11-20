@@ -21,7 +21,7 @@ All five members are reported under the capability of their family: `persistence
 
 Differences from the SQL engines:
 
-- The store keeps no source commit, archive dates, contextual retrieval mode or frontmatter-trust flag. A migrated source gets `last_commit`, `archived_at`, `archive_expires_at` and `contextual_retrieval_mode` null and `trust_frontmatter_overrides` false, as a fresh source row has them. A source with no name takes its id as its name.
+- The store keeps no source commit, archive dates or frontmatter-trust flag. A migrated source gets `last_commit`, `archived_at` and `archive_expires_at` null and `trust_frontmatter_overrides` false, as a fresh source row has them. Its `contextual_retrieval_mode` is the stored override, read through `getSource`. A source with no name takes its id as its name.
 - The store keeps no loop suppressions, so none migrate.
 - The store records no belief events and no persistence worktrees, so `held` never names `belief_events` or `persistence_worktrees`.
 - A plain `putPage` writes no write request and no page version on the store, so a brain written only through page writes migrates. `createVersion` writes a version, and the migration then refuses with the page-history message, as on PGLite.

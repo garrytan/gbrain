@@ -161,6 +161,7 @@ export const RUST_ENGINE_MEMBERS = {
   getSourceStrictness: 'sources',
   listAllSources: 'sources',
   updateSourceConfig: 'sources',
+  setSourceContextualRetrievalMode: 'sources',
   readSourceState: 'sources',
   readAdmissionSource: 'sources',
   attachSourcePath: 'sources',

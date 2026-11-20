@@ -121,6 +121,12 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
+/** Sets the source's contextual-retrieval override, or clears it with null. Returns false, changing nothing, for an unknown source. */
+export async function setSourceContextualRetrievalMode(exec: SqlExecutor, sourceId: string, mode: string | null): Promise<boolean> {
+  const rows = await exec.executeRaw<{ id: string }>('UPDATE sources SET contextual_retrieval_mode = $1 WHERE id = $2 RETURNING id', [mode, sourceId]);
+  return rows.length > 0;
+}
+
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.

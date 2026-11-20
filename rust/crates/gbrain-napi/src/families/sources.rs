@@ -63,6 +63,20 @@ impl Brain {
         self.run(env, move |s| s.set_source_archived(&id, archived))
     }
 
+    /// `setSourceContextualRetrievalMode(id, mode)`: sets or (with `null`) clears the source's
+    /// contextual-retrieval override; whether the source exists.
+    #[napi]
+    pub fn set_source_contextual_retrieval_mode<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        mode: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_source_contextual_retrieval_mode(&id, mode.as_deref())
+        })
+    }
+
     /// `getSource(id)`: the `SourceDetailRow` or `null`.
     #[napi]
     pub fn get_source<'env>(&self, env: &'env Env, id: String) -> napi::Result<Object<'env>> {

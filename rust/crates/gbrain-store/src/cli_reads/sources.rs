@@ -233,6 +233,7 @@ impl Store {
                 archived: false,
                 created_at_us: self.env.now_micros(),
                 chunker_version: None,
+                contextual_retrieval_mode: None,
             };
             put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
             Ok(SourceRow::from(record))

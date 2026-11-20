@@ -21,13 +21,18 @@ const LOOP_SUPPRESSION_COLUMNS = ['id', 'source_id', 'kind', 'value', 'created_a
 export const readMigrationRows: StoreMember<[table: MigrationTable], MigrationRows | null> = async (brain, table) => {
   if (table === 'loop_suppressions') return { columns: [...LOOP_SUPPRESSION_COLUMNS], rows: [] };
   if (table === 'sources') {
-    // `default` first, then by id, as the store lists them. The store keeps no commit, archive-date, retrieval-mode or
-    // frontmatter-trust columns: each reads as a fresh source row has it.
+    // `default` first, then by id, as the store lists them. The store keeps no commit, archive-date or
+    // frontmatter-trust columns: each reads as a fresh source row has it. The retrieval mode comes from `getSource`.
     const sources: SourceRecordRow[] = await storeCall({ member: 'readMigrationRows' }, () => brain.listSourceRecords());
+    const modes = new Map<string, string | null>();
+    for (const s of sources) {
+      const detail = await storeCall({ member: 'readMigrationRows' }, () => brain.getSource(s.id)) as { contextual_retrieval_mode?: string | null } | null;
+      modes.set(s.id, detail?.contextual_retrieval_mode ?? null);
+    }
     const rows = sources.map(s => ({
       id: s.id, name: s.name ?? s.id, local_path: s.local_path ?? null, last_commit: s.last_commit ?? null,
       last_sync_at: s.last_sync_at ?? null, config_json: typeof s.config === 'string' ? s.config : JSON.stringify(s.config ?? {}),
-      archived: s.archived ?? false, archived_at: null, archive_expires_at: null, contextual_retrieval_mode: null,
+      archived: s.archived ?? false, archived_at: null, archive_expires_at: null, contextual_retrieval_mode: modes.get(s.id) ?? null,
       trust_frontmatter_overrides: false, newest_content_at: s.newest_content_at ?? null, created_at: s.created_at,
     }));
     return { columns: [...MIGRATION_SOURCE_COLUMNS], rows };

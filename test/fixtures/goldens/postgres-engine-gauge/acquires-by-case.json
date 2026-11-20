@@ -446,6 +446,12 @@
     "setSourceChunkerVersion#default": {
       "raw": 1
     },
+    "setSourceContextualRetrievalMode#clear": {
+      "raw": 1
+    },
+    "setSourceContextualRetrievalMode#set": {
+      "raw": 1
+    },
     "softDeletePage#default": {},
     "softDeletePage#sourceId": {},
     "softDeletePages#default": {},
