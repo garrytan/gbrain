@@ -150,6 +150,8 @@ export const RUST_ENGINE_MEMBERS = {
   countRecentChronicleReservations: 'telemetry',
   insertConfigIfAbsent: 'config',
   readPageTruthLead: 'pages',
+  readStoredPageHead: 'pages',
+  readVersionSourcePath: 'pages',
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',

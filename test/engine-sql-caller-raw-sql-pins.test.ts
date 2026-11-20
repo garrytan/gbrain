@@ -1277,6 +1277,16 @@ const PINS: Pin[] = [
     from: 'src/core/chronicle/ledger.ts:201 recordChronicleDecision (the truth-lead read), at ac7d551949',
     case: { method: 'readPageTruthLead', variant: 'default', run: e => e.readPageTruthLead(1) },
     texts: ['SELECT truth_lead FROM pages WHERE id=$1'],
+  },  // The reads a page write makes before admission (engine-sql/page-mutation-reads.ts), from page-mutations.ts at e4420913f5.
+  {
+    from: 'src/core/persistence/page-mutations.ts:350 unquotedPutContent, at e4420913f5',
+    case: { method: 'readStoredPageHead', variant: 'default', run: e => e.readStoredPageHead('default', 'notes/a') },
+    texts: ['SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2'],
+  },
+  {
+    from: 'src/core/persistence/page-mutations.ts:585 preparePageAdmission (a revert\'s version file), at e4420913f5',
+    case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
+    texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
   },
 ];
 

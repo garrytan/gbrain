@@ -87,6 +87,7 @@ import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
+import type { StoredPageHead } from './engine-sql/page-mutation-reads.ts';
 import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1642,6 +1643,10 @@ export interface BrainEngine {
   insertConfigIfAbsent(key: string, value: string): Promise<void>;
   /** The stored `truth_lead` of a page by id (a segmented page's body prefix), or null. */
   readPageTruthLead(pageId: number): Promise<string | null>;
+  /** The stored type, tier, title and frontmatter of a page by source and slug, soft-deleted too, or null. */
+  readStoredPageHead(sourceId: string, slug: string): Promise<StoredPageHead | null>;
+  /** A version's `source_path` when the version belongs to `pageId`, or null. */
+  readVersionSourcePath(versionId: number, pageId: number): Promise<string | null>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;

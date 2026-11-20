@@ -168,6 +168,7 @@ import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as chronicleLedger from './engine-sql/chronicle-ledger.ts';
+import * as pageMutationReads from './engine-sql/page-mutation-reads.ts';
 import * as worktreeClaimImpl from './engine-sql/worktree-claim.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import * as writerAdminImpl from './engine-sql/writer-admin.ts';
@@ -1722,6 +1723,8 @@ export class PostgresEngine implements BrainEngine {
   async countRecentChronicleReservations() { return chronicleLedger.countRecentChronicleReservations(this); }
   async insertConfigIfAbsent(key: string, value: string) { return chronicleLedger.insertConfigIfAbsent(this, key, value); }
   async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
+  async readStoredPageHead(sourceId: string, slug: string) { return pageMutationReads.readStoredPageHead(this, sourceId, slug); }
+  async readVersionSourcePath(versionId: number, pageId: number) { return pageMutationReads.readVersionSourcePath(this, versionId, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
   listAccessTokens() { return writeMiscImpl.listAccessTokens(this.writeMiscReads); }

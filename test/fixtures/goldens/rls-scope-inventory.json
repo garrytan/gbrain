@@ -5097,6 +5097,17 @@
         ],
         "flagOnScopes": []
       },
+      "readStoredPageHead#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readTopologyChange#default": {
         "flagOffLanes": [
           "pool"
@@ -5120,6 +5131,17 @@
         "flagOnScopes": []
       },
       "readUnfinishedAccessMigration#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readVersionSourcePath#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7449,6 +7471,7 @@
         "readSourceState": "none",
         "readSourceWriteRow": "none",
         "readStoredBodyBytes": "none",
+        "readStoredPageHead": "none",
         "readStoredPageTier": "none",
         "readSyncConversionRows": "none",
         "readSyncDispatchRow": "none",
@@ -7465,6 +7488,7 @@
         "readUnembeddedPageSummary": "none",
         "readUnfinishedAccessMigration": "none",
         "readVersionAttributions": "none",
+        "readVersionSourcePath": "none",
         "readVoiceGateHealth": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",

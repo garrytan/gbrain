@@ -840,6 +840,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'countRecentChronicleReservations': OOS.callerRawSql,
   'insertConfigIfAbsent': OOS.callerRawSql,
   'readPageTruthLead': OOS.callerRawSql,
+  // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
+  'readStoredPageHead': OOS.callerRawSql,
+  'readVersionSourcePath': OOS.callerRawSql,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,
   'listAccessTokens': OOS.writeMisc,
@@ -1896,4 +1899,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('countRecentChronicleReservations', [['default', (e) => e.countRecentChronicleReservations()]]),
   ...variants('insertConfigIfAbsent', [['default', (e) => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z')]]),
   ...variants('readPageTruthLead', [['default', (e) => e.readPageTruthLead(1)]]),
+  // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
+  ...variants('readStoredPageHead', [['default', (e) => e.readStoredPageHead('default', 'notes/a')]]),
+  ...variants('readVersionSourcePath', [['default', (e) => e.readVersionSourcePath(1, 1)]]),
 ];

@@ -69,6 +69,7 @@ pub mod memory_mutation_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
+pub mod page_mutation_reads;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1027/1033
+# covered: 1029/1035
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 73/79
+# write_misc: 75/81
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -90,17 +90,17 @@ transaction	lifecycle	yes	122	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	135	yes	yes	yes	serves
+getPage	pages	yes	137	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	567	yes	yes	yes	serves
+putPage	pages	yes	569	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	163	yes	yes	yes	serves
+softDeletePage	pages	yes	164	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -378,7 +378,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	31	no	yes	yes	serves
+createVersion	versions	yes	33	no	yes	yes	serves
 getVersions	versions	yes	18	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -824,7 +824,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 readSourceWriteRow	memory_mutation_reads	yes	1	no	yes	yes	serves
-readSourceLocalPath	memory_mutation_reads	yes	1	no	yes	yes	serves
+readSourceLocalPath	memory_mutation_reads	yes	3	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves
 hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	1	no	yes	yes	serves
@@ -928,7 +928,7 @@ readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	6	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	7	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	15	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
@@ -942,6 +942,8 @@ hasPendingAutoChronicleRow	write_misc	yes	1	no	yes	yes	serves
 countRecentChronicleReservations	write_misc	yes	1	no	yes	yes	serves
 insertConfigIfAbsent	write_misc	yes	1	no	yes	yes	serves
 readPageTruthLead	write_misc	yes	2	no	yes	yes	serves
+readStoredPageHead	write_misc	yes	2	no	yes	yes	serves
+readVersionSourcePath	write_misc	yes	2	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	2	no	yes	yes	serves
