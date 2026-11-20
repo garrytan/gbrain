@@ -838,11 +838,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
       const cols = await preflightOauthClientColumns(tx);
       if (cols.has('source_id')) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
-        const rows = await tx.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM oauth_clients WHERE source_id = $1`,
-          [id],
-        );
-        if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
+        if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
     });

@@ -51,9 +51,10 @@ function failingFirstSourceDelete(engine: BrainEngine, error: unknown): BrainEng
   let thrown = false;
   return new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => {
-        if (!thrown && sql.includes('DELETE FROM sources')) { thrown = true; return Promise.reject(error); }
-        return target.executeRaw(sql, params);
+      // The source row's delete is the typed `deleteSourceRecord` member.
+      if (prop === 'deleteSourceRecord') return (...args: Parameters<BrainEngine['deleteSourceRecord']>) => {
+        if (!thrown) { thrown = true; return Promise.reject(error); }
+        return target.deleteSourceRecord(...args);
       };
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;

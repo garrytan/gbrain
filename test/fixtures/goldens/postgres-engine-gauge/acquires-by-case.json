@@ -72,6 +72,8 @@
     "deleteFactsForPage#excludeSourcePrefixes+preserveExpiredLegacy": {},
     "deletePage#default": {},
     "deletePages#default": {},
+    "deleteSourceRecord#default": {},
+    "deleteSourceRecord#expiredArchiveOnly": {},
     "discoverOntologyDimensions#default": {},
     "discoverOntologyDimensions#sourceIds": {},
     "expireFact#default": {},
@@ -360,6 +362,7 @@
     "readSourceChunkerVersion#default": {
       "raw": 1
     },
+    "readSourceDeleteImpact#default": {},
     "readSourceRow#default": {
       "raw": 1
     },

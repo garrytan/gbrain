@@ -130,6 +130,8 @@ export const RUST_ENGINE_MEMBERS = {
   lockSourceRow: 'sources',
   countSourcePages: 'sources',
   insertSource: 'sources',
+  deleteSourceRecord: 'sources',
+  readSourceDeleteImpact: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',

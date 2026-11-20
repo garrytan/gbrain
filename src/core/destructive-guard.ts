@@ -90,44 +90,26 @@ export const CONFIRM_THRESHOLD_PAGES = 1;
  * (ON DELETE RESTRICT — these rows BLOCK a hard delete of the source).
  * PHYSICAL semantics: soft-deleted rows (admin revoke does UPDATE SET
  * deleted_at) still hold the FK, so they are returned too, tagged
- * `deleted: true`, and the guidance splits per row. Pre-migration brains
- * without the deleted_at column fall back to all referents (same
- * 42703-retry idiom as oauth-provider.ts) tagged live; brains without
- * the oauth_clients table — or without the source_id column (no column
- * ⇒ no FK ⇒ no referents) — have no referents by construction.
+ * `deleted: true`, and the guidance splits per row, by client_id in byte
+ * order. Pre-migration brains without the deleted_at column tag every
+ * referent live; brains without the oauth_clients table — or without the
+ * source_id column (no column ⇒ no FK ⇒ no referents) — have no referents
+ * by construction.
  */
 export async function clientsReferencingSource(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<SourceClientReferent[]> {
   try {
-    const rows = await engine.executeRaw<{ client_id: string; client_name: string; deleted: boolean }>(
-      `SELECT client_id, client_name, (deleted_at IS NOT NULL) AS deleted
-       FROM oauth_clients
-       WHERE source_id = $1
-       ORDER BY client_id`,
-      [sourceId],
-    );
-    return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: r.deleted === true }));
+    // `listOauthClients` reads the whole row: a brain without `source_id` has no referents, one without `deleted_at`
+    // reads every client as live.
+    return (await engine.listOauthClients())
+      .filter((c) => c.source_id === sourceId)
+      .sort((x, y) => (x.client_id < y.client_id ? -1 : x.client_id > y.client_id ? 1 : 0))
+      .map((c) => ({ clientId: c.client_id, clientName: c.client_name, deleted: c.deleted_at != null }));
   } catch (e) {
     if (isMissingSchemaObject(e, 'table', 'oauth_clients')) return [];
-    // The primary query references BOTH optional columns; the strict
-    // predicate tells them apart by the column the error names.
-    if (isMissingSchemaObject(e, 'column', 'source_id')) return [];
-    if (!isMissingSchemaObject(e, 'column', 'deleted_at')) throw e;
-    try {
-      const rows = await engine.executeRaw<{ client_id: string; client_name: string }>(
-        `SELECT client_id, client_name FROM oauth_clients
-         WHERE source_id = $1
-         ORDER BY client_id`,
-        [sourceId],
-      );
-      return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: false }));
-    } catch (e2) {
-      // The fallback's only optional column is source_id — no column ⇒ no FK.
-      if (isMissingSchemaObject(e2, 'column', 'source_id')) return [];
-      throw e2;
-    }
+    throw e;
   }
 }
 
@@ -179,72 +161,10 @@ export async function assessDestructiveImpact(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<DestructiveImpact | null> {
-  // Fetch source metadata
-  const sources = await engine.executeRaw<{ id: string; name: string }>(
-    `SELECT id, name FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  if (sources.length === 0) return null;
-
-  const src = sources[0];
-
-  // Count pages
-  const pageRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
-    [sourceId],
-  );
-  const pageCount = pageRows[0]?.n ?? 0;
-
-  // Count chunks
-  const chunkRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM content_chunks cc
-     JOIN pages p ON cc.page_id = p.id
-     WHERE p.source_id = $1`,
-    [sourceId],
-  );
-  const chunkCount = chunkRows[0]?.n ?? 0;
-
-  // Count embeddings (chunks with non-null embedding vectors)
-  const embedRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM content_chunks cc
-     JOIN pages p ON cc.page_id = p.id
-     WHERE p.source_id = $1 AND cc.embedding IS NOT NULL`,
-    [sourceId],
-  );
-  const embeddingCount = embedRows[0]?.n ?? 0;
-
-  // Count files in storage (if any). PGLite has no `files` table — that
-  // surface is Postgres-only (CLAUDE.md: "No files table" for PGLite). Probe
-  // the table existence via information_schema so this works on both engines.
-  let fileCount = 0;
-  const filesTableRows = await engine.executeRaw<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name = 'files'
-     ) AS exists`,
-  );
-  if (filesTableRows[0]?.exists) {
-    const fileRows = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM files WHERE source_id = $1`,
-      [sourceId],
-    );
-    fileCount = fileRows[0]?.n ?? 0;
-  }
-
-  // cathedral-6: count hot-memory facts. A revoked agent's workspace can
-  // hold facts with zero pages — those are data at risk, not "no data".
-  // Tolerant of a pre-v0.31 brain without the facts table (same degrade
-  // posture as clientsReferencingSource).
-  let factCount = 0;
-  try {
-    const factRows = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1`,
-      [sourceId],
-    );
-    factCount = factRows[0]?.n ?? 0;
-  } catch (e) {
-    if (!isMissingSchemaObject(e, 'table', 'facts')) throw e;
-  }
+  const counts = await engine.readSourceDeleteImpact(sourceId);
+  if (!counts) return null;
+  const src = { name: counts.name };
+  const { pages: pageCount, chunks: chunkCount, embeddings: embeddingCount, files: fileCount, facts: factCount } = counts;
 
   // PR6 D5b: fold the FK-RESTRICT referent count into the preview so the
   // operator sees the block BEFORE pulling the trigger.

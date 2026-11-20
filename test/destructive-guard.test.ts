@@ -479,24 +479,24 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     // The sweep reads candidates, then deletes one row at a time. Reproduce a
     // stamp flip landing in between: the moment the first DELETE arrives, both
     // rows' stamps degrade to the refusal set — the DELETE itself must refuse.
-    const orig = engine.executeRaw.bind(engine);
+    const orig = engine.deleteSourceRecord.bind(engine);
     let flipped = false;
-    engine.executeRaw = (async (sql: string, params?: unknown[]) => {
-      if (!flipped && typeof sql === 'string' && sql.includes('DELETE FROM sources')) {
+    engine.deleteSourceRecord = (async (id: string, opts?: { expiredArchiveOnly?: boolean }) => {
+      if (!flipped) {
         flipped = true;
-        await orig(
+        await engine.executeRaw(
           `UPDATE sources SET archive_expires_at = '1970-01-01T00:00:00Z' WHERE id = $1`,
           [flipExpiryId],
         );
-        await orig(`UPDATE sources SET archived_at = NULL WHERE id = $1`, [flipArchId]);
+        await engine.executeRaw(`UPDATE sources SET archived_at = NULL WHERE id = $1`, [flipArchId]);
       }
-      return orig(sql, params);
-    }) as typeof engine.executeRaw;
+      return orig(id, opts);
+    }) as typeof engine.deleteSourceRecord;
     let purged: string[] = [];
     try {
       ({ purged } = await purgeExpiredSources(engine));
     } finally {
-      engine.executeRaw = orig;
+      engine.deleteSourceRecord = orig;
     }
     expect(flipped).toBe(true);
     expect(purged).not.toContain(flipExpiryId);
@@ -566,6 +566,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       if (sql.trimStart().startsWith('SELECT')) return [{ id: 'boom' }];
       throw Object.assign(new Error(message), { code }); // NOT the FK class
     },
+    deleteSourceRecord: async () => { throw Object.assign(new Error(message), { code }); }, // NOT the FK class
     readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
   }) as never;
 
@@ -584,8 +585,9 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
         if (sql.includes('archive_expires_at IS NULL')) return []; // #5452 unverified-archive listing: none here
         if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never]; // #6482: one well-formed unmanaged row
         if (sql.trimStart().startsWith('SELECT')) return [{ id: 'restored-mid-sweep' }];
-        return []; // per-id DELETE re-checks the expiry predicate → 0 rows
+        return [];
       },
+      deleteSourceRecord: async () => ({ deleted: false, stranded: 0 }), // the per-id DELETE re-checks the expiry predicate
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
@@ -754,22 +756,17 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     // Pre-oauth brain: no oauth_clients table at all → no referents by
     // construction (isUndefinedTableError arm).
     const noTable = {
-      executeRaw: async () => {
+      listOauthClients: async () => {
         throw Object.assign(new Error('relation "oauth_clients" does not exist'), { code: '42P01' });
       },
     } as any;
     expect(await clientsReferencingSource(noTable, 'x')).toEqual([]);
 
-    // Pre-migration brain: deleted_at column missing → falls back to ALL
-    // referents (the 42703-retry idiom), tagged live (deleted:false — the
-    // column that would say otherwise doesn't exist).
+    // Pre-migration brain: listOauthClients reads the whole row, which has no
+    // deleted_at → every referent, tagged live (deleted:false — the column
+    // that would say otherwise doesn't exist).
     const noColumn = {
-      executeRaw: async (sql: string) => {
-        if (sql.includes('deleted_at')) {
-          throw Object.assign(new Error('column "deleted_at" does not exist'), { code: '42703' });
-        }
-        return [{ client_id: 'c1', client_name: 'n1' }];
-      },
+      listOauthClients: async () => [{ client_id: 'c1', client_name: 'n1', source_id: 'x' }, { client_id: 'c0', client_name: 'n0', source_id: 'y' }],
     } as any;
     expect(await clientsReferencingSource(noColumn, 'x')).toEqual([
       { clientId: 'c1', clientName: 'n1', deleted: false },
@@ -778,7 +775,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     // Anything else (e.g. a dropped connection) must PROPAGATE — a swallowed
     // error here would let a hard delete proceed past live referents.
     const broken = {
-      executeRaw: async () => { throw new Error('connection reset'); },
+      listOauthClients: async () => { throw new Error('connection reset'); },
     } as any;
     await expect(clientsReferencingSource(broken, 'x')).rejects.toThrow('connection reset');
   });
@@ -786,9 +783,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
   test('missing source_id column → [] (no column ⇒ no FK ⇒ no referents)', async () => {
     // Pre-v61 brain: oauth_clients exists but has no source_id column at all.
     const noSourceId = {
-      executeRaw: async () => {
-        throw Object.assign(new Error('column "source_id" does not exist'), { code: '42703' });
-      },
+      listOauthClients: async () => [{ client_id: 'c1', client_name: 'n1' }],
     } as any;
     expect(await clientsReferencingSource(noSourceId, 'x')).toEqual([]);
 
@@ -892,8 +887,9 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
         if (sql.trimStart().startsWith('SELECT')) {
           return [{ id, config: { kind: 'github', gh_managed: true }, local_path: localPath }];
         }
-        return [{ id }];
+        return [];
       },
+      deleteSourceRecord: async () => ({ deleted: true, stranded: 0 }),
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     } as never;
   }

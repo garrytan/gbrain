@@ -202,7 +202,7 @@ src/commands/sources-strategy.ts	execute_raw	3
 src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
-src/commands/sources.ts	execute_raw	13
+src/commands/sources.ts	execute_raw	12
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
 src/commands/sync/full.ts	execute_raw	2
@@ -350,7 +350,7 @@ src/core/db-lock.ts	execute_raw	2
 src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
-src/core/destructive-guard.ts	execute_raw	17
+src/core/destructive-guard.ts	execute_raw	8
 src/core/eligibility/activation.ts	execute_raw	1
 src/core/eligibility/explain.ts	execute_raw	3
 src/core/eligibility/scan.ts	execute_raw	4
@@ -971,7 +971,6 @@ src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	1
-src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	5
 src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
