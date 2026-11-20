@@ -58,7 +58,7 @@ async function unknownReaders(engine: BrainEngine): Promise<Check> {
          ELSE (SELECT CASE WHEN g.id IS NULL THEN 'unknown' WHEN NOT EXISTS (SELECT 1 FROM access_group_members gm WHERE gm.group_id = g.id) THEN 'empty_group' END
            FROM (SELECT 1) one LEFT JOIN access_groups g ON g.id = substr(n.reader, 7)) END AS kind
        FROM named n)
-     SELECT reader, kind, count(*)::int AS pages, jsonb_build_object('source_id', min(source_id), 'slug', min(slug)) AS sample
+     SELECT reader, kind, count(*)::int AS pages, (array_agg(jsonb_build_object('source_id', source_id, 'slug', slug) ORDER BY source_id COLLATE "C", slug COLLATE "C"))[1] AS sample
        FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind COLLATE "C", reader COLLATE "C" LIMIT ${SAMPLE}`);
   const unknown = rows.filter(r => r.kind !== 'empty_group');
   const empty = rows.filter(r => r.kind === 'empty_group');

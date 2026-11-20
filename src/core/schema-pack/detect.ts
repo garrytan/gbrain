@@ -125,7 +125,7 @@ export async function runDetect(
     `SELECT
        substring(slug from '^[^/]+/') AS prefix,
        COUNT(*)::text AS cnt,
-       array_agg(DISTINCT type) FILTER (WHERE type IS NOT NULL AND type != '') AS sample_types
+       array_agg(DISTINCT type COLLATE "C" ORDER BY type COLLATE "C") FILTER (WHERE type IS NOT NULL AND type != '') AS sample_types
      FROM pages
      WHERE source_id = $1
        AND deleted_at IS NULL

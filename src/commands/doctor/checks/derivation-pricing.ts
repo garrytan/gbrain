@@ -20,7 +20,7 @@ async function runDerivationUnpricedModelCheck(ctx: DoctorContext): Promise<Chec
   try {
     const rows = await connectedEngine(ctx).executeRaw<{ model: string; pipelines: string[]; pages: number; samples: string[] }>(
       `SELECT d.receipt->>'model' AS model, array_agg(DISTINCT d.pipeline COLLATE "C" ORDER BY d.pipeline COLLATE "C") AS pipelines, count(DISTINCT d.page_id)::int AS pages,
-              (array_agg(DISTINCT p.source_id || ':' || p.slug))[1:3] AS samples
+              (array_agg(DISTINCT (p.source_id || ':' || p.slug) COLLATE "C" ORDER BY (p.source_id || ':' || p.slug) COLLATE "C"))[1:3] AS samples
          FROM page_segment_derivations d JOIN pages p ON p.id = d.page_id AND p.deleted_at IS NULL
         WHERE (d.receipt->>'kind' = 'unpriced_model' OR d.receipt->>'reason' = 'unpriced_model') AND d.receipt->>'model' IS NOT NULL
         GROUP BY 1 ORDER BY 3 DESC, (d.receipt->>'model') COLLATE "C"`);

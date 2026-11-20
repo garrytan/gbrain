@@ -165,7 +165,9 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
       (array_agg(slug ORDER BY sequence) FILTER (WHERE has_recovery))[1:20] AS recovery_slugs
     FROM tagged
     GROUP BY GROUPING SETS ((source_id, state, error_code, origin, reason, cause, operation, intent_kind, has_recovery, blocked_reason, compacted, knock_on, routed_message, build, resolved), (source_id))
-    ORDER BY source_id`, [span, opts.sourceIds ?? null, t.windowDays]);
+    -- Every group key, text by byte: a source's blockers, defects and tied categories list the same way on every engine and locale.
+    ORDER BY source_id COLLATE "C", 1, state COLLATE "C", error_code COLLATE "C", origin COLLATE "C", reason COLLATE "C", cause COLLATE "C", operation COLLATE "C",
+      intent_kind COLLATE "C", has_recovery, blocked_reason COLLATE "C", compacted, knock_on, routed_message COLLATE "C", build COLLATE "C", resolved`, [span, opts.sourceIds ?? null, t.windowDays]);
   if (rows === 'unknown') return { status: 'unknown', window_days: t.windowDays, reason: `the aggregate did not finish within ${TERMINAL_STATEMENT_MS} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
   const bySource = new Map<string, TerminalSourceSummary>();
   const summaryOf = (sourceId: string) => {

@@ -680,16 +680,18 @@ export async function traverseGraph(
       })}
       SELECT g.slug, g.source_id, g.title, g.type, g.depth,
         coalesce(
-          -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
+          -- SELECT DISTINCT collapses duplicate (to_slug, link_type)
           -- edges that originate from different provenance (markdown body
           -- vs frontmatter vs auto-extracted). The underlying links table
           -- preserves every row with its origin_page_id / link_source —
           -- the dedup is presentation-only for the legacy traverseGraph
-          -- aggregation. See plan Bug 6/10.
-          (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
-           FROM links l2
-           JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${liveOriginFilter('l2', opts)} ${temporalWalkFilter('l2', opts)}),
+          -- aggregation. See plan Bug 6/10. The pairs list in byte order,
+          -- as PGLite and the Rust store give them on every locale.
+          (SELECT jsonb_agg(jsonb_build_object('to_slug', e.to_slug, 'link_type', e.link_type) ORDER BY e.to_slug COLLATE "C", e.link_type COLLATE "C")
+           FROM (SELECT DISTINCT p3.slug AS to_slug, l2.link_type
+                 FROM links l2
+                 JOIN pages p3 ON p3.id = l2.to_page_id
+                 WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${liveOriginFilter('l2', opts)} ${temporalWalkFilter('l2', opts)}) e),
           '[]'::jsonb
         ) as links
       FROM (SELECT p.id, p.slug, p.source_id, p.title, p.type, w.depth
