@@ -61,7 +61,7 @@ fn invalid(message: String) -> StoreError {
 
 /// A JavaScript number bound to the `bigint` id column: a whole number, or the error Postgres raises. A row id below 1
 /// names no row.
-fn fact_number(op: &str, id: f64) -> Result<Option<u64>> {
+pub(super) fn fact_number(op: &str, id: f64) -> Result<Option<u64>> {
     if !id.is_finite() || id.fract() != 0.0 || id.abs() > 9.223_372_036_854_775e18 {
         return Err(invalid(format!(
             "{op}: invalid input syntax for type bigint: \"{id}\" (id)"

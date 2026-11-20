@@ -210,6 +210,8 @@ test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
+test/engine-parity/remember-members.test.ts
+test/engine-parity/remember-supersede.test.ts
 test/engine-parity/remember-whole.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/restriction-flag-reads.test.ts

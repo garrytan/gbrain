@@ -53,6 +53,7 @@ mod facts_forget;
 mod facts_holding_purges;
 mod facts_loops;
 mod facts_purge;
+mod facts_remember;
 mod facts_repair;
 mod facts_trust;
 mod facts_trust_owner;

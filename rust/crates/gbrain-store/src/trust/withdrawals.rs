@@ -109,6 +109,18 @@ fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 
+/// The time of the ledger row `(source, visibility, subject, fact_hash)`, or `None`: the one-row read
+/// `readMemberPageWithdrawal` (`facts/remember_reads.rs`) makes for each candidate subject and fingerprint.
+pub(crate) fn withdrawal_time(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+    fact_hash: &str,
+) -> Result<Option<i64>> {
+    at(read, &[source_id, visibility, subject, fact_hash])
+}
+
 /// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
 /// $visibility AND w.fact_hash IN (gbrain_fact_fingerprint(claim), gbrain_fact_fingerprint_v1(claim))
 /// AND (w.subject = '*' OR w.subject = entity))`: a NULL entity matches only `*`.

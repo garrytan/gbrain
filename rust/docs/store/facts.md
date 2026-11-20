@@ -386,7 +386,7 @@ Thirty-six members that were raw `executeRaw` statements in seventeen callers (`
 `listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
 statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
 (dimensions once when the column type is declared), so its `$n` numbers differ from the old text. Except `readFactForForget`, `expireFactSuperseded`, `expireFactAtDate` and `readWithdrawalAnchor`
-(served by `facts/forget.rs`, below), none is implemented on Rust
+(served by `facts/forget.rs`, below) and the fourteen of `facts/remember_reads.rs` (below), none is implemented on Rust
 yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
 serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
 
@@ -427,8 +427,45 @@ ISO instant, a bare date or null, and a `today` that is not a real `YYYY-MM-DD` 
 errors. `expireFactAtDate` is reached only on the fence path of a forget (a written source file); the legacy path
 expires through the withdrawal ledger.
 Parity: `test/engine-parity/forget-members.test.ts` (the members one by one) and `forget-whole.test.ts` (a whole
-`forgetFactInFence` and the `forget_fact` operation). `readFactActivity` (the proposal review's candidate read) is still
-not served.
+`forgetFactInFence` and the `forget_fact` operation). `readFactActivity` (the proposal review's candidate read) is served
+by `facts/remember_reads.rs`, below.
+
+## Remember reads and supersession writes (`facts/remember_reads.rs`)
+
+Fourteen of the members above are served: the reads and writes a `remember` with `replaces`, a proposal review's accept and
+undo, a page retire and a recall by id make (`facts/single-prepare.ts`, `facts/write-single.ts`, `facts/proposal-supersede.ts`,
+`facts/proposal-review.ts`, `facts/question-recall.ts`). The TypeScript members are
+`rust-engine/store-members/facts-remember.ts`; the napi family is `families/facts_remember.rs`. Facts are read by id
+(`read_fact`) and by source (`source_rows`); every write goes through `write_fact`, so the trust stamp and the purge refusal
+apply as they do for `expireFact`, and a `superseded_by` that names no fact refuses as `facts_superseded_by_fkey` does.
+
+| Member | What the store does |
+| --- | --- |
+| `readFactEntitySlugById(id)` | The fact's `entity_slug`; `null` for no entity or no fact. |
+| `readSupersessionReplacement(newId, oldId)` | `null` when either fact is gone, else the new fact's `row_num`, `same_page` (the two `source_markdown_slug` values `IS NOT DISTINCT FROM`, so two facts with no page are on one page), the new fact's `valid_from` and the old fact's `valid_from` and `valid_until`. |
+| `linkSupersededFact(oldId, newId)` | Sets `superseded_by` on the old fact. An old id that names nothing updates nothing, even when `newId` names no fact; otherwise a `newId` that names no fact refuses with the foreign key. |
+| `listFactsToRetireFromPage(sourceId, session, slug, pattern)` | The source's unexpired facts with `source_session = session`, or `context = slug`, or `context LIKE pattern` (`\` escapes), in id order: `id`, `row_num`, `source_markdown_slug`, `entity_slug`. |
+| `listFactProvenance(sourceId, ids)` | `{ id, source }` of each fact of the source in `ids`, in id order; a repeated id answers once. |
+| `listFactRowsByIds(sourceIds, ids)` | The whole rows (the `listFactsByEntity` shape, with the embedding) of these ids within these sources, in id order. The SQL has no `ORDER BY`. |
+| `readFactVisibility(id, sourceId)` | `{ visibility }` of a fact of the source, else `null`. |
+| `readFactActivity(id, sourceId)` | `{ active, text_hash }`: unexpired and not past `valid_until` now, and the md5 of the fact text; `null` for a fact not in the source. |
+| `readReviewAcceptedMark(id, sourceId, mark)` | `{ id }` when the source's fact is expired and its context holds `mark` as a substring, else `null`. |
+| `readPairFactRow(id, lock)` | One fact in any source, with the columns `id, source_id, entity_slug, visibility, fact, expired_at, valid_from, valid_until, superseded_by, row_num, source_markdown_slug`. `lock` changes nothing: every store write is serialised. |
+| `expireSupersededFact({ oldId, sourceId, newId, until })` | For an unexpired fact of the source: `valid_until` = `until`, else `GREATEST(valid_from, LEAST(COALESCE(valid_until, now), now))`; `expired_at` = now; `superseded_by` = `newId`. Answers the row count (1 or 0). |
+| `restoreSupersededFact({ oldId, sourceId, expiredAt, validUntil, supersededBy, expectedSupersededBy })` | Puts the three columns back for a fact of the source whose `superseded_by` is `expectedSupersededBy` (`IS NOT DISTINCT FROM`, so null matches null). Answers the row count. |
+| `readReplacementTarget({ targetId, sourceId, excludePrivate, ownPage, lock })` | The whole row of the fact in the source with `withdrawn`: a ledger row of the source and visibility under the fact's current or v1 fingerprint that `covers_fact` reaches (a member page's own subject, else `*`, the entity, an unbacked name key or the owned memory page). With `excludePrivate` the remote provenance floor applies (`hidden_by_private_provenance` with `provenanceOnly`), except to a row on `ownPage`; the TypeScript member serves only the floor `storeFloorPolicy` reads and refuses any other caller. |
+| `readMemberPageWithdrawal({ sourceId, visibility, fact, entitySlug, page, ... })` | The withdrawal a remote save onto member page `page` meets (GST-2346). Candidates are the ledger rows of the source and visibility under the claim's current or v1 fingerprint with subject `page` (counted as they are), or `*` or the claim's entity, which count only when they withdrew a row the page's member reads: an expired row of the same visibility and current fingerprint that `withdrawal_covers` reaches, on `page` itself or, for a world row, on pages the page's member's policy does not hide (the provenance and entity pages, `page_hidden`). The most specific subject first, then the newest; `withdrawn_at` as `timestamptz::text`. |
+
+The TypeScript members refuse (`engine_capability_missing`) an id that is not a whole number and a time that is not an ISO
+instant. `readMemberPageWithdrawal` is served for a member that is not the brain owner and meets no folder rule: the policy
+is `readPolicyFragment('pp', identity, true, [])`, which `storeMemberReadPolicy` (`private-provenance.ts`) compares with the
+reference rendering, as the other privacy members do. The owner read (`lineageAccessSql`, `ownerReadPolicyFragment`) and a
+non-empty `satisfied` list refuse: the store models neither lineage access nor folder rules. A whole `remember` on a brain
+with no signing key goes through the persistence consumer, which calls `readReplacementTarget` and `readFactVisibility`
+only; `readSupersessionReplacement`, `linkSupersededFact` and `readFactEntitySlugById` run only in the legacy
+`writeSingleFact` path, so only the member case exercises them.
+Parity: `test/engine-parity/remember-members.test.ts` (the members one by one) and `remember-supersede.test.ts` (a whole
+`remember` that replaces a fact, and the refusals of a gone or already replaced target).
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
 

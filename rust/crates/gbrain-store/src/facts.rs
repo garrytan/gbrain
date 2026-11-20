@@ -60,6 +60,7 @@ pub mod purge_ledger;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
+pub mod remember_reads;
 pub mod repair;
 pub mod saved_match;
 pub mod trust;
