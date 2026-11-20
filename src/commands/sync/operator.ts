@@ -250,6 +250,10 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
     console.log(`    ... ${listing.matched - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
       + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `gbrain sync status --source ${sourceId} --detail --json`} lists them`);
   }
+  if (status.held_deletes) console.log(`    deletions held (${status.held_deletes.code}) NEEDS HUMAN: ${status.held_deletes.human_reason}`);
+  for (const review of status.identity_reviews ?? []) {
+    console.log(`    ${review.contact_slug}: identity review${review.needs_human ? ` NEEDS HUMAN: ${review.human_reason} Next: ${review.fix.argv!.join(' ')}` : ` (decided: ${review.human_reason})`}`);
+  }
   const superseded = status.last_error?.superseded;
   if (status.last_error) console.log(`    ${status.last_error.path ?? ''}: ${status.last_error.code}${superseded ? ` (superseded: ${SUPERSEDED_TEXT[superseded.by ?? 'commit']} at ${superseded.at}, after this error${superseded.age_seconds !== undefined ? `, recorded ${Math.round(superseded.age_seconds / 60)} min ago` : ''})` : ` safe: ${status.last_error.safe_actions.join(',')}${status.last_error.needs_human ? ` NEEDS HUMAN: ${status.last_error.human_reason}` : ''}`}`);
   const ob = status.oldest_blocker;

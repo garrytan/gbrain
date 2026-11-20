@@ -18,6 +18,7 @@ import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 import { existsSync, statSync, realpathSync } from 'fs';
 import { join as pathJoin, resolve as pathResolve } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
 
 export interface SyncManifest {
   added: string[];
@@ -465,7 +466,7 @@ export function pruneDir(name: string, parentDir?: string): boolean {
  */
 export function isPathPruned(path: string, includeHidden?: string[]): boolean {
   const segments = path.split('/');
-  if (segments.some((seg) => PRUNE_DIR_NAMES.has(seg) || seg.endsWith('.raw'))) return true;
+  if (segments.some((seg) => PRUNE_DIR_NAMES.has(seg) || seg === OWNED_FOLDER_ROOT || seg.endsWith('.raw'))) return true;
   const dotPruned = segments.some((seg) => seg.startsWith('.'));
   if (!dotPruned) return false;
   return !(includeHidden && includeHidden.length > 0 && matchesAnyGlob(path, includeHidden));

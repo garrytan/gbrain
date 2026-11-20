@@ -245,6 +245,7 @@ src/commands/sources-harden.ts	execute_raw	5
 src/commands/sources-lifecycle.ts	execute_raw	1
 src/commands/sources-mirror.ts	execute_raw	2
 src/commands/sources-pull-strategy.ts	execute_raw	1
+src/commands/sources-rebind.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the source row (incarnation, local_path, config, archived) to find its connector cursor
 src/commands/sources-reindex.ts	execute_raw	1
 src/commands/sources-reset-upstream.ts	execute_raw	1
 src/commands/sources-retry-held.ts	execute_raw	2
@@ -305,6 +306,10 @@ src/core/ai/decide/proposals-store.ts	execute_raw	16
 src/core/ai/decide/review-lane.ts	execute_raw	17
 src/core/ai/decide/store.ts	execute_raw	19
 src/core/analyze-lock.ts	execute_raw	1
+src/core/apple-contacts/apple-contacts-source.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads the source row, finds the page a contact id owns and the ids the source owns, rereads a contact page for its review, stamps sources.last_sync_at; no typed engine method exists yet
+src/core/apple-contacts/identity-match.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): lists the candidate sources, runs the exactIdentityStatement candidate read (engine-sql/exact-identity.ts, the whois read), and reads/writes/clears the identity-review op_checkpoints row; no typed engine method exists yet
+src/core/apple-contacts/person-facts.ts	execute_raw	8	GST-3256, pre-ratchet like imessage-source.ts (#9634): fingerprints the wanted claims and reads the active facts on one person page (this source's rows and the claims already there, matched by fact fingerprint as remember does), and reads/writes/clears the person-facts ownership op_checkpoints row; no typed engine method exists yet; +3 follow-up: before a source removal, reads the source kind, counts its active person-page rows (and those no page write can retire) and groups them by page to retire them
+src/core/apple-contacts/review-status.ts	execute_raw	3	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads, writes and clears the pending-deletions op_checkpoints row the incremental delete floor holds; no typed engine method exists yet
 src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	6
@@ -572,6 +577,8 @@ src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/health-memo.ts	execute_raw	1
 src/core/held-embedding.ts	execute_raw	2
+src/core/identity/owner.ts	execute_raw	4	GST-3216 PR 1: the owner identity resolver reads members, member links, member source bindings and Google source accounts across the access tables in one derived pass with no cache; it moves behind a typed access read when the access tables get engine methods
+src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
 src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	1
 src/core/import-file.ts	execute_raw	1
@@ -688,6 +695,9 @@ src/core/ops/wakeshift.ts	execute_raw	5
 src/core/ops/whois.ts	execute_raw	2
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
+src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
+src/core/owned-folder/remove.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the source row (incarnation, local_path, config) to find its connector cursor
+src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the owned-folder sources' rows for pages_in
 src/core/page-body/body-tiling.ts	execute_raw	4
 src/core/page-body/ingest.ts	execute_raw	3
 src/core/page-body/projection.ts	execute_raw	11
@@ -821,6 +831,7 @@ src/core/persistence/links-extraction-holds.ts	execute_raw	2
 src/core/persistence/links-preparation.ts	execute_raw	4
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
+src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/maintenance.ts	execute_raw	3
 src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
@@ -1062,7 +1073,6 @@ src/core/schema-missing-tables.ts	execute_raw	1
 src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
-src/core/schema-pack/field-usage.ts	execute_raw	2
 src/core/schema-pack/lint-rules.ts	execute_raw	3
 src/core/schema-pack/page-to-alias.ts	execute_raw	3
 src/core/schema-pack/page-to-link.ts	execute_raw	1

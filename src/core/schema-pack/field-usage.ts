@@ -36,22 +36,21 @@ function shares(counts: Map<string, number>, sampled: number): FieldShare[] {
 }
 
 /** Field usage for the most common page types in a source (or the brain). */
-export async function runFieldUsage(engine: Pick<BrainEngine, 'executeRaw'>, opts: { sourceId?: string; samplePerType?: number } = {}): Promise<TypeFieldUsage[]> {
+export async function runFieldUsage(engine: Pick<BrainEngine, 'readFieldUsageSamples'>, opts: { sourceId?: string; samplePerType?: number } = {}): Promise<TypeFieldUsage[]> {
   const sample = opts.samplePerType ?? DEFAULT_SAMPLE_PER_TYPE;
-  const scope = opts.sourceId ? 'AND source_id = $1' : '';
-  const params = opts.sourceId ? [opts.sourceId] : [];
-  const types = await engine.executeRaw<{ type: string; pages: number }>(`SELECT type, count(*)::int AS pages FROM pages
-    WHERE deleted_at IS NULL AND coalesce(type, '') <> '' ${scope} GROUP BY type ORDER BY count(*) DESC, type LIMIT ${MAX_TYPES}`, params);
+  const sourceId = opts.sourceId || undefined;
+  const types = await engine.readFieldUsageSamples({ sourceId, maxTypes: MAX_TYPES, samplePerType: sample, countsOnly: true });
   const result: TypeFieldUsage[] = [];
   for (const { type, pages } of types) {
-    const rows = await engine.executeRaw<{ frontmatter: Record<string, unknown> | string | null; compiled_truth: string | null }>(
-      `SELECT frontmatter, compiled_truth FROM pages WHERE deleted_at IS NULL AND type = $${params.length + 1} ${scope}
-        ORDER BY id LIMIT ${Math.max(1, Math.floor(sample))}`, [...params, type]);
+    // One type's sample at a time, as on master: only one type's bodies are held in memory.
+    const [one] = await engine.readFieldUsageSamples({ sourceId, maxTypes: 1, samplePerType: sample, type });
+    const rows = one?.rows ?? [];
     const keys = new Map<string, number>(); const categories = new Map<string, number>(); const relations = new Map<string, number>();
     const bump = (map: Map<string, number>, names: Iterable<string>) => { for (const name of new Set(names)) map.set(name, (map.get(name) ?? 0) + 1); };
     for (const row of rows) {
-      const fm = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) as Record<string, unknown> : row.frontmatter ?? {};
+      const fm = row.frontmatter;
       bump(keys, Object.keys(fm).filter(key => !IGNORED_KEYS.has(key) && fm[key] !== null && fm[key] !== ''));
+      // A segmented page samples a null body, read as empty (TODOS.md).
       const grammar = parseLineGrammar(row.compiled_truth ?? '');
       bump(categories, grammar.facts.map(f => f.category.toLowerCase()));
       bump(relations, grammar.relations.map(r => r.type));

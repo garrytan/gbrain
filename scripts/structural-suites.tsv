@@ -48,7 +48,7 @@ test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4
 test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#5138)	9	readFileSync
 test/brain-durability-hook.serial.test.ts	durability schedule (installCron:true) [D2/D12]	0	readFileSync
 test/brain-durability-hook.serial.test.ts	post-commit hook (D9 local, D7 self-contained)	4	readFileSync
-test/brain-first-turn-rule.test.ts	per-turn rule: OpenClaw before_prompt_build plugin	7	readFileSync
+test/brain-first-turn-rule.test.ts	per-turn rule: OpenClaw before_prompt_build plugin	8	readFileSync
 test/brain-repo-durability.serial.test.ts	hardenBrainRepo	20	readFileSync
 test/brain-score-breakdown.test.ts	Bug 11 — BrainHealth type shape	1	bun-file
 test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdown	1	doctor-source-helper
@@ -218,6 +218,7 @@ test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileS
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
+test/imessage-owned-folder.test.ts	owned folder (${kind})	28	readFileSync
 test/imessage-source.test.ts	repo-less brain (${kind})	10	readFileSync
 test/import-calls.test.ts	operations filter guard	1	exec-scan
 test/import-private-hold-callers-7897.test.ts	import entry points hold a non-canonical private request (#7897)	2	readFileSync
@@ -382,6 +383,7 @@ test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSyn
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
+test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	3	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	8	readFileSync

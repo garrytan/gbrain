@@ -23,6 +23,7 @@ import { abortsManagedRun, type ConnectorHoldSession } from '../connectors/conne
 import { classifyConnectorError } from '../connectors/item-holds.ts';
 import { assertConnectorIdentity } from '../connectors/connector-text.ts';
 import { classifyItemFailure } from '../item-failure.ts';
+import { applyContactPage } from '../contact-page-apply.ts';
 
 import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
 import { CalendarClient, calendarUnreadableStatus, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, GoogleSyncTokenRejectedError, PeopleClient } from './google-clients.ts';
@@ -160,51 +161,23 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
   sweep: { activePack: ActivePack; summary: GoogleSyncSummary; countedSlugs: Set<string>; groupNames: Record<string, string> }): Promise<void> {
   assertConnectorIdentity({ google_contact_id: c.resourceName, emails: c.emails });
   const contactsDir = deps.cfg.contactsDir;
-  // DB lookup by contact id FIRST, in any directory: deletion tombstones
-  // typically carry only resourceName + deleted (no names/emails — slug
-  // derivation yields null), a renamed contact's current name derives a
-  // DIFFERENT slug than the page it owns, and a changed `g_contacts_dir`
-  // (#4845) moves every page. All three need the id-keyed path (mirror of
-  // the calendar sweep's event_id keying).
-  const existingPath = await contactPageRelPathByContactId(deps, c.resourceName);
-  if (c.deleted) {
-    if (existingPath && await contactOwner(deps, existingPath) === c.resourceName) {
-      await deletePageByRelPath(deps, existingPath, sweep.summary);
-    } else {
-      // Page not (yet) in the DB — fall back to slug candidates, guarded
-      // by file ownership. Delete only the page THIS contact owns.
-      for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)]) {
-        if (slug && await contactOwner(deps, `${slug}.md`) === c.resourceName) {
-          await deletePageByRelPath(deps, `${slug}.md`, sweep.summary);
-        }
-      }
-    }
-    return;
-  }
-  const baseSlug = personSlugFromContact(c, false, contactsDir);
-  if (!baseSlug) return;
-  const baseOwner = await contactOwner(deps, `${baseSlug}.md`);
-  const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== c.resourceName;
-  const rendered = renderPersonPage(
-    { ...c, groups: c.groups.map((g) => ({ id: g.id, name: sweep.groupNames[g.id] ?? null })) },
-    collides,
-    contactsDir,
-  );
-  if (!rendered) return;
-  const owner = await contactOwner(deps, rendered.relPath);
-  if (owner === 'hand-authored') {
-    deps.log(`[google] skipping hand-authored ${rendered.relPath}`);
-    return;
-  }
-  // Staged rename: this contact previously rendered elsewhere (a rename, or
-  // a changed contacts directory). The new page lands first, then the page
-  // it owned at the old path is retired, so a sweep that dies in between
-  // leaves the contact with a page rather than none.
-  await importRendered(deps, rendered.relPath, rendered.markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
-  if (existingPath && existingPath !== rendered.relPath && await contactOwner(deps, existingPath) === c.resourceName) {
-    await deletePageByRelPath(deps, existingPath, sweep.summary);
-  }
-  deps.tick(`contact ${c.resourceName}`);
+  // The id-keyed lookup, ownership, collision and staged-rename rules are shared with the apple-contacts source
+  // (contact-page-apply.ts); the id lookup mirrors the calendar sweep's event_id keying.
+  await applyContactPage(c.resourceName, !!c.deleted, {
+    existingPath: () => contactPageRelPathByContactId(deps, c.resourceName),
+    owner: (relPath) => contactOwner(deps, relPath),
+    baseSlug: () => personSlugFromContact(c, false, contactsDir),
+    tombstoneSlugs: () => [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)],
+    render: (collides) => renderPersonPage(
+      { ...c, groups: c.groups.map((g) => ({ id: g.id, name: sweep.groupNames[g.id] ?? null })) },
+      collides,
+      contactsDir,
+    ),
+    write: async (relPath, markdown) => { await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs); },
+    remove: (relPath) => deletePageByRelPath(deps, relPath, sweep.summary),
+    skippedHandAuthored: (relPath) => deps.log(`[google] skipping hand-authored ${relPath}`),
+    applied: () => deps.tick(`contact ${c.resourceName}`),
+  });
 }
 
 /**

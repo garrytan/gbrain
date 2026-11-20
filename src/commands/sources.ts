@@ -148,18 +148,19 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
 
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
-  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
+  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage' || apiKind === 'apple-contacts')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage|apple-contacts] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
-        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
+        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
   }
@@ -787,8 +788,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   const confirmDestructive = args.includes('--confirm-destructive');
-  const _keepStorage = args.includes('--keep-storage');
-  void _keepStorage;
+  const keepStorage = args.includes('--keep-storage');
 
   if (id === 'default') {
     console.error('Error: cannot remove the "default" source (it backs the pre-v0.17 brain).');
@@ -803,8 +803,12 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 
   // v0.26.5: Impact preview + destructive guard
   const impact = await assessDestructiveImpact(engine, id);
+  const appleContacts = parseConfig(src.config).kind === 'apple-contacts';
   if (impact) {
     console.log(formatImpact(impact));
+    if (appleContacts) console.log(`  ${await (await import('../core/apple-contacts/person-facts.ts')).countPersonFacts(engine, id)} company, job title and group row(s) on person pages are retired first.`);
+    const ownedFiles = await (await import('../core/owned-folder/remove.ts')).previewOwnedRemoval(engine, id);
+    if (ownedFiles) console.log(`  ${ownedFiles} chat-day file(s) in .gbrain-owned/${id}/ ${keepStorage ? 'stay (--keep-storage)' : 'are removed in one commit; the remote history still holds what was pushed'}.`);
 
     if (dryRun) {
       console.log('(dry-run; no side effects)');
@@ -841,9 +845,10 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   // catch-and-retry degrade inside a tx; missing table ⇒ empty column set ⇒
   // no FK ⇒ skip); the FK constraint itself is the backstop for a
   // registration committing between the re-check and the DELETE.
+  // GST-3022: an owned-folder source's files leave its folder in one commit first (Git is the parent); a failure keeps the row.
   class SourceReferencedError extends Error {}
   try {
-    await engine.transaction(async (tx) => {
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
       const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
       if (cols.has('source_id')) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
@@ -854,7 +859,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
         if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
-    });
+    }));
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';
     if (e instanceof SourceReferencedError || code === '23503') {
@@ -1069,7 +1074,7 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
-    await deleteSourceRow(engine, id);
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, {}, () => deleteSourceRow(engine, id));
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }
@@ -1301,6 +1306,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
   const publishOff = new Set(await (await import('../core/persistence/worktree-refresh.ts')).publishOptedOut(engine, sources.map(source => source.id)));
+  const pagesView = await import('../core/owned-folder/status.ts'), pagesIn = await pagesView.readPagesIn(engine, sources.map(source => source.id)).catch(() => new Map<string, never>());
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1308,7 +1314,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
-      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}),
+      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}), ...(pagesIn.get(m.source_id) ? { pages_in: pagesIn.get(m.source_id) } : {}),
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(movement.get(m.source_id) ? { data_moving: movement.get(m.source_id)!.data_moving, not_moving_since: movement.get(m.source_id)!.not_moving_since,
         movement_state: movement.get(m.source_id)!.movement_state, movement: movement.get(m.source_id) } : {}),
@@ -1353,6 +1359,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   }
   console.log('');
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
+  for (const [sourceId, p] of pagesIn) console.log(pagesView.pagesInLine(sourceId, p));
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
   for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); } for (const w of watermarks.values()) if (w) console.log(`  ${watermarkView.formatAppliedWatermark(w)}`);
@@ -1951,6 +1958,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
+    case 'rebind':     return (await import('./sources-rebind.ts')).runRebind(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'git-reconcile': return (await import('./sources-git-reconcile.ts')).runSourcesReconcile(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
@@ -2061,6 +2069,7 @@ Subcommands:
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
+  rebind <id> [--yes]                                     Record a changed push destination for an iMessage source's folder (preview first).
   host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                     Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.
   guard <id> [--install [--mode enforce] | --uninstall | --status] [--json]

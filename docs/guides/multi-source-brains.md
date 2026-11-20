@@ -487,6 +487,10 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                Off: autopilot cycles work only on pages changed since
                                the last cycle, so a file edited on disk is picked up
                                by the next explicit sync, not by the cycle.
+gbrain sources rebind <id> [--expect <current-push-urls>] [--yes] [--json]
+                               iMessage sources: record a changed push destination
+                               for the source's .gbrain-owned/ folder. Previews
+                               without --yes; see docs/guides/apple-setup.md#where-the-pages-live.
 gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                Managed brains: host a new, empty source in a bare
                                repository under <path> (see below). Previews without --expect.

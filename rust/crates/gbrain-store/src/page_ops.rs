@@ -999,8 +999,14 @@ impl Store {
                 scrub_purged_slugs(tx, source, slugs)?;
                 crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
             }
+            // Like PGLite and Postgres, the destructive run also returns the deleted pages: the
+            // purge-deleted coordinator redacts their journal rows from this list.
+            let rows: Vec<Value> = pages
+                .iter()
+                .map(|p| json!({ "slug": p.slug, "source_id": p.source_id, "deleted_at": p.deleted_at_us.map(iso) }))
+                .collect();
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            Ok(json!({ "slugs": slugs, "count": slugs.len() }))
+            Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }))
         })
     }
 
