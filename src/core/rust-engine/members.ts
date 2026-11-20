@@ -140,6 +140,7 @@ export const RUST_ENGINE_MEMBERS = {
   readPageTitle: 'pages',
   readPageAliasRows: 'pages',
   readEntityAliasRows: 'pages',
+  listSlugAliases: 'pages',
   readPageTrustRows: 'pages',
   listLinkPageMetadata: 'pages',
   filterPagesAtRevision: 'pages',

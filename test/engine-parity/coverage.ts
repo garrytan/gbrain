@@ -430,7 +430,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   session_state: ['upsertSessionState', 'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow',
     'writeCheckpointManifest', 'ageOutSessionState', 'capSessionStatePerClient'],
   alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows',
-    'readEntityAliasRows'],
+    'readEntityAliasRows', 'listSlugAliases'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage',
     'readLivePageBody', 'readInlinePageRegions', 'readStoredPageTier', 'readPageIndexingState', 'hasSegmentStorage'],
   page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe',

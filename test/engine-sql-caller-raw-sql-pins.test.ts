@@ -2136,6 +2136,11 @@ const PINS: Pin[] = [
        FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
        WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`],
   },
+  {
+    from: 'src/commands/extract.ts:497 loadSlugAliasTargets (at a18d118d27)',
+    case: { method: 'listSlugAliases', variant: 'default', run: e => e.listSlugAliases('default') },
+    texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */

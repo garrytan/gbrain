@@ -676,6 +676,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageTitle': OOS.aliasFanoutReads,
   'readPageAliasRows': OOS.aliasFanoutReads,
   'readEntityAliasRows': OOS.callerRawSql,
+  'listSlugAliases': OOS.callerRawSql,
   'readEntityOpenLoops': OOS.callerRawSql,
   'entityIdentityRead': OOS.helper,
   'linkEntityIdentityRow': OOS.callerRawSql,
@@ -2417,6 +2418,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['slugs+private', (e) => e.readEntityCardRows(SRC, { slugs: [SLUG] }, { excludePrivate: true })],
   ]),
   ...variants('readEntityAliasRows', [['default', (e) => e.readEntityAliasRows(SRC, [SLUG, 'people/bob-example'])]]),
+  ...variants('listSlugAliases', [['default', (e) => e.listSlugAliases(SRC)]]),
   ...variants('readEntityOpenLoops', [['default', (e) => e.readEntityOpenLoops(SLUG, SRC, 3)]]),
   ...variants('linkEntityIdentityRow', [
     ['canonical', (e) => e.linkEntityIdentityRow({ entityId: 'alice', slug: SLUG, sourceId: SRC, confidence: 1, establishedBy: 'manual', canonical: true }), [pageId]],
