@@ -2589,6 +2589,17 @@
           "*"
         ]
       },
+      "listClientsReferencingSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listCompactableReceipts#default": {
         "flagOffLanes": [
           "pool"
@@ -6976,6 +6987,7 @@
         "engineSqlOn": "none",
         "engineSqlRead": "none",
         "ensureAccessPolicyState": "none",
+        "ensureDecideState": "none",
         "ensureFactsKeywordIndex": "none",
         "entityGraphCoverage": "none",
         "entityIdentityRead": "none",
@@ -7098,6 +7110,9 @@
         "insertAccessMigration": "none",
         "insertAccessPolicyRevision": "none",
         "insertAccessToken": "none",
+        "insertDecideCalibration": "none",
+        "insertDecideReceipts": "none",
+        "insertDecideSpend": "none",
         "insertFact": "none",
         "insertFactPurge": "none",
         "insertFactWithdrawal": "none",
@@ -7152,6 +7167,7 @@
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
         "listChunklessPagesWithContent": "direct",
+        "listClientsReferencingSource": "none",
         "listCompactableReceipts": "none",
         "listConfigKeys": "none",
         "listContextualModeCandidates": "none",
@@ -7160,6 +7176,12 @@
         "listCorePageRows": "none",
         "listCorpusSample": "direct",
         "listDeadFactsAbsorbJobsByKeys": "none",
+        "listDecideCalibrations": "none",
+        "listDecideMixedModelDecisions": "none",
+        "listDecideReceiptStats": "none",
+        "listDecideReplayReceipts": "none",
+        "listDecideResolvedModels": "none",
+        "listDecideSpendBySlot": "none",
         "listDueWakeWatches": "none",
         "listEffectRecoveries": "none",
         "listEmbeddingStateRows": "direct",
@@ -7427,6 +7449,7 @@
         "readCursorEdition": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
+        "readDecideState": "none",
         "readDeltaSessionRow": "none",
         "readDueWantedMarkers": "none",
         "readEmbedBackfillBySource": "none",
@@ -7724,6 +7747,7 @@
         "stampWorktreeHeartbeats": "none",
         "stampWriteClaim": "none",
         "startSubagentToolExecution": "none",
+        "storeDecideQualification": "none",
         "storedTimelineRowsByPageIds": "none",
         "stripStaleFrontmatterKeys": "none",
         "sumClientSpendSince": "none",
