@@ -19,11 +19,11 @@ async function runDerivationUnpricedModelCheck(ctx: DoctorContext): Promise<Chec
   const checks: Check[] = [];
   try {
     const rows = await connectedEngine(ctx).executeRaw<{ model: string; pipelines: string[]; pages: number; samples: string[] }>(
-      `SELECT d.receipt->>'model' AS model, array_agg(DISTINCT d.pipeline ORDER BY d.pipeline) AS pipelines, count(DISTINCT d.page_id)::int AS pages,
+      `SELECT d.receipt->>'model' AS model, array_agg(DISTINCT d.pipeline COLLATE "C" ORDER BY d.pipeline COLLATE "C") AS pipelines, count(DISTINCT d.page_id)::int AS pages,
               (array_agg(DISTINCT p.source_id || ':' || p.slug))[1:3] AS samples
          FROM page_segment_derivations d JOIN pages p ON p.id = d.page_id AND p.deleted_at IS NULL
         WHERE (d.receipt->>'kind' = 'unpriced_model' OR d.receipt->>'reason' = 'unpriced_model') AND d.receipt->>'model' IS NOT NULL
-        GROUP BY 1 ORDER BY 3 DESC, 1`);
+        GROUP BY 1 ORDER BY 3 DESC, (d.receipt->>'model') COLLATE "C"`);
     // A model priced since (pricing.overrides) no longer holds anything back: the next run meters it.
     const overrides = await loadPricingOverrides(connectedEngine(ctx));
     const models = rows.filter(r => reservationCostUsd(r.model, 'chat', 1, 1, overrides) === null).map(r => ({ model: r.model, pipelines: r.pipelines ?? [], pages: Number(r.pages), samples: r.samples ?? [], fix: pricingCommand(r.model).join(' ') }));

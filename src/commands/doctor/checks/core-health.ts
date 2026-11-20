@@ -340,12 +340,12 @@ export async function checkVolunteerChannels(
             WHERE source_id = ANY($1::text[])
               AND volunteered_at > now() - interval '7 days'
             GROUP BY channel
-            ORDER BY channel`
+            ORDER BY channel COLLATE "C"`
         : `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
              FROM context_volunteer_events
             WHERE volunteered_at > now() - interval '7 days'
             GROUP BY channel
-            ORDER BY channel`,
+            ORDER BY channel COLLATE "C"`,
       scoped ? [opts.sourceIds] : [],
     );
     const channels: Record<string, { count: number; last_fired: string | null }> = {};
@@ -578,7 +578,7 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
       };
     }
     const sample = await engine.executeRaw<{ slug: string }>(
-      `SELECT p.slug FROM pages p WHERE ${where} ORDER BY p.slug LIMIT 5`,
+      `SELECT p.slug FROM pages p WHERE ${where} ORDER BY p.slug COLLATE "C" LIMIT 5`,
     );
     const slugs = sample.map(r => r.slug).join(', ');
     return {

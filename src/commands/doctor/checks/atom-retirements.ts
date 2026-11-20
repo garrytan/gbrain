@@ -23,7 +23,7 @@ export async function atomRetirementsRestorableCheck(engine: BrainEngine, source
              count(DISTINCT c.origin_kind||':'||c.origin)::int AS origins, min(c.retired_at) AS oldest, max(c.retired_at) AS newest,
              to_char((min(p.deleted_at) + interval '${ATOM_RESTORE_HOLD_DAYS} days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS hold_until
         FROM (${atomRetirementsSql('p.source_id=ANY($1::text[])')}) c JOIN pages p ON p.id=c.id
-       WHERE c.restorable AND c.ledger_generation IS NULL GROUP BY p.source_id ORDER BY p.source_id`, [sources]);
+       WHERE c.restorable AND c.ledger_generation IS NULL GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`, [sources]);
     const [covered] = await engine.executeRaw<{ count: number }>(
       `SELECT count(*)::int AS count FROM (${atomRetirementsSql('p.source_id=ANY($1::text[])')}) c WHERE c.restorable AND c.ledger_generation IS NOT NULL`, [sources]);
     const bySource = rows.map(row => ({ ...row, count: Number(row.count), origins: Number(row.origins) }));

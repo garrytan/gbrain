@@ -51,7 +51,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
       const stubs = await engine.executeRaw<{ slug: string; title: string | null }>(
         `SELECT slug, title FROM pages
           WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE ANY($2::text[]) AND NOT ${retiredPageSql('pages')}
-          ORDER BY slug LIMIT ${PAIR_SCAN_CAP - scanned + 1}`, [sourceId, PREFIXES]);
+          ORDER BY slug COLLATE "C" LIMIT ${PAIR_SCAN_CAP - scanned + 1}`, [sourceId, PREFIXES]);
       if (stubs.length > PAIR_SCAN_CAP - scanned) capped = true;
       for (const stub of stubs.slice(0, PAIR_SCAN_CAP - scanned)) {
         scanned++;

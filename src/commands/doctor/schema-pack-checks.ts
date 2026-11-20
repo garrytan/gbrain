@@ -120,7 +120,7 @@ export async function checkSchemaPackConsistency(
          FROM pages p
         WHERE p.deleted_at IS NULL${scoped ? ' AND p.source_id = ANY($1::text[])' : ''}
         GROUP BY p.source_id, p.type, own
-        ORDER BY p.source_id`,
+        ORDER BY p.source_id COLLATE "C"`,
       scoped ? [opts.sourceIds] : [],
     );
   } catch (e) {

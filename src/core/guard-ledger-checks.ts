@@ -41,6 +41,7 @@ function guardParams(): [string[], string[], string[]] {
  * that owns it, whether the current role may re-create it, and the current role. Read-only (doctor guard_ledger_checks).
  */
 export async function ledgerGuardsWithoutCheck(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Array<{ sig: string; qualified: string; owner: string; owned: boolean; role: string }>> {
+  // The order differs only by Postgres locale and no other engine prints this list: the doctor check skips PGLite (no row-level security) and the Rust store refuses raw SQL.
   return engine.executeRaw(
     `SELECT p.oid::regprocedure::text AS sig, quote_ident(n.nspname) || '.' || quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')' AS qualified,
             pg_get_userbyid(p.proowner)::text AS owner, pg_has_role(current_user, p.proowner, 'USAGE') AS owned, quote_ident(current_user) AS role

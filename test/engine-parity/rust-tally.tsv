@@ -15,6 +15,9 @@ test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-import.test.ts	17	0
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
+test/engine-parity/collate-doctor-access.test.ts	0	11
+test/engine-parity/collate-doctor-persistence.test.ts	0	13
+test/engine-parity/collate-doctor.test.ts	0	10
 test/engine-parity/collate-engine-sql.test.ts	26	9
 test/engine-parity/collate-persistence-a.test.ts	0	18
 test/engine-parity/collate-persistence-b.test.ts	0	21

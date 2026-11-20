@@ -105,7 +105,7 @@ async function runExtractionInputTruncatedCheck(ctx: DoctorContext): Promise<Che
        SELECT r.pipeline, r.kind, count(DISTINCT r.page_id)::int AS pages,
               (array_agg(p.source_id || ':' || p.slug || COALESCE(r.detail, '') ORDER BY r.updated_at DESC))[1:3] AS samples
          FROM receipts r JOIN pages p ON p.id = r.page_id AND p.deleted_at IS NULL
-        GROUP BY 1, 2 ORDER BY 1, 2`);
+        GROUP BY 1, 2 ORDER BY r.pipeline COLLATE "C", r.kind COLLATE "C"`);
     const groups: ReceiptGroup[] = rows.map(r => ({ pipeline: r.pipeline, kind: r.kind, pages: Number(r.pages), samples: r.samples ?? [] }));
     const details = { groups: groups.map(g => ({ ...g, remedy: remedy(g) })) };
     if (!groups.length) {
