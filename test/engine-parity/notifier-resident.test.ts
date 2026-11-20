@@ -9,22 +9,26 @@
  *  - Contract: liveJobs keeps the asked ids whose job is waiting, active, delayed, waiting-children or paused, and drops
  *    a finished, failed or missing job. lastCommit reads the source's last_commit: null before a sync, the advanced
  *    commit after it, null for a missing source. drainHeld reads false with no lease and true while a live holder holds
- *    it; the lease reading names the holder's kind from its record, and its progress counts the source's managed
- *    commits (none on an unbound source).
+ *    it, and 'stalled' while a live holder has held it for the stall window with no progress; the lease reading names
+ *    the holder's kind from its record, and its progress counts the source's managed commits (none on an unbound
+ *    source).
  *  - Regression: the Rust engine refused the three raw reads and the drain lease's holder record writes. The notifier
  *    logged each refusal and went on blind: it could not tell a live marker job from a dead one, read no commit a run
  *    reached, and read a held lease without its holder's kind or progress; a sync could not take the drain lease at all.
  *  - Why existing coverage misses it: test/commit-notifier*.test.ts inject fake stores and seams, and
  *    test/sync-lease*.test.ts run PGLite or Postgres only.
- *  - Seam: none. Real engines, the real resident store, options and runner seams, the real cycle lock and drain lease.
- *    Job ids are compared by the label of the job they name, and clock readings as present or absent.
+ *  - Seam: one, for the stall case only: the lease rows the engine returns read as taken earlier (a Proxy over the
+ *    engine shifts `acquired_at`), since no typed method backdates a lease and the stall window is five minutes. The
+ *    engine still reads the rows, the holder record and the holder's progress. Otherwise real engines, the real
+ *    resident store, options and runner seams, the real cycle lock and drain lease. Job ids are compared by the label
+ *    of the job they name, and clock readings as present or absent.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision } from '../../src/core/minions/submission-authority.ts';
 import { residentNotifierOptions, runnerStart, sqlNotifierStore } from '../../src/core/notifier/resident.ts';
-import { readDrainLease, withDrainLease, type DrainLeaseReading } from '../../src/core/persistence/sync-lease.ts';
+import { HOLDER_STALL_MS, readDrainLease, withDrainLease, type DrainLeaseReading } from '../../src/core/persistence/sync-lease.ts';
 import { syncLockId, tryAcquireDbLock } from '../../src/core/db-lock.ts';
 import { writeSyncAnchor } from '../../src/core/sync-anchor.ts';
 import type { SyncResult } from '../../src/commands/sync.ts';
@@ -118,4 +122,48 @@ describe('engine parity: the resident notifier reads', () => {
     });
     return observed;
   });
+
+  parityTest('drainHeld reads a live holder with no progress for the stall window as stalled', {
+    methods: ['readCycleLocks', 'readDrainLeaseBeacon', 'readDrainHolderProgress', 'writeDrainLeaseHolder', 'releaseDrainLeaseHolder'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'alpha', {}, '/srv/brain/alpha');
+    const heldFor = async (ms: number) => {
+      const drainHeld = runnerStart(takenEarlier(engine, ms)).drainHeld!;
+      return drainHeld('alpha');
+    };
+    let observed: Record<string, unknown> = {};
+    await withDrainLease(engine, 'alpha', { holder: { kind: 'job', id: '7' } }, async () => {
+      observed = {
+        fresh: await heldFor(0),
+        underWindow: await heldFor(HOLDER_STALL_MS - 60_000),
+        pastWindow: await heldFor(HOLDER_STALL_MS + 60_000),
+        progress: (await readDrainLease(takenEarlier(engine, HOLDER_STALL_MS + 60_000), 'alpha'))?.holder.progress ?? null,
+      };
+      return { status: 'up_to_date' } as unknown as SyncResult;
+    });
+    const after = await heldFor(HOLDER_STALL_MS + 60_000);
+    expect({ ...observed, after } as Record<string, unknown>).toEqual({
+      fresh: true, underWindow: true, pastWindow: 'stalled',
+      progress: { committed: 0, last_committed_at: null, last_progress_at: null }, after: false,
+    });
+    return { ...observed, after };
+  });
 });
+
+/**
+ * The engine with its lease rows read as taken `ms` earlier, as a holder that took the lease then and has renewed it
+ * since: the TTL and the renewal stamp stay the engine's, so the lease reads live, and the holder's progress is read
+ * from the earlier start.
+ */
+function takenEarlier(engine: BrainEngine, ms: number): BrainEngine {
+  return new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'readCycleLocks') {
+        return async (filter: Parameters<BrainEngine['readCycleLocks']>[0]) => (await target.readCycleLocks(filter))
+          .map(row => ({ ...row, acquired_at: new Date(new Date(row.acquired_at).getTime() - ms) }));
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
