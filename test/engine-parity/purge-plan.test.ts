@@ -2,17 +2,19 @@
  * BrainEngine parity — the reads of a fact purge's plan, its dry run and `--match` that ran through `executeRaw`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: hasLivePageSlug, readPurgeTakePages, countPurgeCarryingVersions, listStagingsHoldingClaim,
- *    readStagingPartEdges, countPurgeReviewRows, matchPurgeCandidates, listRequestsCarryingClaim,
- *    listRequestsHoldingStagings, listDerivedRowsStep, listSegmentedPurgeBodies, countLegacyDerivedPages,
- *    listPageSourcePaths, listFactNeighbours, setPurgeProbeTimeout, countPurgeProbe and listPurgeProbeItems return the
+ *  - Contract: purgeSubjectPageLive, listPurgePagesById, countPurgeVersionsCarryingClaim, listStagingsHoldingClaim,
+ *    listStagingPartEdges, countPurgeReviewRows, listPurgeMatchCandidates, listRequestsCarryingClaim,
+ *    listRequestsHoldingStagings, listDerivedRows, listSegmentedPageBodies, listSegmentedVersionBodies,
+ *    countLegacyDerivedPages, listPageSourcePathsForPurge, listNearestFactsForPurge, setPurgeProbeTimeout,
+ *    countPurgeProbe and listPurgeProbeItems return the
  *    same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
  *    GBRAIN_TEST_RUST_ARM=1), or the Rust arm stops on the typed engine_capability_missing refusal.
  *  - Regression: an engine that answers one of these differently changes what `forget --purge` plans to rewrite,
  *    what its dry run reports as still carrying the claim, and which facts `--match` offers; the Rust engine has no
  *    SQL, so each read has to exist as a typed method it can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
- *    (D18), so no case compared them across engines. Their SQL text is pinned by test/purge-plan-sql-pin.test.ts.
+ *    (D18), so no case compared them across engines. Their SQL text is pinned by test/purge-plan-sql-pin.test.ts and
+ *    test/fact-purge-sites-sql-pin.test.ts.
  *  - Seam: rows are seeded through the typed `putPage`, `createVersion`, `softDeletePage`, `insertFact`, `expireFact`,
  *    `addLink`, `addTimelineEntry`, `putRawData`, `insertWriteRequest` and the segmented-body members
  *    (test/helpers/page-body-fixtures.ts). Generated values (fact, page, link and request ids, revisions, staging ids)
@@ -31,6 +33,7 @@ const CLAIM = 'Acme "raised" a Seed';
 const lower = (s: string) => s.toLowerCase();
 const escaped = (s: string) => JSON.stringify(s).slice(1, -1).toLowerCase();
 const NEEDLES = { sourceId: SRC, claimLower: lower(CLAIM), claimJson: escaped(CLAIM), reason: escaped(CLAIM) };
+const carryingArgs = (sourceId: string, needle: string, json: string, reason: string) => [sourceId, needle, json, reason] as const;
 
 const note = (title: string, body: string, frontmatter: Record<string, unknown> = {}, type = 'note', source_path?: string) =>
   ({ type: type as 'note', title, compiled_truth: body, frontmatter, ...(source_path ? { source_path } : {}) });
@@ -57,32 +60,32 @@ function vec(...head: number[]): Float32Array {
 const vecText = (...head: number[]) => `[${Array.from(vec(...head)).join(',')}]`;
 
 describe('engine parity: fact purge plan, dry run and --match reads', () => {
-  parityTest('hasLivePageSlug, readPurgeTakePages and listPageSourcePaths read pages by slug and id', {
-    methods: ['hasLivePageSlug', 'readPurgeTakePages', 'listPageSourcePaths'],
+  parityTest('purgeSubjectPageLive, listPurgePagesById and listPageSourcePathsForPurge read pages by slug and id', {
+    methods: ['purgeSubjectPageLive', 'listPurgePagesById', 'listPageSourcePathsForPurge'],
   }, async (engine) => {
     const a = await engine.putPage('acme', note('Acme', 'body', {}, 'note', 'notes/acme.md'));
     const b = await engine.putPage('gone', note('Gone', 'body'));
     await engine.softDeletePage('gone');
-    const live = await engine.hasLivePageSlug(SRC, 'acme');
-    const deleted = await engine.hasLivePageSlug(SRC, 'gone');
-    const missing = await engine.hasLivePageSlug(SRC, 'nobody');
-    const elsewhere = await engine.hasLivePageSlug('elsewhere', 'acme');
-    const pages = (await engine.readPurgeTakePages(SRC, [a.id, b.id, a.id + b.id + 1000]))
+    const live = await engine.purgeSubjectPageLive(SRC, 'acme');
+    const deleted = await engine.purgeSubjectPageLive(SRC, 'gone');
+    const missing = await engine.purgeSubjectPageLive(SRC, 'nobody');
+    const elsewhere = await engine.purgeSubjectPageLive('elsewhere', 'acme');
+    const pages = (await engine.listPurgePagesById(SRC, [a.id, b.id, a.id + b.id + 1000]))
       .map(p => ({ slug: p.slug, sameId: Number(p.page_id) === (p.slug === 'acme' ? a.id : b.id), revision: typeof p.revision }))
       .sort((x, y) => x.slug.localeCompare(y.slug));
-    const otherSource = await engine.readPurgeTakePages('elsewhere', [a.id]);
-    const paths = await engine.listPageSourcePaths([a.id, b.id]);
-    const none = await engine.listPageSourcePaths([]);
+    const otherSource = await engine.listPurgePagesById('elsewhere', [a.id]);
+    const paths = (await engine.listPageSourcePathsForPurge([a.id, b.id])).map(r => r.source_path);
+    const none = await engine.listPageSourcePathsForPurge([]);
     expect(live).toBe(true);
     expect(deleted).toBe(false);
     expect(pages.map(p => p.slug)).toEqual(['acme', 'gone']);
     return { live, deleted, missing, elsewhere, pages, otherSource, paths: [...paths].sort(), none };
   });
 
-  parityTest('countPurgeCarryingVersions counts the source\'s versions that carry the claim in body, title, frontmatter or reason', {
-    methods: ['countPurgeCarryingVersions'],
+  parityTest('countPurgeVersionsCarryingClaim counts the source\'s versions that carry the claim in body, title, frontmatter or reason', {
+    methods: ['countPurgeVersionsCarryingClaim'],
   }, async (engine) => {
-    const before = await engine.countPurgeCarryingVersions(NEEDLES);
+    const before = await engine.countPurgeVersionsCarryingClaim(...carryingArgs(SRC, NEEDLES.claimLower, NEEDLES.claimJson, NEEDLES.reason));
     await engine.putPage('acme', note('Acme', `They said ${CLAIM} today`));
     await engine.createVersion('acme');
     await engine.putPage('acme', note('Acme', 'clean body'));
@@ -93,16 +96,16 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     await engine.createVersion('fm');
     await engine.putPage('plain', note('Plain', 'nothing here'));
     await engine.createVersion('plain');
-    const after = await engine.countPurgeCarryingVersions(NEEDLES);
-    const otherSource = await engine.countPurgeCarryingVersions({ ...NEEDLES, sourceId: 'elsewhere' });
-    const empty = await engine.countPurgeCarryingVersions({ ...NEEDLES, claimLower: 'no such text', claimJson: 'no such text', reason: 'no such text' });
+    const after = await engine.countPurgeVersionsCarryingClaim(...carryingArgs(SRC, NEEDLES.claimLower, NEEDLES.claimJson, NEEDLES.reason));
+    const otherSource = await engine.countPurgeVersionsCarryingClaim(...carryingArgs('elsewhere', NEEDLES.claimLower, NEEDLES.claimJson, NEEDLES.reason));
+    const empty = await engine.countPurgeVersionsCarryingClaim(...carryingArgs(SRC, 'no such text', 'no such text', 'no such text'));
     expect(before).toBe(0);
     expect(after).toBe(3);
     return { before, after, otherSource, empty };
   });
 
-  parityTest('matchPurgeCandidates lists up to 25 facts of the source containing the text, by id, cut to 160 characters', {
-    methods: ['matchPurgeCandidates', 'insertFact', 'expireFact'],
+  parityTest('listPurgeMatchCandidates lists up to 25 facts of the source containing the text, by id, cut to 160 characters', {
+    methods: ['listPurgeMatchCandidates', 'insertFact', 'expireFact'],
   }, async (engine) => {
     const seed = new Seed(engine);
     await seed.fact('exact', { fact: `Note: ${CLAIM}.`, entity_slug: 'companies/acme' });
@@ -112,9 +115,9 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     await seed.fact('long', { fact: `${CLAIM} ${'x'.repeat(300)}` });
     await seed.fact('other', { fact: 'unrelated' });
     for (let i = 0; i < 25; i++) await seed.fact(`bulk-${i}`, { fact: `bulk ${i}: ${CLAIM}` });
-    const rows = await engine.matchPurgeCandidates(SRC, lower(CLAIM));
-    const none = await engine.matchPurgeCandidates(SRC, 'no such text');
-    const elsewhere = await engine.matchPurgeCandidates('elsewhere', CLAIM);
+    const rows = await engine.listPurgeMatchCandidates(SRC, lower(CLAIM));
+    const none = await engine.listPurgeMatchCandidates(SRC, 'no such text');
+    const elsewhere = await engine.listPurgeMatchCandidates('elsewhere', CLAIM);
     expect(rows.length).toBe(25);
     expect(rows.slice(0, 4).map(r => [seed.name(r.id), r.expired, r.fact.length])).toEqual([['exact', false, 27], ['upper', false, 20], ['expired', true, 24], ['long', false, 160]]);
     return {
@@ -123,8 +126,8 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     };
   });
 
-  parityTest('listFactNeighbours ranks the five nearest same-model facts and says which contain the claim', {
-    methods: ['listFactNeighbours', 'insertFact'],
+  parityTest('listNearestFactsForPurge ranks the five nearest same-model facts and says which contain the claim', {
+    methods: ['listNearestFactsForPurge', 'insertFact'],
   }, async (engine) => {
     const seed = new Seed(engine);
     await seed.fact('near', { fact: `${CLAIM}!`, embedding: vec(1, 0), embedding_model: 'm' });
@@ -135,8 +138,8 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     await seed.fact('b', { fact: 'b', embedding: vec(1, 0.4), embedding_model: 'm' });
     await seed.fact('model', { fact: CLAIM, embedding: vec(1, 0), embedding_model: 'other' });
     await seed.fact('bare', { fact: CLAIM });
-    const rows = await engine.listFactNeighbours({ embedding: vecText(1, 0), sourceId: SRC, model: 'm', claim: CLAIM });
-    const none = await engine.listFactNeighbours({ embedding: vecText(1, 0), sourceId: SRC, model: 'nobody', claim: CLAIM });
+    const rows = await engine.listNearestFactsForPurge(vecText(1, 0), SRC, 'm', CLAIM);
+    const none = await engine.listNearestFactsForPurge(vecText(1, 0), SRC, 'nobody', CLAIM);
     expect(rows.map(r => [seed.name(r.id), r.contains_claim])).toEqual([['near', true], ['a', false], ['b', false], ['mid', false], ['far', true]]);
     return { rows: rows.map(r => ({ id: seed.name(r.id), similarity: Math.round(Number(r.similarity) * 1000) / 1000, contains: r.contains_claim })), none };
   });
@@ -158,32 +161,32 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
   });
 
   parityTest('countPurgeReviewRows counts nothing when no review row names the facts; part edges and derived rows are empty', {
-    methods: ['countPurgeReviewRows', 'readStagingPartEdges', 'listDerivedRowsStep', 'setPurgeProbeTimeout', 'transaction'],
+    methods: ['countPurgeReviewRows', 'listStagingPartEdges', 'listDerivedRows', 'setPurgeProbeTimeout', 'transaction'],
   }, async (engine) => {
     const seed = new Seed(engine);
     const id = await seed.fact('f', { fact: CLAIM });
-    const counts = await engine.countPurgeReviewRows(SRC, [id]);
-    expect(counts).toEqual({ q: 0, rp: 0, dp: 0 });
-    const empty = await engine.countPurgeReviewRows(SRC, []);
-    const edges = await engine.readStagingPartEdges(SRC, 64, '00000000-0000-0000-0000-000000000000', -1);
-    const derived = await engine.listDerivedRowsStep([{ table: 'facts', id: String(id) }], 1001);
+    const counts = await engine.countPurgeReviewRows(SRC, [String(id)], [id]);
+    expect(counts).toEqual({ decide_review_queue: 0, decide_review_proposals: 0, decide_proposals: 0 });
+    const empty = await engine.countPurgeReviewRows(SRC, [], []);
+    const edges = await engine.listStagingPartEdges(SRC, 64, { id: '00000000-0000-0000-0000-000000000000', part: -1 });
+    const derived = await engine.listDerivedRows([{ table: 'facts', id: String(id) }], 1001);
     await engine.transaction(async tx => { await tx.setPurgeProbeTimeout(2000); });
     return { counts, empty, edges, derived };
   });
 
-  parityTest('segmented bodies: listSegmentedPurgeBodies, the manifest arm of countPurgeCarryingVersions and listStagingsHoldingClaim', {
-    methods: ['listSegmentedPurgeBodies', 'countPurgeCarryingVersions', 'listStagingsHoldingClaim', 'createSegmentedPageShell'],
+  parityTest('segmented bodies: listSegmentedPageBodies, listSegmentedVersionBodies, the manifest arm of countPurgeVersionsCarryingClaim and listStagingsHoldingClaim', {
+    methods: ['listSegmentedPageBodies', 'listSegmentedVersionBodies', 'countPurgeVersionsCarryingClaim', 'listStagingsHoldingClaim', 'createSegmentedPageShell'],
   }, async (engine) => {
     const texts = [segmentText(`intro ${CLAIM} here`), segmentText('second segment')];
     const { pageId } = await publishSegmentedPage(engine, 'big/acme', texts);
     await engine.putPage('inline', note('Inline', 'clean'));
-    const pages = await engine.listSegmentedPurgeBodies(SRC, 'pages', 1001);
+    const pages = await engine.listSegmentedPageBodies(SRC, 1001);
     await engine.createVersion('big/acme');
-    const versions = await engine.listSegmentedPurgeBodies(SRC, 'page_versions', 1001);
-    const carrying = await engine.countPurgeCarryingVersions(NEEDLES);
+    const versions = await engine.listSegmentedVersionBodies(SRC, 1001);
+    const carrying = await engine.countPurgeVersionsCarryingClaim(...carryingArgs(SRC, NEEDLES.claimLower, NEEDLES.claimJson, NEEDLES.reason));
     const open = await stageGeneration(engine, { pageId, slug: 'big/acme', genFrom: 2, texts: [segmentText(`next ${CLAIM}`)] });
-    const stagings = await engine.listStagingsHoldingClaim({ sourceId: SRC, claimLower: lower(CLAIM), claim: CLAIM, cellLower: escaped(CLAIM) });
-    const noClaim = await engine.listStagingsHoldingClaim({ sourceId: SRC, claimLower: 'no such text', claim: 'no such text', cellLower: 'no such text' });
+    const stagings = await engine.listStagingsHoldingClaim(SRC, CLAIM);
+    const noClaim = await engine.listStagingsHoldingClaim(SRC, 'no such text');
     expect({ carrying, stagings: stagings.map(id => id === open.stagingId) }).toEqual({ carrying: 1, stagings: [true] });
     return {
       pages: pages.map(p => ({ slug: p.slug, samePage: Number(p.page_id) === pageId, generation: p.generation, version: p.version_id })),
@@ -191,7 +194,7 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
       carrying,
       stagings: stagings.map(id => id === open.stagingId ? 'open' : '<other>'),
       noClaim,
-      limited: (await engine.listSegmentedPurgeBodies(SRC, 'pages', 0)).length,
+      limited: (await engine.listSegmentedPageBodies(SRC, 0)).length,
     };
   });
 

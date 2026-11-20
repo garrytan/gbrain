@@ -1,10 +1,12 @@
 /**
- * The reads of a fact purge's plan, its dry run and `--match` (src/core/engine-sql/facts-purge-plan.ts), served from
- * rust/crates/gbrain-store/src/facts/purge_plan.rs. Each member sends the arguments of its BrainEngine member.
+ * The reads of a fact purge's plan, its dry run and `--match` (src/core/engine-sql/facts-purge.ts and
+ * facts-purge-plan.ts), served from rust/crates/gbrain-store/src/facts/purge_plan.rs. Each member sends the arguments
+ * of its BrainEngine member; the store call keeps its own name (the store method in parentheses below).
  *
  * Answered here, without a store call, because the store keeps no such rows:
- * - `readStagingPartEdges`: the raw upload parts (`page_body_staging_parts`) are not kept, so no part edge exists.
- * - `listDerivedRowsStep`: the store keeps no derivation edges (`derivation_inputs`), so no row is derived.
+ * - `listStagingPartEdges`: the raw upload parts (`page_body_staging_parts`) are not kept, so no part edge exists.
+ * - `listDerivedRows`: the store keeps no derivation edges (`derivation_inputs`; `recordDerivationEdges` refuses on
+ *   Rust), so no row is derived.
  * - `setPurgeProbeTimeout`: a store read has no statement deadline to set.
  *
  * The inventory probes (`countPurgeProbe`, `listPurgeProbeItems`) send the probe's shape (purgeProbeShape). The store
@@ -14,6 +16,7 @@
  * no `raw_data.id` to name a row by.
  */
 import type { BrainEngine } from '../../engine.ts';
+import { escapeFenceCell } from '../../fence-shared.ts';
 import { purgeProbeShape, type PurgeProbe } from '../../facts/purge-plan-statements.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -48,28 +51,36 @@ function probeRoute(member: string, probe: PurgeProbe): ProbeRoute {
   } };
 }
 
-export const hasLivePageSlug: Member<'hasLivePageSlug'> = (brain, sourceId, slug) =>
-  storeCall({ member: 'hasLivePageSlug' }, () => brain.hasLivePageSlug({ sourceId, slug }));
+/** (store `hasLivePageSlug`) */
+export const purgeSubjectPageLive: Member<'purgeSubjectPageLive'> = (brain, sourceId, slug) =>
+  storeCall({ member: 'purgeSubjectPageLive' }, () => brain.hasLivePageSlug({ sourceId, slug }));
 
-export const readPurgeTakePages: Member<'readPurgeTakePages'> = (brain, sourceId, pageIds) =>
-  storeCall({ member: 'readPurgeTakePages' }, () => brain.readPurgeTakePages({ sourceId, pageIds: [...pageIds] }));
+/** (store `readPurgeTakePages`) */
+export const listPurgePagesById: Member<'listPurgePagesById'> = (brain, sourceId, pageIds) =>
+  storeCall({ member: 'listPurgePagesById' }, () => brain.readPurgeTakePages({ sourceId, pageIds: [...pageIds] }));
 
-export const countPurgeCarryingVersions: Member<'countPurgeCarryingVersions'> = (brain, q) =>
-  storeCall({ member: 'countPurgeCarryingVersions' }, () => brain.countPurgeCarryingVersions({
-    sourceId: q.sourceId, claimLower: q.claimLower, claimJson: q.claimJson, reason: q.reason }));
+/** (store `countPurgeCarryingVersions`) `needle` is the lowered claim and `escaped` its lowered JSON form. */
+export const countPurgeVersionsCarryingClaim: Member<'countPurgeVersionsCarryingClaim'> = (brain, sourceId, needle, escaped, reason) =>
+  storeCall({ member: 'countPurgeVersionsCarryingClaim' }, () => brain.countPurgeCarryingVersions({
+    sourceId, claimLower: needle, claimJson: escaped, reason }));
 
-export const listStagingsHoldingClaim: Member<'listStagingsHoldingClaim'> = (brain, q) =>
+/** The store gets the same three needles the SQL binds: lowered, exact and the lowered fence cell. */
+export const listStagingsHoldingClaim: Member<'listStagingsHoldingClaim'> = (brain, sourceId, claim) =>
   storeCall({ member: 'listStagingsHoldingClaim' }, () => brain.listStagingsHoldingClaim({
-    sourceId: q.sourceId, claimLower: q.claimLower, claim: q.claim, cellLower: q.cellLower }));
+    sourceId, claimLower: claim.toLowerCase(), claim, cellLower: escapeFenceCell(claim).toLowerCase() }));
 
 /** The store keeps no raw staging parts, so there is no part edge to read. */
-export const readStagingPartEdges: Member<'readStagingPartEdges'> = async () => [];
+export const listStagingPartEdges: Member<'listStagingPartEdges'> = async () => [];
 
-export const countPurgeReviewRows: Member<'countPurgeReviewRows'> = (brain, sourceId, factIds) =>
-  storeCall({ member: 'countPurgeReviewRows' }, () => brain.countPurgeReviewRows({ sourceId, factIds: [...factIds] }));
+/** The store counts by the fact ids; every caller passes `refs` as those ids in text. */
+export const countPurgeReviewRows: Member<'countPurgeReviewRows'> = async (brain, sourceId, _refs, factIds) => {
+  const n = await storeCall({ member: 'countPurgeReviewRows' }, () => brain.countPurgeReviewRows({ sourceId, factIds: [...factIds] })) as { q: number; rp: number; dp: number };
+  return { decide_review_queue: n.q, decide_review_proposals: n.rp, decide_proposals: n.dp };
+};
 
-export const matchPurgeCandidates: Member<'matchPurgeCandidates'> = (brain, sourceId, text) =>
-  storeCall({ member: 'matchPurgeCandidates' }, () => brain.matchPurgeCandidates({ sourceId, text }));
+/** (store `matchPurgeCandidates`) */
+export const listPurgeMatchCandidates: Member<'listPurgeMatchCandidates'> = (brain, sourceId, text) =>
+  storeCall({ member: 'listPurgeMatchCandidates' }, () => brain.matchPurgeCandidates({ sourceId, text }));
 
 export const listRequestsCarryingClaim: Member<'listRequestsCarryingClaim'> = (brain, q) =>
   storeCall({ member: 'listRequestsCarryingClaim' }, () => brain.listRequestsCarryingClaim({
@@ -79,20 +90,28 @@ export const listRequestsHoldingStagings: Member<'listRequestsHoldingStagings'> 
   storeCall({ member: 'listRequestsHoldingStagings' }, () => brain.listRequestsHoldingStagings({ sourceId, stagingIds: [...stagingIds] }));
 
 /** The store keeps no derivation edges, so no row is derived from the frontier. */
-export const listDerivedRowsStep: Member<'listDerivedRowsStep'> = async () => [];
+export const listDerivedRows: Member<'listDerivedRows'> = async () => [];
 
-export const listSegmentedPurgeBodies: Member<'listSegmentedPurgeBodies'> = (brain, sourceId, store, limit) =>
-  storeCall({ member: 'listSegmentedPurgeBodies' }, () => brain.listSegmentedPurgeBodies({ sourceId, store, limit }));
+/** (store `listSegmentedPurgeBodies`, the live pages) */
+export const listSegmentedPageBodies: Member<'listSegmentedPageBodies'> = (brain, sourceId, limit) =>
+  storeCall({ member: 'listSegmentedPageBodies' }, () => brain.listSegmentedPurgeBodies({ sourceId, store: 'pages', limit }));
+
+/** (store `listSegmentedPurgeBodies`, the saved versions) */
+export const listSegmentedVersionBodies: Member<'listSegmentedVersionBodies'> = (brain, sourceId, limit) =>
+  storeCall({ member: 'listSegmentedVersionBodies' }, () => brain.listSegmentedPurgeBodies({ sourceId, store: 'page_versions', limit }));
 
 export const countLegacyDerivedPages: Member<'countLegacyDerivedPages'> = (brain, sourceId) =>
   storeCall({ member: 'countLegacyDerivedPages' }, () => brain.countLegacyDerivedPages({ sourceId }));
 
-export const listPageSourcePaths: Member<'listPageSourcePaths'> = (brain, pageIds) =>
-  storeCall({ member: 'listPageSourcePaths' }, () => brain.listPageSourcePaths({ pageIds: [...pageIds] }));
+/** (store `listPageSourcePaths`) */
+export const listPageSourcePathsForPurge: Member<'listPageSourcePathsForPurge'> = async (brain, pageIds) => {
+  const paths = await storeCall({ member: 'listPageSourcePathsForPurge' }, () => brain.listPageSourcePaths({ pageIds: [...pageIds] })) as string[];
+  return paths.map(source_path => ({ source_path }));
+};
 
-export const listFactNeighbours: Member<'listFactNeighbours'> = (brain, q) =>
-  storeCall({ member: 'listFactNeighbours' }, () => brain.listFactNeighbours({
-    embedding: q.embedding, sourceId: q.sourceId, model: q.model, claim: q.claim }));
+/** (store `listFactNeighbours`) */
+export const listNearestFactsForPurge: Member<'listNearestFactsForPurge'> = (brain, embedding, sourceId, model, fact) =>
+  storeCall({ member: 'listNearestFactsForPurge' }, () => brain.listFactNeighbours({ embedding, sourceId, model, claim: fact }));
 
 /** A store read has no statement deadline to set. */
 export const setPurgeProbeTimeout: Member<'setPurgeProbeTimeout'> = async () => {};

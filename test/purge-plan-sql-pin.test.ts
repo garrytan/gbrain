@@ -1,5 +1,6 @@
 /**
- * The fact purge plan, dry run and --match members (src/core/engine-sql/facts-purge-plan.ts) send Postgres the statement
+ * The fact purge plan, dry run and --match members (src/core/engine-sql/facts-purge-plan.ts and the plan members of
+ * src/core/engine-sql/facts-purge.ts) send Postgres the statement
  * text and binds planFactPurge (src/core/facts/purge.ts), verifyFactPurge (src/core/facts/purge-verify.ts),
  * findRequestsCarrying / findRequestsHoldingStagings (src/core/persistence/intent-redaction.ts) and derivedRowsFrom
  * (src/core/facts/derivation-inputs.ts) sent through `executeRaw` before they had members. A drift here changes a query
@@ -25,7 +26,6 @@ const CLAIM = 'Acme "raised" a Seed';
 const CLAIM_LOWER = CLAIM.toLowerCase();
 const CLAIM_JSON = JSON.stringify(CLAIM).slice(1, -1).toLowerCase();
 const NEEDLES = { sourceId: 'src-a', claimLower: CLAIM_LOWER, claimJson: CLAIM_JSON, reason: CLAIM_LOWER };
-const STAGING_NEEDLES = { sourceId: 'src-a', claimLower: CLAIM_LOWER, claim: CLAIM, cellLower: CLAIM_LOWER };
 
 function recordingEngine(rows?: Parameters<typeof makeFakeSql>[0]) {
   const fake = makeFakeSql(rows);
@@ -80,25 +80,25 @@ const OLD = {
 
 test('each plan and dry-run member sends the old statement text and binds', async () => {
   const { engine, last } = recordingEngine();
-  await engine.hasLivePageSlug('src-a', 'acmename');
+  await engine.purgeSubjectPageLive('src-a', 'acmename');
   expect(last()).toEqual(OLD.s0);
-  await engine.readPurgeTakePages('src-a', [9]);
+  await engine.listPurgePagesById('src-a', [9]);
   expect(last()).toEqual(OLD.s10);
-  await engine.countPurgeCarryingVersions(NEEDLES);
+  await engine.countPurgeVersionsCarryingClaim(NEEDLES.sourceId, NEEDLES.claimLower, NEEDLES.claimJson, NEEDLES.reason);
   expect(last()).toEqual(OLD.s11);
-  await engine.listStagingsHoldingClaim(STAGING_NEEDLES);
+  await engine.listStagingsHoldingClaim('src-a', CLAIM);
   expect(last()).toEqual(OLD.s12);
-  await engine.readStagingPartEdges('src-a', 19, '00000000-0000-0000-0000-000000000000', -1);
+  await engine.listStagingPartEdges('src-a', 19, { id: '00000000-0000-0000-0000-000000000000', part: -1 });
   expect(last()).toEqual(OLD.s13);
   await engine.listRequestsHoldingStagings('src-a', ['00000000-0000-0000-0000-0000000000aa']);
   expect(last()).toEqual(OLD.s14);
   await engine.listRequestsCarryingClaim({ ...NEEDLES, reason: CLAIM_JSON, limit: 10_000 });
   expect(last()).toEqual(OLD.s15);
-  await engine.listDerivedRowsStep([{ table: 'takes', id: '1' }], 1001);
+  await engine.listDerivedRows([{ table: 'takes', id: '1' }], 1001);
   expect(last()).toEqual(OLD.s16);
-  await engine.countPurgeReviewRows('src-a', []);
+  await engine.countPurgeReviewRows('src-a', [], []);
   expect(last()).toEqual(OLD.s17);
-  await engine.listSegmentedPurgeBodies('src-a', 'page_versions', 1001);
+  await engine.listSegmentedVersionBodies('src-a', 1001);
   expect(last()).toEqual(OLD.s18);
   await engine.countLegacyDerivedPages('src-a');
   expect(last()).toEqual(OLD.s19);
@@ -112,15 +112,15 @@ test('each plan and dry-run member sends the old statement text and binds', asyn
   expect(last()).toEqual(OLD.s89);
   await engine.countPurgeProbe({ kind: 'table', table: 'wanted_links', sourceId: 'src-a', needles: [CLAIM] }, 1000);
   expect(last()).toEqual(OLD.s91);
-  await engine.listPageSourcePaths([9]);
+  await engine.listPageSourcePathsForPurge([9]);
   expect(last()).toEqual(OLD.s94);
-  await engine.listFactNeighbours({ embedding: '[1,0]', sourceId: 'src-a', model: 'm', claim: CLAIM });
+  await engine.listNearestFactsForPurge('[1,0]', 'src-a', 'm', CLAIM);
   expect(last()).toEqual(OLD.s95);
 });
 
-test('matchPurgeCandidates sends the old --match statement', async () => {
+test('listPurgeMatchCandidates sends the old --match statement', async () => {
   const { engine, last } = recordingEngine();
-  await engine.matchPurgeCandidates('src-a', 'Raised');
+  await engine.listPurgeMatchCandidates('src-a', 'Raised');
   expect(last()).toEqual({ text: `SELECT id,entity_slug,visibility,
     expired_at IS NOT NULL AS expired,left(fact,160) AS fact FROM facts WHERE source_id=$1 AND strpos(lower(fact),lower($2))>0 ORDER BY id LIMIT 25`,
   params: ['src-a', 'Raised'] });

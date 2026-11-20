@@ -908,8 +908,8 @@ Facts and their supersession chains.
     so `lockFactForWithdrawal`, `queueWithdrawalReview`, `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions` and
     `readPageRevisions` have no caller in `src/` yet. Still raw on Rust: the purge sweep's commit transaction and
     post-commit work (`facts/purge.ts`) and the forget's post-commit chunk rebuild (`page-state/projections.ts`).
-  - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge-plan.ts`, 17 members from
-    `hasLivePageSlug` to `listPurgeProbeItems`; statement texts in `facts/purge-plan-statements.ts`). The store serves
+  - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge.ts` from `purgeSubjectPageLive` to
+    `listNearestFactsForPurge`, and `engine-sql/facts-purge-plan.ts`, four members to `listPurgeProbeItems`). The store serves
     them in `facts/purge_plan.rs`, `facts/purge_probe.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md);
     it probes `links`, `timeline_entries`, `raw_data`, `wanted_links` and every other inventory table it keeps (bytea
     `minion_attachments.content` included), answers 0 for the tables it keeps no rows of, and refuses only naming

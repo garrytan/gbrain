@@ -36,9 +36,7 @@ export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef
   const derived = refKey(row);
   if (inputs.length > DERIVATION_EDGE_LIMIT) throw new RangeError(`A derivation records at most ${DERIVATION_EDGE_LIMIT} inputs.`);
   const edges = inputs.map(refKey);
-  await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
-    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
-    ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
+  await tx.recordDerivationEdges(derived, row.sourceId ?? null, edges);
 }
 
 export interface DerivedRow { table: string; id: string; depth: number }
@@ -55,7 +53,7 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
   const rows: DerivedRow[] = [];
   let frontier = inputs.map(refKey);
   for (let depth = 1; frontier.length && depth <= maxDepth; depth++) {
-    const next = await engine.listDerivedRowsStep(frontier, limit + 1);
+    const next = await engine.listDerivedRows(frontier, limit + 1);
     frontier = [];
     for (const r of next) {
       const key = `${r.derived_table}:${r.derived_id}`;
@@ -84,14 +82,12 @@ export async function hideDerivedRows(tx: BrainEngine, rows: readonly DerivedRow
   for (const [table, ids] of byTable) {
     const numeric = ids.filter(id => /^\d+$/.test(id)).map(Number);
     let count = 0;
-    if (table === 'facts') count = (await tx.executeRaw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [numeric, mark.sourceId])).length;
-    else if (table === 'takes') count = (await tx.executeRaw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [numeric, mark.sourceId])).length;
-    else if (table === 'pages') count = (await tx.executeRaw(`UPDATE pages SET deleted_at=COALESCE(deleted_at,now()) WHERE id=ANY($1::integer[]) AND source_id=$2 RETURNING id`, [numeric, mark.sourceId])).length;
+    if (table === 'facts') count = await tx.expireDerivedFacts(numeric, mark.sourceId);
+    else if (table === 'takes') count = await tx.deactivateDerivedTakes(numeric, mark.sourceId);
+    else if (table === 'pages') count = await tx.softDeleteDerivedPages(numeric, mark.sourceId);
     if (count) hidden[table] = count;
     if (count < ids.length) markedOnly[table] = ids.length - count;
-    await tx.executeRaw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
-      SELECT $1,unnest($2::text[]),$3,$4::uuid,$5 ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now()`,
-    [table, ids, mark.sourceId, mark.requestId, mark.reason]);
+    await tx.markNeedsRederive(table, ids, mark.sourceId, mark.requestId, mark.reason);
   }
   return { hidden, markedOnly };
 }

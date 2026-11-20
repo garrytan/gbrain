@@ -14,8 +14,6 @@
  *
  * Each case is its own update, so each uses its slug index.
  */
-import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
-
 /** facts.source values written by page-extraction paths, whose context head is the source page slug. */
 export const PAGE_EXTRACTION_SOURCE_LIST = ['mcp:put_page', 'sync:import', 'file_upload', 'code_import'] as const;
 
@@ -38,27 +36,11 @@ export function contextHeadSql(alias: string): string {
   return `split_part(${alias}.context, ' — ', 1)`;
 }
 
-/** `$1` source ids and `$2` slugs, paired by position. */
-const GONE = 'unnest($1::text[], $2::text[]) AS g(source_id, slug)';
-const EXPIRE_FILED_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
-  WHERE f.source_id = g.source_id AND f.source_markdown_slug = g.slug AND f.expired_at IS NULL AND f.dimension IS NULL`;
-const EXPIRE_FILED_SLOT_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL, dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
-  FROM ${GONE} WHERE f.source_id = g.source_id AND f.source_markdown_slug = g.slug AND f.expired_at IS NULL AND f.dimension IS NOT NULL AND f.row_num IS NOT NULL AND ${CONVERSATION_SLOT_SQL}`;
-const EXPIRE_EXTRACTED_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
-  WHERE f.source_id = g.source_id AND f.expired_at IS NULL AND ${extractedFromPageSql('f', 'g.slug')}`;
-const EXPIRE_ABOUT_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
-  WHERE f.source_id = g.source_id AND f.entity_slug = g.slug AND f.expired_at IS NULL
-    AND NOT EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug AND hp.slug <> g.slug)`;
-
 /** Expires the purged pages' facts; run it in the transaction that deletes the page rows, after the delete. */
 export async function expireGonePageFacts(
-  exec: { executeRaw(sql: string, params?: unknown[]): Promise<unknown[]> },
+  exec: { expireFactsOfGonePages(sourceIds: string[], slugs: string[]): Promise<void> },
   pages: ReadonlyArray<{ source_id: string; slug: string }>,
 ): Promise<void> {
   if (!pages.length) return;
-  const params = [pages.map(p => p.source_id), pages.map(p => p.slug)];
-  await exec.executeRaw(EXPIRE_FILED_SQL, params);
-  await exec.executeRaw(EXPIRE_FILED_SLOT_SQL, params);
-  await exec.executeRaw(EXPIRE_EXTRACTED_SQL, params);
-  await exec.executeRaw(EXPIRE_ABOUT_SQL, params);
+  await exec.expireFactsOfGonePages(pages.map(p => p.source_id), pages.map(p => p.slug));
 }

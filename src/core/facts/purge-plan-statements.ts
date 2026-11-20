@@ -1,65 +1,11 @@
 /**
- * The statements a fact purge's plan, dry run and `--match` read (facts/purge.ts planFactPurge and matchCandidates,
- * facts/purge-verify.ts, persistence/intent-redaction.ts, facts/derivation-inputs.ts). Each is the text its caller ran
- * through `executeRaw`, byte for byte, built once at module load so the engine-sql functions
- * (src/core/engine-sql/facts-purge-plan.ts) pass whole static texts. The inventory probes are built per call from the
- * deletion inventory's own table and column names (`purgeProbeStatement`): no caller text reaches them.
+ * The statements a fact purge's request finders (persistence/intent-redaction.ts) and its verification probes
+ * (facts/purge-verify.ts) read. Each is the text its caller ran through `executeRaw`, byte for byte, built once at
+ * module load so the engine-sql functions (src/core/engine-sql/facts-purge-plan.ts) pass whole static texts. The
+ * inventory probes are built per call from the deletion inventory's own table and column names (`purgeProbeSelect`):
+ * no caller text reaches them. The plan's other reads live in src/core/engine-sql/facts-purge.ts.
  */
 import { DELETION_INVENTORY_BY_TABLE } from '../deletion-inventory.ts';
-import { liveStagingSql } from '../page-body/schema.ts';
-
-/**
- * A page or page-version row (alias `a`) still states the claim: in its body,
- * timeline, title or frontmatter. `$n` is the lowercased claim, `$n+1` its
- * JSON-escaped form (frontmatter is matched as JSON text).
- */
-export const carriesClaimSql = (a: string, n: number) => `(strpos(lower(${a}.compiled_truth),$${n})>0 OR strpos(lower(COALESCE(${a}.timeline,'')),$${n})>0
-  OR strpos(lower(COALESCE(${a}.title,'')),$${n})>0 OR strpos(lower(COALESCE(${a}.frontmatter::text,'')),$${n + 1})>0)`;
-
-/** A segmented version (`v`) whose generation's segment texts hold the lowered claim `$2`. */
-export const SEGMENTED_VERSION_CARRIES = `EXISTS (SELECT 1 FROM page_body_manifest m JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
-  WHERE m.page_id=v.page_id AND m.staging_id IS NULL AND m.gen_from<=v.body_generation AND (m.gen_to IS NULL OR m.gen_to>v.body_generation)
-    AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)`;
-
-/** Stagings walked per part-edge batch (stagingsWithClaimAcrossParts). */
-export const STAGING_PART_BATCH = 1000;
-
-/** GBRA-574 A1: whether the entity has a live page (an unbacked name key purges source-wide). */
-export const LIVE_PAGE_SLUG_SQL = 'SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1';
-
-/** The pages of the purged takes discovery did not find. */
-export const PURGE_TAKE_PAGES_SQL = 'SELECT slug,id AS page_id,knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])';
-
-/** The page versions of the source carrying the claim ($2 lowered, $3 JSON-escaped, $4 the folded reason). */
-export const PURGE_CARRYING_VERSIONS_SQL = `SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
-    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0 OR strpos(lower(v.change_reason),$4)>0
-      OR (v.body_storage='segmented' AND ${SEGMENTED_VERSION_CARRIES}))`;
-
-/** The live stagings of the source holding the claim ($2 lowered, $3 exact, $4 the lowered fence cell), in one part. */
-export const STAGINGS_HOLDING_CLAIM_SQL = `SELECT s.id::text AS id FROM page_body_stagings s
-    WHERE s.source_id=$1 AND ((s.state IN ('open','sealed','prepared') AND (EXISTS (SELECT 1 FROM page_body_manifest m
-        JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256 WHERE m.staging_id=s.id AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)
-      OR EXISTS (SELECT 1 FROM page_body_staging_parts pt WHERE pt.staging_id=s.id AND position(convert_to($3::text,'UTF8') in pt.body)>0)))
-      OR (${liveStagingSql('s')} AND EXISTS (SELECT 1 FROM page_body_staging_texts r JOIN page_segment_texts t ON t.source_id=r.source_id AND t.sha256=r.sha256
-        WHERE r.staging_id=s.id AND (strpos(lower(convert_from(t.body,'UTF8')),$2)>0 OR strpos(lower(convert_from(t.body,'UTF8')),$4)>0))))
-    ORDER BY s.id`;
-
-/** The next batch of live staging parts after ($3, $4): each part's first and last $2 bytes. */
-export const STAGING_PART_EDGES_SQL = `SELECT pt.staging_id::text AS id,pt.part_no,
-        substring(pt.body from 1 for $2) AS head,substring(pt.body from greatest(1,octet_length(pt.body)-$2+1)) AS tail
-      FROM page_body_staging_parts pt JOIN page_body_stagings s ON s.id=pt.staging_id
-      WHERE s.source_id=$1 AND s.state IN ('open','sealed','prepared') AND (pt.staging_id,pt.part_no)>($3::uuid,$4::int)
-      ORDER BY pt.staging_id,pt.part_no LIMIT ${STAGING_PART_BATCH}`;
-
-/** The review queue, review proposal and decide proposal rows naming the purged facts. */
-export const PURGE_REVIEW_COUNTS_SQL = `SELECT
-    (SELECT count(*)::int FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[]))) AS q,
-    (SELECT count(*)::int FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[]))) AS rp,
-    (SELECT count(*)::int FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($3::bigint[]) OR old_fact_id=ANY($3::bigint[]))) AS dp`;
-
-/** `--match`: up to 25 facts of the source whose text contains $2, by id. */
-export const PURGE_MATCH_SQL = `SELECT id,entity_slug,visibility,
-    expired_at IS NOT NULL AS expired,left(fact,160) AS fact FROM facts WHERE source_id=$1 AND strpos(lower(fact),lower($2))>0 ORDER BY id LIMIT 25`;
 
 const carries = (column: string) => `(${column} IS NOT NULL AND (strpos(lower(${column}::text),$2)>0 OR strpos(lower(${column}::text),$3)>0 OR strpos(lower(${column}::text),$4)>0))`;
 
@@ -71,39 +17,6 @@ export const REQUESTS_CARRYING_SQL = `SELECT id::text AS id,principal_kind,princ
 /** Unfinished requests whose intent publishes one of the stagings $2. */
 export const REQUESTS_HOLDING_STAGINGS_SQL = `SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
     WHERE source_id=$1 AND state IN ('queued','deferred','running','recovering') AND intent->'body_ref'->>'staging_id'=ANY($2::text[]) ORDER BY sequence`;
-
-/** One hop of the derivation walk: the rows derived from the frontier $1 (JSON), up to $2. */
-export const DERIVED_ROWS_STEP_SQL = `SELECT DISTINCT d.derived_table,d.derived_id
-      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
-        ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`;
-
-/** The live segmented pages of the source, by id, up to $2. */
-export const SEGMENTED_PAGE_BODIES_SQL = `SELECT id AS page_id,slug,NULL AS generation,NULL AS version_id FROM pages
-      WHERE source_id=$1 AND deleted_at IS NULL AND body_storage='segmented' ORDER BY id LIMIT $2`;
-
-/** The segmented page versions of the source, by version id, up to $2. */
-export const SEGMENTED_VERSION_BODIES_SQL = `SELECT v.page_id,p.slug,v.body_generation AS generation,v.id AS version_id
-      FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND v.body_storage='segmented' ORDER BY v.id LIMIT $2`;
-
-/** Live model-derived pages of the source with no derivation edge. */
-export const LEGACY_DERIVED_PAGES_SQL = `SELECT count(*)::int AS n FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
-    AND (p.type='atom' OR p.frontmatter->>'dream_generated'='true')
-    AND NOT EXISTS (SELECT 1 FROM derivation_inputs d WHERE d.derived_table='pages' AND d.derived_id=p.id::text)`;
-
-/** The relative file paths the pages $1 and their versions recorded, up to 64. */
-export const PAGE_SOURCE_PATHS_SQL = `SELECT DISTINCT source_path FROM (
-      SELECT source_path FROM pages WHERE id=ANY($1::int[]) UNION ALL SELECT source_path FROM page_versions WHERE page_id=ANY($1::int[])) s
-    WHERE source_path IS NOT NULL AND source_path<>'' AND source_path NOT LIKE '/%' AND source_path NOT LIKE '%..%' LIMIT 64`;
-
-/** The five same-model facts of the source nearest the embedding $1, and whether each contains the claim $4. */
-export const FACT_NEIGHBOURS_SQL = `SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,
-        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
-      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
-      ORDER BY embedding <=> $1::halfvec LIMIT 5`;
-
-/** The transaction-local statement deadline of one bounded probe ($1, e.g. `2000ms`). */
-export const PROBE_TIMEOUT_SQL = "SELECT set_config('statement_timeout',$1,true)";
 
 const textMatch = (column: string, at: number) => `(strpos(lower(${column}::text),$${at})>0 OR strpos(lower(${column}::text),$${at + 1})>0)`;
 /** Vector and lexeme columns carry no probe-able text. */
