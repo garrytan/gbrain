@@ -79,7 +79,7 @@ export async function requestGrowthCheck(engine: BrainEngine): Promise<Check> {
       ? await engine.executeRaw<{ rows: string }>("SELECT GREATEST(reltuples, 0)::bigint::text AS rows FROM pg_class WHERE oid = to_regclass('persistence_requests')")
       : await engine.executeRaw<{ rows: string }>('SELECT count(*)::text AS rows FROM persistence_requests');
     const counters = await engine.executeRaw<{ key: string; lifetime_ids: string }>(
-      "SELECT key,lifetime_ids::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key");
+      "SELECT key,lifetime_ids::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE \"C\"");
     const limits = await readJournalLimits(engine);
     const { warnDays } = await readCapacityThresholds(engine);
     const now = Date.now();

@@ -122,7 +122,7 @@ async function readNoncanonicalPrivate(engine: BrainEngine, sourceIds?: string[]
     FROM pages p JOIN sources s ON s.id=p.source_id
     WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
       AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE lower(k)='visibility') AND p.frontmatter->>'visibility' IS DISTINCT FROM 'private'
-    ORDER BY p.source_id, p.slug`, [ids]);
+    ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`, [ids]);
   const stored = candidates.filter(row => noncanonicalPrivateRequest('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter));
   return { held: Number(heldRow?.n ?? 0), stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
 }
@@ -145,7 +145,7 @@ export async function contentBlockedSources(engine: BrainEngine): Promise<Array<
       r.error_code, r.error_message, r.error_detail FROM op_checkpoints c JOIN persistence_requests r ON r.request_id::text = c.completed_keys->0->'pending'->>'requestId'
       AND r.source_id = c.completed_keys->0->>'sourceId'
     WHERE c.op = 'managed-sync' AND COALESCE(c.completed_keys->0->>'done','false') <> 'true' AND r.state IN ('failed','conflict','cancelled')
-    ORDER BY 1`).catch(() => []);
+    ORDER BY (c.completed_keys->0->>'sourceId') COLLATE "C"`).catch(() => []);
   // #6712 PR 4b (design v3.2 §3.7): a non-company source has no cursor; it is blocked when its newest pass ended blocked on a
   // receipt that pass admitted (the receipt's intent carries the pass id).
   const { readPassReadings } = await import('../../../core/persistence/sync-pass-readers.ts');

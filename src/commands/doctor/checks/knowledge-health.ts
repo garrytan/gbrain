@@ -208,7 +208,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
        WHERE source_type = 'facts:absorb'
          AND created_at >= now() - INTERVAL '24 hours'
        GROUP BY source_id, split_part(summary, ':', 1)
-       ORDER BY source_id, COUNT(*) DESC`,
+       ORDER BY source_id COLLATE "C", COUNT(*) DESC`,
     );
     // #6778: an accepted write still committing and a retry after writer contention before admission are not
     // failures, so they never count toward the threshold; contention that persists warns on its own.
@@ -395,7 +395,7 @@ async function persistentWriterContention(engine: ReturnType<typeof connectedEng
                AND j.data->>'slug' = l.source_ref AND COALESCE(j.data->>'sourceId', 'default') = l.source_id)
         GROUP BY l.source_id
        HAVING COUNT(*) > 10 OR MIN(l.created_at) < now() - INTERVAL '1 hour'
-        ORDER BY l.source_id`,
+        ORDER BY l.source_id COLLATE "C"`,
       [reason],
     );
   } catch (err) {

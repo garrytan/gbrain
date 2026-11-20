@@ -219,7 +219,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
     // one that links point at, so deleting one automatically is a guess).
     const rows = await engine.executeRaw<{ source_id: string; content_hash: string; slugs: string }>(
       `SELECT source_id, content_hash,
-              string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
+              string_agg(slug, '|' ORDER BY length(slug), slug COLLATE "C") AS slugs
          FROM pages
         WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
         GROUP BY source_id, content_hash
@@ -519,7 +519,7 @@ async function countExtractAtomsBacklogBySource(
     const sources = sourceIds
       ? [...sourceIds].sort().map((source_id) => ({ source_id }))
       : await engine.executeRaw<{ source_id: string }>(
-        `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
+        `SELECT source_id FROM pages WHERE deleted_at IS NULL GROUP BY source_id ORDER BY source_id COLLATE "C"`,
       );
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
@@ -990,7 +990,7 @@ export async function computeExtractHealthCheck(
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7
        GROUP BY kind
-       ORDER BY kind`;
+       ORDER BY kind COLLATE "C"`;
     let rows: RollupRow[];
     try {
       rows = await engine.executeRaw<RollupRow>(rollupQuery(true), []);

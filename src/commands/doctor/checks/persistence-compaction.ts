@@ -65,7 +65,7 @@ export async function checkPersistenceCounterDrift(engine: BrainEngine): Promise
       every AS (SELECT * FROM s UNION ALL SELECT 'brain',COALESCE(SUM(req_rows),0),COALESCE(SUM(req_bytes),0),COALESCE(SUM(topo_rows),0),COALESCE(SUM(topo_bytes),0) FROM s)
       SELECT c.key,c.terminal_bytes::text AS counter,COALESCE(e.req_rows,0)::text AS req_rows,COALESCE(e.req_bytes,0)::text AS req_bytes,
         COALESCE(e.topo_rows,0)::text AS topo_rows,COALESCE(e.topo_bytes,0)::text AS topo_bytes,(SELECT value FROM config WHERE key=$1) AS clamped
-      FROM persistence_counters c LEFT JOIN every e ON e.key=c.key WHERE c.key='brain' OR c.key LIKE 'principal:%' ORDER BY c.key`, [TRUE_UP_CLAMPED_KEY]);
+      FROM persistence_counters c LEFT JOIN every e ON e.key=c.key WHERE c.key='brain' OR c.key LIKE 'principal:%' ORDER BY c.key COLLATE "C"`, [TRUE_UP_CLAMPED_KEY]);
     const clamped = Number(rows[0]?.clamped ?? 0) || 0;
     const drift = rows.map(row => {
       const receipts = Number(row.req_bytes) + Number(row.topo_bytes);

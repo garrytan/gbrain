@@ -32,7 +32,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
   try {
     const counters = await engine.executeRaw<{ key: string; outstanding_count: string; intent_bytes: string; lifetime_ids: string;
       terminal_bytes: string; recovery_bytes: string }>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,
-      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key`);
+      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE "C"`);
     const limits = await readJournalLimits(engine);
     const forecast: CapacityForecast | null = await doctorCapacityForecast(engine, { limits }).catch(forecastOrNull);
     const pause = await readBackgroundPauseShare(engine);
@@ -50,7 +50,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
       const stalled = `count(*) FILTER (WHERE created_at <= now()-interval '${OUTSTANDING_STALL_S} seconds')`;
       const holders = await engine.executeRaw<{ source_id: string; n: number | string; stalled: number | string }>(`SELECT source_id,count(*) AS n,${stalled} AS stalled
         FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering')${principal ? ' AND principal_kind=$1 AND principal_id=$2' : ''}
-        GROUP BY source_id ORDER BY ${stalled} DESC,count(*) DESC,source_id LIMIT 3`,
+        GROUP BY source_id ORDER BY ${stalled} DESC,count(*) DESC,source_id COLLATE "C" LIMIT 3`,
         principal ? [principal[1], principal[2]] : []);
       if (!holders.length || Number(holders[0].stalled) === 0) continue;
       outstanding.push({ scope: row.scope, resource: row.resource, used: row.used, limit: row.limit, config_key: row.config_key,

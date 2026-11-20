@@ -50,13 +50,13 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
       suppressed.push(...await listSuppressedWrites(engine, sourceId));
       const recent = await engine.executeRaw<{ slug: string; total: number }>(`SELECT slug, count(*) OVER ()::int AS total FROM (
         SELECT DISTINCT r.slug FROM persistence_requests r WHERE r.sequence > $2::bigint AND ${receiptFilter}) d
-        ORDER BY slug LIMIT ${LIVE_LIMIT}`, [sourceId, floor, FILE_DRIFT_MESSAGE]);
+        ORDER BY slug COLLATE "C" LIMIT ${LIVE_LIMIT}`, [sourceId, floor, FILE_DRIFT_MESSAGE]);
       // #7145: a drifted page stops adding receipts, so its only receipts can sit below the window; read them under a time bound.
       let older: Array<{ slug: string }> = [];
       if (floor !== '0') {
         try {
-          older = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT r.slug FROM persistence_requests r WHERE r.sequence <= $2::bigint AND ${receiptFilter}
-            ORDER BY r.slug LIMIT ${LIVE_LIMIT + 1}`, [sourceId, floor, FILE_DRIFT_MESSAGE], { timeoutMs: OLDER_READ_MS });
+          older = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT r.slug COLLATE "C" AS slug FROM persistence_requests r WHERE r.sequence <= $2::bigint AND ${receiptFilter}
+            ORDER BY r.slug COLLATE "C" LIMIT ${LIVE_LIMIT + 1}`, [sourceId, floor, FILE_DRIFT_MESSAGE], { timeoutMs: OLDER_READ_MS });
         } catch (error) {
           if (!isStatementTimeout(error)) throw error;
           olderUnread.push(sourceId);

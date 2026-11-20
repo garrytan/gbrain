@@ -20,7 +20,7 @@ export async function checkUnboundSource(engine: BrainEngine): Promise<Check> {
         COALESCE((SELECT s.local_path FROM sources s WHERE s.id=p.source_id),
           CASE WHEN p.source_id='default' THEN (SELECT c.value FROM config c WHERE c.key='sync.repo_path') END) AS local_path
        FROM pages p WHERE ${databaseOnlyPageSql('p')} AND p.deleted_at IS NULL
-       GROUP BY p.source_id ORDER BY p.source_id`);
+       GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`);
     const sources = rows.map(row => ({ source_id: row.source_id, pages: row.pages, bound: row.bound }));
     const total = rows.reduce((sum, row) => sum + row.pages, 0);
     if (!total) return { name: 'unbound_source', status: 'ok', message: 'No page was written database-only to an unbound source.', details: { total, sources } };
