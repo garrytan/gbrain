@@ -75,8 +75,8 @@ mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
-mod synthesis_completions;
-mod wake;
+pub(crate) mod synthesis_completions;
+pub(crate) mod wake;
 
 pub use attachments::AttachmentInput;
 pub use checks::{
@@ -260,7 +260,6 @@ fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
 
 /// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
 /// seed, which copies rows with their ids).
-#[allow(dead_code)] // the seed groups that copy job-family rows call it; drop this once they do
 pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
     let mut k = prefix(SEQ);
     k.extend_from_slice(name.as_bytes());
