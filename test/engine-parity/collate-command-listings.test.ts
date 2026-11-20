@@ -53,10 +53,9 @@ async function sources(engine: BrainEngine, backend: Backend) {
   for (const id of MIXED_SOURCES) await createSource(engine, backend, id);
 }
 
-/** A page in `sourceId` with `frontmatter` set by SQL (putPage's guards do not apply to this seed). */
+/** A page in `sourceId` with `frontmatter`, written through putPage. */
 async function page(engine: BrainEngine, sourceId: string, slug: string, frontmatter: Record<string, unknown> = {}, body = `${slug} body`) {
-  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: '' }, { sourceId });
-  await engine.executeRaw('UPDATE pages SET frontmatter = $3::text::jsonb WHERE source_id = $1 AND slug = $2', [sourceId, slug, JSON.stringify(frontmatter)]);
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: '', frontmatter }, { sourceId });
 }
 
 describe('command listings sort text keys by byte', () => {
@@ -85,14 +84,14 @@ describe('command listings sort text keys by byte', () => {
     } finally { rmSync(out, { recursive: true, force: true }); }
   });
 
-  parityTest('scanIntegrity under a limit reads the first pages by byte slug', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('scanIntegrity under a limit reads the first pages by byte slug', { methods: ['putPage'] }, async (engine, backend) => {
     for (const slug of MIXED_SLUGS) await page(engine, 'default', slug, {}, 'He tweeted about the launch last week.');
     const scan = await scanIntegrity(engine, { limit: 2 });
     expect(scan.pagesScanned).toBe(2);
     expect(scan.bareHits.map(h => h.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('scanIntegrity under a limit reads pages by source id, then slug, on the batch and sequential paths', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('scanIntegrity under a limit reads pages by source id, then slug, on the batch and sequential paths', { methods: ['putPage'] }, async (engine, backend) => {
     await sources(engine, backend);
     // Slug order runs opposite to source order, so a slug-first walk reads `aa` first and the source-first batch `zz`.
     const slugOf: Record<string, string> = { 'a-z': 'zz', a0: 'mm', ab: 'aa' };
