@@ -10,13 +10,16 @@
  * repository, in the database otherwise. confirm links cross-source groups as one identity, which rank_entities and
  * enrichment then count once; a bulk confirm covers only clean company groups and is bound to the hash it printed; a person
  * group that shares an account or registry id, and a group whose only shared keys are contact or handle keys, is confirmed
- * alone. reject records "different people or companies" and undoes a confirm.
- * Nothing here merges, renames or deletes a page; nothing is linked without the owner.
+ * alone. reject records "different people or companies" (with each member's fingerprint, so a rename or a move to another
+ * source keeps the pair apart) and undoes a confirm or a link the company sweep made. reconcile also runs that sweep over
+ * every company (core/entities/company-auto-link.ts); sync runs it over the companies it changed. Nothing here merges,
+ * renames or deletes a page, and no person is ever linked without the owner.
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { DUPLICATE_KINDS, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind } from '../core/entities/duplicates.ts';
+import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind } from '../core/entities/duplicates.ts';
+import { autoLinkCompanies } from '../core/entities/company-auto-link.ts';
 import { canonicalOf, decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
 import { identityIdsForPages, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
@@ -50,10 +53,17 @@ confirm <id>...     record that each group is one person or company; rankings an
   --join <entity>   a page of the group is already in this identity group: add the other pages to it
 confirm --clean     list the clean company groups a bulk confirm covers and print their hash; changes nothing
   --expect <hash>   confirm exactly those groups; refuses (preview_changed) if the list changed since
-reject <id>...      record that the pages are different people or companies: the pair is never proposed again, and a
-                    confirmed group is unlinked; two pages in one source also get distinct_from
-reconcile           write decisions the database holds alone into git, re-read the committed decisions and
-                    link pages that arrived since; run it after doctor reports a drift
+reject <id>...      record that the pages are different people or companies: the pair is never proposed again, even
+                    after a page is renamed or moved to another source, and a confirmed or automatic group is
+                    unlinked (<id> may be its identity id); two pages in one source also get distinct_from
+reconcile           write decisions the database holds alone into git, re-read the committed decisions, link
+                    pages that arrived since and link every company group that qualifies; run it after doctor
+                    reports a drift
+
+Companies link automatically: each sync links the cross-source company groups its changed pages belong to when
+they are clean, share a LinkedIn company page or their own site's domain, and name no different countries
+(identity rows established_by dedupe:auto, in the database only). gbrain dedupe reject undoes one.
+People are never linked automatically.
 
 Decisions are kept in .gbrain/identity/ in the brain's repository (committed through gbrain git commit-push),
 or in the database on a brain with no repository. Nothing merges, renames or deletes a page.
@@ -167,8 +177,10 @@ export function previewHash(groups: DuplicateGroup[]): string {
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
+/** The identity group each member sits in; a group the company sweep made is left out, since a confirm takes it over. */
 async function identitiesOf(engine: BrainEngine, groups: DuplicateGroup[]): Promise<Map<string, string>> {
-  return identityIdsForPages(engine, groups.flatMap(g => g.members.map(m => ({ sourceId: m.source_id, slug: m.slug }))));
+  const ids = await identityIdsForPages(engine, groups.flatMap(g => g.members.map(m => ({ sourceId: m.source_id, slug: m.slug }))));
+  return new Map([...ids].filter(([, id]) => !id.startsWith('dedupe-auto/')));
 }
 
 function fieldValue(v: unknown): string | null {
@@ -341,12 +353,16 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   const decisions: DecisionInput[] = [];
   for (const id of [...new Set(f.ids)]) {
     const confirmed = same.filter(d => d.entity_id === id);
+    const auto = confirmed.length || !id.startsWith('dedupe-auto/') ? [] : (await listEntityIdentities(engine, { entityId: id }))
+      .filter(m => m.established_by === 'dedupe:auto').map(m => ({ source_id: m.source_id, slug: m.slug }));
     const members = confirmed.length ? confirmed.map(d => ({ members: d.members, group_id: d.group_id ?? id }))
-      : [result.groups.find(g => g.id === id)?.members ?? read.decisions.find(d => d.group_id === id)?.members]
+      : [result.groups.find(g => g.id === id)?.members ?? read.decisions.find(d => d.group_id === id)?.members ?? (auto.length > 1 ? auto : undefined)]
         .filter((m): m is IdentityMemberRef[] => !!m).map(m => ({ members: m, group_id: id }));
     if (!members.length) throw unknownGroup(id);
     for (const m of members) decisions.push({ verdict: 'different', members: m.members, group_id: m.group_id, entity_id: null, canonical: null, decided_by: DECIDED_BY });
   }
+  const pages = await entityPagesOf(engine, decisions.flatMap(d => d.members));
+  for (const d of decisions) d.evidence = d.members.map(m => pages.get(`${m.source_id}\t${m.slug}`)?.fingerprint).filter((x): x is string => !!x);
   const undone = new Set(decisions.map(d => decisionId(d.members)));
   for (const d of decisions) {
     const keys = new Set(d.members.map(memberText));
@@ -410,10 +426,13 @@ async function runReconcile(engine: BrainEngine, args: string[]): Promise<void> 
   const f = parseFlags('reconcile', args, new Set());
   if (!f) return;
   const r = await reconcileDecisions(engine);
+  const auto = await autoLinkCompanies(engine);
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
   if (r.store === 'database') console.log(`Duplicate decisions are kept in the database (no repository). Linked ${r.applied?.linked ?? 0} page(s), unlinked ${r.applied?.unlinked ?? 0}.`);
   else console.log(`Wrote ${r.written} decision(s) into git and re-read the committed decisions of source ${r.projection?.source_id} (${r.projection?.upserted ?? 0} updated, ${r.projection?.removed ?? 0} removed, ${r.projection?.linked ?? 0} page(s) linked).`
     + (r.projection?.invalid.length ? ` ${r.projection.invalid.length} file(s) did not validate: ${r.projection.invalid.join(', ')}.` : ''));
   if (r.git_kept?.length) console.log(`${r.git_kept.length} decision(s) the database held differently are already committed; git wins, so the database now has the committed verdict: ${r.git_kept.join(', ')}.`);
   if (r.pending.length) console.log(`${r.pending.length} member page(s) are still not linked: ${r.pending.slice(0, 10).map(p => `${p.source_id}:${p.slug} (${p.reason})`).join(', ')}.`);
+  console.log(auto.skipped_sweep === 'no_checkout' ? 'Companies that share an id are linked by the host that holds the checkout of the decisions; none were linked here.'
+    : `Companies that share an id: linked ${auto.linked} group(s), unlinked ${auto.unlinked}${auto.skipped ? `, ${auto.skipped} changed while they were linked and wait for the next sync` : ''}.`);
 }

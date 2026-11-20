@@ -1136,7 +1136,7 @@ export interface BrainEngine {
    * so the preview and a subsequent real run agree up to whatever crosses
    * the cutoff (or is soft-deleted/restored) between the two statements.
    * Dry-run responses additionally carry `pages` (slug, source_id, deleted_at) for
-   * display; the destructive path leaves `pages` undefined.
+   * display; the destructive path returns the deleted pages in `pages` too.
    * `opts.excludeIds` keeps those page ids out of both (GBRA-130 A-49: tombstones the unmanaged belief-ledger
    * expiry failed or parked); `opts.onlyIds` limits both to those ids under the same holds (#9653 concept rebuild).
    */

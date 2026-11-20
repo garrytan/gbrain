@@ -101,6 +101,7 @@ import { factsPagesEntry } from './checks/facts-pages.ts';
 import { embedBackfillStalledEntry } from './checks/embed-backfill-stalled.ts';
 import { contentDriftSweepEntry } from './checks/content-drift-sweep.ts';
 import { connectorAccountMismatchEntry } from './checks/connector-account-mismatch.ts';
+import { ownerIdentityEntry } from './checks/owner-identity.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { unscopedMultiUserTokenEntry } from './checks/unscoped-multi-user-token.ts';
@@ -391,6 +392,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   factsPagesEntry,
   // GST-2988 PR 3: secret store entries, backups, keys and escrow, spool, held-back commits and side refs (read-only).
   secretStoreEntry,
+  // GST-3216: who gbrain takes the owner to be; warns on shared identifiers and ambiguous owner pages (read-only).
+  ownerIdentityEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

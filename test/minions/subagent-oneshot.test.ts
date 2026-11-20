@@ -22,6 +22,7 @@ import {
   parseOneshotResponse,
   extractWikilinkTargets,
   ONESHOT_SYSTEM,
+  ONESHOT_REASK,
   type OneshotArgs,
 } from '../../src/core/minions/handlers/subagent-oneshot.ts';
 import type { ChatResult } from '../../src/core/ai/gateway.ts';
@@ -304,7 +305,8 @@ describe('runSubagentOneshot', () => {
   test('unparseable output → fallback, NOTHING persisted (no messages, no ledger, no pages)', async () => {
     const ctx = await makeCtx(DATA);
     const outcome = await runSubagentOneshot(makeArgs(ctx, DATA, 'I wrote some lovely pages for you!'));
-    expect(outcome).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: FB_TOKENS });
+    // Prose with no JSON is asked once for the JSON (#9648), so the usage covers both calls.
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: { ...FB_TOKENS, in: 200, out: 100 } });
     const msgs = await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM subagent_messages WHERE job_id = $1`, [ctx.id]);
     expect(msgs[0]!.n).toBe(0);
@@ -437,6 +439,72 @@ describe('runSubagentOneshot', () => {
         tokens: { ...FB_TOKENS, out: 8192 },
       });
     }
+  });
+
+  describe('a prose answer with no JSON is asked once for the JSON (#9648)', () => {
+    const PROSE_SKIP = "I'm not writing any pages for this transcript. It holds one idle notification and nothing that meets the bar.";
+    function sequence(texts: string[], calls: Parameters<NonNullable<OneshotArgs['_chat']>>[0][]): OneshotArgs['_chat'] {
+      return (async (opts: Parameters<NonNullable<OneshotArgs['_chat']>>[0]) => {
+        calls.push(structuredClone(opts.messages) as never);
+        const text = texts[Math.min(calls.length - 1, texts.length - 1)]!;
+        return { text, blocks: [{ type: 'text', text }], stopReason: 'end', usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic' };
+      }) as OneshotArgs['_chat'];
+    }
+
+    test('a prose skip followed by the skip JSON banks the skip', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      args._chat = sequence([PROSE_SKIP, '{"pages": [], "skipped": true, "skip_reason": "one idle notification"}'], calls as never);
+      const outcome = await runSubagentOneshot(args);
+      expect(outcome.kind).toBe('done');
+      expect(outcome.kind === 'done' && outcome.result.oneshot_skipped).toBe(true);
+      expect(outcome.kind === 'done' && outcome.result.tokens).toEqual({ in: 200, out: 100, cache_read: 0, cache_create: 0 });
+      expect(calls.length).toBe(2);
+      expect(calls[1]).toEqual([{ role: 'user', content: DATA.prompt }, { role: 'assistant', content: PROSE_SKIP }, { role: 'user', content: ONESHOT_REASK }]);
+      const rows = await engine.executeRaw<{ tool_name: string }>('SELECT tool_name FROM subagent_tool_executions WHERE job_id = $1', [ctx.id]);
+      expect(rows.map(r => r.tool_name)).toEqual(['oneshot_skip']);
+    });
+
+    test('prose twice is still unparseable after the one re-ask', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      args._chat = sequence([PROSE_SKIP], calls as never);
+      expect(await runSubagentOneshot(args)).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: { ...FB_TOKENS, in: 200, out: 100 } });
+      expect(calls.length).toBe(2);
+    });
+
+    test('an empty first answer is not re-asked', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      args._chat = sequence(['  \n'], calls as never);
+      expect(await runSubagentOneshot(args)).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: FB_TOKENS });
+      expect(calls.length).toBe(1);
+    });
+
+    test('a re-ask that fails prompt-too-long keeps the first answer', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      const first = sequence([PROSE_SKIP], calls as never)!;
+      args._chat = (async (opts: Parameters<NonNullable<OneshotArgs['_chat']>>[0]) => {
+        if (calls.length > 0) { calls.push(opts.messages as never); throw new Error('prompt is too long: 1000123 tokens > 1000000 maximum'); }
+        return first(opts);
+      }) as OneshotArgs['_chat'];
+      expect(await runSubagentOneshot(args)).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: FB_TOKENS });
+      expect(calls.length).toBe(2);
+    });
+
+    test('an answer that attempted JSON is not re-asked', async () => {
+      const ctx = await makeCtx(DATA);
+      const calls: unknown[][] = [];
+      const args = makeArgs(ctx, DATA, '');
+      args._chat = sequence([VALID_RESPONSE.slice(0, 50)], calls as never);
+      expect(await runSubagentOneshot(args)).toEqual({ kind: 'fallback', reason: 'unparseable', tokens: FB_TOKENS });
+      expect(calls.length).toBe(1);
+    });
   });
 
   test('malformed output below the cap remains unparseable', async () => {

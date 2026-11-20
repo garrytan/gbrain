@@ -2229,7 +2229,7 @@
       "listFactsByEntity": {
         "allFilters": [
           {
-            "paramCount": 7,
+            "paramCount": 14,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2240,7 +2240,7 @@
         ],
         "default": [
           {
-            "paramCount": 4,
+            "paramCount": 8,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -3604,7 +3604,7 @@
       "listEntityKeyRows": {
         "after": [
           {
-            "paramCount": 5,
+            "paramCount": 11,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -3615,7 +3615,7 @@
         ],
         "default": [
           {
-            "paramCount": 5,
+            "paramCount": 11,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

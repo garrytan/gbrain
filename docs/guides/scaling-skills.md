@@ -160,6 +160,10 @@ A few rules to keep the parser unambiguous:
   `Note`, `Convention`) are deliberately ignored. This is what stops prose
   bullets like `- **Note**: see [link]` from being mis-parsed as skill
   rows in real-world AGENTS.md files.
+- **In AGENTS.md, a list row needs its skill on disk.** AGENTS.md is the
+  agent's general instructions, so `- **memory**: search first` counts as a
+  routing row only when `skills/memory/SKILL.md` exists; otherwise it is a
+  prose bullet. List rows in `skills/RESOLVER.md` always count.
 - **The path always resolves to `skills/<name>/SKILL.md`.** An optional
   `→ \`skills/path\`` (or ASCII `->`) suffix is allowed for readability,
   but the parser strips it. For non-conventional paths (skills under

@@ -151,7 +151,10 @@ public struct Config: Codable, Equatable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(self)
+        try Self.writePrivate(try encoder.encode(self), path: path)
+    }
+
+    public static func writePrivate(_ data: Data, path: String) throws {
         let temp = path + ".tmp-\(getpid())-\(UUID().uuidString)"
         let fd = Darwin.open(temp, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard fd >= 0 else { throw ConfigError(description: "could not write \(path)") }
@@ -171,26 +174,38 @@ public final class LiveGrants {
     var loaded = false
     var stamp: FileStamp?
     var grants: [TokenGrant] = []
+    var enabled: Set<String> = []
 
     public init(path: String) {
         self.path = path
     }
 
     public func current() -> [TokenGrant] {
+        reload().grants
+    }
+
+    public func enabledSources() -> Set<String> {
+        reload().enabled
+    }
+
+    func reload() -> (grants: [TokenGrant], enabled: Set<String>) {
         lock.lock()
         defer { lock.unlock() }
         let now = FileStamp(path: path)
-        if loaded && now == stamp { return grants }
+        if loaded && now == stamp { return (grants, enabled) }
         loaded = true
         stamp = now
         do {
-            grants = try Config.load(path: path).validated().grants
+            let config = try Config.load(path: path).validated()
+            grants = config.grants
+            enabled = config.enabled
             Log.line("config loaded: \(grants.count) token(s)")
         } catch {
             grants = []
+            enabled = []
             Log.line("config unreadable, refusing every token until it is fixed: \(error)")
         }
-        return grants
+        return (grants, enabled)
     }
 }
 
