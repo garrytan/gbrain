@@ -48,6 +48,7 @@ import { eligibilityCacheField, readTrustGeneration } from '../eligibility/gener
 import { callerRelaxesPrivacy, privateFactSources, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 import { callerIdentityKey } from '../access/member-facts.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -242,6 +243,8 @@ export async function getBrainHotMemoryMeta(
       activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });
   }
+  // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+  fetched = await applySlotEnds(ctx.engine, { sourceId, worldOnly, excludePrivate, minTrust: policy.floor, suppressFlagged: policy.suppressFlagged }, fetched, { activeOnly: true });
   if (fetched.length === 0) {
     store({ expiresAt: Date.now() + ttl, payload: undefined });
     return undefined;

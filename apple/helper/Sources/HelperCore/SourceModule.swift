@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SourceCatalog {
-    public static let ids = ["imessage"]
+    public static let ids = ["imessage", "contacts"]
     public static var scopes: Set<String> { Set(ids.map(readScope)) }
 
     public static func readScope(_ id: String) -> String {
