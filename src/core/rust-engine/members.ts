@@ -222,6 +222,13 @@ export const RUST_ENGINE_MEMBERS = {
   findTrajectory: 'facts',
   getFactsHealth: 'facts',
   migrateFactsToCanonical: 'facts',
+  // embedding-catalog (engine-sql/embedding-catalog.ts): refused as the raw SQL it replaces until its Rust adapter lands (N6)
+  readChunkVectorColumn: 'raw_sql',
+  readEmbeddingIdentity: 'raw_sql',
+  listEmbeddingStores: 'raw_sql',
+  hasStoredVectors: 'raw_sql',
+  countChunkVectorCoverage: 'raw_sql',
+
   // takes
   addTakesBatch: 'takes',
   updateTakeEmbeddings: 'takes',
@@ -312,6 +319,7 @@ export const RUST_ENGINE_MEMBERS = {
   readPersistenceBrainId: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',
+  listFenceHoldRows: 'persistence_journal',
   readLedgerSource: 'persistence_journal',
   // access_control
   isFolderRestricted: 'access_control',
@@ -359,6 +367,18 @@ export const RUST_ENGINE_MEMBERS = {
   readQueueDivergence: 'minion_queue',
   readQueueHealthSignals: 'minion_queue',
   readWedgeSignals: 'minion_queue',
+  // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
+  readLastAutopilotCycles: 'minion_queue',
+  countJobsByStatus: 'minion_queue',
+  readWaitingQueueDepths: 'minion_queue',
+  readLastCompletedJobAt: 'minion_queue',
+  countTtlCancelledByName: 'minion_queue',
+  readWaitingScopeState: 'minion_queue',
+  countRecentCompletedJobs: 'minion_queue',
+  listRecentFailedJobErrors: 'minion_queue',
+  readQueuedPageChars: 'minion_queue',
+  readSourceJobCounts: 'minion_queue',
+  readEmbedBackfillBySource: 'minion_queue',
   // The decide store and proposal lanes, open loops, timeline reads and the write-side reads (engine-sql/decide-*.ts,
   // open-loops.ts, timeline-reads.ts, write-misc.ts). A member with no native method yet is classed raw_sql (the capability of the executeRaw it replaces), so the reported
   // capability list stays as on master; its adapter lands with its native method.
@@ -431,6 +451,19 @@ export const RUST_ENGINE_MEMBERS = {
   transitionDecideProposal: 'eval_capture',
   transitionDecideReviewProposal: 'eval_capture',
   upsertDecideState: 'eval_capture',
+  // memory-mutation-reads (engine-sql/memory-mutation-reads.ts): refused as the raw SQL they replace; their Rust adapter (a privacy-policy bridge) lands with its own cut
+  readSourceWriteRow: 'raw_sql',
+  readSourceLocalPath: 'raw_sql',
+  readFactEntitySlug: 'raw_sql',
+  hasLiveFileBackedPage: 'raw_sql',
+  factReadableUnder: 'raw_sql',
+  readRemoteForgetTier: 'raw_sql',
+  readForgetTarget: 'raw_sql',
+  isFactEntityUnbacked: 'raw_sql',
+  readLinkedFactCopies: 'raw_sql',
+  hasHiddenFactCopy: 'raw_sql',
+  ownerReachesFact: 'raw_sql',
+  readFactWithdrawalClaim: 'raw_sql',
   upsertOpenLoop: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
