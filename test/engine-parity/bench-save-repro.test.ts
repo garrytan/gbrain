@@ -40,14 +40,26 @@ const run = async (engine: BrainEngine, name: string, params: Record<string, unk
   try {
     const r = await operations.find(o => o.name === name)!.handler(ctxFor(engine, sourceId) as never, params) as Record<string, unknown>;
     return { ok: true, state: r.state ?? null, status: r.status ?? null };
-  } catch (error) { return { ok: false, code: (error as { code?: string }).code ?? String(error) }; }
+  } catch (error) {
+    const out = { ok: false, code: (error as { code?: string }).code ?? String(error) };
+    thrown.set(out, error);
+    return out;
+  }
 };
+/** The error each refused `run` caught, kept off the compared value. */
+const thrown = new WeakMap<object, unknown>();
+/**
+ * publication-retry-limit: on Rust a save that reaches a member Rust does not serve yet ends failed with that member's
+ * typed refusal after the claim limit (persistence/capability-retry.ts), never write_pending. The case then ends on that
+ * refusal, which the Rust arm counts as refused; once the member is served the case commits and this is never taken.
+ */
+const typedOnRust = (backend: string, out: { ok: boolean; code?: unknown }) => backend === 'rust' && out.ok === false && out.code === 'engine_capability_missing';
 const person = (n: string) => `---\ntitle: Carol\ntype: person\n---\nCarol ${n}.\n`;
 const COMMITTED = { ok: true, state: 'committed', status: 'created_or_updated' };
 
 describe('the bench save failures', () => {
   parityTest('case 1: put_page to a git-rooted source no writer claimed commits the page and its file', {
-    methods: [],
+    methods: ['putPage', 'getPage'],
     timeout: 60_000,
   }, async (engine, backend) => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-bench-save-parity-')));
@@ -79,22 +91,28 @@ describe('the bench save failures', () => {
     }
   });
 
-  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: [] }, async (engine) => {
+  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['putPage', 'createVersion', 'addTag', 'getPage'] }, async (engine, backend) => {
     try {
       const created = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v1') });
       const updated = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v2'), force: true });
       const later = await run(engine, 'add_tag', { slug: 'people/carol-example', tag: 'friend' });
       const page = await engine.getPage('people/carol-example', { sourceId: 'default' });
       const out = { created, updated, later, hasV2: String(page?.compiled_truth ?? '').includes('v2') };
+      if (typedOnRust(backend, updated)) {
+        // The refused update did not hold up the write behind it in the same source, and wrote nothing.
+        expect({ created, later, hasV2: out.hasV2 }).toEqual({ created: COMMITTED, later: { ok: true, state: 'committed', status: 'ok' }, hasV2: false });
+        throw thrown.get(updated);
+      }
       expect(out).toEqual({ created: COMMITTED, updated: COMMITTED, later: { ok: true, state: 'committed', status: 'ok' }, hasV2: true });
       return out;
     } finally { await disposePersistenceConsumer(engine); }
   });
 
-  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: [] }, async (engine) => {
+  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['putPage'] }, async (engine, backend) => {
     try {
       const big = '---\ntitle: Conv\ntype: conversation\n---\n' + 'User: hello there, this is a long line of conversation text.\n'.repeat(90);
       const part = await run(engine, 'put_page', { slug: 'conversations/conv-example/part-1', content: big });
+      if (typedOnRust(backend, part)) throw thrown.get(part);
       expect(part).toEqual(COMMITTED);
       return part;
     } finally { await disposePersistenceConsumer(engine); }

@@ -96,6 +96,8 @@ export interface StagingRefusalDetail {
  */
 export interface CapabilityRefusalDetail {
   origin: 'engine_capability'; member: string; capability: string;
+  /** A refusal at publication: the claims it was refused on, and the limit (capability-retry.ts) that ended it. */
+  attempts?: number; limit?: number;
   stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
 }
 export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail | CapabilityRefusalDetail }

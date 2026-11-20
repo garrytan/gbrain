@@ -1,4 +1,5 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
+import { settleCapabilityRefusal } from './capability-retry.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -855,6 +856,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     // #5984 Phase 4.5: after a foreground write that went ahead of queued sync rows commits, this consumer's next
     // claim on its root is plain FIFO, so a stream of writes cannot starve the sync side.
     if (isTerminal(row) && this.passedSync.delete(row.id) && row.state === 'committed') this.owesSyncTurn.add(row.worktree_id ?? `db:${row.source_incarnation}`);
+    if (isTerminal(row)) settleCapabilityRefusal(row.id);
     try { this.opts.onSettled?.(row); } catch (error) { this.report(error); }
     return isTerminal(row);
   }
