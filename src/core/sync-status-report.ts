@@ -88,13 +88,12 @@ export async function buildSyncStatusReport(
   // Resolve the active embedding column via the registry. Brains pointed
   // at Voyage / multimodal / any non-default column get accurate counts
   // for the column they actually use (D16 → A, Codex P2 #10).
-  const { resolveEmbeddingColumn, quoteIdentifier } = await import('./search/embedding-column.ts');
+  const { resolveEmbeddingColumn } = await import('./search/embedding-column.ts');
   // loadConfig() returns null when ~/.gbrain/config.json is missing.
   // resolveEmbeddingColumn handles missing fields via its own
   // gateway-fallback chain, so a minimal stub satisfies the call shape.
   const cfg = loadConfig() ?? ({ engine: engine.kind } as Parameters<typeof resolveEmbeddingColumn>[1]);
   const resolved = resolveEmbeddingColumn(undefined, cfg);
-  const embeddingColIdent = quoteIdentifier(resolved.name);
 
   const sourceIds = sources.map((s) => s.id);
   type SourceRow = {
@@ -103,12 +102,6 @@ export async function buildSyncStatusReport(
     last_sync_at: string | Date | null;
     // v0.41.32.0: remote staleness reads this column (no git subprocess).
     newest_content_at: string | Date | null;
-  };
-  type CountRow = {
-    source_id: string;
-    pages: string | number;
-    chunks_total: string | number;
-    chunks_unembedded: string | number;
   };
 
   // Pull last_commit + last_sync_at fresh (caller may have called us
@@ -122,7 +115,7 @@ export async function buildSyncStatusReport(
   for (const r of sourceRows) sourceMap.set(r.id, r);
 
   // Per-source page + chunk + unembedded-chunk counts in a single
-  // round-trip. Canonical SQL (verified against
+  // round-trip (engine-sql/cli-reads-ops.ts countSourcePagesAndChunks). Canonical SQL (verified against
   // src/commands/doctor/checks/extraction-sync.ts: content_chunks joined on page_id
   // (NOT page_slug — Codex P0 #1), filtered for non-soft-deleted pages
   // (NOT NULL — soft-delete shipped v0.26.5), unembedded counted
@@ -131,43 +124,10 @@ export async function buildSyncStatusReport(
   // No try/catch swallow — a thrown error means DB down / permission
   // denied / statement timeout (NOT a schema variant). Surfacing the
   // real error is better than a misleading "0 chunks" report (Q2).
-  let countRows: CountRow[] = [];
-  if (sourceIds.length > 0) {
-    countRows = await engine.executeRaw<CountRow>(
-      `WITH s AS (
-         SELECT unnest($1::text[]) AS source_id
-       )
-       SELECT
-         s.source_id,
-         COALESCE(p.pages, 0) AS pages,
-         COALESCE(c.chunks_total, 0) AS chunks_total,
-         COALESCE(c.chunks_unembedded, 0) AS chunks_unembedded
-       FROM s
-       LEFT JOIN (
-         SELECT source_id, COUNT(*) AS pages
-         FROM pages
-         WHERE deleted_at IS NULL
-         GROUP BY source_id
-       ) p ON p.source_id = s.source_id
-       LEFT JOIN (
-         SELECT pg.source_id,
-                COUNT(*) AS chunks_total,
-                COUNT(*) FILTER (WHERE cc.${embeddingColIdent} IS NULL) AS chunks_unembedded
-         FROM content_chunks cc
-         JOIN pages pg ON pg.id = cc.page_id
-         WHERE pg.deleted_at IS NULL
-         GROUP BY pg.source_id
-       ) c ON c.source_id = s.source_id`,
-      [sourceIds],
-    );
-  }
+  const countRows = await engine.countSourcePagesAndChunks(sourceIds, { embeddingColumn: resolved.name });
   const countMap = new Map<string, { pages: number; chunks_total: number; chunks_unembedded: number }>();
   for (const r of countRows) {
-    countMap.set(r.source_id, {
-      pages: Number(r.pages) || 0,
-      chunks_total: Number(r.chunks_total) || 0,
-      chunks_unembedded: Number(r.chunks_unembedded) || 0,
-    });
+    countMap.set(r.source_id, { pages: r.pages, chunks_total: r.chunks_total, chunks_unembedded: r.chunks_unembedded });
   }
 
   // v0.41.31: per-source embed-backfill job state. Best-effort — the

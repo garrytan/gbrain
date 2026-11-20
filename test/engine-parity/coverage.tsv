@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 906/906
+# covered: 907/907
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -40,7 +40,7 @@
 # minion_status: 11/11
 # minion_subagent: 17/17
 # cli_reads_export: 14/14
-# cli_reads_ops: 14/14
+# cli_reads_ops: 15/15
 # facts_doctor: 11/11
 # embedding_catalog: 5/5
 # fact_relink_attempts: 3/3
@@ -660,6 +660,7 @@ listUnattributedFacts	cli_reads_ops	yes	6	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	8	no	yes	yes	serves
 countLivePagesBySourceType	cli_reads_ops	yes	2	no	yes	yes	serves
 countLivePagesBySlugPrefixes	cli_reads_ops	yes	2	no	yes	yes	serves
+countSourcePagesAndChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
 listOutsideContentFenceCounts	facts_doctor	yes	2	no	yes	yes	serves

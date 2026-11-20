@@ -125,15 +125,12 @@ describe('per-source lock id (D8 — Codex P0 #1 fix)', () => {
 // ── buildSyncStatusReport ────────────────────────────────────────────
 
 describe('buildSyncStatusReport', () => {
-  // Minimal engine stub: implements executeRaw with a script of canned
-  // responses keyed by the first SQL keyword. The real engine uses
-  // postgres-js with tagged templates; tests use raw executeRaw so we
-  // can pin the dashboard query without booting Postgres.
-  //
-  // SQL regex changed from PR's original `chunks/page_slug` (broken;
-  // would have shipped silently) to the canonical `content_chunks` +
-  // `page_id` shape. The IRON RULE regression case lives in
-  // test/e2e/sync-status-pglite.test.ts and exercises real SQL.
+  // Minimal engine stub: the per-source counts come from the typed
+  // countSourcePagesAndChunks member, so the stub answers it with canned
+  // rows. Its SQL (content_chunks joined on page_id, not the broken
+  // `chunks/page_slug` shape) is pinned by the engine-sql golden text, and
+  // the IRON RULE regression case in test/e2e/sync-status-pglite.test.ts
+  // exercises the real SQL.
   function makeEngine(scripts: {
     sourceRows?: Array<{ id: string; last_commit: string | null; last_sync_at: string | null; newest_content_at?: string | null }>;
     countRows?: Array<{ source_id: string; pages: number; chunks_total: number; chunks_unembedded: number }>;
@@ -144,14 +141,11 @@ describe('buildSyncStatusReport', () => {
       listSourceRecords: async () => (scripts.sourceRows ?? []).map((r) => ({
         name: r.id, local_path: null, config: {}, created_at: new Date(0), ...r,
       })),
-      executeRaw: async (sql: string) => {
-        // Codex P0 #1 regression: must match the CORRECT SQL shape
-        // (content_chunks + page_id), not the broken PR shape.
-        if (/content_chunks cc[\s\S]*JOIN pages pg ON pg\.id = cc\.page_id/.test(sql)) {
-          return scripts.countRows ?? [];
-        }
-        return [];
+      countSourcePagesAndChunks: async (ids: readonly string[], opts: { embeddingColumn: string }) => {
+        expect(typeof opts.embeddingColumn).toBe('string');
+        return (scripts.countRows ?? []).filter(r => ids.includes(r.source_id));
       },
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
   }
 
@@ -327,7 +321,7 @@ describe('buildSyncStatusReport', () => {
     const engine = {
       kind: 'postgres',
       listSourceRecords: async () => [{ id: 'a', name: 'a', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date(0) }],
-      executeRaw: async () => {
+      countSourcePagesAndChunks: async () => {
         throw new Error('canceling statement due to statement timeout');
       },
     } as unknown as BrainEngine;

@@ -5,6 +5,7 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope};
@@ -996,6 +997,68 @@ fn live_page_counts_keep_archived_sources_and_like_meaning() {
     assert!(
         store
             .count_live_pages_by_slug_prefixes(&de(json!({})))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// Writes `count` chunks on `slug` of `source`; the first `embedded` of them carry a vector.
+fn chunks_in(store: &Store, source: &str, slug: &str, count: u32, embedded: u32) {
+    let rows: Vec<ChunkInput> = (0..count)
+        .map(|i| {
+            let mut row = json!({ "chunk_index": i, "chunk_text": format!("{slug} {i}") });
+            if i < embedded {
+                let vector: Vec<f64> = (0..1536)
+                    .map(|d| if d == i as usize { 1.0 } else { 0.0 })
+                    .collect();
+                row["model"] = json!("m1");
+                row["embedding"] = json!(vector);
+            }
+            serde_json::from_value(row).unwrap()
+        })
+        .collect();
+    let opts = UpsertChunksOptions {
+        source_id: Some(source.to_string()),
+        ..UpsertChunksOptions::default()
+    };
+    store.upsert_chunks(slug, &rows, &opts).unwrap();
+}
+
+#[test]
+fn source_page_and_chunk_counts_follow_the_requested_sources() {
+    let dir = TempDir::new("ops-source-coverage");
+    let store = open(&dir);
+    source(&store, "side");
+    source(&store, "old");
+    put(&store, "notes/a", note("A", "a"));
+    chunks_in(&store, "default", "notes/a", 3, 2);
+    put(&store, "notes/b", note("B", "b"));
+    put(&store, "notes/gone", note("G", "g"));
+    chunks_in(&store, "default", "notes/gone", 2, 0);
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    put_in(&store, "side", "notes/c", note("C", "c"));
+    chunks_in(&store, "side", "notes/c", 2, 0);
+    put_in(&store, "old", "notes/d", note("D", "d"));
+    chunks_in(&store, "old", "notes/d", 1, 1);
+    store.set_source_archived("old", true).unwrap();
+    let query = json!({ "sourceIds": ["side", "missing", "default", "old", "side"] });
+    let rows = store.count_source_pages_and_chunks(&de(query)).unwrap();
+    assert_eq!(
+        Value::Array(rows),
+        json!([
+            { "source_id": "side", "pages": 1, "chunks_total": 2, "chunks_unembedded": 2 },
+            { "source_id": "missing", "pages": 0, "chunks_total": 0, "chunks_unembedded": 0 },
+            { "source_id": "default", "pages": 2, "chunks_total": 4, "chunks_unembedded": 2 },
+            { "source_id": "old", "pages": 1, "chunks_total": 1, "chunks_unembedded": 0 },
+            { "source_id": "side", "pages": 1, "chunks_total": 2, "chunks_unembedded": 2 },
+        ]),
+        "requested order kept, notes/b's own body chunk counted, a deleted page and its chunks not, archived source counted"
+    );
+    assert!(
+        store
+            .count_source_pages_and_chunks(&de(json!({})))
             .unwrap()
             .is_empty()
     );

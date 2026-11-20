@@ -19,6 +19,7 @@ src/core/embedding-migration-worst-case.ts	2
 src/core/embedding-migration.ts	8
 src/core/embedding-readiness.ts	3
 src/core/engine-sql/chunks.ts	6
+src/core/engine-sql/cli-reads-ops.ts	1
 src/core/engine-sql/code-edges.ts	1
 src/core/engine-sql/health.ts	2
 src/core/engine-sql/pages.ts	2
@@ -34,7 +35,6 @@ src/core/postgres-engine.ts	1
 src/core/schema-migrations/v116-code-edges-source-backfill-and-callee-index.ts	1
 src/core/search-vector-backfill.ts	1
 src/core/source-health.ts	1
-src/core/sync-status-report.ts	1
 src/eval/brainbench/metrics/deletion.ts	1
 src/eval/brainbench/metrics/trust-reads.ts	1
 src/eval/longmemeval/retrieval-arms.ts	1

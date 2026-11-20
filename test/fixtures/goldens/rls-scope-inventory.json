@@ -5778,6 +5778,7 @@
         "countSearchVectorRows": "none",
         "countSegmentedTimelinePages": "none",
         "countSourcePages": "none",
+        "countSourcePagesAndChunks": "none",
         "countStaleChunks": "direct",
         "countStaleFactEmbeddings": "none",
         "countStaleFrontmatterKeyPages": "direct",

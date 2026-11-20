@@ -271,6 +271,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listExtractionPendingPages': OOS.cliReadsOps,
   'countLivePagesBySourceType': OOS.cliReadsOps,
   'countLivePagesBySlugPrefixes': OOS.cliReadsOps,
+  'countSourcePagesAndChunks': OOS.cliReadsOps,
   'listUnattributedFacts': OOS.cliReadsOps,
   'listWantedPages': OOS.cliReadsOps,
   'readRankCoverage': OOS.cliReadsOps,

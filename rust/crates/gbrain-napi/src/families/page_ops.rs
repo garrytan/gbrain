@@ -167,6 +167,19 @@ impl Brain {
         })
     }
 
+    /// `countSourcePagesAndChunks({ sourceIds })`: per requested source, in order, its live pages,
+    /// their chunks and the chunks with no stored vector.
+    #[napi]
+    pub fn count_source_pages_and_chunks<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_source_pages_and_chunks(&required(query, "countSourcePagesAndChunks query")?)
+        })
+    }
+
     /// `getAllSlugs({ sourceId? }?)`: sorted distinct slugs, soft-deleted pages included.
     #[napi]
     pub fn get_all_slugs<'env>(

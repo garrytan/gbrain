@@ -305,15 +305,17 @@ describe('buildSyncStatusReport against real PGLite (IRON RULE regression for Bl
          WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
     );
 
-    const proxyEngine: BrainEngine = {
-      kind: engine.kind,
-      executeRaw: async (sql: string, params?: unknown[]) => {
-        if (/WITH s AS \(\s*SELECT unnest/.test(sql)) {
-          throw new Error('synthetic test error: count query failed');
+    // The count query is the typed countSourcePagesAndChunks member; every
+    // other member is the real engine's.
+    const proxyEngine = new Proxy(engine, {
+      get(target, prop, receiver) {
+        if (prop === 'countSourcePagesAndChunks') {
+          return async () => { throw new Error('synthetic test error: count query failed'); };
         }
-        return (engine.executeRaw as (sql: string, params?: unknown[]) => Promise<unknown[]>)(sql, params);
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
       },
-    } as unknown as BrainEngine;
+    }) as BrainEngine;
 
     await expect(buildSyncStatusReport(proxyEngine, sources)).rejects.toThrow(
       /count query failed/,

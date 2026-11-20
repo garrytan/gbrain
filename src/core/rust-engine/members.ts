@@ -67,6 +67,7 @@ export const RUST_ENGINE_MEMBERS = {
   listExtractionPendingPages: 'pages',
   countLivePagesBySourceType: 'pages',
   countLivePagesBySlugPrefixes: 'pages',
+  countSourcePagesAndChunks: 'pages',
   slugsEndingIn: 'pages',
   generatedPagesIn: 'pages',
   livePageIdsAt: 'pages',

@@ -1,15 +1,15 @@
 /**
  * The CLI search and graph reads (BrainEngine scanExactBatch, nextLivePageAfter, listExactIdentityCandidates,
  * rankEntities, readRankCoverage, readExactSnippetChunks, listExactRescanChunks, listExtractionPendingPages), served by gbrain-store `cli_reads::reads`, and the schema stats
- * live-page counts (countLivePagesBySourceType, countLivePagesBySlugPrefixes), served by gbrain-store `page_ops::live_counts`. What the store does not keep
+ * live-page counts (countLivePagesBySourceType, countLivePagesBySlugPrefixes) and the sync status counts (countSourcePagesAndChunks), served by gbrain-store `page_ops::live_counts`. What the store does not keep
  * (trust tiers, page aliases) and what each member answers for it:
  * rust/docs/store/cli-reads-ops.md.
  */
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, LivePageTypeCountRow, RankCoverageRow } from '../../engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, LivePageTypeCountRow, RankCoverageRow, SourcePageChunkCountRow } from '../../engine-sql/cli-reads-ops.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../../engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../../search/exact-scan.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 /**
@@ -69,6 +69,17 @@ export const countLivePagesBySourceType: StoreMember<[opts?: { sourceIds?: reado
 export const countLivePagesBySlugPrefixes: StoreMember<[prefixes: readonly string[], opts?: { sourceIds?: readonly string[] }], number[]> = (brain, prefixes, opts) => {
   const sent = takeOptions('countLivePagesBySlugPrefixes', opts ?? {}, ['sourceIds']);
   return storeCall({ member: 'countLivePagesBySlugPrefixes' }, () => brain.countLivePagesBySlugPrefixes({ ...sent, prefixes: [...prefixes] }));
+};
+
+/**
+ * Per source, in order: live pages, their chunks and the chunks with no stored vector. The store keeps one vector per
+ * chunk (the `embedding` column), so another column refuses rather than count every chunk as unembedded.
+ */
+export const countSourcePagesAndChunks: StoreMember<[sourceIds: readonly string[], opts: { embeddingColumn: string }], SourcePageChunkCountRow[]> = async (brain, sourceIds, opts) => {
+  const { embeddingColumn } = takeOptions('countSourcePagesAndChunks', opts, ['embeddingColumn']);
+  if (embeddingColumn !== 'embedding') refuseMember('countSourcePagesAndChunks', `embedding column ${String(embeddingColumn)} is not kept by the store`);
+  if (sourceIds.length === 0) return [];
+  return storeCall({ member: 'countSourcePagesAndChunks' }, () => brain.countSourcePagesAndChunks({ sourceIds: [...sourceIds] }));
 };
 
 /**

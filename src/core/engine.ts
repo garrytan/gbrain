@@ -14,7 +14,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows } from './engine-sql/access-control.ts';
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, LivePageTypeCountRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, LivePageTypeCountRow, SourcePageChunkCountRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -3444,6 +3444,8 @@ export interface BrainEngine {
   countLivePagesBySourceType(opts?: { sourceIds?: readonly string[] }): Promise<LivePageTypeCountRow[]>;
   /** schema stats: the live-page count of each slug prefix, in order (`slug LIKE prefix || '%'`), in `sourceIds` (all when empty). */
   countLivePagesBySlugPrefixes(prefixes: readonly string[], opts?: { sourceIds?: readonly string[] }): Promise<number[]>;
+  /** sync status: per source of `sourceIds`, in order, live pages, their chunks, and the chunks with no vector in `embeddingColumn`. */
+  countSourcePagesAndChunks(sourceIds: readonly string[], opts: { embeddingColumn: string }): Promise<SourcePageChunkCountRow[]>;
 
   // Facts statements, doctor checks (engine-sql/facts-doctor.ts). Each runs the statement its caller ran through executeRaw.
   /** conversation_outcomes_stale: the newest unexpired extraction-outcome rows of `sourceIds`, newest id first, at most `limit`. */

@@ -1568,6 +1568,7 @@ export class PGLiteEngine implements BrainEngine {
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listWantedPages(this.rawRead, opts); }
   countLivePagesBySourceType(opts?: { sourceIds?: readonly string[] }) { return cliReadsOpsImpl.countLivePagesBySourceType(this.rawRead, opts); }
   countLivePagesBySlugPrefixes(prefixes: readonly string[], opts?: { sourceIds?: readonly string[] }) { return cliReadsOpsImpl.countLivePagesBySlugPrefixes(this.rawRead, prefixes, opts); }
+  countSourcePagesAndChunks(sourceIds: readonly string[], opts: { embeddingColumn: string }) { return cliReadsOpsImpl.countSourcePagesAndChunks(this.rawRead, sourceIds, opts); }
 
   // Facts statements, doctor checks (engine-sql/facts-doctor.ts), through executeRaw as before.
   listConversationFactRows(sourceIds: string[], limit: number) { return factsDoctorImpl.listConversationFactRows(this.rawRead, sourceIds, limit); }

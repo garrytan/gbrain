@@ -8,6 +8,7 @@
  *    `query_cache_unavailable` (the store keeps no query_cache table) and never answers zero rows there. schema_stats
  *    counts live pages per source and type (archived sources included, soft-deleted pages not, an empty type as
  *    untyped) and finds the pack prefixes no live page matches, with SQL LIKE meaning for `%`, `_` and `\`.
+ *    get_status_snapshot counts, per source, its live pages, their chunks and the chunks with no vector.
  *  - Regression: a raw-SQL read on the tool path that a Rust brain refuses, or a fail-open catch that hides the refusal
  *    and answers as if the table were empty.
  *  - Why existing coverage misses it: test/quarantine-cache-ops.test.ts and the jobs op tests run on PGLite only.
@@ -18,7 +19,8 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { ALL_SOURCES } from '../../src/core/source-id.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { NoticeLedger } from '../../src/core/notice-ledger.ts';
-import { archiveSource, createSource, parityArms } from './harness.ts';
+import { archiveSource, basisEmbedding, createSource, parityArms } from './harness.ts';
+import { chunk, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -122,5 +124,28 @@ describe('engine parity: MCP tools a Rust brain refused', () => {
         none: await engine.countLivePagesBySlugPrefixes([]),
         types: await engine.countLivePagesBySourceType({ sourceIds: ['default', 'side'] }),
       };
+    });
+
+  parityTest('get_status_snapshot counts each source\'s live pages, their chunks and the chunks with no vector',
+    { methods: ['countSourcePagesAndChunks'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'side');
+      await createSource(engine, backend, 'empty');
+      const note = (title: string) => ({ type: 'note' as const, title, compiled_truth: `${title} body`, timeline: '' });
+      await seedPage(engine, { slug: 'notes/a', input: note('a'),
+        chunks: [chunk(0, 'a one', { embedding: basisEmbedding(1) }), chunk(1, 'a two')] });
+      await seedPage(engine, { slug: 'notes/b', input: note('b'), chunks: [chunk(0, 'b one', { embedding: basisEmbedding(2) })] });
+      await seedPage(engine, { slug: 'notes/gone', input: note('gone'), chunks: [chunk(0, 'gone one')] });
+      await engine.softDeletePage('notes/gone');
+      await seedPage(engine, { slug: 'notes/c', input: note('c'), chunks: [chunk(0, 'c one'), chunk(1, 'c two')] }, { sourceId: 'side' });
+      const answer = await call(engine, 'get_status_snapshot');
+      expect(answer.error).toBeNull();
+      const sync = answer.body?.sync as { sources: Array<Record<string, unknown>>; embedding_column: string };
+      const counts = sync.sources.map(s => ({ source_id: s.source_id, pages: s.pages, chunks_total: s.chunks_total,
+        chunks_unembedded: s.chunks_unembedded, embedding_coverage_pct: s.embedding_coverage_pct }));
+      expect(counts.map(c => [c.source_id, c.pages, c.chunks_total, c.chunks_unembedded])).toEqual([
+        ['default', 2, 3, 1], ['empty', 0, 0, 0], ['side', 1, 2, 2],
+      ]);
+      const body = answer.body as { cycle: unknown; queue: unknown; workers: unknown };
+      return { counts, embedding_column: sync.embedding_column, cycle: body.cycle, queue: body.queue, workers: body.workers };
     });
 });

@@ -1244,6 +1244,7 @@ export class PostgresEngine implements BrainEngine {
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listWantedPages(this.executeRaw.bind(this), opts); }
   countLivePagesBySourceType(opts?: { sourceIds?: readonly string[] }) { return cliReadsOpsImpl.countLivePagesBySourceType(this.executeRaw.bind(this), opts); }
   countLivePagesBySlugPrefixes(prefixes: readonly string[], opts?: { sourceIds?: readonly string[] }) { return cliReadsOpsImpl.countLivePagesBySlugPrefixes(this.executeRaw.bind(this), prefixes, opts); }
+  countSourcePagesAndChunks(sourceIds: readonly string[], opts: { embeddingColumn: string }) { return cliReadsOpsImpl.countSourcePagesAndChunks(this.executeRaw.bind(this), sourceIds, opts); }
 
   // Facts statements, doctor checks (engine-sql/facts-doctor.ts), through executeRaw as before.
   listConversationFactRows(sourceIds: string[], limit: number) { return factsDoctorImpl.listConversationFactRows(this.executeRaw.bind(this), sourceIds, limit); }

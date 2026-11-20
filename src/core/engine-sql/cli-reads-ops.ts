@@ -4,7 +4,9 @@
  * search-exact (with its held-snippet chunk reads), wanted, whois,
  * rank-entities (with its remote coverage), extraction-pending, the held
  * fence cells of a world-only fact read (eligibility/stamp.ts heldFenceLines)
- * and the two live-page counts of schema stats (schema-pack/stats.ts).
+ * the two live-page counts of schema stats (schema-pack/stats.ts) and the
+ * per-source page and chunk counts of the sync status report
+ * (sync-status-report.ts).
  *
  * Every function takes the engine's own `executeRaw`, so each statement runs
  * on exactly the path it ran on before it moved here: on Postgres a
@@ -22,6 +24,7 @@ import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy } from 
 import { activationSuppressedSql, deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
 import { heldRowSql } from '../eligibility/fence-overlay.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { quoteIdentifier } from '../search/embedding-column.ts';
 
 /** The engine's `executeRaw` (bound), with the two bounds these reads use. */
 export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean }) => Promise<R[]>;
@@ -321,4 +324,47 @@ export async function countLivePagesBySlugPrefixes(raw: EngineRawRead, prefixes:
        ORDER BY p.ord`);
   const rows = await raw<{ count: number | string }>(text, params);
   return rows.map(r => Number(r.count));
+}
+
+export interface SourcePageChunkCountRow {
+  source_id: string;
+  pages: number;
+  chunks_total: number;
+  chunks_unembedded: number;
+}
+
+/**
+ * The sync status report: for each source of `sourceIds`, in order, its live pages, the chunks of those pages and
+ * the chunks with no vector in `embeddingColumn` (the resolved active column). A source with no pages counts zero.
+ */
+export async function countSourcePagesAndChunks(raw: EngineRawRead, sourceIds: readonly string[], opts: { embeddingColumn: string }): Promise<SourcePageChunkCountRow[]> {
+  if (sourceIds.length === 0) return [];
+  const col = trustedSql(quoteIdentifier(opts.embeddingColumn));
+  const { text, params } = renderFragment(sqlFragment`WITH s AS (
+         SELECT source_id, ord FROM unnest(${[...sourceIds]}::text[]) WITH ORDINALITY AS u(source_id, ord)
+       )
+       SELECT
+         s.source_id,
+         COALESCE(p.pages, 0) AS pages,
+         COALESCE(c.chunks_total, 0) AS chunks_total,
+         COALESCE(c.chunks_unembedded, 0) AS chunks_unembedded
+       FROM s
+       LEFT JOIN (
+         SELECT source_id, COUNT(*) AS pages
+         FROM pages
+         WHERE deleted_at IS NULL
+         GROUP BY source_id
+       ) p ON p.source_id = s.source_id
+       LEFT JOIN (
+         SELECT pg.source_id,
+                COUNT(*) AS chunks_total,
+                COUNT(*) FILTER (WHERE cc.${col} IS NULL) AS chunks_unembedded
+         FROM content_chunks cc
+         JOIN pages pg ON pg.id = cc.page_id
+         WHERE pg.deleted_at IS NULL
+         GROUP BY pg.source_id
+       ) c ON c.source_id = s.source_id
+       ORDER BY s.ord`);
+  const rows = await raw<{ source_id: string; pages: number | string; chunks_total: number | string; chunks_unembedded: number | string }>(text, params);
+  return rows.map(r => ({ source_id: r.source_id, pages: Number(r.pages) || 0, chunks_total: Number(r.chunks_total) || 0, chunks_unembedded: Number(r.chunks_unembedded) || 0 }));
 }
