@@ -19,7 +19,7 @@ import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
-import { CREDENTIAL_SQL, OAUTH_CODE_SQL, OAUTH_REFRESH_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { CREDENTIAL_SQL, OAUTH_CODE_SQL, OAUTH_EXPIRE_ALL_SQL, OAUTH_REFRESH_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -1005,6 +1005,12 @@ describe('the OAuth code flow and the token grant send the same statements throu
       expect(capture.error).toBeUndefined();
       expect(capture.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual([{ text, params: ['h', 'pin-code'] }]);
     }
+  });
+  test('the restore quarantine member sends the two expiry statements restore.ts sent, tokens first, with no params', async () => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'expireAllOauthCredentials', variant: 'member', run: e => e.expireAllOauthCredentials() }));
+    expect(capture.error).toBeUndefined();
+    expect(OAUTH_EXPIRE_ALL_SQL).toEqual({ tokens: 'UPDATE oauth_tokens SET expires_at=0', codes: 'UPDATE oauth_codes SET expires_at=0' });
+    expect(capture.trace.flatMap(t => (t.kind === 'query' ? [t.text] : []))).toEqual([OAUTH_EXPIRE_ALL_SQL.tokens, OAUTH_EXPIRE_ALL_SQL.codes]);
   });
   test('issueOauthTokens runs on the transaction handle, never on the pool', async () => {
     // The client row is locked by the grant's transaction: a token INSERT on another connection waits on its foreign key.

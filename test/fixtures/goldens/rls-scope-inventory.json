@@ -6125,6 +6125,7 @@
         "entityIdentityRead": "none",
         "executeRaw": "none",
         "executeRawDirect": "none",
+        "expireAllOauthCredentials": "none",
         "expireFact": "none",
         "expireFactsByWithdrawal": "none",
         "expireMemoryProposals": "none",

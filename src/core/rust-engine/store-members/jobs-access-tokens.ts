@@ -72,6 +72,11 @@ export const insertOauthToken: StoreMember<[row: OauthTokenInsert], void> = asyn
 export const deleteExpiredOauthCredentials: StoreMember<[nowEpochSeconds: number], number> = async (brain, now) =>
   Number(await storeCall({ member: 'deleteExpiredOauthCredentials' }, () => brain.deleteExpiredOauthCredentials(now)));
 
+/** Every OAuth token and code expires (`expires_at = 0`), in one write. */
+export const expireAllOauthCredentials: StoreMember<[], void> = async (brain) => {
+  await storeCall({ member: 'expireAllOauthCredentials' }, () => brain.expireAllOauthCredentials());
+};
+
 /** One authorization code; a repeated hash and a client with no row are refused as 23505 and 23503, as the SQL engines refuse them. */
 export const insertOauthCode: StoreMember<[row: OauthCodeInsert], void> = async (brain, row) => {
   await refusing('insertOauthCode', () => brain.insertOauthCode({ ...row, scopes: [...row.scopes] }));

@@ -285,4 +285,10 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.delete_expired_oauth_credentials(now))
     }
+
+    /// `expireAllOauthCredentials()`: every OAuth token and code expires (`expires_at = 0`), in one write.
+    #[napi]
+    pub fn expire_all_oauth_credentials<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.expire_all_oauth_credentials())
+    }
 }

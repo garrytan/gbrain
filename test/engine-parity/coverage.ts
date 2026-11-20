@@ -151,7 +151,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns',
     'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs',
     'readOauthAccessTokenRows', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
-    'deleteExpiredOauthCredentials', 'insertOauthToken', 'convertLegacyAccessTokenGrant',
+    'deleteExpiredOauthCredentials', 'expireAllOauthCredentials', 'insertOauthToken', 'convertLegacyAccessTokenGrant',
     // OAuth authorization codes and the grant transaction (engine-sql/access-credentials.ts OAUTH_CODE_SQL)
     'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens',
     'readOauthRefreshTokenForUpdate', 'deleteOauthRefreshToken',

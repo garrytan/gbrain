@@ -75,8 +75,7 @@ export async function quarantineSharedSkillRestore(tx: BrainEngine, restoreId: s
   await tx.executeRaw('UPDATE shared_skill_revision_leases SET expires_at=LEAST(expires_at,now())');
   await tx.executeRaw('UPDATE access_tokens SET revoked_at=COALESCE(revoked_at,now())');
   await tx.executeRaw('UPDATE oauth_clients SET deleted_at=COALESCE(deleted_at,now()),grant_revision=grant_revision+1');
-  await tx.executeRaw('UPDATE oauth_tokens SET expires_at=0');
-  await tx.executeRaw('UPDATE oauth_codes SET expires_at=0');
+  await tx.expireAllOauthCredentials();
   await tx.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now())');
   forgetRequestIdentity();
   await tx.executeRaw('DELETE FROM persistence_writer_protocols');

@@ -146,6 +146,33 @@ pub(super) fn delete_expired_tokens(tx: &mut dyn KvWrite, now_epoch_seconds: i64
     Ok(u32::try_from(expired.len()).unwrap_or(u32::MAX))
 }
 
+/// `UPDATE oauth_tokens SET expires_at=0`: every token expires (the restore quarantine); how many rows it changed.
+pub(super) fn expire_all_tokens(tx: &mut dyn KvWrite) -> Result<u32> {
+    let mut rows = Vec::new();
+    let mut bad = None;
+    scan_prefix(&*tx, &prefix(OAUTH_TOKEN), false, &mut |k, v| {
+        match serde_json::from_slice::<OauthTokenRecord>(v) {
+            Ok(r) => rows.push((k.to_vec(), r)),
+            Err(e) => {
+                bad = Some(StoreError::invalid(format!(
+                    "unreadable OAuth token record: {e}"
+                )));
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = bad {
+        return Err(e);
+    }
+    let changed = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+    for (key, mut row) in rows {
+        row.expires_at = Some(0);
+        put_json(tx, &key, &row)?;
+    }
+    Ok(changed)
+}
+
 /// `DELETE FROM oauth_tokens WHERE token_hash = $1 AND client_id = $2`: the token goes only when this client owns it.
 pub(super) fn delete_token_of_client(
     tx: &mut dyn KvWrite,

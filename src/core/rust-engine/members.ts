@@ -881,6 +881,7 @@ export const RUST_ENGINE_MEMBERS = {
   readActiveAccessTokenByHash: 'minion_queue',
   touchAccessTokenLastUsed: 'minion_queue',
   deleteExpiredOauthCredentials: 'minion_queue',
+  expireAllOauthCredentials: 'minion_queue',
   convertLegacyAccessTokenGrant: 'minion_queue',
   insertOauthToken: 'minion_queue',
   insertOauthCode: 'minion_queue',

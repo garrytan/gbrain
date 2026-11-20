@@ -3904,6 +3904,8 @@ export interface BrainEngine {
   touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
   /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both (a store that keeps none deletes none). */
   deleteExpiredOauthCredentials(nowEpochSeconds: number): Promise<number>;
+  /** Set `expires_at = 0` on every OAuth token and code (the shared-skill restore quarantine): no archived grant is honored. */
+  expireAllOauthCredentials(): Promise<void>;
   /** OAuth access tokens expiring from `from` to `to` (epoch seconds, inclusive), or after `from` when `to` is null. */
   countOauthAccessTokens(from: number, to: number | null): Promise<number>;
   /** Convert an access token still on the legacy shape to its grant columns on first read; the converted row, or null when none converted. */

@@ -410,6 +410,18 @@ export const OAUTH_SWEEP_SQL = {
     `,
 } as const;
 
+/** The restore quarantine's expiry of every OAuth token and code (shared-skills/restore.ts), byte for byte as it sent them. */
+export const OAUTH_EXPIRE_ALL_SQL = {
+  tokens: 'UPDATE oauth_tokens SET expires_at=0',
+  codes: 'UPDATE oauth_codes SET expires_at=0',
+} as const;
+
+/** Expire every OAuth token and code (`expires_at = 0`), so a restored brain honors no grant the archive carried. */
+export async function expireAllOauthCredentials(tx: Raw): Promise<void> {
+  await tx.executeRaw(OAUTH_EXPIRE_ALL_SQL.tokens);
+  await tx.executeRaw(OAUTH_EXPIRE_ALL_SQL.codes);
+}
+
 /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both. */
 export async function deleteExpiredOauthCredentials(tx: Raw, nowEpochSeconds: number): Promise<number> {
   const tokens = await tx.executeRaw(OAUTH_SWEEP_SQL.tokens, [nowEpochSeconds]);
