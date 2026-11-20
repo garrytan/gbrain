@@ -997,6 +997,7 @@ export const RUST_ENGINE_MEMBERS = {
   readTokenLifetimeClampedClients: 'minion_queue',
   readScopeSourceConfigs: 'minion_queue',
   readOauthAccessTokenRows: 'minion_queue',
+  lockActiveAccessTokens: 'minion_queue',
   readActiveAccessTokenByHash: 'minion_queue',
   touchAccessTokenLastUsed: 'minion_queue',
   deleteExpiredOauthCredentials: 'minion_queue',

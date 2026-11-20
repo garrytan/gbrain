@@ -242,9 +242,9 @@ export type AccessCredentialLookup = { tokenName: string } | { memberId: string 
 
 /** The statements access/members.ts legacyTokenByName and boundCredentials (tokens, then clients) ran through executeRaw. */
 export const ACCESS_CREDENTIAL_SQL = {
-  token_by_name: 'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at',
-  tokens_by_member: 'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name',
-  clients_by_member: "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id",
+  token_by_name: 'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at, id',
+  tokens_by_member: 'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name COLLATE "C", id',
+  clients_by_member: "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id COLLATE \"C\"",
 } as const;
 
 /**
@@ -306,12 +306,19 @@ export const PAGES_NAMING_READER_LIMIT = 51;
 export const PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 51`;
 
+/** The most live pages listPagesNamingReader returns: access-read-by-nobody.ts checks 200 and reads one more to see a cut. */
+export const LIVE_PAGES_NAMING_READER_LIMIT = 201;
+
+/** The statement access-read-by-nobody.ts pagesReadByNobodyNaming ran through executeRaw (LIMIT is LIVE_PAGES_NAMING_READER_LIMIT). */
+export const LIVE_PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`;
+
 /**
  * The pages, in every source and by (source, slug), whose normalized readers (`gbrain_access_readers`) name exactly
  * `principal` (`member:<id>` or `group:<id>`), at most PAGES_NAMING_READER_LIMIT of them. Soft-deleted pages count, as
- * before.
+ * before. `live` leaves soft-deleted pages out and returns at most LIVE_PAGES_NAMING_READER_LIMIT.
  */
-export async function listPagesNamingReader(exec: MemberLookupRead, principal: string): Promise<PageNamingReaderRow[]> {
-  const rows = await exec.executeRaw<PageNamingReaderRow>(PAGES_NAMING_READER_SQL, [principal]);
+export async function listPagesNamingReader(exec: MemberLookupRead, principal: string, opts: { live?: boolean } = {}): Promise<PageNamingReaderRow[]> {
+  const rows = await exec.executeRaw<PageNamingReaderRow>(opts.live ? LIVE_PAGES_NAMING_READER_SQL : PAGES_NAMING_READER_SQL, [principal]);
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 }

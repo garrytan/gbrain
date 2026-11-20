@@ -1184,13 +1184,13 @@ SELECT source_id, type FROM pairs`],
   {
     from: 'src/core/access/members.ts:199 legacyTokenByName (active tokens with one name)',
     case: { method: 'readAccessCredentials', variant: 'token-name', run: e => e.readAccessCredentials({ tokenName: 'laptop' }) },
-    texts: ['SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at'],
+    texts: ['SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at, id'],
   },
   {
-    from: 'src/core/access/members.ts:305/307 boundCredentials (tokens, then clients)',
+    from: 'src/core/access/members.ts:305/307 boundCredentials (tokens, then clients; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readAccessCredentials', variant: 'member', run: e => e.readAccessCredentials({ memberId: 'alice-example' }) },
-    texts: ['SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name',
-      "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id"],
+    texts: ['SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name COLLATE "C", id',
+      "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id COLLATE \"C\""],
   },
   {
     from: 'src/core/access/members.ts:295 audienceMemberIds (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
@@ -1297,6 +1297,12 @@ SELECT source_id, type FROM pairs`],
     case: { method: 'listFailureTombstones', variant: 'default', run: e => e.listFailureTombstones('default', '(extraction failed: ') },
     texts: [`SELECT page_slug AS slug, claim_text, prompt_version, proposed_at::text AS proposed_at FROM take_proposals
       WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access-read-by-nobody.ts:45 pagesReadByNobodyNaming (at 30750dcd6c; the columns read slug first like the default read, and the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
+    case: { method: 'listPagesNamingReader', variant: 'live', run: e => e.listPagesNamingReader('member:alice-example', { live: true }) },
+    texts: [`SELECT slug, source_id FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`],
   },
   {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
@@ -1503,6 +1509,16 @@ SELECT source_id, type FROM pairs`],
               WHERE t.token_hash = $1 AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
             `],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:240 rescopeInTransaction by id (at 30750dcd6c)',
+    case: { method: 'lockActiveAccessTokens', variant: 'by-id', run: e => e.lockActiveAccessTokens({ id: '00000000-0000-4000-8000-0000000000b1' }) },
+    texts: ['SELECT * FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE'],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:241 rescopeInTransaction by name (at 30750dcd6c)',
+    case: { method: 'lockActiveAccessTokens', variant: 'by-name', run: e => e.lockActiveAccessTokens({ name: 'laptop' }) },
+    texts: ['SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE'],
   },
   {
     from: 'src/core/oauth-provider.ts:1021 verifyAccessToken legacy fallback (at d51679a5fd)',

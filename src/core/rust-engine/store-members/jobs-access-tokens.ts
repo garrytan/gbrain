@@ -7,12 +7,13 @@
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
-import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
+import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
+import { uuidText, withDates } from '../store-codec.ts';
 
 export const insertAccessToken: StoreMember<[row: AccessTokenInsert], { id: string }> = (brain, row) =>
-  refusing('insertAccessToken', () => brain.insertAccessToken({ ...row, revoked_at: row.revoked_at?.toISOString() ?? null })) as Promise<{ id: string }>;
+  refusing('insertAccessToken', () => brain.insertAccessToken({ ...row, revoked_at: row.revoked_at?.toISOString() ?? null, created_at: row.created_at?.toISOString() ?? null })) as Promise<{ id: string }>;
 
 export const findActiveAccessTokens: StoreMember<[target: string], ActiveAccessTokenRow[]> = (brain, target) =>
   storeCall({ member: 'findActiveAccessTokens' }, () => brain.findActiveAccessTokens(target)) as Promise<ActiveAccessTokenRow[]>;
@@ -52,6 +53,17 @@ export const readOauthAccessTokenRows: StoreMember<[hash: string, rung: OauthTok
 export const readActiveAccessTokenByHash: StoreMember<[hash: string, caller: TokenByHashCaller], Record<string, unknown> | null> = async (brain, hash) => {
   const raw = await storeCall({ member: 'readActiveAccessTokenByHash' }, () => brain.readActiveAccessTokenByHash(hash)) as Record<string, unknown> | null;
   return raw ? { ...raw, token_hash: hash, created_at: new Date(String(raw.created_at)), last_used_at: raw.last_used_at == null ? null : new Date(String(raw.last_used_at)) } : null;
+};
+
+/**
+ * `auth rescope`'s rows: the stored columns of the active tokens one id or an exact name names, oldest first, the
+ * timestamps as Dates. The store runs one write at a time, so it takes no lock. An id that is not a UUID is refused
+ * with Postgres's text; the rows leave out the hash, as every store token row does.
+ */
+export const lockActiveAccessTokens: StoreMember<[target: ActiveTokenTarget], Record<string, unknown>[]> = async (brain, target) => {
+  const [id, name] = 'id' in target ? [uuidText(target.id), null] : [null, target.name];
+  const rows = await storeCall({ member: 'lockActiveAccessTokens' }, () => brain.lockActiveAccessTokens(id, name)) as Record<string, unknown>[];
+  return rows.map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
 };
 
 /** The debounced `last_used_at` stamp (once per token per 60 s by the store clock; `unified` leaves a row with no `source_grant` alone). */

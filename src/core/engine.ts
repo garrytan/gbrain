@@ -10,7 +10,7 @@ import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
-import type { AccessTokenListRow, ActiveTokenGrantField, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
+import type { AccessTokenListRow, ActiveTokenGrantField, ActiveTokenTarget, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -4092,6 +4092,8 @@ export interface BrainEngine {
   readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]>;
   /** The bearer check's OAuth token read at one rung of its degrade ladder. */
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
+  /** `auth rescope`'s whole rows (`SELECT *`) of the active tokens one id or an exact name names, locked FOR UPDATE. */
+  lockActiveAccessTokens(target: ActiveTokenTarget): Promise<Record<string, unknown>[]>;
   /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null>;
   /** Stamp a token's `last_used_at`, debounced to once a minute. */
@@ -4110,7 +4112,7 @@ export interface BrainEngine {
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]>;
 
   /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */
-  listPagesNamingReader(principal: string): Promise<PageNamingReaderRow[]>;
+  listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]>;
 
   /** The live pages, in every source and by (source id, slug) bytes, whose readers name exactly `principal`; at most 201 of them (member disable checks 200 and reads one more). */
   listLivePagesNamingReader(principal: string): Promise<import('./engine-sql/collate-command-reads.ts').LivePageNamingReaderRow[]>;

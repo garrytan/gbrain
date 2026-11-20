@@ -642,6 +642,7 @@
       "loadContradictionsTrend": "takes",
       "loadPurgeTarget": "out-of-scope:facts-purge (born in engine-sql/facts-purge.ts; pinned by test/engine-parity/facts-purge.test.ts)",
       "lockAccessPolicy": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
+      "lockActiveAccessTokens": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "lockAllSourceRows": "sources",
       "lockEffectClaimRow": "out-of-scope:embedding-install (born in engine-sql/embedding-install.ts; pinned by test/engine-parity/embedding-install.test.ts and test/persistence-embedding-effects.test.ts)",
       "lockEffectGuard": "out-of-scope:persistence-effect-worker (born in engine-sql/persistence-effect-worker.ts; pinned by test/engine-parity/persistence.test.ts)",
