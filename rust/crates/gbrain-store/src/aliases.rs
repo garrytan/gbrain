@@ -221,6 +221,60 @@ fn delete_page_alias(
     tx.delete(&key(PAGE_ALIAS_BY_SLUG, &[source, slug, alias, origin]))
 }
 
+/// The shadow seed (`seed.rs`): stores a `slug_aliases` row copied from another engine. `false` when
+/// `(source, alias)` already holds one.
+pub(crate) fn seed_slug_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    alias: &str,
+    record: &SlugAliasRecord,
+) -> Result<bool> {
+    refuse_nul(
+        "seed slug_aliases",
+        &[source, alias, &record.canonical_slug],
+    )?;
+    if read_slug_alias(&*tx, source, alias)?.is_some() {
+        return Ok(false);
+    }
+    put_slug_alias(tx, source, alias, record)?;
+    Ok(true)
+}
+
+/// The shadow seed (`seed.rs`): stores a `page_aliases` row copied from another engine. `false` when
+/// the row is already stored.
+pub(crate) fn seed_page_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    alias: &str,
+    slug: &str,
+    origin: &str,
+) -> Result<bool> {
+    refuse_nul("seed page_aliases", &[source, alias, slug, origin])?;
+    if tx
+        .get(&key(PAGE_ALIAS, &[source, alias, slug, origin]))?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    put_page_alias(tx, source, alias, slug, origin)?;
+    Ok(true)
+}
+
+/// The shadow seed (`seed.rs`): stores a page's `contextual_retrieval_mode` and `corpus_generation`
+/// as another engine holds them.
+pub(crate) fn seed_cr_state(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    mode: String,
+    corpus_generation: Option<String>,
+) -> Result<()> {
+    let state = CrState {
+        mode,
+        corpus_generation,
+    };
+    put_json(tx, &cr_key(page_id), &state)
+}
+
 /// The `slug_aliases` row of `alias` in `source`, if any.
 pub(crate) fn read_slug_alias(
     read: &dyn KvRead,

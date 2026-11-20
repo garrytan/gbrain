@@ -33,7 +33,7 @@ const HASH_EPHEMERAL_KEYS: &[&str] = &[
     "trust_tier",
 ];
 
-const NEXT_PAGE_ID: &str = "next_page_id";
+pub(crate) const NEXT_PAGE_ID: &str = "next_page_id";
 const NEXT_VERSION_ID: &str = "next_version_id";
 
 /// A text column of `pages` that PGLite lets be NULL: `compiled_truth` and `timeline` (migration v248).

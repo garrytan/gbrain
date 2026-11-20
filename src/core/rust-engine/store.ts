@@ -26,7 +26,24 @@ interface StoreAddon { Pool: new (threads: number) => StorePool; Brain: new (poo
 /** An open store: the brain and the pool it runs on. */
 export interface RustStore {
   readonly brain: StoreBrain;
+  /**
+   * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
+   * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
+   */
+  importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult>;
   close(): Promise<void>;
+}
+
+/** One primary row: column name to its `::text` value, or null. */
+export type SeedRow = Record<string, string | null>;
+
+/** What one `importRelation` batch did. `losses` counts values the store could not keep, by kind. */
+export interface SeedImportResult {
+  imported: number;
+  skipped: number;
+  dropped: number;
+  unmapped_columns: string[];
+  losses: Record<string, number>;
 }
 
 /** Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`. */
@@ -42,6 +59,13 @@ export async function openRustStore(addon: object, databasePath: string): Promis
   }
   return {
     brain,
+    async importRelation(seedId, relation, rows) {
+      try {
+        return await brain.importRelation(seedId, relation, rows) as SeedImportResult;
+      } catch (error) {
+        throw mapStoreError(error, { member: 'importRelation' });
+      }
+    },
     async close() {
       try { await brain.close(); } finally { await pool.shutdown(STORE_SHUTDOWN_WAIT_MS).catch(() => undefined); }
     },

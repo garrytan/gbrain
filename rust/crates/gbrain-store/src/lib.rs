@@ -26,6 +26,7 @@ mod page_projection;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
+pub mod seed;
 pub mod sources;
 #[cfg(test)]
 mod test_support;

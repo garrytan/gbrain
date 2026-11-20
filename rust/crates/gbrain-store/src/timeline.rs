@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-const NEXT_TIMELINE_ID: &str = "next_timeline_id";
+pub(crate) const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
 /// What is stored for a timeline entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-const NEXT_TAKE_ID: &str = "next_take_id";
+pub(crate) const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
 const BY_ROW: u8 = 0x02;
 const EVIDENCE: u8 = 0x03;
@@ -471,6 +471,23 @@ pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> 
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     write_take(tx, take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
+}
+
+/// The shadow seed (`seed.rs`): stores a take copied from another engine with its own id and row.
+/// `false` when the id already holds a take; a row held by another take is the unique
+/// `(page_id, row_num)` violation. The caller checked the page.
+pub(crate) fn seed_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<bool> {
+    if read_take(&*tx, take.id)?.is_some() {
+        return Ok(false);
+    }
+    if tx.get(&row_key(take.page_id, take.row_num))?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on takes (page_id, row_num)",
+        ));
+    }
+    insert_take(tx, take)?;
+    Ok(true)
 }
 
 /// Deletes a take with its evidence rows.

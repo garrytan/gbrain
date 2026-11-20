@@ -13,6 +13,7 @@ mod journal;
 mod links;
 mod pages;
 mod search;
+mod seed;
 mod sources;
 mod tags;
 mod timeline;

@@ -43,6 +43,7 @@ mod collapse;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+pub(crate) use embedding::md5_hex;
 mod fence;
 pub mod generations;
 pub mod loops;
