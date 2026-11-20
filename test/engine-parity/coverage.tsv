@@ -407,11 +407,11 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	4	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	2	no	yes	yes	serves
-insertAccessMember	access_members	yes	15	no	yes	yes	serves
-setAccessMemberDisabled	access_members	yes	7	no	yes	yes	serves
+insertAccessMember	access_members	yes	16	no	yes	yes	serves
+setAccessMemberDisabled	access_members	yes	8	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
-tombstoneAccessMember	access_members	yes	7	no	yes	yes	serves
+tombstoneAccessMember	access_members	yes	8	no	yes	yes	serves
 addAccessGroupMembers	access_members	yes	2	no	yes	yes	serves
 removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
 deleteAccessGroup	access_members	yes	1	no	yes	yes	serves
@@ -991,7 +991,7 @@ listWakeWatches	jobs_wake	yes	10	no	yes	yes	serves
 endWakeWatches	jobs_wake	yes	8	no	yes	yes	serves
 countWakeWatches	jobs_wake	yes	1	no	yes	yes	serves
 readWakeDoctor	jobs_wake	yes	3	no	yes	yes	serves
-countPendingWakeForgets	jobs_wake	yes	5	no	yes	yes	serves
+countPendingWakeForgets	jobs_wake	yes	6	no	yes	yes	serves
 listWakeCrons	jobs_wake	yes	1	no	yes	yes	serves
 addWakeCron	jobs_wake	yes	4	no	yes	yes	serves
 removeWakeCron	jobs_wake	yes	1	no	yes	yes	serves
@@ -1002,8 +1002,8 @@ recordWakeTermsAcceptance	jobs_wake	yes	4	no	yes	yes	serves
 listDueWakeWatches	jobs_wake	yes	5	no	yes	yes	serves
 claimWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
 settleWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
-queueWakeForget	jobs_wake	yes	4	no	yes	yes	serves
+queueWakeForget	jobs_wake	yes	5	no	yes	yes	serves
 forgetWakeMember	jobs_wake	yes	1	no	yes	yes	serves
 forgetWakeCredential	jobs_wake	yes	4	no	yes	yes	serves
-claimWakeForgets	jobs_wake	yes	5	no	yes	yes	serves
+claimWakeForgets	jobs_wake	yes	6	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
