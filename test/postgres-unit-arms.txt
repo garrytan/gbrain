@@ -268,6 +268,7 @@ test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/transaction-settings.test.ts
 test/engine-parity/traversal-cache.test.ts
+test/engine-parity/trust-backfill.test.ts
 test/engine-parity/trust-fence.test.ts
 test/engine-parity/trust-proposals.test.ts
 test/engine-parity/trust-reads.test.ts
