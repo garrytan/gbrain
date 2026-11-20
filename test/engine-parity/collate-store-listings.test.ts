@@ -256,6 +256,20 @@ describe('store listings come out by byte', () => {
     expect(Object.keys((await readBudgetLimited(engine)).held_reasons)).toEqual(BYTE_SOURCES.map(source => `by-${source}`));
   });
 
+  // owner lane 14; flips at main join (listBudgetLimitedRows is a named refusal on Rust until main's page_embedding_budget ledger)
+  parityTest('readBudgetLimited lists sources of valid ids by byte of source id', { methods: ['putPage', 'getPage', 'upsertChunks', 'recordPageEmbeddingHold'], requires: 'raw_sql' }, async (engine, backend) => {
+    const ids = ['ab', 'b', 'a-z'];
+    for (const id of ids) await createSource(engine, backend, id);
+    for (const id of ids) {
+      await engine.putPage('big', { type: 'note', title: 'big', compiled_truth: 'x'.repeat(PAGE_INLINE_MAX_BYTES + 1), timeline: '' }, { sourceId: id });
+      await engine.upsertChunks('big', [{ chunk_index: 0, chunk_text: 'chunk', chunk_source: 'compiled_truth' }], { sourceId: id });
+      await engine.recordPageEmbeddingHold((await engine.getPage('big', { sourceId: id }))!.id, 'r');
+    }
+    const bySource = (await readBudgetLimited(engine)).by_source;
+    expect(bySource.map(s => s.pending_chunks)).toEqual(ids.map(() => 1));
+    expect(bySource.map(s => s.source_id)).toEqual(byteOrder(ids));
+  });
+
   parityTest('readBudgetLimited lists the held reasons of one source by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
     for (const reason of MIXED_SLUGS) await heldPage(engine, 'default', `big-${reason}`, reason);
     expect(Object.keys((await readBudgetLimited(engine)).held_reasons)).toEqual([...BYTE_SLUGS]);

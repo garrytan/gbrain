@@ -102,11 +102,11 @@ transaction	lifecycle	yes	103	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	119	yes	yes	yes	serves
+getPage	pages	yes	120	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	566	yes	yes	yes	serves
+putPage	pages	yes	567	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -223,7 +223,7 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	29	yes	yes	yes	serves
+upsertChunks	chunks	yes	30	yes	yes	yes	serves
 sealChunks	chunks	yes	54	no	yes	yes	serves
 getChunks	chunks	yes	30	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
@@ -245,7 +245,7 @@ writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
 readPageEmbeddingBudget	chunks	yes	4	no	yes	yes	serves
-recordPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
+recordPageEmbeddingHold	chunks	yes	2	no	yes	yes	serves
 openPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
 reservePageEmbedding	chunks	yes	4	no	yes	yes	serves
 settlePageEmbeddingReservation	chunks	yes	1	no	yes	yes	serves
