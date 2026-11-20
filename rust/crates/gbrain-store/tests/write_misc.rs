@@ -106,8 +106,12 @@ fn put(store: &Store, source: &str, slug: &str, frontmatter: Value) {
 }
 
 fn naming(store: &Store, principal: &str, limit: u32) -> Vec<(String, String)> {
+    naming_of(store, principal, limit, false)
+}
+
+fn naming_of(store: &Store, principal: &str, limit: u32, live_only: bool) -> Vec<(String, String)> {
     store
-        .list_pages_naming_reader(principal, limit)
+        .list_pages_naming_reader(principal, limit, live_only)
         .unwrap()
         .into_iter()
         .map(|r| (r.source_id, r.slug))
@@ -179,6 +183,19 @@ fn pages_naming_reader_match_normalized_readers_exactly_in_every_source() {
         vec![pair("default", "notes/a"), pair("default", "notes/b")]
     );
     assert_eq!(naming(&store, "member:alice-example", 0), vec![]);
+    assert_eq!(
+        naming_of(&store, "member:alice-example", 201, true),
+        vec![
+            pair("default", "notes/a"),
+            pair("default", "notes/b"),
+            pair("other", "notes/c"),
+        ],
+        "the live read leaves the soft-deleted page out"
+    );
+    assert_eq!(
+        naming_of(&store, "member:alice-example", 1, true),
+        vec![pair("default", "notes/a")]
+    );
     assert_eq!(
         naming(&store, "group:team-a", 50),
         vec![pair("default", "notes/b")]

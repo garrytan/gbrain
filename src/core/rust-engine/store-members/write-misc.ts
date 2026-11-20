@@ -5,7 +5,8 @@
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readJobPrincipal, readAccessCredentials, hasLabelledOnlyMember and listPagesNamingReader;
  * SQL in engine-sql/access-control.ts and engine-sql/write-misc.ts; the member and group reads are in access-members.ts). The credential revokes and the token list are
  * served by the jobs credential members (store-members/jobs-access-tokens.ts and jobs-oauth-clients.ts). The source read, the path attach and the pages naming a reader are served by
- * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not
+ * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`, the may_act_for and credential reads by the
+ * token and client records (gbrain-store `jobs::credential_binding`); the rest answer for state the store does not
  * keep. What each member answers and why: rust/docs/store/write_misc.md.
  */
 import type {
@@ -13,10 +14,11 @@ import type {
 } from '../../engine-sql/write-misc.ts';
 import { readAccessMembers } from './access-members.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AppliedPolicyRevision, FolderAccessRows, JobPrincipalKind, MayActForVia, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
-import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
+import { LIVE_PAGES_NAMING_READER_LIMIT, PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { uuidText } from '../store-codec.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -132,20 +134,30 @@ export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderA
   storeCall({ member: 'readFolderAccess' }, () => brain.readFolderAccess([...readers]));
 
 /**
- * A stdio server's may_act_for is a config value, which the store keeps. The store keeps access tokens and OAuth clients
- * without the may_act_for list, so a token or a client permits nothing, as one with an empty list does.
+ * A stdio server's may_act_for is the config text as stored; a live token's (by id text) or client's is its list, null
+ * when the credential is revoked, deleted, absent or holds no list.
  */
-export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
-  via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
+export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) => {
+  if (via === 'stdio_config') return storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key));
+  const live = await storeCall({ member: 'readMayActFor' }, () => brain.readLiveCredential(via, key)) as { may_act_for: unknown } | null;
+  return Array.isArray(live?.may_act_for) ? live!.may_act_for as string[] : null;
+};
 
 /**
- * A queued remote job's principal, revoked and deleted rows included: an OAuth client's row comes from the store's client
- * read (readOauthClient, as minions/submission-authority.ts reads it), a legacy token's from the token the store keeps
+ * A queued remote job's principal, revoked and deleted rows included: an OAuth client's row is the store's client read
+ * (readOauthClient) cut to the columns JOB_PRINCIPAL_SQL names, a legacy token's the token the store keeps
  * (`brain.readAccessToken`), with its times as Dates as PGLite and Postgres return them. The row leaves out `token_hash`.
+ * A token id that is not a uuid refuses as the SQL engines' `id = $1` does (uuidText).
  */
 export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async (brain, principal) => {
-  if (principal.kind === 'oauth_client') return await readOauthClient(brain, principal.id) as unknown as Record<string, unknown> | null;
-  const raw = await storeCall({ member: 'readJobPrincipal' }, () => brain.readAccessToken(principal.id)) as Record<string, unknown> | null;
+  if (principal.kind === 'oauth_client') {
+    const row = await readOauthClient(brain, principal.id);
+    if (!row) return null;
+    const { client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations } = row;
+    return { client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations };
+  }
+  const id = uuidText(principal.id);
+  const raw = await storeCall({ member: 'readJobPrincipal' }, () => brain.readAccessToken(id)) as Record<string, unknown> | null;
   if (!raw) return null;
   const date = (v: unknown) => v == null ? null : new Date(String(v));
   return { ...raw, created_at: date(raw.created_at), last_used_at: date(raw.last_used_at), revoked_at: date(raw.revoked_at) };
@@ -173,18 +185,21 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
 
 /**
- * The store keeps tokens and clients without member bindings and without the may_act_for list (see readMayActFor), and
- * this lookup is not served from them yet: no name or member binding names a live credential.
+ * The live credentials `by` names: the active tokens with exactly this name, oldest first, or the active tokens (by
+ * name, in byte order) and then the clients not deleted (by client id) bound to exactly this member.
  */
-export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
+export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async (brain, by) =>
+  await storeCall({ member: 'readAccessCredentials' }, () => brain.readAccessCredentials(by)) as AccessCredentialRow[];
 
 
 /**
  * The store keeps pages, so this is a real answer: gbrain-store `write_misc` reads every page (soft-deleted ones too, as
  * the SQL does), keeps those whose normalized readers (`gbrain_access_readers`) name exactly the principal, and returns
- * them by (source, slug), at most PAGES_NAMING_READER_LIMIT (the SQL's LIMIT 51).
+ * them by (source, slug), at most PAGES_NAMING_READER_LIMIT (the SQL's LIMIT 51). `live` leaves soft-deleted pages out
+ * and reads at most LIVE_PAGES_NAMING_READER_LIMIT (LIMIT 201).
  */
-export const listPagesNamingReader: StoreMember<[principal: string], PageNamingReaderRow[]> = async (brain, principal) => {
-  const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, PAGES_NAMING_READER_LIMIT)) as PageNamingReaderRow[];
+export const listPagesNamingReader: StoreMember<[principal: string, opts?: { live?: boolean }], PageNamingReaderRow[]> = async (brain, principal, opts = {}) => {
+  const limit = opts.live ? LIVE_PAGES_NAMING_READER_LIMIT : PAGES_NAMING_READER_LIMIT;
+  const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, limit, opts.live === true)) as PageNamingReaderRow[];
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 };

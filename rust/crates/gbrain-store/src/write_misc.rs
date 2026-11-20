@@ -38,17 +38,21 @@ impl Store {
     /// The pages in every source whose normalized readers (`gbrain_access_readers`, the
     /// `page_readers` column) name exactly `principal`, by (source, slug), at most `limit`. A
     /// soft-deleted page counts, as in the SQL (`FROM pages` with no deleted filter); a page with
-    /// no `readable_by` key or an invalid one (`!nobody`) names no member or group.
+    /// no `readable_by` key or an invalid one (`!nobody`) names no member or group. `live_only` leaves
+    /// the soft-deleted pages out (`deleted_at IS NULL`, the `member disable` check).
     pub fn list_pages_naming_reader(
         &self,
         principal: &str,
         limit: u32,
+        live_only: bool,
     ) -> Result<Vec<PageNamingReaderRow>> {
         let read = self.read()?;
         let mut rows: Vec<PageNamingReaderRow> = all_pages(&*read)?
             .into_iter()
             .filter(|p| {
-                access_readers(&p.frontmatter).is_some_and(|r| r.iter().any(|x| x == principal))
+                (!live_only || p.deleted_at_us.is_none())
+                    && access_readers(&p.frontmatter)
+                        .is_some_and(|r| r.iter().any(|x| x == principal))
             })
             .map(|p| PageNamingReaderRow {
                 slug: p.slug,

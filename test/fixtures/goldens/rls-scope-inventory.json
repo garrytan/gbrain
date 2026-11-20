@@ -7234,6 +7234,7 @@
         "loadContradictionsTrend": "none",
         "loadPurgeTarget": "none",
         "lockAccessPolicy": "none",
+        "lockActiveAccessTokens": "none",
         "lockAllSourceRows": "none",
         "lockEffectClaimRow": "none",
         "lockEffectGuard": "none",

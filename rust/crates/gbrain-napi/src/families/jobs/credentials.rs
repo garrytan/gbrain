@@ -38,6 +38,19 @@ impl Brain {
         self.run(env, move |s| s.read_access_token(&id))
     }
 
+    /// `lockActiveAccessTokens({ id } | { name })`: the whole rows of the active tokens it names, without their hashes.
+    #[napi]
+    pub fn lock_active_access_tokens<'env>(
+        &self,
+        env: &'env Env,
+        id: Option<String>,
+        name: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.lock_active_access_tokens(id.as_deref(), name.as_deref())
+        })
+    }
+
     /// `readActiveAccessTokenByHash(hash)`: the active token's whole row without its hash, or null.
     #[napi]
     pub fn read_active_access_token_by_hash<'env>(

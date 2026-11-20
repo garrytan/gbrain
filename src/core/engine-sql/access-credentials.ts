@@ -352,6 +352,22 @@ export function readOauthAccessTokenRows(tx: Raw, hash: string, rung: OauthToken
   return tx.executeRaw<Record<string, unknown>>(BEARER_SQL.oauth_rungs[rung], [hash]);
 }
 
+/** The statements `auth rescope` ran through executeRaw to lock the active tokens it names, by id or by exact name. */
+export const ACTIVE_TOKEN_LOCK_SQL = {
+  by_id: 'SELECT * FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE',
+  by_name: 'SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE',
+} as const;
+
+/** The active tokens a rescope names: one id (a UUID) or every token with an exact name. */
+export type ActiveTokenTarget = { id: string } | { name: string };
+
+/** The whole rows (`SELECT *`) of the active tokens `target` names, locked FOR UPDATE until the transaction ends. */
+export function lockActiveAccessTokens(tx: Raw, target: ActiveTokenTarget): Promise<Record<string, unknown>[]> {
+  return 'id' in target
+    ? tx.executeRaw<Record<string, unknown>>(ACTIVE_TOKEN_LOCK_SQL.by_id, [target.id])
+    : tx.executeRaw<Record<string, unknown>>(ACTIVE_TOKEN_LOCK_SQL.by_name, [target.name]);
+}
+
 /** The whole row (`SELECT *`, every schema generation) of the token not revoked with this hash, or null. */
 export async function readActiveAccessTokenByHash(tx: Raw, hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null> {
   const [row] = await tx.executeRaw<Record<string, unknown>>(caller === 'transport' ? BEARER_SQL.token_by_hash_transport : BEARER_SQL.token_by_hash_provider, [hash]);

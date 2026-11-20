@@ -121,6 +121,8 @@ describe('access reads sort text keys by byte', () => {
     }
     const out = (await engine.listPagesNamingReader('member:alice-example')).map(p => `${p.source_id}:${p.slug}`);
     expect(out).toEqual(['a-z', 'ab'].flatMap(s => BYTES.map(id => `${s}:${id}/p`)));
-    return out;
+    const live = (await engine.listPagesNamingReader('member:alice-example', { live: true })).map(p => `${p.source_id}:${p.slug}`);
+    expect(live).toEqual(out);
+    return { out, live };
   });
 });
