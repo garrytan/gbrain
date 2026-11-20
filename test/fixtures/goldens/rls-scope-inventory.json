@@ -7577,6 +7577,7 @@
         "readMentionLastPass": "none",
         "readMirrorGateRows": "none",
         "readNamedEntitySlugs": "none",
+        "readNewestTimelineEntryId": "none",
         "readNoopEmbeddingCandidates": "none",
         "readNotifierLease": "none",
         "readNotifierSources": "none",

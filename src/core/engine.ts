@@ -2548,6 +2548,8 @@ export interface BrainEngine {
    * source) to a stored row of the page is skipped. A missing page is a foreign key refusal.
    */
   insertCanonicalTimelineRows(pageId: number, rows: readonly CanonicalTimelineRow[]): Promise<void>;
+  /** The id of the newest timeline row of the page (deleted or not) on `date` whose summary is `summary`, event rows included, or null. */
+  readNewestTimelineEntryId(sourceId: string, slug: string, date: string, summary: string): Promise<number | null>;
 
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**

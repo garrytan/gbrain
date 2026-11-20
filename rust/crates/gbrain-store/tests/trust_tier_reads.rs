@@ -7,7 +7,7 @@ use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+    ActivationRowsQuery, CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
 };
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
@@ -603,4 +603,102 @@ fn page_refs_by_id_name_each_listed_page_once_deleted_pages_and_other_sources_in
     );
     let none: PageIdsQuery = args(json!({ "ids": [] }));
     assert!(b.list_page_refs_by_ids(&none).unwrap().is_empty());
+}
+
+fn receipt(b: &Brain, table: &str, id: u64, families: &[&str]) {
+    let input: gbrain_store::trust::write_gate::ReceiptInput = args(json!({
+        "target_table": table, "target_id": id.to_string(), "source_id": "default",
+        "content_hash": "h1", "tier": "agent_written", "detector_version": 1, "verdict": "flag",
+        "reason_families": families, "reasons": ["found"], "detector_error": false, "request_id": null,
+    }));
+    b.upsert_write_gate_receipt(input).unwrap();
+}
+
+fn verdicts(b: &Brain, table: &str, ids: &[i64]) -> Vec<Value> {
+    let q: ActivationRowsQuery = args(json!({ "table": table, "ids": ids }));
+    b.list_activation_verdict_rows(&q).unwrap()
+}
+
+#[test]
+fn activation_verdicts_read_takes_and_timeline_entries_with_the_page_and_fact_rule() {
+    let b = brain("tier-reads-verdict-rows");
+    page(
+        &b,
+        "default",
+        "people/mo-example",
+        None,
+        "person",
+        json!({}),
+    );
+    let page_id = b
+        .list_page_refs_by_ids(&args(json!({ "ids": [1, 2, 3] })))
+        .unwrap()[0]["id"]
+        .as_u64()
+        .unwrap();
+    // A take per tier; an entry per tier. No declared tier stores `unknown`, which ranks below
+    // `agent_written`, so a flag marks it as it marks an agent row.
+    let take_at = |tier: Option<&str>, row: i64| {
+        declared(&b, tier, |tx| {
+            let input: gbrain_store::takes::TakeInput = args(json!({
+                "page_id": page_id, "row_num": row, "claim": format!("take {row}"), "kind": "take",
+                "holder": "h", "weight": 0.5, "active": true }));
+            tx.add_takes_batch(&[input]).unwrap();
+        });
+    };
+    take_at(Some("agent_written"), 1);
+    take_at(Some("user_confirmed"), 2);
+    take_at(None, 3);
+    take_at(Some("agent_written"), 4);
+    let entry_at = |tier: Option<&str>, day: &str| {
+        declared(&b, tier, |tx| {
+            let input: gbrain_store::timeline::TimelineInput =
+                args(json!({ "date": day, "summary": format!("met {day}") }));
+            assert!(
+                tx.add_timeline_entry("people/mo-example", &input, &Default::default())
+                    .unwrap()
+            );
+        });
+    };
+    entry_at(Some("agent_written"), "2026-02-01");
+    entry_at(Some("operator_curated"), "2026-02-02");
+    entry_at(None, "2026-02-03");
+    // Ids are allocated in write order from one per table on a fresh brain.
+    for (table, ids) in [("takes", [1u64, 2, 3]), ("timeline_entries", [1u64, 2, 3])] {
+        for id in ids {
+            receipt(&b, table, id, &["override"]);
+        }
+    }
+    // A flag outside the instruction families marks nothing.
+    receipt(&b, "takes", 4, &["secret"]);
+    let shape = |rows: Vec<Value>| -> Vec<Value> {
+        rows.into_iter()
+            .map(|r| json!([r["id"], r["trust_tier"], r["flagged"]]))
+            .collect()
+    };
+    assert_eq!(
+        shape(verdicts(&b, "takes", &[3, 1, 2, 999, 1, -4, 4])),
+        vec![
+            json!([1, "agent_written", true]),
+            json!([2, "user_confirmed", false]),
+            json!([3, "unknown", true]),
+            json!([4, "agent_written", false]),
+        ]
+    );
+    assert_eq!(
+        shape(verdicts(&b, "timeline_entries", &[2, 3, 1, 999])),
+        vec![
+            json!([1, "agent_written", true]),
+            json!([2, "operator_curated", false]),
+            json!([3, "unknown", true]),
+        ]
+    );
+    assert!(verdicts(&b, "timeline_entries", &[]).is_empty());
+}
+
+#[test]
+fn activation_verdicts_refuse_a_table_they_do_not_read() {
+    let b = brain("tier-reads-verdict-refuse");
+    let q: ActivationRowsQuery = args(json!({ "table": "links", "ids": [1] }));
+    let err = b.list_activation_verdict_rows(&q).unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
 }

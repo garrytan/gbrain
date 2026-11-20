@@ -80,8 +80,9 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
   }
   // #5567: a writer that regenerates the page from its own inputs never holds this entry. The materialized
   // marker makes its preserving render carry the bullet forward instead of deleting it (fix wave 4 audit).
-  const [source] = await engine.executeRaw<{ kind: string | null }>("SELECT config->>'kind' AS kind FROM sources WHERE id=$1", [row.source_id]);
-  const block = regeneratedByWriter(source?.kind, snapshot.page) ? `${materializedMarker(rendered.canonical)}\n${rendered.block}` : rendered.block;
+  const sourceConfig = (await engine.getSource(row.source_id))?.config as { kind?: unknown } | null | undefined;
+  const kind = typeof sourceConfig?.kind === 'string' ? sourceConfig.kind : null;
+  const block = regeneratedByWriter(kind, snapshot.page) ? `${materializedMarker(rendered.canonical)}\n${rendered.block}` : rendered.block;
   // An identical entry written before the page's writer marked user bullets is still a duplicate.
   const exact = hasExactBlock(snapshot.page.timeline, block) || (block !== rendered.block && hasExactBlock(snapshot.page.timeline, rendered.block));
   const tuples = extractTimelineFromContent(`${snapshot.page.compiled_truth}\n<!-- timeline -->\n${snapshot.page.timeline}`, row.slug);
@@ -98,9 +99,8 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
   return { ...prepared, apply: async tx => {
     const outcome = await prepared.apply(tx);
     const inserted = await tx.addTimelineEntry(row.slug, { ...rendered.canonical, detail: rendered.detail }, { sourceId: row.source_id });
-    const [stored] = gate.verdict === 'flag' ? await tx.executeRaw<{ id: number }>(`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`, [row.source_id, row.slug, rendered.canonical.date, rendered.canonical.summary]) : [];
-    const flagged = stored ? gateField(gate, `p:${row.source_id}/${row.slug}`, await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: Number(stored.id), sourceId: row.source_id, assessment: gate, requestId: row.id })) : undefined;
+    const stored = gate.verdict === 'flag' ? await tx.readNewestTimelineEntryId(row.source_id, row.slug, rendered.canonical.date, rendered.canonical.summary) : null;
+    const flagged = stored !== null ? gateField(gate, `p:${row.source_id}/${row.slug}`, await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: stored, sourceId: row.source_id, assessment: gate, requestId: row.id })) : undefined;
     // #5970: the rendered bullet is the exact line to edit (edit_page) when the entry needs a correction.
     return { ...outcome, status: exact && !inserted ? 'skipped' : 'ok', ...(exact && !inserted ? { reason: 'duplicate' } : {}), entry: rendered.canonical, bullet: rendered.block, ...(flagged ? { gate: flagged } : {}) };
   } };

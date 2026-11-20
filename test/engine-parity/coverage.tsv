@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 947/950
+# covered: 948/951
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -19,7 +19,7 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 20/20
+# timeline: 21/21
 # ontology: 4/4
 # raw_files: 6/6
 # takes: 24/24
@@ -85,17 +85,17 @@ transaction	lifecycle	yes	96	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	111	yes	yes	yes	serves
+getPage	pages	yes	116	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	521	yes	yes	yes	serves
+putPage	pages	yes	527	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	156	yes	yes	yes	serves
+softDeletePage	pages	yes	157	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -281,9 +281,9 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	40	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	41	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
-getTimeline	timeline	yes	19	yes	yes	yes	serves
+getTimeline	timeline	yes	25	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
@@ -292,6 +292,7 @@ upsertEventProjection	timeline	yes	19	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	serves
+readNewestTimelineEntryId	timeline	yes	1	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	16	no	yes	yes	serves
 getOntology	ontology	yes	9	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -843,7 +844,7 @@ readTrustGeneration	trust	yes	2	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	18	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	15	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
-listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	serves
+listWriteGateReceiptsFor	trust	yes	4	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 upsertWriteGateHold	trust	yes	5	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves

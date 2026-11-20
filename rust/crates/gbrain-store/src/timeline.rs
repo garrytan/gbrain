@@ -238,6 +238,33 @@ pub(crate) fn read_entry(
     get_json(read, &keys::timeline(page_id, date, id))
 }
 
+/// The entries whose id is in `wanted`, by id. Entries are keyed by page and date, not id, so
+/// this reads every `E` record once.
+pub(crate) fn entries_by_ids(
+    read: &dyn KvRead,
+    wanted: &std::collections::BTreeSet<u64>,
+) -> Result<std::collections::BTreeMap<u64, TimelineRecord>> {
+    let mut found = std::collections::BTreeMap::new();
+    if wanted.is_empty() {
+        return Ok(found);
+    }
+    let mut failure = None;
+    scan_prefix(read, &[keys::TIMELINE], false, &mut |_, v| {
+        match serde_json::from_slice::<TimelineRecord>(v) {
+            Ok(r) if wanted.contains(&r.id) => {
+                found.insert(r.id, r);
+            }
+            Ok(_) => {}
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(found),
+    }
+}
+
 /// Writes `new`, replacing `old` (the same entry as it was stored before) when given. Removes
 /// `old`'s `E` key and its `D` key when that `D` key still points at `old.id`. Refuses with
 /// `constraint_violation` when `new`'s `D` key points at another entry (the dedup unique index).
@@ -451,6 +478,35 @@ impl Store {
                 },
             )
         })
+    }
+
+    /// `readNewestTimelineEntryId(sourceId, slug, date, summary)`: the id of the newest entry of the
+    /// page (deleted or not) on `date` whose summary is `summary`, event rows included; null when
+    /// the page or such an entry is missing. A bad date fails, as the `$3::date` cast does.
+    pub fn read_newest_timeline_entry_id(
+        &self,
+        source_id: &str,
+        slug: &str,
+        date: &str,
+        summary: &str,
+    ) -> Result<Option<u64>> {
+        no_nul(
+            "readNewestTimelineEntryId",
+            &[
+                ("sourceId", source_id),
+                ("slug", slug),
+                ("summary", summary),
+            ],
+        )?;
+        let date = parse_date(date)?;
+        let read = self.read()?;
+        let Some(page) = read_page(&*read, source_id, slug)? else {
+            return Ok(None);
+        };
+        let rows = page_entries(&*read, page.id, Some(&date), Some(&date), 1, &|row| {
+            Ok(row.summary == summary)
+        })?;
+        Ok(rows.first().map(|row| row.id))
     }
 
     /// `addTimelineEntriesBatch`: rows whose page is missing or soft-deleted are skipped. Returns

@@ -350,6 +350,7 @@ export const RUST_ENGINE_MEMBERS = {
   removeTimelineRows: 'timeline',
   updateTimelineDetails: 'timeline',
   insertCanonicalTimelineRows: 'timeline',
+  readNewestTimelineEntryId: 'timeline',
   sampleEffectiveDates: 'timeline',
   sampleEffectiveDateSources: 'timeline',
   readMaxTimelineEntryId: 'timeline',

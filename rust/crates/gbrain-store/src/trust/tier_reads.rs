@@ -12,14 +12,14 @@
 //! - [`Store::list_fact_ids_at_trust_rank`]: the listed facts whose stored tier ranks at or above
 //!   a floor, for quoting lower-tier facts to an untrusted reader.
 //! - [`Store::list_activation_verdict_rows`]: the stored tier and activation flag of each listed
-//!   page or fact, for activation control on the proactive surfaces.
+//!   page, fact, take or timeline entry, for activation control on the proactive surfaces.
 //!
-//! They read the tier and write origin fields of the page, fact and version records
+//! They read the tier and write origin fields of the page, fact, take, timeline and version records
 //! (`trust::stamp`); no read needs a key range of its own, so the family adds no key prefix.
 //!
 //! The TypeScript members (src/core/rust-engine/store-members/trust-tier-reads.ts) refuse what the
 //! store does not model: a caller page policy that is not the no-caller one, the takes and
-//! timeline tables, and a cursor, limit or id that is not an integer. The belief history reads are
+//! timeline tables of the trust scan, and a cursor, limit or id that is not an integer. The belief history reads are
 //! not served; the valid-time reads live in `trust/valid_time.rs`.
 
 use super::{TrustPolicy, TrustTier, activation_suppressed, withdrawals};
@@ -117,6 +117,14 @@ pub struct ActivationRowsQuery {
 enum ScanTable {
     Pages,
     Facts,
+}
+
+/// The tables `listActivationVerdictRows` reads: the two the trust scan reads, plus takes and
+/// timeline entries.
+enum VerdictTable {
+    Scan(ScanTable),
+    Takes,
+    Timeline,
 }
 
 fn scan_table(op: &str, table: &str) -> Result<ScanTable> {
@@ -420,24 +428,42 @@ impl Store {
         Ok(out)
     }
 
-    /// `listActivationVerdictRows`: the stored tier of each listed page record (deleted or not)
-    /// or fact, by id, once each, and whether `activationSuppressedSql` marks it (a tier at or
-    /// below `agent_written` with an instruction-family flag receipt). An id no row has answers
-    /// nothing.
+    /// `listActivationVerdictRows`: the stored tier of each listed page record (deleted or not),
+    /// fact, take or timeline entry, by id, once each, and whether `activationSuppressedSql` marks
+    /// it (a tier at or below `agent_written` with an instruction-family flag receipt). A take or
+    /// entry stored before the tier stamp reads as `unknown`, the column default the SQL engines
+    /// give such a row. An id no row has answers nothing.
     pub fn list_activation_verdict_rows(&self, q: &ActivationRowsQuery) -> Result<Vec<Value>> {
         const OP: &str = "listActivationVerdictRows";
-        let table = scan_table(OP, &q.table)?;
+        let table = match q.table.as_str() {
+            "takes" => VerdictTable::Takes,
+            "timeline_entries" => VerdictTable::Timeline,
+            _ => VerdictTable::Scan(scan_table(OP, &q.table)?),
+        };
         let read = self.read()?;
         let wanted: BTreeSet<u64> = q
             .ids
             .iter()
             .filter_map(|id| u64::try_from(*id).ok())
             .collect();
+        let entries = if matches!(table, VerdictTable::Timeline) {
+            crate::timeline::entries_by_ids(&*read, &wanted)?
+        } else {
+            BTreeMap::new()
+        };
         let mut out = Vec::new();
         for id in wanted {
             let tier = match table {
-                ScanTable::Pages => read_page_by_id(&*read, id)?.map(|page| page_tier(&page)),
-                ScanTable::Facts => crate::facts::read_fact(&*read, id)?.map(|fact| fact.tier()),
+                VerdictTable::Scan(ScanTable::Pages) => {
+                    read_page_by_id(&*read, id)?.map(|page| page_tier(&page))
+                }
+                VerdictTable::Scan(ScanTable::Facts) => {
+                    crate::facts::read_fact(&*read, id)?.map(|fact| fact.tier())
+                }
+                VerdictTable::Takes => {
+                    crate::takes::read_take(&*read, id)?.map(|take| take.trust.tier())
+                }
+                VerdictTable::Timeline => entries.get(&id).map(|entry| entry.trust.tier()),
             };
             if let Some(tier) = tier {
                 let flagged = activation_suppressed(&*read, &q.table, id, tier)?;

@@ -174,7 +174,7 @@ Rust guesses and gaps (1x parity):
 ## Tier reads (`trust::tier_reads`)
 
 Typed reads of the stamped tier and write origin that core memory, the trust scan and page history made through
-`executeRaw` (src/core/engine-sql/trust-tier-reads.ts). They read fields of the page, fact and version records, so
+`executeRaw` (src/core/engine-sql/trust-tier-reads.ts). They read fields of the page, fact, take, timeline and version records, so
 the family adds no key prefix. Versions have no by-id index: the version reads scan the `V` keys once per call.
 
 | Member | Store method | PGLite statement |
@@ -185,7 +185,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
-| `listActivationVerdictRows` | `list_activation_verdict_rows`: the stored tier of each listed page record (deleted or not) or fact, by id, once each, and whether `activationSuppressedSql` marks it (a tier at or below `agent_written` with an instruction-family flag receipt); an unknown or negative id answers nothing. `takes` and `timeline_entries` refuse | `SELECT a.id, a.trust_tier, <activationSuppressedSql> AS flagged FROM facts a WHERE a.id = ANY($1::bigint[])` |
+| `listActivationVerdictRows` | `list_activation_verdict_rows`: the stored tier of each listed page record (deleted or not), fact, take or timeline entry, by id, once each, and whether `activationSuppressedSql` marks it (a tier at or below `agent_written` with an instruction-family flag receipt); an unknown or negative id answers nothing. A take or entry stored before the tier stamp reads `unknown`, the column default the SQL engines give it. Entries have no by-id index: a timeline read scans the `E` keys once | `SELECT a.id, a.trust_tier, <activationSuppressedSql> AS flagged FROM facts a WHERE a.id = ANY($1::bigint[])` |
 | `listFactIdsAtTrustRank` | `list_fact_ids_at_trust_rank`: of the listed ids, each fact whose stored tier ranks at or above `minRank` (a stored name that is no tier ranks 0), once each, ascending | `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND <trustRankSql> >= $2` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, plus `history_unpruned` | the `WITH rows AS (…)` pick |

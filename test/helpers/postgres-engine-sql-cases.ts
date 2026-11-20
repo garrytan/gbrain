@@ -731,6 +731,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listPagesNamingReader': OOS.callerRawSql,
   'forgetWakeMember': OOS.callerRawSql,
   'forgetWakeCredential': OOS.callerRawSql,
+  'readNewestTimelineEntryId': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'notifierCoverageRecorded': OOS.writeMisc,

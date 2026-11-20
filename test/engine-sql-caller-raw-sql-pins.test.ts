@@ -1647,6 +1647,12 @@ const PINS: Pin[] = [
     case: { method: 'listSourceWantedMarkers', variant: 'default', run: e => e.listSourceWantedMarkers('source-a') },
     texts: ['SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent'],
   },
+  {
+    from: 'src/core/persistence/semantic-pages.ts:101 prepareSemanticPageMutation (the flagged entry\'s row id; at 0740badd2c)',
+    case: { method: 'readNewestTimelineEntryId', variant: 'default', run: e => e.readNewestTimelineEntryId('default', 'people/alice-example', '2026-01-02', 'Met for coffee') },
+    texts: [`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */
