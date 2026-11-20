@@ -9,12 +9,14 @@
 //! - the supersession writes: `linkSupersededFact`, `expireSupersededFact`, `restoreSupersededFact`.
 //!
 //! Every write goes through `write_fact`, so the trust stamp and the purge refusal apply as they do for `expireFact`,
-//! and a `superseded_by` that names no fact refuses as `facts_superseded_by_fkey` does.
+//! and a `superseded_by` that names no fact refuses as `facts_superseded_by_fkey` does. `restoreSupersededFact` also
+//! runs the withdrawal guard ([`preserve_withdrawal`]).
 //! See rust/docs/store/facts.md, "Remember reads and supersession writes".
 
 use super::forget::fact_number;
 use super::generations::covers_fact;
 use super::purge::withdrawal_covers;
+use super::withdrawal_guard::preserve_withdrawal;
 use super::{
     FactRecord, PrivacyPolicy, bigint, embedding, fact_fingerprint, foreign_key,
     hidden_by_private_provenance, like, opt_time, page_hidden, read_fact, source_rows,
@@ -402,7 +404,8 @@ impl Store {
     }
 
     /// `restoreSupersededFact`: puts the source's old fact back as it was, only while it still points at
-    /// `expectedSupersededBy` (`IS NOT DISTINCT FROM`); the row count.
+    /// `expectedSupersededBy` (`IS NOT DISTINCT FROM`); the row count. The withdrawal guard runs (`expired_at` is in
+    /// the `SET` list): a row restored active that a withdrawal of its claim reaches comes back expired.
     pub fn restore_superseded_fact(&self, args: &RestoreSupersededFactArgs) -> Result<u64> {
         const OP: &str = "restoreSupersededFact";
         no_nul(OP, &[("sourceId", &args.source_id)])?;
@@ -430,6 +433,7 @@ impl Store {
             new.expired_at_us = expired_at;
             new.valid_until_us = valid_until;
             new.superseded_by = superseded_by.map(|v| require_fact(tx, v)).transpose()?;
+            preserve_withdrawal(&*tx, &mut new)?;
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(1)
         })

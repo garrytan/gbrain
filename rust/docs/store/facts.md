@@ -162,8 +162,9 @@ context only while the row is still as planned: on the given page with the given
 (not expired, `valid_until` unset or later), with no entity or on the unbacked name key `from`,
 user or unattributed, written by a conversation extractor, and the target page is live. Both
 return false and write nothing when the row does not match. The purge guard of the Postgres
-`UPDATE` runs, as on every fact write ("The fact purge ledger"); the withdrawal trigger is not
-modeled there.
+`UPDATE` runs, as on every fact write ("The fact purge ledger"), and so does the withdrawal guard
+(`withdrawal_guard.rs`, "Captured-facts and rehome repair"): both set `entity_slug`, so a row they
+leave active that a withdrawal of its claim reaches on the new entity is saved expired.
 
 `listConversationRelinkPages` is the page pick of `gbrain facts relink --conversation`. It reads
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
@@ -393,13 +394,19 @@ Eight store methods serve nine members of `engine-sql/facts-repair.ts` (`readRep
 | `readEntityRehomeState` `{ sourceId, from, to }` | `readEntityRehomeState` | Always one object `{ from_live, to_live, ids }`, `ids` the database-only fact ids keyed under `from`, `null` when none. |
 | `rehomeEntityFacts` `{ sourceId, from, to }` | `rehomeEntityFacts` | Moves the database-only facts keyed under `from` to `to` in one write. A stint key a fact already holds on `to` refuses with `constraint_violation` (`idx_facts_ontology_stint_dedup`) and no fact moves; the TypeScript member raises it as Postgres does (see "Unique violations"). Answers null. |
 
-`withdrawal_guard.rs` is `gbrain_preserve_fact_withdrawal` for the rows these two writes (and the ontology repair
+`withdrawal_guard.rs` is `gbrain_preserve_fact_withdrawal`. It runs on every insert (`write_fact` with no stored
+row, the withdrawal half of `gbrain_guard_inserted_facts`) and on the rows these two writes (and the ontology repair
 writes) change. A row that is already expired is left alone. Otherwise the earliest withdrawal of the same source and
 visibility whose claim fingerprint (current or v1) and subject reach the row expires it and clamps `valid_until` to
 the withdrawal time when that is earlier. A row on a `memory/members/` page matches only a withdrawal of its own page
 slug; any other row matches subject `*`, its entity, or (when it is unbacked and not an owned memory subject) any
-subject. The guard is applied only by these repair writes: `insertFact`, `insertFacts` and the other fact writers still
-do not run the withdrawal trigger (see "Not modeled").
+subject. So `insertFact`, `insertFacts` and the ontology inserts run it on every row they insert, after the purge
+refusal. Of the updates, every member whose Postgres `UPDATE` sets a watched column (`fact`, `source_id`, `visibility`,
+`entity_slug`, `expired_at`) on a row it can leave active applies it before `write_fact`: these repair writes,
+`restoreOntologyFact`, `placeRelinkedFact`, `linkConversationFact`, `restoreSupersededFact`, `restoreFactPreimage` and
+`migrateFactsToCanonical`. The other update members the store serves set no watched column, or set `expired_at` to a
+time, so the trigger has nothing to do there. `test/engine-parity/fact-update-guard.test.ts` and
+`rust/crates/gbrain-store/tests/facts_update_guard.rs` pin the five later members.
 
 The six ontology re-key and repair members (`listRekeyLosers` and its four write companions, `listOntologyFactCandidates`,
 `restoreOntologyFact`) are `facts/ontology_repair.rs`; `restoreOntologyFact` also applies the withdrawal guard. See
@@ -775,7 +782,8 @@ no page purges); `readLedgerSource`'s `purgesPossible` (`brain.hasFactPurges`); 
 The guard: every fact write (`write_fact`) refuses with `purged_content` (`purged_content: this claim was purged
 from this source and cannot be saved again`, the triggers' message) when a tombstone of the row's source and
 visibility names its fingerprint under subject `*`, the row's entity, or any subject when the entity is an unbacked
-name key. On insert it skips an extraction outcome marker (`gbrain_guard_inserted_facts`); on update it runs when
+name key. On insert it skips an extraction outcome marker (`gbrain_guard_inserted_facts`), and an insert it lets
+through then gets the withdrawal stamp (`facts/withdrawal_guard.rs`, "Captured-facts and rehome repair"); on update it runs when
 `fact`, `source_id`, `visibility` or `entity_slug` changed (`gbrain_refuse_purged_fact`). Postgres fires the update
 trigger when the statement sets one of those columns, even to the same value; the store fires it only on a change,
 which refuses nothing a no-op update would not already have kept. The refusal rolls back the whole write, as the
@@ -1057,5 +1065,5 @@ by running without error. `insertHoldingPagePurges` is compared by the claim che
 
 ## Not modeled
 
-The withdrawal ledger and the insert/update guards that read it (the guard runs only inside `facts/captured.rs`, "Captured-facts and rehome repair"), and the write-attribution trigger. Inputs whose PGLite outcome the store cannot
+The write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.

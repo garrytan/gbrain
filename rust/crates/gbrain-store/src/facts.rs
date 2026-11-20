@@ -531,14 +531,24 @@ pub(crate) fn stamp_fact(
 /// with the trust context `trust` ([`stamp_fact`], a `BEFORE` row trigger, so a refusal comes
 /// before a unique-index refusal). A unique index another row holds refuses as Postgres does
 /// (`23505`); the caller's write then rolls back.
+///
+/// After the purge refusal, an insert (`old` is `None`) runs the withdrawal half of the insert
+/// guard as `gbrain_guard_inserted_facts` does: an active row a withdrawal of its claim reaches is
+/// saved expired at the earliest such withdrawal, `valid_until` clamped to it
+/// ([`withdrawal_guard::preserve_withdrawal`]). Every insert writes through here: `insert_fact`,
+/// `insert_facts` and the ontology inserts.
 pub(crate) fn write_fact(
     tx: &mut dyn KvWrite,
     trust: &WriteTrust,
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
-    let new = &stamp_fact(trust, old, new)?;
-    purge_ledger::refuse_purged(tx, old, new)?;
+    let mut new = stamp_fact(trust, old, new)?;
+    purge_ledger::refuse_purged(tx, old, &new)?;
+    if old.is_none() {
+        withdrawal_guard::preserve_withdrawal(&*tx, &mut new)?;
+    }
+    let new = &new;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;
@@ -1864,7 +1874,8 @@ impl Store {
     /// `migrateFactsToCanonical(phantom, canonical, sourceId)`: the phantom page's unexpired rows
     /// move onto the canonical slug (entity and page), their `row_num` offset past the canonical
     /// page's largest. First the ontology observations the move would duplicate are dropped
-    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`).
+    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`). The withdrawal guard runs on each moved row
+    /// (`entity_slug` is in the `SET` list): a withdrawal of the claim on the canonical entity expires it.
     pub fn migrate_facts_to_canonical(
         &self,
         phantom: &str,
@@ -1912,6 +1923,7 @@ impl Store {
                         })?),
                         None => None,
                     };
+                withdrawal_guard::preserve_withdrawal(&*tx, &mut new)?;
                 write_fact(tx, trust, Some(old), &new)?;
             }
             Ok(moving.len() as u64)
