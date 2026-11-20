@@ -988,6 +988,28 @@
         ],
         "flagOnScopes": []
       },
+      "findCardRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "findCardRows#scoped and filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "findDuplicatePage#default": {
         "flagOffLanes": [
           "pool"
@@ -2729,6 +2751,28 @@
         "flagOnScopes": []
       },
       "listAudienceAccessMembers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listCardRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listCardRows#scoped and filtered": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7834,6 +7878,7 @@
         "findBulkFactDays": "none",
         "findByTitleFuzzy": "none",
         "findCandidateDuplicates": "none",
+        "findCardRows": "none",
         "findCodeDefinitions": "none",
         "findCodeRefChunks": "none",
         "findDuplicatePage": "direct",
@@ -7997,6 +8042,7 @@
         "listAwaitingMemoryProposals": "none",
         "listBuildSkewStacktraceLines": "none",
         "listCapturedFactsForClassification": "none",
+        "listCardRows": "none",
         "listChatChannelCensus": "none",
         "listChunklessPagesWithContent": "direct",
         "listClientsReferencingSource": "none",
