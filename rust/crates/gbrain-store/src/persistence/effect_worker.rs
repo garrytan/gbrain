@@ -9,6 +9,7 @@
 //! claimable, and no recovery on a worktree blocks an effect without one.
 
 use super::effects::{EffectRecord, all_effects, effect_by_id, write_effect};
+use super::worktree_rows::read_worktree_row;
 use super::{is_uuid, json_text};
 use crate::Store;
 use crate::env::Env;
@@ -146,7 +147,7 @@ pub(crate) fn select_claimable_effect_in(
                 && (m.state == "queued" || m.state == "running")
         })
     };
-    Ok(effects
+    let due: Vec<&EffectRecord> = effects
         .iter()
         .filter(|e| {
             let due_state = e.state == "queued"
@@ -154,10 +155,20 @@ pub(crate) fn select_claimable_effect_in(
                 || dead_owner_claim(e, dead_owners);
             due_state
                 && e.next_attempt_at_us <= now
-                && e.worktree_id.is_none()
                 && e.recovery.is_none()
                 && (e.kind == "withdrawal-mirror" || !mirror_pending(e))
         })
+        .collect();
+    // A due effect on a worktree is claimable only by the worktree's owner host; the seam refuses
+    // until this store can read that row, so the claim never answers "none" in its place.
+    for e in &due {
+        if let Some(id) = &e.worktree_id {
+            read_worktree_row(read, id)?;
+        }
+    }
+    Ok(due
+        .into_iter()
+        .filter(|e| e.worktree_id.is_none())
         .min_by_key(|e| (e.next_attempt_at_us, e.id))
         .cloned())
 }

@@ -45,7 +45,7 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.lockPersistenceCounters(keys)` | the counter rows `{ key, outstanding_count, intent_bytes, lifetime_ids, terminal_bytes }`, sorted by key; a missing row is created at zero | `lockPersistenceCounters` |
-| `brain.insertWriteRequest(row)` | the stored `WriteRequest`. It charges each counter (one outstanding request, its intent bytes, one lifetime id, its terminal reservation) in the same write. `constraint_violation` for a principal kind, state, target kind or protocol version the table refuses, a null slug, a worktree id (this engine keeps no worktrees), a refresh id that names no `d 0x10` refresh row, or a request id the principal already used | `insertWriteRequest` |
+| `brain.insertWriteRequest(row)` | the stored `WriteRequest`. It charges each counter (one outstanding request, its intent bytes, one lifetime id, its terminal reservation) in the same write. `constraint_violation` for a principal kind, state, target kind or protocol version the table refuses, a null slug, a refresh id that names no `d 0x10` refresh row, or a request id the principal already used. A worktree id that is not a uuid refuses with the uuid syntax message; any other worktree id refuses `engine_capability_missing` from the worktree-row seam (see "Worktree rows") | `insertWriteRequest` |
 | `brain.readWriteRequest({ kind, id }, requestId)` | the `WriteRequest` or `null` | `readWriteRequest` |
 | `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById`, `lockWriteRequest`, `readWriteRequestProgress` (the TS member picks the nine progress columns from this row) |
 | `brain.countOutstandingBySource(principalKind, principalId)` | `[{ source_id, n }]`: one row per source that holds requests of the principal in state `queued`, `deferred`, `running` or `recovering`. The most requests come first; a tie is in byte order of the source id, as Postgres sorts `COLLATE "C"` | `countOutstandingBySource` |
@@ -62,13 +62,24 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.releaseUnpublishedClaim({ id, token, reason, charge })` | `true` when the request was `running` under that token with no recovery record and no publication begun; it is back in `queued` with `reason` as its blocked reason, no token and no lease. `charge` counts one preparation attempt and keeps the claim phase; otherwise the phase is cleared | `releaseUnpublishedClaim` |
 | `brain.renewWriteClaim({ id, token, leaseMs, phaseJson })` | `true` when the claim is still `running` under that token; the lease is extended and the phase replaced when one is given | `renewWriteClaim` |
 | `brain.expireStaleWriteClaims({ hostId, charge, deadOwners })` | the number of claims returned to `queued`: an expired lease, or a phase owner in `deadOwners` (`pid:nonce:start`), with publication not started; at most 100, oldest first. `charge` counts one preparation attempt for a claim that expired while preparing | `expireStaleWriteClaims` |
-| `brain.hasClaimableWrite({ excludeRoots, priority })` | whether a claim would find a row now. `priority` `null` reads config `sync.foreground_priority` (on unless `0` or `false`) | `hasClaimableWrite` |
-| `brain.selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })` | the request row a FIFO claim takes next, or `null`. A row is a candidate when it is `queued` or a `deferred` row whose refresh is released. A foreground row before the sync rows it passes, then sequence order. A root in `fifoRoots` claims plain FIFO; with any lane root only a foreground row is claimed | `selectClaimableWrite` |
+| `brain.hasClaimableWrite({ hostId, excludeRoots, priority })` | whether a claim would find a row now. `priority` `null` reads config `sync.foreground_priority` (on unless `0` or `false`). A host id that is not a uuid refuses with the uuid syntax message | `hasClaimableWrite` |
+| `brain.selectClaimableWrite({ hostId, excludeRoots, fifoRoots, laneRoots, nonce, syncSeen, priority, leaseHolder })` | the request row a FIFO claim takes next, or `null`. A row is a candidate when it is `queued` or a `deferred` row whose refresh is released. With `leaseHolder` (`{ lockPrefix, pid, host }`, a non-resident consumer), a managed-sync row whose lock `lockPrefix + source_id` is live and held by another process ranks last; then a foreground row before the sync rows it passes, then sequence order. A root in `fifoRoots` claims plain FIFO; with any lane root only a foreground row is claimed. `nonce` and `syncSeen` feed the sync-wait term, which matches worktree rows only. A host id that is not a uuid, or a fractional or out-of-range `pid`, refuses as the Postgres casts do | `selectClaimableWrite` |
 | `brain.readSourceMembership(sourceId)` | `{ incarnation, archived }` or `null` | `readSourceMembership`, `readLedgerSource` |
 
-Rows have a null `worktree_id`, so the worktree terms of the claim statements are answered as Postgres
-answers them for a null worktree. `select_claimable_write` (the claim head read) exists in the store
-but has no binding.
+A candidate row that names a worktree needs its worktree row for the claim terms, so both claim reads
+refuse `engine_capability_missing` when they meet one (see "Worktree rows"). Rows with a null
+`worktree_id` are answered as Postgres answers them for a null worktree.
+
+## Worktree rows
+
+The worktree binding (`claimWorktree` and the `persistence_worktrees`, `persistence_source_bindings` and
+`persistence_host_bindings` tables) has not landed on this engine. Every member that meets a worktree id
+reads its row through one seam (`persistence/worktree_rows.rs`), and until the binding lands the seam
+refuses with `engine_capability_missing` and the message `managed_persistence: worktree <id> cannot be
+read: ...`. The TypeScript members map it to the `managed_persistence` capability refusal. A member never
+answers "no row" or "no work" in place of a worktree row it cannot read: the write and effect inserts,
+both write claims, the effect claim, the idle probe's write and effect terms, and the gated-mirror scan
+refuse instead. Nothing is written on a refusal.
 
 ## Receipt list
 
@@ -188,8 +199,8 @@ request is bound to a worktree here, so an unstamped consumer has no owner host 
 ## Effect scans
 
 The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins
-`persistence_effects` to the worktrees the host owns. This engine keeps no worktree, so the two
-recovery scans answer no row; the claim read answers the next effect (see "Effect worker"). The arguments are checked as the Postgres casts check them: a host
+`persistence_effects` to the worktrees the host owns. The effect-recovery scan belongs to the worktree
+binding and answers no row; the claim read answers the next effect (see "Effect worker"). The arguments are checked as the Postgres casts check them: a host
 id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`, an `after` that is
 not a bigint with `invalid input syntax for type bigint: "<after>"` (or `value "<after>" is out of range
 for type bigint`), a fractional limit with the same bigint syntax message and a negative limit with
@@ -197,7 +208,7 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.listGatedMirrorRequests(hostId)` | `[]`: no withdrawal mirror is parked on a worktree here. The gate and allowed codes change nothing, so they are not sent | `listGatedMirrorRequests` |
+| `brain.listGatedMirrorRequests(hostId)` | `[]` when no withdrawal mirror is parked (`failed`, `targets_parked`) on a worktree; a parked mirror on a worktree refuses `engine_capability_missing` (see "Worktree rows"). The gate and allowed codes only narrow the rows, so they are not sent | `listGatedMirrorRequests` |
 | `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
 | `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
@@ -211,7 +222,8 @@ order. A `gated` kind is left out while config `auto_link` or `mcp.remote_auto_l
 `0`, `no` or `off`, any case, trimmed), and a kind already stored for the request is kept as it is, as
 `ON CONFLICT DO NOTHING` keeps it. A request id, revision or incarnation that is not a uuid refuses
 with the uuid syntax message; a journal id with no request row refuses `constraint_violation` (the
-foreign key), and so does an effect with no kind or no data. Nothing is stored on a refusal.
+foreign key), and so does an effect with no kind or no data. Any other worktree id refuses
+`engine_capability_missing` (see "Worktree rows"). Nothing is stored on a refusal.
 
 `brain.readRequestEffects(requestId, kind)` resolves `{ kind, state, error_code, outcome, recovering }` for
 each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
@@ -235,13 +247,14 @@ it is one more write of the withdrawal's store write, so the effects commit with
 
 The statements the effect worker sends to claim one effect and to settle its claim
 (`persistence-effect-worker.ts`), with the PostgreSQL rules. The store is single-writer, so a read
-takes no row lock, and a Rust brain has no worktrees.
+takes no row lock.
 
 `brain.selectClaimableEffect(hostId, deadOwners)` resolves the effect row with the lowest
 (`next_attempt_at`, id) that is `queued`, `running` with an expired claim, or `running` under a dead
 owner (`deadOwners` holds `pid:nonce:start` keys; the claim's `host_id` must be `hostId`), that is due
 now, on no worktree and not recovering, and that is a withdrawal mirror or belongs to a request with no
-`queued` or `running` withdrawal mirror. It resolves `null` when no effect is claimable.
+`queued` or `running` withdrawal mirror. It resolves `null` when no effect is claimable. An effect that
+meets every other term but names a worktree refuses `engine_capability_missing` (see "Worktree rows").
 
 `brain.stampEffectClaim({ id, token, ownerJson })` marks the effect `running` under `token` for two
 minutes, adds one attempt and stores the claim owner; it resolves the claimed row, or `null` when no
@@ -273,8 +286,9 @@ syntax message.
 `publishing`, `retryingTopologies`, `laneRoots`, the projection `cursor`, `abandonedBefore` and
 `foregroundPriority`. `work` is true when one of these holds:
 
-- a queued write is claimable (the claim rules above, with `excludedRoots` and `laneRoots`) and is
-  not blocked for writer pool capacity, unless `publishing` is set;
+- a write the claim may take (`queued`, or `deferred` with its refresh released) is claimable (the
+  claim rules above, with `excludedRoots` and `laneRoots`) and is not blocked for writer pool capacity,
+  unless `publishing` is set. A running or recovering write is not claimable work;
 - a running write that has not published, with no recovery, has an expired claim;
 - an effect is due as the probe states it: `queued`, or `running` with an expired claim, due now, on no
   worktree, not recovering, and a withdrawal mirror or of a request whose withdrawal mirror is committed;
@@ -283,8 +297,9 @@ syntax message.
 - a segmented page has a projection job past its retry cooldown;
 - with `abandonedBefore`, a running write or effect with no recovery was last written before it.
 
-The worktree recovery, effect recovery on a worktree, topology recovery and overdue deferred terms join
-a worktree, and a Rust brain has none, so they find no row. `projection_last` is the last key window row
+A write or due effect that names a worktree makes the probe refuse `engine_capability_missing` (see
+"Worktree rows"). The worktree recovery, effect recovery on a worktree, topology recovery and overdue
+deferred terms join a worktree row; the inserts refuse every worktree id, so they find no row. `projection_last` is the last key window row
 (`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
 is not a uuid refuses with the uuid cast message.
 

@@ -562,10 +562,8 @@ mod tests {
 
     fn no_roots() -> crate::persistence::ClaimableSpec {
         crate::persistence::ClaimableSpec {
-            exclude_roots: vec![],
-            fifo_roots: vec![],
-            lane_roots: vec![],
             priority: Some(false),
+            ..Default::default()
         }
     }
 

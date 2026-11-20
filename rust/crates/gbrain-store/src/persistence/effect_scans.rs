@@ -3,14 +3,19 @@
 //! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
-//! worktree. This engine keeps no worktree, so every scan answers no row (the claim itself is
-//! `effect_worker.rs`).
+//! worktree (the claim itself is `effect_worker.rs`). The gated-mirror scan reads the effects
+//! first: with no parked mirror on a worktree it answers no row, and one that has a worktree asks
+//! the worktree-row seam (`worktree_rows.rs`), which refuses `engine_capability_missing` until it
+//! can read the row. The effect-recovery scan belongs to the worktree binding and answers no row.
 //! The parameters are still checked as their Postgres casts check them, so an argument Postgres
 //! refuses is refused here too.
 
+use super::effects::all_effects;
+use super::worktree_rows::read_worktree_row;
 use crate::Store;
 use crate::env::is_uuid;
 use crate::error::{Result, StoreError};
+use crate::kv::KvRead;
 use serde_json::Value;
 
 /// `$1::uuid`: the message Postgres gives for text that is not a uuid.
@@ -24,10 +29,21 @@ pub(super) fn host_uuid(text: &str) -> Result<()> {
     }
 }
 
-/// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`: no request has a parked
-/// withdrawal mirror on a worktree here, so no row; a non-uuid host id refuses.
-pub(crate) fn list_gated_mirror_requests(host_id: &str) -> Result<Vec<Value>> {
+/// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`: the scan joins each parked
+/// withdrawal mirror (`kind='withdrawal-mirror'`, `state='failed'`,
+/// `error_code='targets_parked'`) to its worktree's owner host. With no such effect there is no
+/// row; an effect that has one needs its worktree row, and the seam (`worktree_rows.rs`) refuses
+/// that read until it can answer. A non-uuid host id refuses.
+pub(crate) fn list_gated_mirror_requests(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
     host_uuid(host_id)?;
+    for e in all_effects(read)? {
+        let parked = e.kind == "withdrawal-mirror"
+            && e.state == "failed"
+            && e.error_code.as_deref() == Some("targets_parked");
+        if let (true, Some(id)) = (parked, &e.worktree_id) {
+            read_worktree_row(read, id)?;
+        }
+    }
     Ok(Vec::new())
 }
 
@@ -78,7 +94,7 @@ pub(crate) fn list_effect_recoveries(
 impl Store {
     /// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`.
     pub fn list_gated_mirror_requests(&self, host_id: &str) -> Result<Vec<Value>> {
-        list_gated_mirror_requests(host_id)
+        list_gated_mirror_requests(&*self.read()?, host_id)
     }
 
     /// `listEffectRecoveries(hostId, after, limit)`.
@@ -98,14 +114,15 @@ mod tests {
 
     #[test]
     fn gated_mirror_requests_are_empty_and_refuse_a_non_uuid_host() {
+        let s = crate::test_support::store();
         let host = "0f000000-0000-4000-8000-0000000000f1";
-        assert!(list_gated_mirror_requests(host).unwrap().is_empty());
+        assert!(s.list_gated_mirror_requests(host).unwrap().is_empty());
         assert!(
-            list_gated_mirror_requests(&host.to_uppercase())
+            s.list_gated_mirror_requests(&host.to_uppercase())
                 .unwrap()
                 .is_empty()
         );
-        let bad = list_gated_mirror_requests("nope").unwrap_err();
+        let bad = s.list_gated_mirror_requests("nope").unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 

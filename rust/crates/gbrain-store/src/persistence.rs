@@ -38,9 +38,10 @@
 //! runs one write transaction at a time, so a read never overlaps a write. Each member's body is a
 //! `*_in` function over one `KvWrite`, so a store write transaction can run several of them.
 //!
-//! Every request row on this engine has a null `worktree_id` (the insert refuses another value:
-//! no worktree binding exists here), so the worktree terms of the claim statements are answered
-//! as Postgres answers them for a null worktree. A row admitted `deferred` names its refresh
+//! A request or effect that names a worktree reads its worktree row through the seam in
+//! `worktree_rows.rs`, which refuses `engine_capability_missing` until the worktree binding lands:
+//! the inserts refuse such a row, and a claim that meets one refuses rather than answer "none".
+//! Rows with a null `worktree_id` are answered as Postgres answers them for a null worktree. A row admitted `deferred` names its refresh
 //! (`deferred_refresh_id`, checked against the refresh rows of `worktree_admission.rs`); the claim
 //! takes it once `RELEASED_DEFERRED`, and the state writes refuse what `gbrain_guard_deferred_request`
 //! refuses.
@@ -62,6 +63,8 @@ mod effect_worker;
 mod effects;
 mod housekeeping;
 mod idle_probe;
+#[cfg(test)]
+mod lease_order_tests;
 mod noop_settle;
 mod op_checkpoint;
 mod owner_scans;
@@ -69,6 +72,7 @@ pub(crate) mod projection_queue;
 mod receipt_list;
 mod topology;
 mod worktree_admission;
+mod worktree_rows;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
@@ -618,10 +622,13 @@ pub(crate) fn insert_write_request_in(
     let Some(slug) = input.slug.clone() else {
         return Err(violation("a write request needs a slug"));
     };
-    if input.worktree_id.is_some() {
-        return Err(violation(
-            "no persistence worktree exists on this engine, so worktree_id cannot be set",
-        ));
+    let worktree_id = optional_uuid(&input.worktree_id, "worktreeId")?;
+    if let Some(id) = worktree_id.as_str()
+        && worktree_rows::read_worktree_row(&*tx, id)?.is_none()
+    {
+        return Err(violation(format!(
+            "worktree_id {id} names no persistence_worktrees row"
+        )));
     }
     let deferred_refresh_id = optional_uuid(&input.deferred_refresh_id, "deferredRefreshId")?;
     if let Some(id) = deferred_refresh_id.as_str()
@@ -668,6 +675,7 @@ pub(crate) fn insert_write_request_in(
     extra.insert("admitter_host_id".into(), admitter_host_id);
     extra.insert("admitter_segment_reader".into(), json!(true));
     extra.insert("deferred_refresh_id".into(), deferred_refresh_id);
+    extra.insert("worktree_id".into(), worktree_id);
     let record = RequestRecord {
         id: env.new_uuid(),
         principal_kind: input.principal_kind.clone(),
@@ -1108,10 +1116,56 @@ pub(crate) fn expire_stale_write_claims_in(
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ClaimableSpec {
+    /// `$1`: the consumer's host id (a uuid), which selects the worktree rows it may claim.
+    pub host_id: Option<String>,
     pub exclude_roots: Vec<String>,
     pub fifo_roots: Vec<String>,
     pub lane_roots: Vec<String>,
+    /// `$5` and `$6`: the consumer nonce and per-worktree sync-seen sequences of the `waiting`
+    /// term, which matches worktree rows only (`g.worktree_id=r.worktree_id`).
+    pub nonce: Option<String>,
+    pub sync_seen: Map<String, Value>,
     pub priority: Option<bool>,
+    /// `CLAIM_HEAD_LEASE_HELD` ($7-$9): a non-resident consumer ranks a managed-sync row whose
+    /// source's drain lease another live process holds after every other row. `None` for a
+    /// resident consumer.
+    pub lease_holder: Option<LeaseHolder>,
+}
+
+/// The lock a non-resident consumer checks before it takes a managed-sync row.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaseHolder {
+    pub lock_prefix: String,
+    pub pid: f64,
+    pub host: String,
+}
+
+impl ClaimableSpec {
+    /// The parameters Postgres casts before it reads a row: `$1::uuid` and `$8::integer`.
+    fn check(&self) -> Result<()> {
+        if let Some(host) = &self.host_id {
+            effect_scans::host_uuid(host)?;
+        }
+        if let Some(h) = &self.lease_holder
+            && (h.pid.fract() != 0.0 || h.pid < f64::from(i32::MIN) || h.pid > f64::from(i32::MAX))
+        {
+            return Err(StoreError::invalid(format!(
+                "invalid input syntax for type integer: \"{}\"",
+                h.pid
+            )));
+        }
+        Ok(())
+    }
+
+    /// Whether sync row `r`'s drain lease is held by a process other than this consumer.
+    fn lease_held(&self, read: &dyn KvRead, r: &RequestRecord, now: i64) -> Result<bool> {
+        let Some(h) = self.lease_holder.as_ref().filter(|_| sync_kind(&r.intent)) else {
+            return Ok(false);
+        };
+        let id = format!("{}{}", h.lock_prefix, r.source_id);
+        crate::jobs::lock_held_by_other(read, &id, h.pid as i64, &h.host, now)
+    }
 }
 
 fn foreground_priority(read: &dyn KvRead, given: Option<bool>) -> Result<bool> {
@@ -1204,12 +1258,15 @@ fn pending(all: &[RequestRecord]) -> Vec<&RequestRecord> {
 fn candidates<'a>(read: &dyn KvRead, all: &'a [RequestRecord]) -> Result<Vec<&'a RequestRecord>> {
     let mut out = Vec::new();
     for r in all {
-        if !extra_is_null(r, "worktree_id") {
+        if !(r.state == "queued" || worktree_admission::released_deferred_in(read, r)?) {
             continue;
         }
-        if r.state == "queued" || worktree_admission::released_deferred_in(read, r)? {
-            out.push(r);
+        // A worktree row's claim terms read its worktree; the seam refuses until it can.
+        if let Some(id) = r.extra.get("worktree_id").and_then(Value::as_str) {
+            worktree_rows::read_worktree_row(read, id)?;
+            continue;
         }
+        out.push(r);
     }
     Ok(out)
 }
@@ -1221,6 +1278,7 @@ pub(crate) fn has_claimable_write_in(
     env: &dyn Env,
     spec: &ClaimableSpec,
 ) -> Result<bool> {
+    spec.check()?;
     let priority = foreground_priority(read, spec.priority)?;
     let all = all_requests(read)?;
     let pending = pending(&all);
@@ -1241,11 +1299,14 @@ pub(crate) fn select_claimable_write_in(
     env: &dyn Env,
     spec: &ClaimableSpec,
 ) -> Result<Option<Value>> {
+    spec.check()?;
     let priority = foreground_priority(read, spec.priority)?;
     let all = all_requests(read)?;
     let pending = pending(&all);
     let now = env.now_micros();
-    let mut best: Option<(bool, &RequestRecord)> = None;
+    // The claim order: a row whose lease another process holds last, then claim-first rows, then
+    // the oldest sequence. `free` and `ahead` rank higher when true.
+    let mut best: Option<((bool, bool), &RequestRecord)> = None;
     for r in candidates(read, &all)? {
         let first = priority && !spec.fifo_roots.contains(&root_key(r));
         if !spec.lane_roots.is_empty() && (sync_kind(&r.intent) || !first) {
@@ -1254,15 +1315,18 @@ pub(crate) fn select_claimable_write_in(
         if !claimable(r, &pending, first, spec, &spec.lane_roots, now) {
             continue;
         }
-        let ahead = first && !sync_kind(&r.intent);
+        let rank = (
+            !spec.lease_held(read, r, now)?,
+            first && !sync_kind(&r.intent),
+        );
         let better = match best {
             None => true,
-            Some((b_ahead, b)) => {
-                (ahead, std::cmp::Reverse(r.sequence)) > (b_ahead, std::cmp::Reverse(b.sequence))
+            Some((b_rank, b)) => {
+                (rank, std::cmp::Reverse(r.sequence)) > (b_rank, std::cmp::Reverse(b.sequence))
             }
         };
         if better {
-            best = Some((ahead, r));
+            best = Some((rank, r));
         }
     }
     Ok(best.map(|(_, r)| r.to_row()))

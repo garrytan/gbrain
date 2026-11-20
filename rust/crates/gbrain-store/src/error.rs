@@ -57,6 +57,9 @@ pub const INVALID_STATE: &str = "invalid_state";
 pub const WRITE_CONFLICT: &str = "write_conflict";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
+/// The store does not keep what the call must read, so it cannot answer truthfully. The message
+/// starts with the capability and a colon (`managed_persistence: ...`). Nothing was written.
+pub const CAPABILITY_MISSING: &str = "engine_capability_missing";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {

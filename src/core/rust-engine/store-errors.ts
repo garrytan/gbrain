@@ -13,6 +13,8 @@
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
 import { opError } from '../ops/contract.ts';
+import { ENGINE_CAPABILITIES, type Capability } from '../engine-capabilities.ts';
+import { capabilityMissing } from './errors.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { PageRevisionConflictError, PageSnapshotAmbiguousError } from '../page-state/types.ts';
@@ -65,9 +67,21 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return Object.assign(new Error(`cannot execute ${ctx.member} in a read-only transaction`), { code: READ_ONLY_SQLSTATE });
     case 'page_ambiguous':
       return new PageSnapshotAmbiguousError();
+    case 'engine_capability_missing':
+      return storeCapabilityMissing(error, ctx);
     default:
       return error;
   }
+}
+
+/**
+ * The store refused because it does not keep a table the call must read (rust/README.md "Error codes"): its message
+ * starts with the capability and a colon. The refusal is the engine's capability refusal, naming the member; nothing ran.
+ */
+function storeCapabilityMissing(error: unknown, ctx: StoreErrorContext): unknown {
+  const named = /^([a-z_]+):/.exec(error instanceof Error ? error.message : '')?.[1];
+  if (!named || !(ENGINE_CAPABILITIES as readonly string[]).includes(named)) return error;
+  return capabilityMissing(named as Capability, ctx.member);
 }
 
 function pageNotFound(error: unknown, ctx: StoreErrorContext): unknown {

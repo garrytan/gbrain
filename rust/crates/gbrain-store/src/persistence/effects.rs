@@ -15,6 +15,7 @@
 //! Every kind is stored. Which kinds a worker may claim is the claim statement's choice, not the
 //! insert's.
 
+use super::worktree_rows::read_worktree_row;
 use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
@@ -273,6 +274,12 @@ pub(crate) fn insert_publication_effects_in(
     uuid_cast(&spec.source_incarnation)?;
     if let Some(worktree) = &spec.worktree_id {
         uuid_cast(worktree)?;
+        // `worktree_id` references `persistence_worktrees`; the seam refuses until it can be read.
+        if read_worktree_row(&*tx, worktree)?.is_none() {
+            return Err(violation(format!(
+                "worktree_id {worktree} names no persistence_worktrees row"
+            )));
+        }
     }
     let gated_off = {
         let mut off = false;

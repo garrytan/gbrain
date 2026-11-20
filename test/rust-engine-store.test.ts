@@ -144,6 +144,24 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
+  withAddon('a write naming a worktree refuses by the managed_persistence capability, not as a missing row', async () => {
+    const { engine } = await open();
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const row = {
+      principalKind: 'local_cli', principalId: 'store-writer', requestId: 'b0000000-0000-4000-8000-0000000000b1', operation: 'put_page',
+      sourceId: 'default', sourceIncarnation: incarnation, pageId: null, slug: 'notes/a', worktreeId: 'f0000000-0000-4000-8000-0000000000a1',
+      topologyGeneration: null, digest: 'd'.repeat(64), intent: { kind: 'put_page' }, authority: {}, intentBytes: 10, terminalReservation: 4096,
+      targetKind: 'page', protocolVersion: 1, admitterVersion: 'store-test', admitterHostId: null, counterKeys: [], clientRequestId: null,
+      state: 'queued' as const, deferredRefreshId: null,
+    };
+    // The store cannot read a worktree row until the worktree binding lands, so it refuses by capability and writes nothing.
+    const refusal = await engine.insertWriteRequest(row as never).then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(OperationError);
+    expect(refusal).toMatchObject({ code: 'engine_capability_missing', reason: 'managed_persistence' });
+    expect((refusal as OperationError).message).toContain('insertWriteRequest');
+    expect(await engine.readWriteRequest('local_cli', 'store-writer', 'b0000000-0000-4000-8000-0000000000b1')).toBeNull();
+  });
+
   withAddon('a transaction setting the engine does not keep refuses before any work', async () => {
     const { engine } = await open();
     // gbrain.topology_change is read by a PGLite guard trigger the store does not run: setting it would be a guard

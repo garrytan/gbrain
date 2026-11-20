@@ -2,7 +2,8 @@
 //! owner's housekeeping sends on each scan tick (rust/docs/store/persistence.md, "Owner scans").
 //!
 //! Each scan joins a write request (or a refresh) to a `persistence_worktrees` row the host owns.
-//! This engine keeps no worktree (a request here always has a null `worktree_id`), so every list answers no
+//! A request here always has a null `worktree_id` (the insert asks the worktree-row seam,
+//! `worktree_rows.rs`, which refuses every worktree id until the binding lands), so every list answers no
 //! row; only a refresh hold can stand, while its refresh row is not released. The parameters are
 //! still checked as their Postgres casts check them, so an argument Postgres refuses is refused
 //! here too.

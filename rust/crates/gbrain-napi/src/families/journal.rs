@@ -329,7 +329,7 @@ impl Brain {
         })
     }
 
-    /// `hasClaimableWrite({ excludeRoots, priority })`.
+    /// `hasClaimableWrite({ hostId, excludeRoots, priority })`.
     #[napi]
     pub fn has_claimable_write<'env>(
         &self,
@@ -341,8 +341,8 @@ impl Brain {
         })
     }
 
-    /// `selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })`: the request row
-    /// `claimNextWrite` claims next, or `null`.
+    /// `selectClaimableWrite({ hostId, excludeRoots, fifoRoots, laneRoots, nonce, syncSeen, priority,
+    /// leaseHolder })`: the request row `claimNextWrite` claims next, or `null`.
     #[napi]
     pub fn select_claimable_write<'env>(
         &self,

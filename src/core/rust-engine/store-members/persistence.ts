@@ -199,18 +199,24 @@ export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { 
   await storeCall({ member: 'expireStaleWriteClaims' }, () => brain.expireStaleWriteClaims(expiry));
 };
 
-/** Whether a claim would find a row now. The host id selects worktree rows, which this engine never has. */
+/**
+ * Whether a claim would find a row now. The host id selects worktree rows; a row on a worktree refuses
+ * `engine_capability_missing` until the store can read its worktree.
+ */
 export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
-  (brain, _hostId, excludeRoots, opts) =>
-    storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ excludeRoots, priority: opts?.priority ?? null }));
+  (brain, hostId, excludeRoots, opts) =>
+    storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ hostId, excludeRoots, priority: opts?.priority ?? null }));
 
 /**
- * The request a FIFO claim takes next, or null. The host id, nonce, sync-seen map and lease holder select worktree and
- * managed-sync rows, which this engine never has; one process owns the store, so no row is locked against another.
+ * The request a FIFO claim takes next, or null. The whole spec goes to the store: the lease holder ranks a managed-sync
+ * row whose drain lease another process holds last, and the host id, nonce and sync-seen map select worktree rows (a
+ * row on a worktree refuses `engine_capability_missing` until the store can read its worktree). One process owns the
+ * store, so no row is locked against another.
  */
 export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
-  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' },
-    () => brain.selectClaimableWrite({ excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, priority: spec.priority })));
+  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
+    hostId: spec.hostId, excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, nonce: spec.nonce,
+    syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder })));
 
 // The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
 // worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.
