@@ -125,7 +125,7 @@ export async function resolveEntitySlug(
  * imported from a file, whose slug sync folds). Null for any other reference.
  */
 async function accentedSlugFallback(engine: BrainEngine, source_id: string, trimmed: string): Promise<string | null> {
-  const slugForm = exactSlugForm(trimmed);
+  const slugForm = storedSlugForm(trimmed);
   if (!trimmed.includes('/') || !/[^\x00-\x7f]/.test(slugForm) || !looksLikeSlug(slugForm)) return null;
   const folded = fallbackSlugify(trimmed);
   if (folded && folded !== slugForm && (await tryExactSlug(engine, source_id, folded))?.retired === false) return folded;
@@ -851,11 +851,17 @@ async function tryPrefixExpansion(
 }
 
 /**
- * The form an exact slug lookup uses: a path-shaped reference (`People/Ünal-Example`,
- * a decomposed `people/zoe\u0308-example`) in the slug normal form writes store
- * (normalizeSlug: lowercase + NFC); any other reference unchanged.
+ * The form an exact slug lookup uses: a path-shaped reference with its accents
+ * composed (a decomposed `people/zoe\u0308-example` → NFC, the form writes store);
+ * any other reference unchanged. Case is kept, so mixed-case input still skips the
+ * exact-match path (#5421) and reaches the fallback, which lowercases it.
  */
 function exactSlugForm(trimmed: string): string {
+  return trimmed.includes('/') ? trimmed.normalize('NFC') : trimmed;
+}
+
+/** The slug put_page would store for a path-shaped reference (normalizeSlug: lowercase + NFC). */
+function storedSlugForm(trimmed: string): string {
   return trimmed.includes('/') ? normalizeSlug(trimmed) : trimmed;
 }
 
