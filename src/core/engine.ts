@@ -4064,6 +4064,13 @@ export interface BrainEngine {
   /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */
   listPagesNamingReader(principal: string): Promise<PageNamingReaderRow[]>;
 
+  /** The live pages, in every source and by (source id, slug) bytes, whose readers name exactly `principal`; at most 201 of them (member disable checks 200 and reads one more). */
+  listLivePagesNamingReader(principal: string): Promise<import('./engine-sql/collate-command-reads.ts').LivePageNamingReaderRow[]>;
+  /** The pages named `slug` (soft-deleted ones too) with the type, frontmatter and stamped folder rules who-can-read reads: in one source, else in every source by source id bytes. */
+  readPageAccessRows(slug: string, sourceId?: string): Promise<import('./engine-sql/collate-command-reads.ts').PageAccessRow[]>;
+  /** A source's markdown page slugs (soft-deleted ones too) by byte: the reconcile-links walk. */
+  listMarkdownPageSlugs(sourceId: string): Promise<string[]>;
+
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;

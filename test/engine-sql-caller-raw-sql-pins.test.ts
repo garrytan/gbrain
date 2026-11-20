@@ -843,6 +843,27 @@ const PINS: Pin[] = [
      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 51`],
   },
   {
+    from: 'src/commands/access-read-by-nobody.ts:43 pagesReadByNobodyNaming, at dded7edc51 (LIMIT was DISABLE_CHECK_LIMIT + 1)',
+    case: { method: 'listLivePagesNamingReader', variant: 'default', run: e => e.listLivePagesNamingReader('member:alice-example') },
+    texts: [`SELECT source_id, slug FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`],
+  },
+  {
+    from: 'src/commands/access.ts:168 whoCanRead, at dded7edc51 (one statement per call: with and without a source)',
+    case: { method: 'readPageAccessRows', variant: 'anySource', run: e => e.readPageAccessRows('notes/a') },
+    texts: [`SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1 ORDER BY source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:168 whoCanRead, at dded7edc51',
+    case: { method: 'readPageAccessRows', variant: 'oneSource', run: e => e.readPageAccessRows('notes/a', 'default') },
+    texts: [`SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1 AND source_id = $2 ORDER BY source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/reconcile-links.ts:120 runReconcileLinks, at dded7edc51',
+    case: { method: 'listMarkdownPageSlugs', variant: 'default', run: e => e.listMarkdownPageSlugs('default') },
+    texts: [`SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`],
+  },
+  {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
     case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
     texts: [

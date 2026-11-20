@@ -5,9 +5,9 @@
 # Counts fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows. docs/ci-guards.md#engine-raw-sql-ratchet
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	5
-src/commands/access-read-by-nobody.ts	execute_raw	2
+src/commands/access-read-by-nobody.ts	execute_raw	1
 src/commands/access-rules.ts	execute_raw	4
-src/commands/access.ts	execute_raw	5
+src/commands/access.ts	execute_raw	4
 src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	2
 src/commands/agent-register.ts	sql_template	7
@@ -166,7 +166,6 @@ src/commands/onboard.ts	execute_raw	1
 src/commands/pages-status.ts	execute_raw	2
 src/commands/quarantine.ts	execute_raw	1
 src/commands/recall.ts	execute_raw	1
-src/commands/reconcile-links.ts	execute_raw	1
 src/commands/reindex-code.ts	execute_raw	2
 src/commands/reindex-multimodal.ts	sql_template	5
 src/commands/reindex-synopsis.ts	execute_raw	2
@@ -178,7 +177,6 @@ src/commands/serve-health.ts	execute_raw	1
 src/commands/serve-http-admin-api.ts	execute_raw	4
 src/commands/serve-http-admin-api.ts	sql_template	11
 src/commands/serve-http-api-keys.ts	execute_raw	2
-src/commands/serve-http-clients.ts	execute_raw	1
 src/commands/serve-http-metrics.ts	execute_raw	2
 src/commands/serve-http-registration.ts	execute_raw	2
 src/commands/serve-http-registration.ts	sql_template	3

@@ -214,6 +214,7 @@ import * as connectGateImpl from './engine-sql/connect-gate.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
+import * as collateCommandReadsImpl from './engine-sql/collate-command-reads.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
@@ -1489,6 +1490,10 @@ export class PostgresEngine implements BrainEngine {
   listAudienceAccessMembers(): Promise<string[]> { return accessControlImpl.listAudienceAccessMembers(this); }
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]> { return accessControlImpl.readAccessGroups(this, id); }
   listPagesNamingReader(principal: string): Promise<PageNamingReaderRow[]> { return accessControlImpl.listPagesNamingReader(this, principal); }
+  // Command reads (engine-sql/collate-command-reads.ts), through this engine's executeRaw.
+  listLivePagesNamingReader(principal: string) { return collateCommandReadsImpl.listLivePagesNamingReader(this.executeRaw.bind(this), principal); }
+  readPageAccessRows(slug: string, sourceId?: string) { return collateCommandReadsImpl.readPageAccessRows(this.executeRaw.bind(this), slug, sourceId); }
+  listMarkdownPageSlugs(sourceId: string) { return collateCommandReadsImpl.listMarkdownPageSlugs(this.executeRaw.bind(this), sourceId); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }
   readMentionIndexStatus(sourceIds: readonly string[]) { return this.preparationRead(exec => entityReadsImpl.readMentionIndexStatus(unscopedExecutor(exec, 'entities: mention-index status ran unscoped through executeRaw'), sourceIds)); }

@@ -70,6 +70,7 @@ import * as pageEmbeddingBudget from './page-embedding-budget.ts';
 import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as collateCommandReads from './collate-command-reads.ts';
 import * as accessPolicy from './access-policy.ts';
 import * as accessSetup from './access-setup.ts';
 import * as writeAttribution from './write-attribution.ts';
@@ -131,6 +132,8 @@ export const STORE_MEMBERS = {
   ...pageEmbeddingBudget,
   ...embeddingInstall,
   ...writeMisc,
+  // The page reads of the member-disable check, who-can-read and reconcile-links (rust/docs/store/collate-command-reads.md).
+  ...collateCommandReads,
   // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
   ...accessPolicy,
   // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).

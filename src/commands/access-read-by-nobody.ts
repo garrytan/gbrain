@@ -9,10 +9,11 @@ import { identityFor, MEMBER_PAGE_PREFIX, normalizeReaders, readersAllow, NOBODY
 import { listMembers, type MemberRecord } from '../core/access/members.ts';
 import { ownerMemberId, ownerReadsRestrictedOn } from '../core/access/owner.ts';
 import { whoCanRead } from './access.ts';
+import { LIVE_PAGES_NAMING_READER_LIMIT } from '../core/engine-sql/collate-command-reads.ts';
 
 const SAMPLES = 5;
 /** Pages naming a disabled member that member disable checks one by one with who-can-read. */
-const DISABLE_CHECK_LIMIT = 200;
+const DISABLE_CHECK_LIMIT = LIVE_PAGES_NAMING_READER_LIMIT - 1;
 
 interface PageRef { source_id: string; slug: string }
 
@@ -41,9 +42,7 @@ export function readByNobodyNote(entry: { slug: string; source_id: string; reade
 
 /** Pages whose readable_by names `memberId` that no enabled member reads remotely now (checked with who-can-read). */
 export async function pagesReadByNobodyNaming(engine: BrainEngine, memberId: string): Promise<{ pages: PageRef[]; truncated: boolean }> {
-  const rows = await engine.executeRaw<PageRef>(
-    `SELECT source_id, slug FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT ${DISABLE_CHECK_LIMIT + 1}`, [`member:${memberId}`]);
+  const rows = await engine.listLivePagesNamingReader(`member:${memberId}`);
   const pages: PageRef[] = [];
   for (const row of rows.slice(0, DISABLE_CHECK_LIMIT)) {
     const [entry] = await whoCanRead(engine, row.slug, row.source_id);

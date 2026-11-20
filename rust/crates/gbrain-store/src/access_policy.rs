@@ -229,6 +229,17 @@ pub(crate) fn stamp_page_put(tx: &mut dyn KvWrite, prior: Option<u64>, value: &[
     }
 }
 
+/// The rule ids (`source:rule_id`) the last restamp or page write kept for page `page_id`
+/// (`pages.folder_rule_ids`), `None` when it kept none, as the column reads NULL.
+pub(crate) fn kept_rule_ids(
+    read: &dyn KvRead,
+    source_id: &str,
+    page_id: u64,
+) -> Result<Option<Vec<String>>> {
+    let kept: Option<Vec<String>> = get_json(read, &stamp_key(source_id, page_id))?;
+    Ok(kept.filter(|ids| !ids.is_empty()))
+}
+
 /// The rule records of the ids the last restamp or page write kept for page `page_id`
 /// (`pages.folder_rule_ids`), empty when it keeps none. An id whose rule is gone reads as a rule
 /// that covers no derived page, as `gbrain_access_lineage_rules` finds no row for it.

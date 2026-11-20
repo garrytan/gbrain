@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 926/932
+# covered: 929/935
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -60,6 +60,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 13/13
 # wanted_links: 2/2
+# collate_command_reads: 3/3
 # write_misc: 65/71
 # write_attribution: 5/5
 # telemetry: 10/10
@@ -661,7 +662,7 @@ insertOauthClient	minion_queue	yes	24	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	11	no	yes	yes	serves
-listOauthClients	minion_queue	yes	1	no	yes	yes	serves
+listOauthClients	minion_queue	yes	2	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	13	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
@@ -790,7 +791,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	87	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	82	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -857,6 +858,9 @@ listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
+listLivePagesNamingReader	collate_command_reads	yes	1	no	yes	yes	serves
+readPageAccessRows	collate_command_reads	yes	1	no	yes	yes	serves
+listMarkdownPageSlugs	collate_command_reads	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
 readSourceState	write_misc	yes	2	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves

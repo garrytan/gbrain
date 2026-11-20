@@ -10,6 +10,7 @@ mod cli_reads_import;
 mod cli_reads_ops;
 mod cli_reads_search_pages;
 mod cli_sources;
+mod collate_command_reads;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;
