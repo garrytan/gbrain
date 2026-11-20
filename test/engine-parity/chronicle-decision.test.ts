@@ -20,7 +20,8 @@
  *    truth-lead read that answers null records too_short; on Rust the segmented save stops on its raw-SQL body staging);
  *    (7) an upsert that wins keeps the event, cost-attempt and judge columns and clears the campaign stamp, and a guarded
  *    one leaves the row as it was (SQL arms; the Rust store test pins the same on its records); (8) an upsert for a
- *    missing source or page refuses (the foreign keys; Rust by name) and writes nothing, and a soft-deleted page records.
+ *    missing source or page refuses with the SQL foreign-key error (code 23503, the same message on every engine; the
+ *    source's key when both are missing) and writes nothing, and a soft-deleted page records.
  *  - Regression: the decision's activation insert, truth-lead read, add_link pending read, upsert, row read and daily
  *    count were `executeRaw` calls; the Rust engine refuses raw SQL, so every chronicle-shaped save failed on Rust.
  *  - Why existing coverage misses it: test/chronicle-*.test.ts run on PGLite and Postgres only; bench-save-repro case 3
@@ -284,28 +285,32 @@ describe('the write-time chronicle decision', () => {
 
   parityTest('an upsert for a missing source or page refuses and writes nothing; a soft-deleted page still records', {
     methods: ['putPage', 'softDeletePage', 'upsertChronicleRow', 'readChronicleRow'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     const page = await engine.putPage('meetings/fk-example', { type: 'meeting', title: 'Fk', compiled_truth: 'A body.', timeline: '' });
     const row = (sourceId: string, pageId: number) => ({ sourceId, pageId, contentHash: 'h-fk', extractorVersion: CHRONICLE_EXTRACTOR_VERSION,
       slug: 'meetings/fk-example', state: 'pending', reason: null, trigger: 'auto', principalKind: 'local_cli', principalId: null, requestId: null,
       noExtract: false, nextAttemptAt: null });
+    // Every engine refuses as the SQL foreign keys do: code 23503 and the violation's message (it reaches agent output).
     const attempt = async (sourceId: string, pageId: number) => {
       try { return { written: await engine.upsertChronicleRow(row(sourceId, pageId)) }; } catch (error) {
-        // The SQL engines refuse with the foreign key's violation; the Rust store refuses the same by name.
-        if (backend === 'rust') expect((error as { code?: string }).code).toBe(pageId === Number(page.id) ? 'source_not_found' : 'page_not_found');
-        return { refused: true };
+        return { code: (error as { code?: string }).code ?? null, message: (error as Error).message };
       }
     };
+    const violation = (column: 'source_id' | 'page_id') => ({ code: '23503',
+      message: `insert or update on table "chronicle_page_state" violates foreign key constraint "chronicle_page_state_${column}_fkey"` });
     const read = (sourceId: string, pageId: number) => engine.readChronicleRow({ sourceId, pageId, contentHash: 'h-fk', extractorVersion: CHRONICLE_EXTRACTOR_VERSION });
     const missingPage = await attempt('default', Number(page.id) + 1_000_000);
     const missingPageRow = await read('default', Number(page.id) + 1_000_000);
     const missingSource = await attempt('no-such-source', Number(page.id));
     const missingSourceRow = await read('no-such-source', Number(page.id));
+    // Both missing: PGLite and Postgres both report the source's key.
+    const bothMissing = await attempt('no-such-source', Number(page.id) + 1_000_000);
     await engine.softDeletePage('meetings/fk-example');
     const softDeleted = await attempt('default', Number(page.id));
-    const out = { missingPage, missingPageRow, missingSource, missingSourceRow, softDeleted, stored: (await read('default', Number(page.id)))?.state ?? null };
-    expect(out).toEqual({ missingPage: { refused: true }, missingPageRow: null, missingSource: { refused: true }, missingSourceRow: null,
-      softDeleted: { written: true }, stored: 'pending' });
+    const out = { missingPage, missingPageRow, missingSource, missingSourceRow, bothMissing, softDeleted,
+      stored: (await read('default', Number(page.id)))?.state ?? null };
+    expect(out).toEqual({ missingPage: violation('page_id'), missingPageRow: null, missingSource: violation('source_id'), missingSourceRow: null,
+      bothMissing: violation('source_id'), softDeleted: { written: true }, stored: 'pending' });
     return out;
   });
 });

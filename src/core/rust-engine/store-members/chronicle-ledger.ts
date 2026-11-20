@@ -6,15 +6,36 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { ChronicleLedgerRow } from '../../chronicle/contract.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
+/** The foreign key of `chronicle_page_state` each store refusal stands for; a row missing both names the source's. */
+const FOREIGN_KEY_OF: Record<string, string> = {
+  source_not_found: 'chronicle_page_state_source_id_fkey',
+  page_not_found: 'chronicle_page_state_page_id_fkey',
+};
+/** SQLSTATE `foreign_key_violation`. */
+const FOREIGN_KEY_VIOLATION = '23503';
+
 /**
- * The checked store call: the SQL engines' foreign keys refuse a row whose source or page is missing
- * (`source_not_found` / `page_not_found`), and the store refuses the same and writes nothing.
+ * The checked store call: the SQL engines' foreign keys refuse a row whose source or page is missing, and the store
+ * refuses the same (`source_not_found` / `page_not_found`) and writes nothing. The refusal is thrown as the SQL
+ * engines throw it: code `23503` and the foreign-key violation's message, so a caller (and an agent reading the
+ * message) sees the same error on every engine.
  */
-export const upsertChronicleRow: Member<'upsertChronicleRow'> = (brain, w) =>
-  storeCall({ member: 'upsertChronicleRow' }, () => brain.upsertChronicleRowChecked(w)) as Promise<Awaited<ReturnType<BrainEngine['upsertChronicleRow']>>>;
+export const upsertChronicleRow: Member<'upsertChronicleRow'> = async (brain, w) => {
+  try {
+    return await brain.upsertChronicleRowChecked(w) as Awaited<ReturnType<BrainEngine['upsertChronicleRow']>>;
+  } catch (error) {
+    const constraint = FOREIGN_KEY_OF[storeErrorCode(error) ?? ''];
+    if (constraint) {
+      throw Object.assign(new Error(`insert or update on table "chronicle_page_state" violates foreign key constraint "${constraint}"`),
+        { code: FOREIGN_KEY_VIOLATION });
+    }
+    throw mapStoreError(error, { member: 'upsertChronicleRow' });
+  }
+};
 
 /** The store answers `decided_at` and `updated_at` as ISO text; the SQL engines answer Dates. */
 export const readChronicleRow: Member<'readChronicleRow'> = async (brain, key) => {
