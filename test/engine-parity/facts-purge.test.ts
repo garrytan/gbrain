@@ -752,4 +752,33 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(row.valid_until!.getTime()).toBeLessThanOrEqual(row.expired_at!.getTime());
     return { first, again, afterFirst, member, everyone, world, left, expired: history.map((r) => ({ visibility: r.visibility, expired: r.expired_at instanceof Date, closed: r.valid_until instanceof Date })) };
   });
+
+  // recordDerivationEdges keeps each edge once (ON CONFLICT DO NOTHING) and listDerivedRows reads one hop back: the
+  // distinct rows derived from any frontier row, by table then id, at most `limit`. Ids share one width, so byte order
+  // and the Postgres collation agree.
+  parityTest('recordDerivationEdges records each input edge once and listDerivedRows reads one hop back', {
+    methods: ['recordDerivationEdges', 'listDerivedRows'],
+  }, async (engine) => {
+    const ref = (table: string, id: string) => ({ table, id });
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101'), ref('facts', '301')]);
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101')]);
+    await engine.recordDerivationEdges(ref('facts', '302'), SRC, [ref('pages', '101'), ref('pages', '201')]);
+    await engine.recordDerivationEdges(ref('takes', '401'), null, [ref('facts', '302')]);
+    await engine.recordDerivationEdges(ref('pages', '202'), SRC, []);
+    const hop = async (frontier: Array<{ table: string; id: string }>, limit = 10) =>
+      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${r.derived_id}`);
+    const fromInput = await hop([ref('pages', '101')]);
+    expect(fromInput).toEqual(['facts:302', 'pages:201']);
+    const fromTwo = await hop([ref('pages', '101'), ref('pages', '201')]);
+    expect(fromTwo).toEqual(['facts:302', 'pages:201']);
+    const limited = await hop([ref('pages', '101'), ref('facts', '302')], 2);
+    expect(limited).toEqual(['facts:302', 'pages:201']);
+    const sourceless = await hop([ref('facts', '302')]);
+    expect(sourceless).toEqual(['takes:401']);
+    const leaf = await hop([ref('takes', '401')]);
+    expect(leaf).toEqual([]);
+    const empty = await hop([]);
+    expect(empty).toEqual([]);
+    return { fromInput, fromTwo, limited, sourceless, leaf, empty };
+  });
 });

@@ -174,6 +174,22 @@ pub struct RelinkQuery {
     pub limit: f64,
 }
 
+/// One row a derivation walk starts from or reaches (`derivation_inputs.input_table`/`input_id`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DerivationRef {
+    pub table: String,
+    pub id: String,
+}
+
+/// `listDerivedRows(frontier, limit)`'s arguments.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct DerivedRowsQuery {
+    pub frontier: Vec<DerivationRef>,
+    pub limit: i64,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceArgs {
@@ -248,6 +264,25 @@ impl Store {
             }
         }
         Ok(n)
+    }
+
+    /// `listDerivedRows(frontier, limit)`: the rows one hop of the derivation walk reaches from
+    /// the frontier (`derivation_inputs` rows whose input is a frontier row, read from the input
+    /// index `h 0x0B`), distinct, in byte order of (derived_table, derived_id), at most `limit`. A
+    /// NUL in a table or id is refused as a text column refuses it, and a negative limit as
+    /// `LIMIT` refuses it.
+    pub fn list_derived_rows(&self, q: &DerivedRowsQuery) -> Result<Vec<Value>> {
+        for r in &q.frontier {
+            no_nul("listDerivedRows", &[("table", &r.table), ("id", &r.id)])?;
+        }
+        let limit = crate::generations::hop_limit(q.limit)?;
+        let read = self.read()?;
+        Ok(
+            crate::generations::derived_from(&*read, &q.frontier, limit)?
+                .into_iter()
+                .map(|(table, id)| json!({ "derived_table": table, "derived_id": id }))
+                .collect(),
+        )
     }
 
     /// `loadPurgeTarget(id, sourceId)`: the fact row `id` of the source unless it is an outcome
@@ -631,6 +666,136 @@ mod tests {
     fn vector_text_writes_each_element_as_float4out() {
         assert_eq!(vector_text(&[1.0, 0.0, 0.5, -0.25]), "[1,0,0.5,-0.25]");
         assert_eq!(vector_text(&[]), "[]");
+    }
+
+    fn put_note(store: &Store, source: &str, slug: &str) -> u64 {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {},
+        }))
+        .unwrap();
+        let options: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({ "sourceId": source })).unwrap();
+        store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap()
+    }
+
+    fn record(
+        store: &Store,
+        source: Option<&str>,
+        derived: (&str, String),
+        inputs: &[(&str, String)],
+    ) {
+        let args: crate::generations::DerivationInputsArgs = serde_json::from_value(json!({
+            "derived": { "table": derived.0, "id": derived.1 },
+            "sourceId": source,
+            "inputs": inputs.iter().map(|(t, i)| json!({ "table": t, "id": i })).collect::<Vec<_>>(),
+        }))
+        .unwrap();
+        assert_eq!(store.record_derivation_inputs(&args).unwrap(), Value::Null);
+    }
+
+    fn hop(store: &Store, frontier: Value, limit: i64) -> Result<Vec<Value>> {
+        let q: DerivedRowsQuery =
+            serde_json::from_value(json!({ "frontier": frontier, "limit": limit })).unwrap();
+        store.list_derived_rows(&q)
+    }
+
+    /// `recordDerivationInputs` stores each edge once (ON CONFLICT DO NOTHING), and one hop of the
+    /// walk reads the rows derived from any frontier row, distinct, in byte order, at most `limit`.
+    #[test]
+    fn list_derived_rows_reads_the_recorded_derivation_inputs() {
+        let store = crate::test_support::store();
+        let input = put_note(&store, "default", "notes/input").to_string();
+        assert_eq!(
+            hop(&store, json!([{ "table": "pages", "id": input }]), 1001).unwrap(),
+            Vec::<Value>::new()
+        );
+        record(
+            &store,
+            Some("default"),
+            ("pages", "9".into()),
+            &[("pages", input.clone()), ("facts", "1".into())],
+        );
+        record(
+            &store,
+            Some("default"),
+            ("facts", "10".into()),
+            &[("pages", input.clone())],
+        );
+        record(
+            &store,
+            None,
+            ("pages", "9".into()),
+            &[("pages", input.clone())],
+        );
+        let rows = store.derivation_rows().unwrap();
+        assert_eq!(rows.len(), 3, "a repeated edge is stored once: {rows:?}");
+        assert_eq!(
+            rows.iter().filter(|r| r[4] == Value::Null).count(),
+            0,
+            "the first write of an edge wins"
+        );
+        let both = json!([{ "table": "pages", "id": input }, { "table": "facts", "id": "1" }]);
+        assert_eq!(
+            hop(&store, both.clone(), 1001).unwrap(),
+            vec![
+                json!({ "derived_table": "facts", "derived_id": "10" }),
+                json!({ "derived_table": "pages", "derived_id": "9" }),
+            ]
+        );
+        assert_eq!(hop(&store, both.clone(), 1).unwrap().len(), 1);
+        assert_eq!(hop(&store, both.clone(), 0).unwrap(), Vec::<Value>::new());
+        assert!(hop(&store, both, -1).is_err());
+        assert_eq!(hop(&store, json!([]), 1).unwrap(), Vec::<Value>::new());
+        assert!(hop(&store, json!([{ "table": "pages", "id": "1\u{0}" }]), 1).is_err());
+        // No inputs writes nothing.
+        record(&store, Some("default"), ("pages", "11".into()), &[]);
+        assert_eq!(store.derivation_rows().unwrap().len(), 3);
+    }
+
+    /// A source delete removes that source's edges and their index rows; an edge with another
+    /// source or none stays (`derivation_inputs.source_id -> sources ON DELETE CASCADE`).
+    #[test]
+    fn a_source_delete_removes_its_derivation_inputs() {
+        let store = crate::test_support::store();
+        let source: crate::sources::SourceInput =
+            serde_json::from_value(json!({ "id": "side", "config": {} })).unwrap();
+        store.upsert_source(&source).unwrap();
+        record(
+            &store,
+            Some("side"),
+            ("pages", "2".into()),
+            &[("pages", "1".into())],
+        );
+        record(
+            &store,
+            Some("default"),
+            ("pages", "3".into()),
+            &[("pages", "1".into())],
+        );
+        record(
+            &store,
+            None,
+            ("pages", "4".into()),
+            &[("pages", "1".into())],
+        );
+        store
+            .write(|tx| crate::cascade::remove_source_rows(tx, "side"))
+            .unwrap();
+        let rows = store.derivation_rows().unwrap();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().all(|r| r[4] != json!("side")));
+        let ids: Vec<Value> = hop(&store, json!([{ "table": "pages", "id": "1" }]), 10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r["derived_id"].clone())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![json!("3"), json!("4")],
+            "the index row of a removed edge goes too"
+        );
     }
 
     #[test]

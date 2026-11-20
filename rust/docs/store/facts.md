@@ -1150,6 +1150,19 @@ no caller depends on that order. `now()` is the store's clock.
 | `readDeletedPageBody(sourceId, slug)` | `{ compiled_truth, timeline, body_storage }` of the coordinate's soft-deleted page; null when the page is live or missing. |
 | `expireFactsByIds(sourceId, ids)` | Expires the unexpired rows of the source among `ids` now; `{ id }` of each row it expired, by id. |
 
+## Derivation inputs (`generations/derivation_inputs.rs`)
+
+`recordDerivationEdges` (the store method is `recordDerivationInputs`) keeps each `derived <- input` edge once
+(`ON CONFLICT DO NOTHING`) under `h 0x0A` (by derived row), with its mirror under `h 0x0B` (by input row). A source
+delete removes that source's edges; an edge with no source stays. `listDerivedRows` reads one hop from the input
+index: the distinct derived rows of the frontier, in byte order of (derived_table, derived_id), at most `limit`. A NUL
+in a table or id is `invalid_argument`, as is a negative limit. The SQL is in `src/core/engine-sql/facts-trust.ts`.
+
+This line ports lane 7's `derivation_inputs.rs` (rust-engine/derivation-trust, `02492fa7e6`) without the owner-only
+lineage walk: `inputs_of`, `lineage_reaches`, `lineage_owner_only` and `timeline_entry_page` are cut, so the owner-only
+`fn` test does not read these edges yet (page-visibility.md). The derivation-trust branch lands first; at the merge,
+the trunk takes its file, which holds everything here.
+
 ## Not modeled
 
 The write-attribution trigger. Inputs whose PGLite outcome the store cannot

@@ -7,6 +7,9 @@
  * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `recordDerivationEdges` and `listDerivedRows` (src/core/engine-sql/facts-trust.ts) write and walk one hop of the store's
+ * `derivation_inputs` rows (generations/derivation_inputs.rs, keys `h 0x0A` and `h 0x0B`); the store calls the write
+ * `recordDerivationInputs`.
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
  * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
  * (private-provenance.ts).
@@ -95,3 +98,14 @@ export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain
 
 export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
   storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));
+
+/** Each edge goes to the store as `{ table, id }`; the store keeps it once, as `ON CONFLICT DO NOTHING` does. */
+export const recordDerivationEdges: Member<'recordDerivationEdges'> = (brain, derived, sourceId, edges) =>
+  storeCall({ member: 'recordDerivationEdges' }, async () => {
+    await brain.recordDerivationInputs({
+      derived: { table: derived.table, id: derived.id }, sourceId, inputs: edges.map((e) => ({ table: e.table, id: e.id })) });
+  });
+
+export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) =>
+  storeCall({ member: 'listDerivedRows' }, () => brain.listDerivedRows({
+    frontier: frontier.map((f) => ({ table: f.table, id: f.id })), limit }));
