@@ -1,6 +1,6 @@
 /**
  * GST-3216 PR 2: connector pages mark the owner's turns only from the provider's own signal: iMessage's is-from-me
- * flag (label "Me"), Gmail's SENT label or one of the account's addresses. The owner label must be unique on the page,
+ * flag (label "Me") and Gmail's SENT label, never a From line the sender sets. The owner label must be unique on the page,
  * and the source must be one person's (bound to one member, or the owner's on a brain no other person shares).
  * Meetings get no marker: a recorder's speaker label that matches the account owner does not prove who spoke.
  * Repo-less PGLite, plus Postgres when DATABASE_URL is set.
@@ -34,8 +34,8 @@ const ACCOUNT = 'owner@example.com';
 const mail = (id: string, from: string, fromAddress: string, labelIds: string[] = ['INBOX']): GmailMessageMeta => ({
   id: `m${id}`.padEnd(12, '0'), threadId: 't1', from, fromAddress, to: [ACCOUNT], cc: [], subject: 'Plans', dateIso: `2026-04-0${id}T10:00:00.000Z`,
   internalDateMs: 0, labelIds, listUnsubscribe: false, bodyText: `message ${id}` } as GmailMessageMeta);
-const marker = (messages: GmailMessageMeta[], member: string | null = null, addresses = [ACCOUNT]) => {
-  const page = renderThreadPage({ threadId: 't1', account: ACCOUNT, messages }, { stamp: { member }, addresses: new Set(addresses) })!;
+const marker = (messages: GmailMessageMeta[], member: string | null = null) => {
+  const page = renderThreadPage({ threadId: 't1', account: ACCOUNT, messages }, { member })!;
   const line = page.markdown.split('\n').find(l => l.startsWith('speaker_owner: '));
   return line ? JSON.parse(line.slice('speaker_owner: '.length)) : undefined;
 };
@@ -46,9 +46,9 @@ describe('Gmail thread pages', () => {
       .toEqual({ label: 'Owner Example <owner@example.com>', basis: 'gmail_sent', turns: 1, member: 'alice-example' });
   });
 
-  test('a message from one of the account\'s addresses without SENT counts on the account basis', () => {
-    expect(marker([mail('1', 'Owner Example <alias@example.com>', 'alias@example.com'), mail('2', 'Bob Example <bob@example.com>', 'bob@example.com')], null, [ACCOUNT, 'alias@example.com']))
-      .toEqual({ label: 'Owner Example <alias@example.com>', basis: 'provider_account', turns: 1 });
+  test('an inbound message whose From line copies the owner\'s address is not an owner turn', () => {
+    expect(marker([mail('1', 'Owner Example <owner@example.com>', ACCOUNT), mail('2', 'Bob Example <bob@example.com>', 'bob@example.com')])).toBeUndefined();
+    expect(marker([mail('1', 'Owner Example <owner@example.com>', ACCOUNT, ['SENT']), mail('2', 'Owner Example <owner@example.com>', ACCOUNT)])).toBeUndefined();
   });
 
   test('two From lines for the owner, or another sender under the owner\'s From line: speaker-unknown', () => {

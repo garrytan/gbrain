@@ -208,7 +208,7 @@ async function processThread(
     if (!page) return null;
   }
   const ownerStamp = await connectorSpeakerOwnerStamp(deps.engine, deps.sourceId);
-  const rendered = renderThreadPage(thread, ownerStamp ? { stamp: ownerStamp, addresses: myAddressSet(deps.entry) } : undefined);
+  const rendered = renderThreadPage(thread, ownerStamp ?? undefined);
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;

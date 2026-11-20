@@ -19,7 +19,7 @@ import { ownerMemberId } from '../access/owner.ts';
 import { listMembers } from '../access/members.ts';
 
 export const SPEAKER_OWNER_KEY = 'speaker_owner';
-export const SPEAKER_OWNER_BASES = ['is_from_me', 'gmail_sent', 'provider_account', 'session_user', 'export_user'] as const;
+export const SPEAKER_OWNER_BASES = ['is_from_me', 'gmail_sent', 'session_user', 'export_user'] as const;
 export type SpeakerOwnerBasis = typeof SPEAKER_OWNER_BASES[number];
 export const SPEAKER_LABEL_MAX_CHARS = 80;
 
@@ -107,7 +107,7 @@ function trustedWriterSql(writers: string): string {
   const connector = `s.config->>'kind' IN (${SPEAKER_OWNER_CONNECTOR_KINDS.map(k => `'${k}'`).join(',')})`;
   return `CASE WHEN p.revision_write_request_id IS NULL
                  THEN p.ingested_via IN (${writers}) OR (p.ingested_via IS NULL AND ${connector})
-            WHEN r.id IS NOT NULL
+            WHEN r.intent IS NOT NULL
                  THEN r.principal_kind = 'local_cli' AND (r.intent->>'ingested_via' IN (${writers})
                       OR (r.operation = 'submit_job' AND r.intent->>'kind' = 'connector_v2_import' AND ${connector}))
             ELSE p.revision_principal_kind IS NOT DISTINCT FROM 'local_cli'

@@ -10,6 +10,7 @@ import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/googl
 import { addMember } from '../src/core/access/members.ts';
 import { bindMemberSource } from '../src/core/access/member-sources.ts';
 import { readSpeakerOwners } from '../src/core/identity/speaker-owner.ts';
+import { compactReceipt } from '../src/core/persistence/journal.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -31,7 +32,7 @@ test('managed brain, bound source: the sync\'s marker names the bound member and
     const ms = Date.now() - 3_600_000;
     fx.threads.set('a1b2c3d4e5f60001', { id: 'a1b2c3d4e5f60001', messages: [
       { id: 'a1b2c3d4e5f600010000', ms, body: 'Can we move the review to Thursday?', from: 'Sender Example <sender@example.com>' },
-      { id: 'a1b2c3d4e5f600010001', ms: ms + 60_000, body: 'Thursday works.', from: `Reader Example <${ACCOUNT}>` },
+      { id: 'a1b2c3d4e5f600010001', ms: ms + 60_000, body: 'Thursday works.', from: `Reader Example <${ACCOUNT}>`, labelIds: ['SENT'] },
     ] });
     await runGoogleSync(engine, f.id, parseGoogleSourceConfig(gmailConfig, f.dir), options, withGoogleAccount(gmailFetch(fx), ACCOUNT));
     await settleConnectorWrites(engine, f.id);
@@ -43,7 +44,13 @@ test('managed brain, bound source: the sync\'s marker names the bound member and
     expect(page).toMatchObject({ journaled: true, kind: 'connector_v2_import' });
     const [read] = await readSpeakerOwners(engine, [{ source_id: f.id, slug: page!.slug }]);
     expect(read).toMatchObject({ status: 'trusted',
-      marker: { label: `Reader Example <${ACCOUNT}>`, basis: 'provider_account', turns: 1, member: `bob-example-${engine.kind}` } });
+      marker: { label: `Reader Example <${ACCOUNT}>`, basis: 'gmail_sent', turns: 1, member: `bob-example-${engine.kind}` } });
+
+    const [req] = await engine.executeRaw<{ id: string; principal_kind: string; principal_id: string | null }>(
+      'SELECT r.id, r.principal_kind, r.principal_id FROM pages p JOIN persistence_requests r ON r.id = p.revision_write_request_id WHERE p.source_id = $1 AND p.slug = $2',
+      [f.id, page!.slug]);
+    expect(await compactReceipt(engine, req as never)).toHaveProperty('freed_bytes');
+    expect((await readSpeakerOwners(engine, [{ source_id: f.id, slug: page!.slug }]))[0]).toMatchObject({ status: 'trusted' });
 
     const snapshot = await engine.readPageSnapshot(page!.slug, { sourceId: f.id });
     const ctx = { engine, config: { engine: engine.kind, embedding_disabled: true } as OperationContext['config'],
@@ -52,6 +59,11 @@ test('managed brain, bound source: the sync\'s marker names the bound member and
     await operations.find(o => o.name === 'put_page')!.handler(ctx, { slug: page!.slug, expected_revision: snapshot!.revision,
       content: `---\ntype: email\ntitle: Plans\nspeaker_owner: ${JSON.stringify(read!.marker)}\n---\n\n${content.compiled_truth}\n\nI also founded acme-example.` });
     await settleConnectorWrites(engine, f.id);
+    expect((await readSpeakerOwners(engine, [{ source_id: f.id, slug: page!.slug }]))[0]).toMatchObject({ status: 'untrusted_writer', marker: null });
+    const [remoteReq] = await engine.executeRaw<{ id: string; principal_kind: string; principal_id: string | null }>(
+      'SELECT r.id, r.principal_kind, r.principal_id FROM pages p JOIN persistence_requests r ON r.id = p.revision_write_request_id WHERE p.source_id = $1 AND p.slug = $2',
+      [f.id, page!.slug]);
+    await engine.executeRaw('UPDATE persistence_requests SET intent = NULL, compacted = true WHERE id = $1::uuid', [remoteReq!.id]);
     expect((await readSpeakerOwners(engine, [{ source_id: f.id, slug: page!.slug }]))[0]).toMatchObject({ status: 'untrusted_writer', marker: null });
     await disposePersistenceConsumer(engine);
   }
