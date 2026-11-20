@@ -237,6 +237,8 @@ test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
+test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts
+test/engine-parity/tie-purge-files-links-facts.test.ts
 test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/transaction-settings.test.ts
@@ -817,6 +819,7 @@ test/search/rerank-gate-telemetry.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
+test/serve-http-admin-tie-breaks.test.ts
 test/serve-http-memory-proposals.test.ts
 test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
