@@ -577,12 +577,13 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
+/// The redirect rows and page-alias rows of `alias_target_rows`, each as `(source, slug)`.
+pub(crate) type AliasTargetRows = (Vec<(String, String)>, Vec<(String, String)>);
+
 /// The `(source, canonical_slug)` of every `slug_aliases` row and the `(source, slug)` of every
 /// `page_aliases` row (one per row, any origin): the pages the alias rows name, for the repair
 /// scans that look for rows whose page is gone (`repair_reads`).
-pub(crate) fn alias_target_rows(
-    read: &dyn KvRead,
-) -> Result<(Vec<(String, String)>, Vec<(String, String)>)> {
+pub(crate) fn alias_target_rows(read: &dyn KvRead) -> Result<AliasTargetRows> {
     let mut redirects = Vec::new();
     let mut failure = None;
     scan_prefix(read, &[keys::ALIAS, SLUG_ALIAS], false, &mut |k, v| {
