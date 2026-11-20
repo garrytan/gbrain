@@ -51,6 +51,22 @@ The caller imports the relations in this order (`seed::RELATIONS`), because a ro
 
 A row whose source or page is missing is `source_not_found` or `page_not_found`.
 
+## Primary tables the seed does not copy
+
+The seed copies only the relations in `seed::RELATIONS`, plus the `page_projection_jobs` row that each `pages` row
+carries. It reads no other primary table, so nothing in those tables carries into the store:
+
+- `minion_jobs`, with `minion_inbox`, `minion_attachments` and the other `minion_*` logs. A Postgres brain of an older
+  release can hold budget-owner rows in `minion_jobs`; none of them carry, and checks before an engine swap must
+  account for that.
+- Body segments: `page_segment_texts`, `page_body_manifest`, `page_segment_derivations` and the `page_body_staging*`
+  tables (see `segmented_body` below).
+- History and audit: `page_versions`, `slug_rename_history`, the `*_purges`, `fact_withdrawals` and `belief_*` tables.
+- The persistence write path: the `persistence_*` tables, `write_gate_*`, `page_write_guards`.
+- Access and credentials: `access_*`, `oauth_*`, `secret_store*`.
+- Queues, caches, telemetry and every other table not named in the relation table above (for example `files`,
+  `raw_data`, `open_loops`, `retrieval_*`, `eval_*`, `decide_*`, `wake_*`, `shared_skill_*`).
+
 ## What the seed does not keep
 
 Nothing is dropped silently. `unmapped_columns` names each column that held a value other than its default in some
