@@ -150,6 +150,7 @@ test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-card-option-reads.test.ts
+test/engine-parity/entity-card-timeline.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
