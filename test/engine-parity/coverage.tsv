@@ -279,8 +279,8 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
-readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
-readPageBodySizes	large_page	yes	1	no	yes	yes	serves
+readStoredBodyBytes	large_page	yes	1	no	yes	yes	refuses:pages
+readPageBodySizes	large_page	yes	1	no	yes	yes	refuses:pages
 readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves

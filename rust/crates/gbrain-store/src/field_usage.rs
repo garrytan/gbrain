@@ -23,6 +23,11 @@ pub struct FieldUsageQuery {
     pub source_id: Option<String>,
     pub max_types: Option<f64>,
     pub sample_per_type: Option<f64>,
+    /// One page type; absent reads every type.
+    #[serde(rename = "type")]
+    pub page_type: Option<String>,
+    /// True answers the types and counts with no sampled pages.
+    pub counts_only: Option<bool>,
 }
 
 /// A count bound as the PGLite read binds it: `Math.floor`, at least `min`.
@@ -37,11 +42,16 @@ impl Store {
     /// `readFieldUsageSamples(query)`: the live page types of the scope with their page counts,
     /// most pages first, ties in byte order (`COLLATE "C"`), at most `maxTypes`; per type, the
     /// frontmatter and compiled_truth of at most `samplePerType` (at least 1) live pages in page id
-    /// order. The answer carries no page id.
+    /// order. The answer carries no page id. `type` narrows the read to one type; `countsOnly`
+    /// answers no sampled pages.
     pub fn read_field_usage_samples(&self, query: &FieldUsageQuery) -> Result<Value> {
         let source = query.source_id.as_deref().filter(|s| !s.is_empty());
         let max_types = limit(query.max_types, 0);
-        let sample = limit(query.sample_per_type, 1);
+        let sample = if query.counts_only == Some(true) {
+            0
+        } else {
+            limit(query.sample_per_type, 1)
+        };
         let read = self.read()?;
         let mut by_type: BTreeMap<String, Vec<PageRecord>> = BTreeMap::new();
         for page in all_pages(&*read)? {
@@ -49,6 +59,13 @@ impl Store {
                 continue;
             }
             if source.is_some_and(|s| page.source_id != s) {
+                continue;
+            }
+            if query
+                .page_type
+                .as_deref()
+                .is_some_and(|t| page.page_type != t)
+            {
                 continue;
             }
             by_type
@@ -103,6 +120,7 @@ mod tests {
             source_id: None,
             max_types: Some(max_types),
             sample_per_type: Some(sample),
+            ..FieldUsageQuery::default()
         }
     }
 
@@ -135,5 +153,34 @@ mod tests {
         );
         let zero = s.read_field_usage_samples(&query(0.0, 0.0)).unwrap();
         assert_eq!(zero, json!([]));
+    }
+
+    #[test]
+    fn one_type_or_counts_only() {
+        let s = store();
+        put(&s, "notes/a", "alpha", json!({ "k": 2 }));
+        put(&s, "people/p1", "person", json!({ "n": 1 }));
+        put(&s, "people/p2", "person", json!({ "n": 2 }));
+        let counts = s
+            .read_field_usage_samples(&FieldUsageQuery {
+                counts_only: Some(true),
+                ..query(50.0, 10.0)
+            })
+            .unwrap();
+        assert_eq!(
+            counts,
+            json!([{ "type": "person", "pages": 2, "rows": [] }, { "type": "alpha", "pages": 1, "rows": [] }])
+        );
+        let one = s
+            .read_field_usage_samples(&FieldUsageQuery {
+                page_type: Some("alpha".into()),
+                ..query(1.0, 10.0)
+            })
+            .unwrap();
+        assert_eq!(
+            one,
+            json!([{ "type": "alpha", "pages": 1,
+                "rows": [{ "frontmatter": { "k": 2 }, "compiled_truth": "notes/a body" }] }])
+        );
     }
 }

@@ -8,7 +8,10 @@
  *    statement that reads the pages table with the Rust engine's refusal.
  *  - Why existing coverage misses it: test/schema-field-usage.test.ts runs the report on a plain PGLite engine, where
  *    the raw statements succeed.
- *  - Seam: a real PGLite brain behind a Proxy that refuses raw SQL on the pages table only.
+ *  - Memory: runFieldUsage reads the type counts with no samples, then one type's sample per call, as master did, so
+ *    it never holds every type's page bodies at once. A caller that reads every type's sample in one call fails here.
+ *  - Seam: a real PGLite brain behind a Proxy that refuses raw SQL on the pages table only and records each
+ *    readFieldUsageSamples answer.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -18,6 +21,7 @@ import { runFieldUsage } from '../src/core/schema-pack/field-usage.ts';
 
 let pglite: PGLiteEngine;
 let rawPageStatements = 0;
+const answers: Array<{ query: Record<string, unknown>; types: number; rows: number }> = [];
 
 beforeAll(async () => {
   pglite = new PGLiteEngine();
@@ -40,6 +44,13 @@ function noRawPages(): BrainEngine {
           return target.executeRaw(sql, params);
         };
       }
+      if (prop === 'readFieldUsageSamples') {
+        return async (query: Parameters<BrainEngine['readFieldUsageSamples']>[0]) => {
+          const out = await target.readFieldUsageSamples(query);
+          answers.push({ query: { ...query }, types: out.length, rows: out.reduce((n, t) => n + t.rows.length, 0) });
+          return out;
+        };
+      }
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -57,6 +68,9 @@ describe('schema detect --fields runs on a typed member', () => {
     const report = await runFieldUsage(noRawPages(), { sourceId: 'default' });
     expect(rawPageStatements).toBe(0);
     expect(report.map((t) => `${t.type}:${t.pages}:${t.sampled}`)).toEqual(['person:4:4', 'company:1:1']);
+    // One counts-only read, then one read per type that holds only that type's sample.
+    expect(answers.map((a) => `${a.query.type ?? '*'}:${a.query.countsOnly === true ? 'counts' : 'sample'}:${a.types}:${a.rows}`))
+      .toEqual(['*:counts:2:0', 'person:sample:1:4', 'company:sample:1:1']);
     const [person] = report;
     expect(person).toMatchObject({ required: ['company', 'works_at ->'], optional: ['role', '[preference]'] });
   });
