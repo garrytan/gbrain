@@ -14,7 +14,7 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { basename, join, relative } from 'path';
 import { findResolverFile, findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
 import type { SkillsDirSource } from './repo-root.ts';
-import { loadOrDeriveManifest } from './skill-manifest.ts';
+import { loadOrDeriveManifest, type ManifestEntry } from './skill-manifest.ts';
 import {
   indexResolverTriggers,
   lintRoutingFixtures,
@@ -299,6 +299,28 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
   return refs;
 }
 
+/**
+ * A manifest entry whose SKILL.md is gone is a missing file, not an
+ * unreachable skill (GST-3155). Pushes one missing_file error per such entry
+ * and returns their resolver-form paths (`skills/<path>`).
+ */
+function reportMissingManifestFiles(skillsDir: string, manifest: ManifestEntry[], issues: ResolvableIssue[]): Set<string> {
+  const missing = new Set<string>();
+  for (const skill of manifest) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir; manifest paths are only probed for existence
+    if (existsSync(join(skillsDir, skill.path))) continue;
+    missing.add(`skills/${skill.path}`);
+    issues.push({
+      type: 'missing_file',
+      severity: 'error',
+      skill: skill.name,
+      message: `manifest.json lists '${skill.name}' at '${skill.path}' but the file doesn't exist`,
+      action: `Restore 'skills/${skill.path}' or remove its entry from manifest.json`,
+    });
+  }
+  return missing;
+}
+
 // ---------------------------------------------------------------------------
 // Main function
 // ---------------------------------------------------------------------------
@@ -379,11 +401,9 @@ export function checkResolvable(
   // decision yet), THEN decide how to grade the unreachable ones using the
   // final tally, THEN construct issues. This lets the severity call factor
   // in how SPARSE trigger coverage is across the whole directory, not just
-  // whether this one skill has a trigger. A manifest entry whose file is
-  // gone is a missing file, not an unreachable skill (GST-3155).
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir; manifest paths are only probed for existence
-  const manifestMissing = manifest.filter(skill => !existsSync(join(skillsDir, skill.path)));
-  const resolved = manifest.filter(skill => !manifestMissing.includes(skill)).map(skill => {
+  // whether this one skill has a trigger.
+  const manifestMissingPaths = reportMissingManifestFiles(skillsDir, manifest, issues);
+  const resolved = manifest.filter(skill => !manifestMissingPaths.has(`skills/${skill.path}`)).map(skill => {
     const expectedPath = `skills/${skill.path}`;
     if (resolverSkillPaths.has(expectedPath)) return { skill, reachable: true };
     // Also check if the skill name appears in any resolver entry
@@ -455,16 +475,6 @@ export function checkResolvable(
   // Missing files are likewise one issue per SKILL PATH, not per trigger row
   // (a skill with six triggers is one missing file, not six).
   const missingFiles = new Map<string, string>();
-  for (const skill of manifestMissing) {
-    issues.push({
-      type: 'missing_file',
-      severity: 'error',
-      skill: skill.name,
-      message: `manifest.json lists '${skill.name}' at '${skill.path}' but the file doesn't exist`,
-      action: `Restore '${join(skillsDir, skill.path)}' or remove its entry from manifest.json`,
-    });
-  }
-  const manifestMissingPaths = new Set(manifestMissing.map(s => `skills/${s.path}`));
   for (const entry of triggerEntries) {
     if (entry.isGStack) continue;
 
@@ -475,8 +485,7 @@ export function checkResolvable(
 
     if (!existsSync(fullPath) && !manifestMissingPaths.has(entry.skillPath)) missingFiles.set(entry.skillPath, fullPath);
 
-    // Check if in manifest. manifest.json keys a skill by its frontmatter
-    // name, which can differ from its folder, so match the path too.
+    // manifest.json stores the frontmatter name, which can differ from the folder.
     const skillName = relPath.replace(/\/SKILL\.md$/, '');
     const inManifest = manifest.some(s => s.path === relPath || s.name === skillName);
     if (!inManifest && existsSync(fullPath)) {
