@@ -1,6 +1,6 @@
 /**
- * Contradiction-probe members (BrainEngine writeContradictionsRun, loadContradictionsTrend, getContradictionCacheEntry,
- * putContradictionCacheEntry, sweepContradictionCache), and listLinkContexts, the link contexts the edge-contradictions
+ * Contradiction-probe members (BrainEngine writeContradictionsRun, loadContradictionsTrend,
+ * readLastContradictionsPromptVersion, getContradictionCacheEntry, putContradictionCacheEntry, sweepContradictionCache), and listLinkContexts, the link contexts the edge-contradictions
  * phase quotes to its judge (src/core/engine-sql/contradictions-cycle.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -17,6 +17,9 @@ export const loadContradictionsTrend: Member<'loadContradictionsTrend'> = async 
   // PGLite parses ran_at into a Date and prints it with toISOString (millisecond precision).
   return rows.map((row) => ({ ...row, ran_at: new Date(row.ran_at).toISOString() }));
 };
+
+export const readLastContradictionsPromptVersion: Member<'readLastContradictionsPromptVersion'> = (brain) =>
+  storeCall({ member: 'readLastContradictionsPromptVersion' }, () => brain.readLastContradictionsPromptVersion());
 
 export const getContradictionCacheEntry: Member<'getContradictionCacheEntry'> = (brain, key) =>
   storeCall({ member: 'getContradictionCacheEntry' }, () => brain.getContradictionCacheEntry(key));

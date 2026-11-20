@@ -57,5 +57,5 @@ Rust store serves them from `rust/crates/gbrain-store/src/edge_proposals.rs`; th
 - Groups that tie on their newest `refreshed_at` are cut by `maxSubjects` in `(source_id, from_page_id, link_type)`
   order. Postgres names no order for such ties.
 - A record refused for an unknown status draws no id on the store; Postgres draws one before the check fails.
-- `readLastContradictionsPromptVersion` belongs to the same capability and is not served, so the store does not
-  report `contradictions`.
+- `readLastContradictionsPromptVersion` belongs to the same capability and is served (`contradictions.md`), so the
+  store reports `contradictions`.

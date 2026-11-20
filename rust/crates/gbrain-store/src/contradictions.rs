@@ -1,8 +1,8 @@
 //! Contradiction-probe runs and the judge cache: the `eval_contradictions_runs` and
 //! `eval_contradictions_cache` tables of the PGLite engine.
 //!
-//! Members: writeContradictionsRun, loadContradictionsTrend, getContradictionCacheEntry,
-//! putContradictionCacheEntry, sweepContradictionCache, and listLinkContexts (the link contexts
+//! Members: writeContradictionsRun, loadContradictionsTrend, readLastContradictionsPromptVersion,
+//! getContradictionCacheEntry, putContradictionCacheEntry, sweepContradictionCache, and listLinkContexts (the link contexts
 //! the edge-contradictions phase quotes to its judge, read from the link records of links.rs).
 //!
 //! Keys (every one starts with `keys::CONTRADICTIONS`, `Q`):
@@ -328,6 +328,33 @@ impl Store {
             rows.push(record.to_json());
         }
         Ok(rows)
+    }
+
+    /// `readLastContradictionsPromptVersion()`: the `prompt_version` of the newest run
+    /// (`ORDER BY ran_at DESC LIMIT 1`), `None` before any run. Runs that tie on `ran_at` go to
+    /// the largest `run_id` in byte order; Postgres names no order for such ties.
+    pub fn read_last_contradictions_prompt_version(&self) -> Result<Option<String>> {
+        let read = self.read()?;
+        let mut newest = None;
+        scan_prefix(
+            &*read,
+            &[keys::CONTRADICTIONS, RUN_BY_TIME],
+            true,
+            &mut |k, _| {
+                newest = Some(String::from_utf8_lossy(&k[10..]).into_owned());
+                false
+            },
+        )?;
+        let Some(id) = newest else {
+            return Ok(None);
+        };
+        let record: RunRecord = get_json(&*read, &run_key(&id))?.ok_or_else(|| {
+            StoreError::new(
+                crate::error::STORE_CORRUPT,
+                format!("contradiction run index names a missing run {id:?}"),
+            )
+        })?;
+        Ok(Some(record.prompt_version))
     }
 
     /// `getContradictionCacheEntry(key)`: the verdict of a live entry (`expires_at > now`), else

@@ -90,10 +90,10 @@ transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	128	yes	yes	yes	serves
-readPageSnapshot	pages	yes	31	no	yes	yes	serves
+readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	550	yes	yes	yes	serves
+putPage	pages	yes	551	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -165,7 +165,7 @@ applyLinkTemporalRows	link_temporal	yes	1	no	yes	yes	serves
 writeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
-edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
+edgeValidityCounts	link_temporal	yes	2	no	yes	yes	serves
 listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
 countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
@@ -232,7 +232,7 @@ listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	110	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
-replaceDerivedLinks	links	yes	13	no	yes	yes	serves
+replaceDerivedLinks	links	yes	14	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
@@ -305,7 +305,7 @@ upsertCliFileRow	raw_files	yes	3	no	yes	yes	serves
 upsertRawFileRow	raw_files	yes	2	no	yes	yes	serves
 upsertSyncFileRow	raw_files	yes	2	no	yes	yes	serves
 sourceIdExists	raw_files	yes	2	no	yes	yes	serves
-readPageIdInSource	raw_files	yes	9	no	yes	yes	serves
+readPageIdInSource	raw_files	yes	10	no	yes	yes	serves
 readFileOwner	raw_files	yes	2	no	yes	yes	serves
 claimFilePage	raw_files	yes	2	no	yes	yes	serves
 upsertOpFileRow	raw_files	yes	3	no	yes	yes	serves
@@ -386,7 +386,7 @@ sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 listEdgeContradictionCandidates	contradictions	yes	4	no	yes	yes	serves
 listKnownEdgeProposals	contradictions	yes	4	no	yes	yes	serves
 listLinkContexts	contradictions	yes	5	no	yes	yes	serves
-recordEdgeProposal	contradictions	yes	4	no	yes	yes	serves
+recordEdgeProposal	contradictions	yes	5	no	yes	yes	serves
 readEdgeProposal	contradictions	yes	4	no	yes	yes	serves
 edgeClosureLanded	contradictions	yes	3	no	yes	yes	serves
 readEdgeProposalEvidence	contradictions	yes	3	no	yes	yes	serves
@@ -398,7 +398,7 @@ markEdgeProposalUndone	contradictions	yes	2	no	yes	yes	serves
 markRevertedEdgeProposals	contradictions	yes	4	no	yes	yes	serves
 listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
-readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
+readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	112	yes	yes	yes	serves
 insertFacts	facts	yes	137	no	yes	yes	serves
@@ -458,7 +458,7 @@ replaceDerivedAliases	sync_aliases	yes	11	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	22	no	yes	yes	serves
+getConfig	config	yes	23	no	yes	yes	serves
 setConfig	config	yes	33	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves

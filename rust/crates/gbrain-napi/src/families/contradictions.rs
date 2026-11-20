@@ -38,6 +38,16 @@ impl Brain {
         self.run(env, move |s| s.load_contradictions_trend(days))
     }
 
+    /// `readLastContradictionsPromptVersion()`: resolves the prompt version of the newest run, or
+    /// null before any run.
+    #[napi]
+    pub fn read_last_contradictions_prompt_version<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_last_contradictions_prompt_version())
+    }
+
     /// `getContradictionCacheEntry(key)`: resolves the live verdict or null.
     #[napi]
     pub fn get_contradiction_cache_entry<'env>(

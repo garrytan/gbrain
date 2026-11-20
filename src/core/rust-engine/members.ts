@@ -785,9 +785,9 @@ export const RUST_ENGINE_MEMBERS = {
 
   // contradictions: the edge-contradictions phase, the scoped reader and the eval reads (engine-sql/contradictions-cycle.ts).
   // The edge-proposal ledger (link_edge_proposals), the phase's candidate scan and its closure check belong to the phase
-  // and are served (store-members/edge-proposals.ts). 'contradictions' stays unreported while
-  // readLastContradictionsPromptVersion refuses. listLinkContexts is a plain read of the links table and is served, so
-  // 'links' stays reported (test/rust-engine-capability-classes.test.ts).
+  // and are served (store-members/edge-proposals.ts), as is readLastContradictionsPromptVersion
+  // (store-members/contradictions.ts), so 'contradictions' is reported. listLinkContexts is a plain read of the links
+  // table and is served, so 'links' stays reported (test/rust-engine-capability-classes.test.ts).
   listEdgeContradictionCandidates: 'contradictions',
   listKnownEdgeProposals: 'contradictions',
   listLinkContexts: 'links',

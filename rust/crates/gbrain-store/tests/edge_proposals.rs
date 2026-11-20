@@ -6,7 +6,7 @@ mod memory_env;
 use gbrain_store::edge_proposals::{EdgeCandidateQuery, EdgeProposalInput};
 use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::extraction::ExtractedRef;
-use gbrain_store::link_queries::{ApplyTemporalInput, StateWrite};
+use gbrain_store::link_queries::{ApplyTemporalInput, EdgeValidityInput, StateWrite};
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use memory_env::{Brain, brain};
@@ -235,6 +235,41 @@ fn statuses_move_and_only_an_open_proposal_is_rejected() {
     b.mark_edge_proposal_undone(id).unwrap();
     assert_eq!(status(&b), "undone");
     assert!(!b.reject_open_edge_proposal(99.0).unwrap());
+}
+
+#[test]
+fn edge_validity_counts_the_proposals_by_status_within_the_source_scope() {
+    let b = brain("edge-validity-proposals");
+    let alice = page(&b, "people/alice", "person");
+    let acme = page(&b, "companies/acme", "company");
+    let widget = page(&b, "companies/widget", "company");
+    for (hash, status) in [
+        ("e1", "proposed"),
+        ("e2", "proposed"),
+        ("e3", "undated_unresolved"),
+        ("e4", "applied"),
+        ("e5", "rejected"),
+    ] {
+        b.record_edge_proposal(&proposal(alice, acme, widget, hash, status))
+            .unwrap()
+            .unwrap();
+    }
+    let counts = |scope: Value| {
+        let input: EdgeValidityInput = de(json!({ "sourceIds": scope, "staleLimit": 21 }));
+        serde_json::to_value(b.edge_validity_counts(&input).unwrap()).unwrap()["proposals"].clone()
+    };
+    assert_eq!(
+        counts(Value::Null),
+        json!({"proposed": 2, "undated": 1, "applied": 1})
+    );
+    assert_eq!(
+        counts(json!(["default"])),
+        json!({"proposed": 2, "undated": 1, "applied": 1})
+    );
+    assert_eq!(
+        counts(json!(["elsewhere"])),
+        json!({"proposed": 0, "undated": 0, "applied": 0})
+    );
 }
 
 #[test]

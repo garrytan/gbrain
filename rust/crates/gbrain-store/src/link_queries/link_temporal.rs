@@ -441,7 +441,7 @@ pub struct StaleAssertion {
     pub ended: Option<String>,
 }
 
-/// Contradiction proposal counts. The store keeps no proposals, so they are zero.
+/// Contradiction proposal counts by status, from edge_proposals.rs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProposalCounts {
     pub proposed: u64,
@@ -1571,8 +1571,8 @@ impl Store {
         Ok(out)
     }
 
-    /// `edgeValidityCounts`: relationship counts by status and the pages that still state an
-    /// ended relationship, newest end first.
+    /// `edgeValidityCounts`: relationship counts by status, the pages that still state an ended
+    /// relationship, newest end first, and the contradiction proposals by status.
     pub fn edge_validity_counts(&self, input: &EdgeValidityInput) -> Result<EdgeValidityCounts> {
         let read = self.read()?;
         let read = &*read;
@@ -1636,6 +1636,7 @@ impl Store {
             ));
         }
         stale.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let proposals = crate::edge_proposals::proposal_counts(read, in_scope)?;
         Ok(EdgeValidityCounts {
             by_status: counts
                 .into_iter()
@@ -1646,11 +1647,7 @@ impl Store {
                 .take(input.stale_limit as usize)
                 .map(|(_, _, s)| s)
                 .collect(),
-            proposals: ProposalCounts {
-                proposed: 0,
-                undated: 0,
-                applied: 0,
-            },
+            proposals,
         })
     }
 

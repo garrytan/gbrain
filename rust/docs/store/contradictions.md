@@ -36,17 +36,19 @@ contexts the three Postgres keeps are its own choice; the edge phase quotes them
 The twelve edge members are served: the proposal ledger, the candidate scan and the closure check live in
 `gbrain-store/src/edge_proposals.rs` (see `edge_proposals.md`). Their capability in `members.ts` stays `contradictions`.
 
-The other four are not served on Rust today: each is absent from `store-members/*`, so it refuses with
-`engine_capability_missing` naming the member. Their capability in `members.ts` is `contradictions` for
-`readLastContradictionsPromptVersion`, `chunks` for `listLiveChunksByIds`, `takes` for `listLiveTakesByIds` and
-`eval_capture` for `listEvalCandidateQueries`. Because `readLastContradictionsPromptVersion` still refuses, the Rust
-engine does not report `contradictions` (`test/rust-engine-capability-classes.test.ts`). The caller sees the refusal; no
+`readLastContradictionsPromptVersion` is served: `Store::read_last_contradictions_prompt_version` reads the run index
+by `ran_at` in reverse and answers the newest run's prompt version, null before any run. Runs that tie on `ran_at` go to
+the largest `run_id` in byte order; Postgres names no order for such ties. With it, every `contradictions` member is
+served, so the Rust engine reports `contradictions` (`test/rust-engine-capability-classes.test.ts`).
+
+The other three are not served on Rust today: each is absent from `store-members/*`, so it refuses with
+`engine_capability_missing` naming the member. Their capability in `members.ts` is `chunks` for `listLiveChunksByIds`,
+`takes` for `listLiveTakesByIds` and `eval_capture` for `listEvalCandidateQueries`. The caller sees the refusal; no
 member changes behaviour. What the store would need to serve them:
 
 | Members | Reads or writes | The store would need |
 | --- | --- | --- |
 | `listLiveChunksByIds`, `listLiveTakesByIds` | live chunks and active takes by id under the caller's page policy, the holder allow-list and a trust floor | the caller's page policy applied to the owning page; the take holder allow-list; the projection-eligibility floor |
-| `readLastContradictionsPromptVersion` | the newest `ran_at` run's prompt version | the run index by `ran_at` |
 | `listEvalCandidateQueries` | recent eval-capture queries | the capture record scan, newest first |
 
 The policy and floor text are Postgres text only; the store reads the typed arguments, never the statement.

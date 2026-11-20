@@ -32,8 +32,8 @@ use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::link_queries::link_temporal::{
-    RelationshipKey, RelationshipRecord, TransitionRecord, is_date, multirange_contains,
-    relationship,
+    ProposalCounts, RelationshipKey, RelationshipRecord, TransitionRecord, is_date,
+    multirange_contains, relationship,
 };
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
@@ -327,6 +327,32 @@ fn non_employer(q: &EdgeCandidateQuery, target: &PageRecord) -> bool {
     } else {
         q.non_employer_types.contains(&target.page_type)
     }
+}
+
+/// The proposal counts of `edgeValidityCounts`: `proposed`, `undated_unresolved` and `applied`
+/// proposals whose source passes `in_scope` (`source_id = ANY(scope)`, every source when the scope
+/// is null).
+pub(crate) fn proposal_counts(
+    read: &dyn KvRead,
+    in_scope: impl Fn(&str) -> bool,
+) -> Result<ProposalCounts> {
+    let mut counts = ProposalCounts {
+        proposed: 0,
+        undated: 0,
+        applied: 0,
+    };
+    for r in all_proposals(read)? {
+        if !in_scope(&r.source_id) {
+            continue;
+        }
+        match r.status.as_str() {
+            "proposed" => counts.proposed += 1,
+            "undated_unresolved" => counts.undated += 1,
+            "applied" => counts.applied += 1,
+            _ => {}
+        }
+    }
+    Ok(counts)
 }
 
 /// Deletes the proposals whose subject or either target is hard-deleted and clears the ending of
