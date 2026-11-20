@@ -170,6 +170,7 @@ test/engine-parity/facts.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/held-fence-cells.test.ts
+test/engine-parity/hidden-refusals-2.test.ts
 test/engine-parity/hidden-refusals.test.ts
 test/engine-parity/hot-memory-meta.test.ts
 test/engine-parity/hot-memory-watermark.test.ts

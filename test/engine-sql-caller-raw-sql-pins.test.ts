@@ -1666,6 +1666,13 @@ const PINS: Pin[] = [
        WHERE to_tsvector('english'::regconfig, h) @@ plainto_tsquery('english'::regconfig, t.term)) AS i
      FROM unnest($1::text[]) AS h`],
   },
+  {
+    from: 'src/core/search/ignored-privacy-labels.ts:179 withIgnoredPrivacyLabelNotice (the stored page; at efeb078093)',
+    case: { method: 'readLivePageFrontmatter', variant: 'default', run: e => e.readLivePageFrontmatter('default', 'people/alice-example') },
+    // The caller's NOTICE_READ_TIMEOUT_MS bound rides along: the same server-side envelope its executeRaw call sent.
+    texts: ['BEGIN READ WRITE; SET LOCAL statement_timeout = 1000',
+      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', 'COMMIT'],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */

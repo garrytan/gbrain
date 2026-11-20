@@ -271,6 +271,18 @@ export async function readIgnoredPrivacyLabelPages(exec: TimedRawRead, sourceId:
 }
 
 /**
+ * The type and frontmatter of the live page at `slug` in the source, or null (put_page's ignored-label notice reads the
+ * page it stored back, so the stored frontmatter decides). `timeoutMs` bounds the Postgres statement.
+ */
+export async function readLivePageFrontmatter(exec: TimedRawRead, sourceId: string, slug: string,
+  opts: { timeoutMs?: number } = {}): Promise<IgnoredLabelPageRow | null> {
+  const [page] = await exec.executeRaw<IgnoredLabelPageRow>(
+    'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug],
+    { timeoutMs: opts.timeoutMs ?? NOTICE_READ_TIMEOUT_MS });
+  return page ?? null;
+}
+
+/**
  * The slugs among `slugs` at which a live page sits in the source, retired or not, each once, in no set order
  * (entities/resolve.ts `tryOrgDirVariant`); `limit: 2` stops at two (`findExactBasenameCandidates`).
  */

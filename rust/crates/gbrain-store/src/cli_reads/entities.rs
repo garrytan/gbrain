@@ -400,6 +400,23 @@ impl Store {
             })
             .collect())
     }
+
+    /// `readLivePageFrontmatter(sourceId, slug)`: the type and frontmatter of the live page at the
+    /// slug in the source, or `None` when no live page sits there.
+    pub fn read_live_page_frontmatter(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<LabelPageRow>> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .into_iter()
+            .find(|p| p.source_id == source_id && p.slug == slug && p.deleted_at_us.is_none())
+            .map(|p| LabelPageRow {
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+            }))
+    }
 }
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or

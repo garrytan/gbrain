@@ -332,6 +332,38 @@ fn label_pages_carry_a_label_key_and_no_readers() {
 }
 
 #[test]
+fn live_page_frontmatter_reads_the_stored_page_or_none() {
+    let dir = TempDir::new("cli-live-frontmatter");
+    let store = seeded(&dir);
+    let row = store
+        .read_live_page_frontmatter("default", "notes/readers")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.page_type, "note");
+    assert_eq!(row.frontmatter["access"], json!("x"));
+    assert_eq!(row.frontmatter["readable_by"], json!(["a"]));
+    // Soft-deleted, missing, or in another source: no row.
+    assert!(
+        store
+            .read_live_page_frontmatter("default", "people/nc")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_live_page_frontmatter("default", "notes/ghost")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_live_page_frontmatter("other", "notes/readers")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn retirement_hop_reads_retirement_and_target() {
     let dir = TempDir::new("cli-hop");
     let store = seeded(&dir);

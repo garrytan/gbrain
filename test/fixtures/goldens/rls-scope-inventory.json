@@ -7562,6 +7562,7 @@
         "readLiveGenerationRow": "none",
         "readLiveMember": "none",
         "readLivePageBody": "none",
+        "readLivePageFrontmatter": "none",
         "readLivePageTypes": "none",
         "readLiveSlugs": "none",
         "readLocalWriterMemberGrant": "none",

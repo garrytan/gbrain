@@ -135,6 +135,13 @@ export const readEntityCardRows: StoreMember<[sourceId: string, match: EntityCar
     return storeCall({ member: 'readEntityCardRows', sourceId }, () => brain.readEntityCardRows(sourceId, wire, policy ?? null)) as Promise<EntityCardRow[]>;
   };
 
+/** The live page's type and frontmatter, or null; the store has no statement deadline, so `timeoutMs` is not read. */
+export const readLivePageFrontmatter: StoreMember<[sourceId: string, slug: string, opts?: { timeoutMs?: number }], IgnoredLabelPageRow | null> =
+  async (brain, sourceId, slug, opts) => {
+    takeOptions('readLivePageFrontmatter', opts, [], ['timeoutMs']);
+    return (await storeCall({ member: 'readLivePageFrontmatter', sourceId }, () => brain.readLivePageFrontmatter(sourceId, slug)) as IgnoredLabelPageRow | null) ?? null;
+  };
+
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */
 export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope: { slugs: readonly string[] } | { since: string },
   opts?: { limit?: number; timeoutMs?: number }], IgnoredLabelPageRow[]> = async (brain, sourceId, scope, opts) => {

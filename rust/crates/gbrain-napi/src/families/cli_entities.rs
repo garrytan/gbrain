@@ -286,4 +286,17 @@ impl Brain {
             )
         })
     }
+
+    /// `readLivePageFrontmatter(sourceId, slug)`: the live page's type and frontmatter, or null.
+    #[napi]
+    pub fn read_live_page_frontmatter<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_page_frontmatter(&source_id, &slug)
+        })
+    }
 }

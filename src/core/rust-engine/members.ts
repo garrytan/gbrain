@@ -839,6 +839,7 @@ export const RUST_ENGINE_MEMBERS = {
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',
   readIgnoredPrivacyLabelPages: 'pages',
+  readLivePageFrontmatter: 'pages',
   // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")
   acquireCycleLock: 'minion_queue',
   refreshCycleLock: 'minion_queue',
