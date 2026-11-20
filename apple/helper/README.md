@@ -1,6 +1,6 @@
 # GBrain Helper (macOS)
 
-A small macOS program that reads the Messages database on your own Mac and answers gbrain over `127.0.0.1`. It never writes to the database and never shows a macOS dialog while it answers a request. When the owner turns sending on, it also sends one-to-one iMessages for the owner's own agent over Tailscale (see [Sending](#sending)); it never sends on its own. Once the owner turns it on, it can also read the owner's Apple Contacts, read-only (see [Contacts](#contacts)).
+A small macOS program that reads the Messages database on your own Mac and answers gbrain over `127.0.0.1`. It never writes to the database and never shows a macOS dialog while it answers a request. When the owner turns sending on, it also sends one-to-one iMessages for the owner's own agent over Tailscale (see [Sending](#sending)); it never sends on its own. Once the owner turns it on, it can also read the owner's Apple Contacts, and, behind a separate switch, change them for the owner's own agent, saving a copy first (see [Contacts](#contacts) and [Changing contacts](#changing-contacts)).
 
 This folder is Swift source only. On Linux and Windows nothing in gbrain's install, upgrade, doctor or test suite builds or loads it. On a Mac, `scripts/install.sh` builds, signs and starts it (see [Install on a Mac](#install-on-a-mac)); a later `gbrain apple-setup` will run the same steps for you. `.github/workflows/apple-helper.yml` builds, tests and installs it on a macOS runner.
 
@@ -34,7 +34,7 @@ Any program already running as you can read the signing keychain's password, or 
 
 ## Layout
 
-- `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`) and the Contacts reader (`Contacts.swift`, `SystemContactsStore.swift`).
+- `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`), the Contacts reader (`Contacts.swift`, `SystemContactsStore.swift`) and the Contacts write door (`ContactsWrite.swift`, `PhoneKey.swift`).
 - `Sources/gbrain-apple-helper/`: the command-line program.
 - `Bundle/`: `Info.plist`, the background agent's property list and the entitlements for `GBrain Helper.app`.
 - `scripts/install.sh`: builds, signs, installs and registers the app (above).
@@ -53,6 +53,8 @@ Any program already running as you can read the signing keychain's password, or 
 | `POST /v1/admin/send` | none; this Mac only | the `send-setup`, `send-key` and `send-limits` commands use it; widening asks for Touch ID |
 | `GET /v1/contacts/changes` | `read:contacts` | contacts that changed since `cursor`, or every contact without one; `limit` (1 to 500, default 200); loopback and tailnet listeners, see [Contacts](#contacts) |
 | `POST /v1/admin/contacts` | none; this Mac only | the `contacts-setup` command uses it to ask macOS for Contacts access |
+| `POST /v1/contacts/batch` | an owner key (`GBrain-Sign`) for any change, or a `write:contacts:enrich` token for additive ones | up to 200 changes to contacts; loopback and tailnet listeners, see [Changing contacts](#changing-contacts) |
+| `POST /v1/admin/contacts-write` | none; this Mac only | the `contacts-restore` command uses it |
 
 Without a cursor a thread page holds the newest messages, oldest first. With `since_rowid` it holds the messages after that row, in row order; `meta.next_since_rowid` is the cursor for the next page.
 
@@ -114,7 +116,7 @@ Every command takes `--config <path>`. `token add` takes the token's SHA-256, ne
 
 ## Contacts
 
-The `contacts` source lets the owner's gbrain read Apple Contacts on this Mac. It reads each contact's given name, family name, nickname, organization, job title, emails, phones and the names of the groups it is in, and nothing else: no notes, birthdays, addresses, photos, relationships or social profiles. It never changes a contact; the code never builds a Contacts save request, and a test fails the build if one appears.
+The `contacts` source lets the owner's gbrain read Apple Contacts on this Mac. It reads each contact's given name, family name, nickname, organization, job title, emails, phones and the names of the groups it is in, and nothing else: no notes, birthdays, addresses, photos, relationships or social profiles. Reading never changes a contact. Only the write door in `ContactsWrite.swift` saves to Contacts, through `SystemContactsStore`, and a test fails the build if a save request appears anywhere else.
 
 ### Turning it on, once, at the Mac
 
@@ -137,6 +139,35 @@ GBrain Helper then appears under System Settings > Privacy & Security > Contacts
 - Keep reading while `more` is true, and save a cursor only after applying its page. Sending the next cursor is what tells the helper the page was applied; sending an older cursor again gets the same changes again. Upserts are idempotent.
 
 macOS's change history isn't available to Swift, so the helper finds changes itself. It keeps `contacts-index.json` (mode 0600) beside its config, holding a SHA-256 of each contact's fields as last applied, and never contact data. A request without a cursor starts a new index, and a cursor from an older index answers `cursor_expired`. The index serves one reader, the owner's gbrain: a second reader would make the first one's cursors expire with each full read, and the changes one reader applied would count as sent to the other.
+
+## Changing contacts
+
+`POST /v1/contacts/batch` changes contacts for the owner's own agent. It is off until the owner runs `gbrain-apple-helper contacts-write on` at the Mac, and `contacts-write off` stops it at once.
+
+### Who can change what
+
+- **Owner changes** are signed with an owner key (`GBrain-Sign`, Ed25519, the same scheme as [Sending](#request) with `/v1/contacts/batch` as the route in the signed lines). The Mac keeps only the public half: `gbrain-apple-helper contacts-write key add --name <name> --public-key-file <path or ->`. A signed batch carries `owner_instruction`, the owner's own words, which the journal keeps. It may use every op: `create`, `fill`, `add_value`, `group_add`, `set`, `remove_value`, `group_remove`, `delete` and `merge`.
+- **Enrichment** uses a token with the `write:contacts:enrich` scope and may only add: `create`, `fill` (an empty field), `add_value` (an email or phone beside the others) and `group_add`. Every card it creates or touches joins the group "Added by GBrain".
+
+### Request
+
+A JSON body: `batch` (8 to 128 safe characters), `requested_by` (`owner` or `enrich`), `country_code` (for phone matching), `owner_instruction` for owner batches, and `changes`: 1 to 200 objects, each with a unique `key` and an `op`, plus `id`, `from` (for `merge`), `field`, `value`, `label`, `group`, `fields` (for `create`) and `expect`. `set` and `delete` carry `expect`, the value or card as last read; a card that no longer matches is skipped, not changed. The body is at most 256 KB.
+
+The answer is `{"data": {"batch", "journal", "results": [{key, op, status, id, reason}], "stopped", "side_effects", "next"}}`. A status is `applied`, `replayed` (the same batch and key already finished), `skipped` with a reason (`already_set`, `already_present`, `already_member`, `not_present`, `not_member`, `card_missing`, `create_duplicate`, `quota`, or a linked card), `failed` (`save_failed`, `readback_mismatch`) or `not_run` after the batch stopped.
+
+### What happens
+
+1. Once a day, before the first change, the helper writes every contact (all fields but notes, images as base64) to `contacts-backups/full-YYYY-MM-DD.jsonl` beside its config, mode 0600, kept 7 days, at most 2 GB, and excluded from Time Machine. If that fails, nothing changes (`backup_failed`).
+2. Each change is written to `contacts-journal/<batch>.jsonl` as an intent, with the card as it was, before it is saved, and as done after. A retried batch answers finished keys from the journal and reconciles any intent left unfinished.
+3. After each save the helper reads the card back and compares it. Cards linked to another card are refused, and a `create` that matches an existing email or phone is skipped as `create_duplicate`. A `merge` runs as steps that each journal and keep the removed card restorable.
+
+### Limits
+
+Per day: 50 new cards, 25 deletes and 200 edits by default, kept in `contacts-write-quota.json`. `gbrain-apple-helper contacts-write limits set new_cards=<n> deletes=<n> edits=<n>` changes them; `contacts-write status` shows the switch, keys and limits.
+
+### Undo
+
+`gbrain-apple-helper contacts-restore --batch <id>` reads that batch's journal and prints what it would put back; `--apply` puts the cards back as they were before the batch.
 
 ## Sending
 
@@ -211,6 +242,14 @@ A query parameter is missing or out of range. The detail names it. A repeated pa
 ### unauthorized
 
 No bearer token, or one the helper doesn't know.
+
+### contacts_write_off
+
+Contacts writes are off at the Mac. Run `gbrain-apple-helper contacts-write on` when the owner wants them.
+
+### backup_failed
+
+The helper could not write its daily copy of the contacts, so it changed nothing. Check disk space and the `contacts-backups/` folder beside the config, then send the batch again.
 
 ### insufficient_scope
 

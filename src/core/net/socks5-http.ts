@@ -1,5 +1,5 @@
 /**
- * A plain-HTTP GET through a SOCKS5 proxy, in TypeScript with no dependency (RFC 1928, no-authentication method; RFC
+ * A plain-HTTP GET or POST through a SOCKS5 proxy, in TypeScript with no dependency (RFC 1928, no-authentication method; RFC
  * 9112 for the request and response). socks5h semantics: a host name is sent to the proxy unresolved (address type 3),
  * so the proxy, not this host, resolves it; an IP literal goes as an IPv4 or IPv6 address. The request asks the server
  * to close the connection, and the response is read to its end, bounded, then parsed (Content-Length or chunked).
@@ -17,6 +17,8 @@ export interface Socks5HttpRequest {
   headers: Record<string, string>;
   signal: AbortSignal;
   maxBytes: number;
+  /** POST with this body (sent with Content-Length); GET when absent. */
+  body?: Buffer;
 }
 
 export interface RawHttpResponse { status: number; headers: Record<string, string>; body: Buffer }
@@ -153,8 +155,10 @@ export async function socks5HttpGet(req: Socks5HttpRequest): Promise<RawHttpResp
     });
     await handshake(socket, reader, req.host, req.port);
     const hostHeader = isIP(req.host) === 6 ? `[${req.host}]:${req.port}` : `${req.host}:${req.port}`;
-    socket.write([`GET ${req.path} HTTP/1.1`, `Host: ${hostHeader}`, 'Connection: close',
+    socket.write([`${req.body ? 'POST' : 'GET'} ${req.path} HTTP/1.1`, `Host: ${hostHeader}`, 'Connection: close',
+      ...(req.body ? [`Content-Length: ${req.body.length}`] : []),
       ...Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`), '', ''].join('\r\n'));
+    if (req.body) socket.write(req.body);
     return parseHttpResponse(await reader.rest());
   } finally {
     req.signal.removeEventListener('abort', onAbort);

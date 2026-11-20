@@ -1,0 +1,4 @@
+---
+kind: add
+---
+New: gbrain apple-contacts write changes the owner's Apple Contacts through GBrain Helper on their Mac, one change per call, signed with an owner key and carrying the owner's own words as --owner-instruction. Nothing changes until you turn it on: apple_contacts.write is off by default (dry_run prints the request and sends nothing), the verbs that change or remove what is on a card (set, remove-value, group-remove, delete, merge) also need apple_contacts.destructive_writes on, which ships off, and the helper has its own switch, gbrain-apple-helper contacts-write on. Before the first change each day the helper saves a copy of every contact, journals each change, reads each card back, keeps daily limits (50 new cards, 25 deletes, 200 edits) and can put a whole batch back with gbrain-apple-helper contacts-restore --batch <id> --apply. gbrain apple-contacts status shows the switches. Syncing contacts into the brain is unchanged.
