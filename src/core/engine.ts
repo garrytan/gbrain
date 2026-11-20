@@ -27,6 +27,7 @@ import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
+import type * as CollatePageReadsSql from './engine-sql/collate-page-reads.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
 import type { ReasonPurgeTombstone } from './engine-sql/sync-reason-reads.ts';
@@ -3639,6 +3640,24 @@ export interface BrainEngine {
   listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
   /** file_list: the files of one page (or every page) the caller can read, at most 100; text sorts by byte and equal names fall to the file id. */
   listReadableFileRows(slug: string | undefined, excludePrivate: boolean): Promise<Array<Record<string, unknown>>>;
+  /** The live typed pages' distinct (source_id, type) pairs, in no promised order (onboard type_proliferation sorts them by byte). */
+  listPageTypePairs(): Promise<Array<{ source_id: string; type: string }>>;
+  /** Live pages with at least one outgoing `mentions` link. */
+  countPagesWithMentionLinks(): Promise<number>;
+  /** The sources that hold a live page (the mention gazetteer reads each one's pack). */
+  listGazetteerSourceIds(): Promise<Array<{ id: string }>>;
+  /** The live pages of the given types the mention gazetteer reads, with four frontmatter handle texts as h1..h4. */
+  listGazetteerPages(types: string[], handleKeys: readonly string[]): Promise<CollatePageReadsSql.GazetteerPageRow[]>;
+  /** The `page_aliases` rows of live pages of the given types (the read throws on a brain older than v110, which has no table). */
+  listGazetteerAliasRows(types: string[]): Promise<CollatePageReadsSql.GazetteerAliasRow[]>;
+  /** The first `limit` live pages with a `mentions` link, by slug (by byte) then id, with their title, body and timeline text. */
+  listStaleMentionPages(limit: number): Promise<CollatePageReadsSql.StaleMentionPageRow[]>;
+  /** The `mentions` links of those same pages, by from slug then to slug (by byte). */
+  listStaleMentionLinks(limit: number): Promise<CollatePageReadsSql.StaleMentionLinkRow[]>;
+  /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool, by byte. */
+  listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
+  /** The pool's (source_id, entity_slug) pairs among `keys` with no live page at that slug, at most `limit`, by byte. */
+  listPoolUnbackedKeys(scope: FactsTrustSql.FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

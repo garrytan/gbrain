@@ -1,0 +1,34 @@
+/**
+ * The fact pool's scope and filters as the store reads them (`PoolArgs`, rust/crates/gbrain-store/src/facts/trust.rs). Shared
+ * by the relevance members (facts-trust.ts) and the pool-pair reads (collate-reads.ts).
+ *
+ * Not spread into STORE_MEMBERS: index.ts spreads only the member modules, and this one exports a helper.
+ */
+import { escapeLikePattern } from '../../cjk.ts';
+import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
+import type { FactPoolFilters, FactPoolScope } from '../../engine-sql/facts-trust.ts';
+import { storePrivacyPolicy } from './private-provenance.ts';
+import { storeVisibility } from './fact-visibility.ts';
+
+type Row = Record<string, unknown>;
+
+/** The pool's scope and filters as the store reads them, or a refusal for a policy it cannot answer. */
+export function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters | undefined): Row {
+  // A world-only pool is widened per row for the caller's member page and private-facts grant, as the fact lists are.
+  const widen = scope.worldOnly ? storeVisibility(member, ['world']).widen : undefined;
+  const grep = filters?.grep?.trim();
+  return {
+    sourceIds: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'])],
+    worldOnly: scope.worldOnly,
+    ...(widen ? { widen } : {}),
+    // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
+    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }),
+    minTrust: scope.minTrust || null,
+    suppressFlagged: scope.suppressFlagged === true,
+    ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
+    ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
+    ...(filters?.since ? { since: filters.since.toISOString() } : {}),
+    ...(grep ? { grep: `%${escapeLikePattern(grep)}%` } : {}),
+    includeExpired: filters?.includeExpired === true,
+  };
+}

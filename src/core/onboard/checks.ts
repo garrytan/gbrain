@@ -678,16 +678,6 @@ export async function checkPackUpgradeAvailable(
   }
 }
 
-const PAGE_TYPE_PAIRS_SQL = `WITH RECURSIVE pairs AS (
-  (SELECT source_id, type FROM pages WHERE deleted_at IS NULL AND type IS NOT NULL ORDER BY source_id, type LIMIT 1)
-  UNION ALL
-  SELECT n.source_id, n.type FROM pairs, LATERAL (
-    SELECT p.source_id, p.type FROM pages p
-     WHERE p.deleted_at IS NULL AND p.type IS NOT NULL AND (p.source_id, p.type) > (pairs.source_id, pairs.type)
-     ORDER BY p.source_id, p.type LIMIT 1) n
-)
-SELECT source_id, type FROM pairs`;
-
 /**
  * type_proliferation (D16): pack-aware ratio. Warns when distinct typed
  * pages exceed pack-declared types + 5; fails at declared × 2. No false
@@ -699,7 +689,7 @@ SELECT source_id, type FROM pairs`;
  * alias counts as its canonical type. A source whose pack does not resolve,
  * or a failed query, is "not verified" (warn), never ok.
  *
- * The (source, type) pairs are read by a skip scan over idx_pages_source_type
+ * The (source, type) pairs are read by `listPageTypePairs`, a skip scan over idx_pages_source_type
  * (v316): one index probe per distinct pair, never a pass over every page.
  * The walk keeps the database collation so the skip scan can use that index;
  * the pairs are then sorted by byte in JS, so every Postgres locale reports
@@ -712,7 +702,7 @@ export async function checkTypeProliferation(
     ({ check: { name: 'type_proliferation', status, message }, remediations: [] });
   let rows: Array<{ source_id: string; type: string }>;
   try {
-    rows = (await engine.executeRaw<{ source_id: string; type: string }>(PAGE_TYPE_PAIRS_SQL))
+    rows = (await engine.listPageTypePairs())
       .sort((a, b) => Buffer.compare(Buffer.from(a.source_id), Buffer.from(b.source_id)) || Buffer.compare(Buffer.from(a.type), Buffer.from(b.type)));
   } catch (e) {
     return result('warn', `type_proliferation not verified: the page type query failed (${(e as Error).message}).`);

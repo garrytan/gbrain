@@ -220,6 +220,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
   'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles', 'listReadableFileRows',
+  // Collate-equal page, mention and fact-pool reads
+  'listPageTypePairs', 'countPagesWithMentionLinks', 'listGazetteerSourceIds', 'listGazetteerPages', 'listGazetteerAliasRows', 'listStaleMentionPages', 'listStaleMentionLinks', 'listPoolEntityPairs', 'listPoolUnbackedKeys',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',

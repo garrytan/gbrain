@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 970/978
+# covered: 979/987
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -21,6 +21,7 @@
 # tags: 5/5
 # timeline: 19/19
 # ontology: 4/4
+# collate_reads: 9/9
 # raw_files: 7/7
 # takes: 24/24
 # dream: 3/3
@@ -301,6 +302,15 @@ mergeOntologyFact	ontology	yes	13	no	yes	yes	serves
 getOntology	ontology	yes	6	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	2	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	5	no	yes	yes	serves
+listPageTypePairs	collate_reads	yes	1	no	yes	yes	serves
+countPagesWithMentionLinks	collate_reads	yes	1	no	yes	yes	serves
+listGazetteerSourceIds	collate_reads	yes	1	no	yes	yes	serves
+listGazetteerPages	collate_reads	yes	1	no	yes	yes	serves
+listGazetteerAliasRows	collate_reads	yes	1	no	yes	yes	serves
+listStaleMentionPages	collate_reads	yes	1	no	yes	yes	serves
+listStaleMentionLinks	collate_reads	yes	1	no	yes	yes	serves
+listPoolEntityPairs	collate_reads	yes	1	no	yes	yes	serves
+listPoolUnbackedKeys	collate_reads	yes	1	no	yes	yes	serves
 putRawData	raw_files	yes	5	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	5	no	yes	yes	serves
@@ -799,7 +809,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	64	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	60	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

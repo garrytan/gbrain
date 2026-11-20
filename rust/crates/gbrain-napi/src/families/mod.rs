@@ -14,6 +14,7 @@ mod collate_command_reads;
 mod collate_cycle_window;
 mod collate_identity_downgrades;
 mod collate_take_proposals;
+mod collate_reads;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;

@@ -80,7 +80,7 @@ src/core/belief/purge.ts	registerVersionCarriers	sql	STREAM	segmented version: N
 src/core/belief/state.ts	readBeliefState	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
 src/core/brainstorm/domain-bank.ts	fetchFar	field	LEAD	
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	field	LEAD	
-src/core/by-mention.ts	scanStaleMentions	sql	STREAM	
+src/core/engine-sql/collate-page-reads.ts	listStaleMentionPages	sql	STREAM	
 src/core/chronicle/backfill.ts	runChronicleBackfill	field	STREAM	
 src/core/chronicle/backfill.ts	runChronicleBackfill	sql	STREAM	
 src/core/chronicle/execute.ts	executeChronicleRow	field	LEAD	

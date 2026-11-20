@@ -1312,6 +1312,15 @@ export class PostgresEngine implements BrainEngine {
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.executeRaw.bind(this), opts); }
   listReadableFileRows(slug: string | undefined, excludePrivate: boolean) { return collatePageReadsImpl.listReadableFileRows(this.executeRaw.bind(this), slug, excludePrivate); }
+  listPageTypePairs() { return collatePageReadsImpl.listPageTypePairs(this.executeRaw.bind(this)); }
+  countPagesWithMentionLinks() { return collatePageReadsImpl.countPagesWithMentionLinks(this.executeRaw.bind(this)); }
+  listGazetteerSourceIds() { return collatePageReadsImpl.listGazetteerSourceIds(this.executeRaw.bind(this)); }
+  listGazetteerPages(types: string[], handleKeys: readonly string[]) { return collatePageReadsImpl.listGazetteerPages(this.executeRaw.bind(this), types, handleKeys); }
+  listGazetteerAliasRows(types: string[]) { return collatePageReadsImpl.listGazetteerAliasRows(this.executeRaw.bind(this), types); }
+  listStaleMentionPages(limit: number) { return collatePageReadsImpl.listStaleMentionPages(this.executeRaw.bind(this), limit); }
+  listStaleMentionLinks(limit: number) { return collatePageReadsImpl.listStaleMentionLinks(this.executeRaw.bind(this), limit); }
+  listPoolEntityPairs(scope: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[1], filters: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[2]) { return collatePageReadsImpl.listPoolEntityPairs(this.executeRaw.bind(this), scope, filters); }
+  listPoolUnbackedKeys(scope: Parameters<typeof collatePageReadsImpl.listPoolUnbackedKeys>[1], keys: readonly string[], limit: number) { return collatePageReadsImpl.listPoolUnbackedKeys(this.executeRaw.bind(this), scope, keys, limit); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }

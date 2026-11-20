@@ -31,6 +31,7 @@ import * as salience from './salience.ts';
 import * as stats from './stats.ts';
 import * as rawFiles from './raw-files.ts';
 import * as filesOps from './files-ops.ts';
+import * as collateReads from './collate-reads.ts';
 import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
 import * as keyword from './keyword.ts';
@@ -182,6 +183,7 @@ export const STORE_MEMBERS = {
   ...filesOps,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  ...collateReads,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

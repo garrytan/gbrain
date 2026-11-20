@@ -34,6 +34,11 @@ import { hashToken } from '../src/core/utils.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../src/core/eligibility/sql.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
+import { HANDLE_FRONTMATTER_KEYS } from '../src/core/by-mention.ts';
+import { renderFragment } from '../src/core/engine-sql/fragment.ts';
+import { poolWhere, type FactPoolScope } from '../src/core/engine-sql/facts-trust.ts';
+
+const POOL_SCOPE: FactPoolScope = { sourceIds: ['default'], worldOnly: true, excludePrivate: false };
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -550,6 +555,106 @@ const PINS: Pin[] = [
     : 'TRUE'}
       ORDER BY ${slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C", id' : 'filename COLLATE "C", id'} LIMIT $1`],
   })),
+  // The mention gazetteer and the stale-mention scan (src/core/by-mention.ts), moved without a change to the text.
+  {
+    from: 'src/core/by-mention.ts:1101 scanStaleMentions (total), at dded7edc51',
+    case: { method: 'countPagesWithMentionLinks', variant: 'default', run: e => e.countPagesWithMentionLinks() },
+    texts: [`SELECT COUNT(DISTINCT l.from_page_id)::int AS count
+       FROM links l
+       JOIN pages p ON p.id = l.from_page_id
+      WHERE l.link_source = 'mentions'
+        AND p.deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/by-mention.ts:517 buildGazetteer (sources), at dded7edc51',
+    case: { method: 'listGazetteerSourceIds', variant: 'default', run: e => e.listGazetteerSourceIds() },
+    texts: ['SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL'],
+  },
+  {
+    from: 'src/core/by-mention.ts:527 buildGazetteer (pages), at dded7edc51',
+    case: { method: 'listGazetteerPages', variant: 'default', run: e => e.listGazetteerPages(['person'], HANDLE_FRONTMATTER_KEYS) },
+    texts: [`SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
+            frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
+     FROM pages
+     WHERE type = ANY($1::text[])
+       AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/by-mention.ts:550 buildGazetteer (aliases), at dded7edc51',
+    case: { method: 'listGazetteerAliasRows', variant: 'default', run: e => e.listGazetteerAliasRows(['person']) },
+    texts: [`SELECT pa.alias_norm, pa.slug, pa.source_id, p.title, p.type, pa.origin, pa.case_sensitive, pa.alias_text, p.frontmatter->>'identity' AS identity
+       FROM page_aliases pa
+       JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+       WHERE p.type = ANY($1::text[])
+         AND p.deleted_at IS NULL`],
+  },
+  ...(() => {
+    const scannedCte = `WITH scanned AS (
+       SELECT p.id
+         FROM pages p
+        WHERE p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM links l
+             WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
+          )
+        ORDER BY p.slug COLLATE "C", p.id
+        LIMIT $1
+     )`;
+    return [
+      {
+        from: 'src/core/by-mention.ts:1140 scanStaleMentions (bodies), at dded7edc51',
+        case: { method: 'listStaleMentionPages', variant: 'default', run: e => e.listStaleMentionPages(500) },
+        texts: [`${scannedCte}
+     SELECT p.id, p.slug, p.source_id, p.title, p.body_storage,
+            COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
+       FROM pages p
+       JOIN scanned s ON s.id = p.id
+      ORDER BY p.slug COLLATE "C", p.id`],
+      },
+      {
+        from: 'src/core/by-mention.ts:1152 scanStaleMentions (links), at dded7edc51',
+        case: { method: 'listStaleMentionLinks', variant: 'default', run: e => e.listStaleMentionLinks(500) },
+        texts: [`${scannedCte}
+     SELECT l.from_page_id AS from_id, f.slug AS from_slug,
+            t.slug AS to_slug, t.source_id AS to_source_id, l.link_kind, l.link_type
+       FROM links l
+       JOIN scanned s ON s.id = l.from_page_id
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id
+      WHERE l.link_source = 'mentions'
+      ORDER BY f.slug COLLATE "C", t.slug COLLATE "C"`],
+      },
+    ] as Pin[];
+  })(),
+  {
+    from: 'src/core/onboard/checks.ts:681 checkTypeProliferation (PAGE_TYPE_PAIRS_SQL), at dded7edc51',
+    case: { method: 'listPageTypePairs', variant: 'default', run: e => e.listPageTypePairs() },
+    texts: [`WITH RECURSIVE pairs AS (
+  (SELECT source_id, type FROM pages WHERE deleted_at IS NULL AND type IS NOT NULL ORDER BY source_id, type LIMIT 1)
+  UNION ALL
+  SELECT n.source_id, n.type FROM pairs, LATERAL (
+    SELECT p.source_id, p.type FROM pages p
+     WHERE p.deleted_at IS NULL AND p.type IS NOT NULL AND (p.source_id, p.type) > (pairs.source_id, pairs.type)
+     ORDER BY p.source_id, p.type LIMIT 1) n
+)
+SELECT source_id, type FROM pairs`],
+  },
+  // The caller composed the text with `poolPredicate` and hand-numbered the placeholders after the pool's; the member renders the same text.
+  {
+    from: 'src/core/search/fact-relevance.ts:358 poolEntityPairs, at dded7edc51',
+    case: { method: 'listPoolEntityPairs', variant: 'default', run: e => e.listPoolEntityPairs(POOL_SCOPE, {}) },
+    texts: () => [`SELECT DISTINCT f.source_id COLLATE "C" AS source_id, f.entity_slug COLLATE "C" AS entity_slug FROM facts f WHERE ${renderFragment(poolWhere(POOL_SCOPE, {})).text} AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/search/fact-relevance.ts:293 poolUnbackedKeys, at dded7edc51',
+    case: { method: 'listPoolUnbackedKeys', variant: 'default', run: e => e.listPoolUnbackedKeys(POOL_SCOPE, ['people/alice-example'], 10) },
+    texts: () => {
+      const n = renderFragment(poolWhere(POOL_SCOPE, undefined)).params.length;
+      return [`SELECT DISTINCT f.source_id COLLATE "C" AS source_id, f.entity_slug COLLATE "C" AS entity_slug FROM facts f WHERE ${renderFragment(poolWhere(POOL_SCOPE, undefined)).text} AND f.entity_slug = ANY($${n + 1}::text[])
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT $${n + 2}`];
+    },
+  },
   {
     from: 'src/core/destructive-guard.ts:104 clientsReferencingSource, at dded7edc51',
     case: { method: 'listClientsReferencingSource', variant: 'default', run: e => e.listClientsReferencingSource('guest-src') },

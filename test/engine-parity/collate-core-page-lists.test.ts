@@ -215,14 +215,14 @@ describe('storage shelf and fact pool lists', () => {
     }
   }
 
-  parityTest('poolEntityPairs lists the fact pool pairs by (source, entity slug) byte order', { methods: ['insertFact', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('poolEntityPairs lists the fact pool pairs by (source, entity slug) byte order', { methods: ['insertFact', 'listPoolEntityPairs'] }, async (engine, backend) => {
     await seedFacts(engine, backend);
     const pairs = (await poolEntityPairs(engine, scope, {})).map(r => [r.source_id, r.entity_slug]);
     expect(pairs).toEqual(BYTE_SOURCES.flatMap(id => BYTE_SLUGS.map(slug => [id, slug])));
     return pairs;
   });
 
-  parityTest('poolUnbackedKeys keeps the byte-first unbacked pairs under its limit', { methods: ['insertFact', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('poolUnbackedKeys keeps the byte-first unbacked pairs under its limit', { methods: ['insertFact', 'listPoolUnbackedKeys'] }, async (engine, backend) => {
     await seedFacts(engine, backend);
     const pairs = (await poolUnbackedKeys(engine, scope, MIXED_SLUGS, 4)).map(r => [r.source_id, r.entity_slug]);
     expect(pairs).toEqual(BYTE_SOURCES.flatMap(id => BYTE_SLUGS.map(slug => [id, slug])).slice(0, 4));
@@ -248,7 +248,7 @@ describe('forecast journal', () => {
 });
 
 describe('stale-mention scan', () => {
-  parityTest('scanStaleMentions scans the byte-first pages under its limit and lists their links by byte', { methods: ['putPage', 'addLinksBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('scanStaleMentions scans the byte-first pages under its limit and lists their links by byte', { methods: ['putPage', 'addLinksBatch', 'countPagesWithMentionLinks', 'listGazetteerSourceIds', 'listGazetteerPages', 'listGazetteerAliasRows', 'listStaleMentionPages', 'listStaleMentionLinks'] }, async (engine) => {
     for (const slug of [...MIXED_SLUGS, 'm-hub', 'target']) await engine.putPage(slug, note(slug));
     const mention = (from: string, to: string) => ({ from_slug: from, to_slug: to, link_type: 'mentions', context: '', link_source: 'mentions',
       from_source_id: 'default', to_source_id: 'default' });
@@ -265,7 +265,7 @@ describe('stale-mention scan', () => {
 
 describe('onboard page-type walk', () => {
   parityTest('type_proliferation walks the (source, type) pairs by byte: a tie names the byte-first pool, and the walk reaches every source',
-    { methods: ['putPage', 'setConfig', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+    { methods: ['putPage', 'setConfig', 'listPageTypePairs'] }, async (engine, backend) => {
       // `a-z` is on one pack; `a0` and `ab` share another. Each pack is `warn` with six undeclared types over it, so the worst
       // pool on a tie is the first one read: bytes read `a-z` first, an en_US order reads `a0` first.
       const env = { GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined };
@@ -283,8 +283,6 @@ describe('onboard page-type walk', () => {
         for (let i = 0; i < await declared('gbrain-base-v2') + 6; i++) await add('a-z', typeName('custom-type', i), i);
         for (let i = 0; i < await declared('gbrain-everything') + 6; i++) await add('a0', typeName('custom-type', i), i);
         await add('ab', typeName('custom-type', 0), 0);
-        // The check reports a failed query as not verified, so read raw SQL once first: the Rust arm stops here on its refusal.
-        await engine.executeRaw('SELECT 1');
         const tie = (await checkTypeProliferation(engine)).check;
         expect(tie.status).toBe('warn');
         expect(tie.message).toContain('(source a-z, pack gbrain-base-v2;');

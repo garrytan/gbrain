@@ -1637,6 +1637,15 @@ export class PGLiteEngine implements BrainEngine {
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.rawRead); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.rawRead, opts); }
   listReadableFileRows(slug: string | undefined, excludePrivate: boolean) { return collatePageReadsImpl.listReadableFileRows(this.rawRead, slug, excludePrivate); }
+  listPageTypePairs() { return collatePageReadsImpl.listPageTypePairs(this.rawRead); }
+  countPagesWithMentionLinks() { return collatePageReadsImpl.countPagesWithMentionLinks(this.rawRead); }
+  listGazetteerSourceIds() { return collatePageReadsImpl.listGazetteerSourceIds(this.rawRead); }
+  listGazetteerPages(types: string[], handleKeys: readonly string[]) { return collatePageReadsImpl.listGazetteerPages(this.rawRead, types, handleKeys); }
+  listGazetteerAliasRows(types: string[]) { return collatePageReadsImpl.listGazetteerAliasRows(this.rawRead, types); }
+  listStaleMentionPages(limit: number) { return collatePageReadsImpl.listStaleMentionPages(this.rawRead, limit); }
+  listStaleMentionLinks(limit: number) { return collatePageReadsImpl.listStaleMentionLinks(this.rawRead, limit); }
+  listPoolEntityPairs(scope: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[1], filters: Parameters<typeof collatePageReadsImpl.listPoolEntityPairs>[2]) { return collatePageReadsImpl.listPoolEntityPairs(this.rawRead, scope, filters); }
+  listPoolUnbackedKeys(scope: Parameters<typeof collatePageReadsImpl.listPoolUnbackedKeys>[1], keys: readonly string[], limit: number) { return collatePageReadsImpl.listPoolUnbackedKeys(this.rawRead, scope, keys, limit); }
 
 
   getSourceStrictness(sourceId: string) { return persistenceStateImpl.getSourceStrictness(unscopedExecutor(this.engineSql, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId); }
