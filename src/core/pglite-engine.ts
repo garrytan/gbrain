@@ -3665,8 +3665,8 @@ export class PGLiteEngine implements BrainEngine {
     return this.transaction(tx => pagesImpl.setPageAliases((tx as PGLiteEngine).engineSql, tx, slug, sourceId, aliasNorms));
   }
 
-  async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
-    return pagesImpl.replaceDerivedAliases(this.engineSql, slug, sourceId, aliases);
+  async replaceDerivedAliases(slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> { // DELETE + INSERT commit together: outside a transaction it opens one, so a refused INSERT keeps the old rows
+    return this._pageTransaction ? pagesImpl.replaceDerivedAliases(this.engineSql, slug, sourceId, aliases) : this.transaction(tx => pagesImpl.replaceDerivedAliases((tx as PGLiteEngine).engineSql, slug, sourceId, aliases));
   }
 
   async getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null> {

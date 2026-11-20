@@ -53,6 +53,9 @@ pub(crate) fn stamp_row(
     content_changed: bool,
 ) -> Result<RowTrust> {
     let context = stamp_context::current()?;
+    // `gbrain_stamp_write_attribution` casts the request on every row written to `takes` and
+    // `timeline_entries` (the facts writer checks its own context in `facts::stamp_fact`).
+    context.attribution.refuse_request_not_uuid()?;
     let (row, stored_origin) = match old {
         None => (
             StampRow::Insert {
