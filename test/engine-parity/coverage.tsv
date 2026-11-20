@@ -83,7 +83,7 @@ getPage	pages	yes	107	yes	yes	yes	serves
 readPageSnapshot	pages	yes	28	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	408	yes	yes	yes	serves
+putPage	pages	yes	409	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	7	yes	yes	yes	serves
@@ -238,7 +238,7 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	5	no	yes	yes	serves
 getSalienceScores	links	yes	6	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
-addTag	tags	yes	16	yes	yes	yes	serves
+addTag	tags	yes	17	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
@@ -417,7 +417,7 @@ moveKeptFactRows	persistence_journal	yes	1	no	yes	yes	serves
 readGenerationFenceBlocks	persistence_journal	yes	3	no	yes	yes	serves
 listOwnedGenerationItems	persistence_journal	yes	2	no	yes	yes	serves
 readLiveGenerationId	persistence_journal	yes	1	no	yes	yes	serves
-readGenerationPageRows	persistence_journal	yes	3	no	yes	yes	serves
+readGenerationPageRows	persistence_journal	yes	4	no	yes	yes	serves
 readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves

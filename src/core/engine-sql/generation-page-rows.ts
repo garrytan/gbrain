@@ -1,10 +1,11 @@
 /**
  * The page row read of the generation adapters (generations/adapters/page.ts `readPageRows`) as one typed engine
- * member. Each `match` is one statement the adapters sent through `executeRaw`, byte for byte, with the same
- * parameters: the single-page adapter's row of one slug, the synthesis adapter's outputs of a transcript, the atoms
- * adapter's atoms of an origin field, and the Life Chronicle adapter's events of a depth page. Every row of the source
- * matching it is returned, deleted rows included, by slug, with its tags sorted and whether its body is segmented.
- * These are internal reads of derived pages, not caller page reads, so they take no page read policy, as the
+ * member. Each `match` is one statement the adapters sent through `executeRaw`, with the same parameters: the
+ * single-page adapter's row of one slug, the synthesis adapter's outputs of a transcript, the atoms adapter's atoms of
+ * an origin field, and the Life Chronicle adapter's events of a depth page. Every row of the source matching it is
+ * returned, deleted rows included, by slug, with its tags sorted and whether its body is segmented. Both sorts carry
+ * `COLLATE "C"`, which the adapters' text did not, so Postgres sorts by bytes on every locale, as PGLite and the Rust
+ * store do. These are internal reads of derived pages, not caller page reads, so they take no page read policy, as the
  * statements never did. The Rust engine serves them from its page records
  * (rust/crates/gbrain-store/src/generations/page_rows.rs).
  */
@@ -29,22 +30,22 @@ export type GenerationPageRowsQuery =
 
 export const GENERATION_PAGE_ROWS_SQL = {
   slug: `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-       FROM pages p WHERE p.source_id = $1 AND (p.slug = $2) ORDER BY p.slug`,
+            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+       FROM pages p WHERE p.source_id = $1 AND (p.slug = $2) ORDER BY p.slug COLLATE "C"`,
   synthesis: `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
        FROM pages p WHERE p.source_id = $1 AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL
-      AND p.frontmatter->>'raw_source' = $3 AND p.frontmatter->>'dream_generated' = 'true')) ORDER BY p.slug`,
+      AND p.frontmatter->>'raw_source' = $3 AND p.frontmatter->>'dream_generated' = 'true')) ORDER BY p.slug COLLATE "C"`,
   atomsSourceSlug: `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-       FROM pages p WHERE p.source_id = $1 AND (p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'source_slug' = $3))) ORDER BY p.slug`,
+            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+       FROM pages p WHERE p.source_id = $1 AND (p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'source_slug' = $3))) ORDER BY p.slug COLLATE "C"`,
   atomsSourcePath: `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-       FROM pages p WHERE p.source_id = $1 AND (p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'source_path' = $3))) ORDER BY p.slug`,
+            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+       FROM pages p WHERE p.source_id = $1 AND (p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'source_path' = $3))) ORDER BY p.slug COLLATE "C"`,
   chronicle: `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
        FROM pages p WHERE p.source_id = $1 AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND p.type='event' AND p.frontmatter->'event'->>'depth' = $3
-      AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%')) ORDER BY p.slug`,
+      AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%')) ORDER BY p.slug COLLATE "C"`,
 } as const;
 
 function statement(q: GenerationPageRowsQuery): { sql: string; params: unknown[] } {

@@ -8,9 +8,8 @@
 //! page read policy. Deleted rows are included. They add no keys.
 //!
 //! Order: the rows come in `P source \0 slug` key order, so by slug bytes, and tags sort by
-//! bytes. Postgres orders `ORDER BY p.slug` and `jsonb_agg(t.tag ORDER BY t.tag)` by the
-//! database collation, which can differ for mixed case or non-ASCII text; the adapters key the
-//! rows by slug, so the order does not change what they read.
+//! bytes, as Postgres orders `ORDER BY p.slug COLLATE "C"` and
+//! `jsonb_agg(t.tag ORDER BY t.tag COLLATE "C")` on every locale.
 //!
 //! `frontmatter->>'k'` is the key's text: a string is itself, JSON null or a missing key is
 //! NULL, any other value is its jsonb text (so `true` matches `'true'`).
