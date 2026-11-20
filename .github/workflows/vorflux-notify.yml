@@ -12,7 +12,7 @@ name: Vorflux notify
 #   - the pull request being merged or closed;
 #   - a push to its head by anyone other than garrytan;
 #   - a full required check (full-suite, e2e-full-suite or macOS 26
-#     validation) ending red on its current head.
+#     validation) ending red or timing out on its current head.
 #
 # Safety: every filter sits in the job-level if, so other events start no
 # runner. Nothing is checked out and no pull-request code runs; the job reads
@@ -63,7 +63,7 @@ jobs:
        (github.event.action == 'closed' ||
         (github.event.action == 'synchronize' && github.event.sender.login != 'garrytan'))) ||
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'failure' &&
+       (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out') &&
        github.event.workflow_run.head_repository.full_name == 'garrytan/gbrain')
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
@@ -138,7 +138,7 @@ jobs:
               run=$(api "commits/$HEAD_SHA/check-runs?filter=latest&check_name=$(jq -rn --arg c "$check" '$c | @uri')" | jq -c --argjson suite "$RUN_SUITE" \
                 '[.check_runs[] | select(.check_suite.id == $suite)] | sort_by(.completed_at) | last // empty')
               [ -n "$run" ] || skip "this run has no current $check check on $HEAD_SHA"
-              [ "$(jq -r '.conclusion' <<<"$run")" = failure ] || skip "$check did not fail in this run"
+              case "$(jq -r '.conclusion' <<<"$run")" in failure|timed_out) ;; *) skip "$check did not fail in this run" ;; esac
               HTML_URL=$(jq -r '.html_url' <<<"$run")
               event=check_failed; delivery="check_failed:$HEAD_SHA:$check" ;;
             *) skip "event $EVENT_NAME is not watched" ;;
