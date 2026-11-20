@@ -10,8 +10,9 @@
  * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, countLabelFacts, whose label line this member
  * reads into literal labels (label-line.ts), and countPurgedPageFacts, which reads the store's `page_purges` ledger. No
  * member writes that ledger on Rust: the page purge sweep and the restore replay write it with raw SQL in the write
- * journal's transaction and refuse, so on Rust every counted fact is ambiguous. listUnwithdrawnFacts reads the store's
- * derived generation ledger (facts/generations.rs), which no member writes on Rust either: the fence writer publishes
+ * journal's transaction and refuse, so on Rust every counted fact is ambiguous. (`insertFactPurge` and `insertHoldingPagePurges` are
+ * served, but they write the `fact_purges` ledger, not `page_purges`, so they do not change that.) listUnwithdrawnFacts reads
+ * the store's derived generation ledger (facts/generations.rs), which no member writes on Rust either: the fence writer publishes
  * generations with raw SQL and refuses, so on Rust it lists nothing. loopFactDrift and closedLoopWithActiveFact are
  * served from open-loops.ts. listExtractorFactsForClassification (facts/extractor_classify.rs) reads its receipts from
  * the write journal's committed requests (`persistence_requests` on SQL), the requests the store's journal records.

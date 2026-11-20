@@ -401,6 +401,10 @@ slug; any other row matches subject `*`, its entity, or (when it is unbacked and
 subject. The guard is applied only by these repair writes: `insertFact`, `insertFacts` and the other fact writers still
 do not run the withdrawal trigger (see "Not modeled").
 
+The six ontology re-key and repair members (`listRekeyLosers` and its four write companions, `listOntologyFactCandidates`,
+`restoreOntologyFact`) are `facts/ontology_repair.rs`; `restoreOntologyFact` also applies the withdrawal guard. See
+`ontology.md`, "Ontology re-key and repair statements".
+
 ## Group 5: the rest of the facts write and recall sites (not yet in Rust)
 
 Thirty-six members that were raw `executeRaw` statements in seventeen callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,

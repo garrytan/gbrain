@@ -54,6 +54,7 @@ pub mod generations;
 mod held_cells;
 pub mod holding_purges;
 pub mod loops;
+pub mod ontology_repair;
 mod page_purges;
 mod privacy;
 pub mod purge;

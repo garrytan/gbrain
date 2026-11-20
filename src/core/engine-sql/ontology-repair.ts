@@ -20,7 +20,7 @@ export type { EngineRawRead };
 export interface RekeyMove { where: string; entity: string; sms: string; params: [unknown, unknown] }
 
 const REKEY_WHERE_BY_ID = 'f.id = $2::bigint AND ';
-const REKEY_WHERE_SHAPES: readonly string[] = [
+export const REKEY_WHERE_SHAPES: readonly string[] = [
   'f.entity_slug = $2 AND f.row_num IS NULL',
   REKEY_WHERE_BY_ID + UNBACKED_FACT_SQL,
   'f.entity_slug = $2 AND f.source_markdown_slug IS DISTINCT FROM $2',
@@ -28,8 +28,8 @@ const REKEY_WHERE_SHAPES: readonly string[] = [
   'f.source_markdown_slug = $2',
   'f.source_markdown_slug = $3 AND f.expired_at IS NULL',
 ];
-const REKEY_ENTITY_SHAPES: readonly string[] = ['$3::text', 'f.entity_slug', '$2::text'];
-const REKEY_SMS_SHAPES: readonly string[] = ['f.source_markdown_slug', '$3::text', '$2::text'];
+export const REKEY_ENTITY_SHAPES: readonly string[] = ['$3::text', 'f.entity_slug', '$2::text'];
+export const REKEY_SMS_SHAPES: readonly string[] = ['f.source_markdown_slug', '$3::text', '$2::text'];
 
 /** A re-key move's text, when it is one of the closed shapes; the move never carries a value. */
 function rekeyMoveSql(text: string, shapes: readonly string[]): string {
