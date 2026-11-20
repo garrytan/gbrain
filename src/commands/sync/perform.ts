@@ -18,6 +18,7 @@ import type { OperationContext } from '../../core/ops/contract.ts';
 import { refreshProjectionStatistics } from '../../core/search/projection-statistics.ts';
 import { withRefreshingLock, LockUnavailableError, LockStolenError, syncLockId } from '../../core/db-lock.ts';
 import { readSyncAnchor } from '../../core/sync-anchor.ts';
+import { assertNotOwnedRoot } from '../../core/owned-folder/paths.ts';
 import { recordUpstreamObservation } from '../../core/sync-upstream.ts';
 import { assertSyncApplicable } from '../../core/sync-applicability.ts';
 import { performPlainDirectorySync, plainDirectorySyncRoot } from './plain-directory.ts';
@@ -91,10 +92,13 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
     if (connector) return connector;
   }
   if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+  if (opts.repoPath) assertNotOwnedRoot(opts.repoPath, 'gbrain sync refuses the root');
   const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
+  if (plainRoot) assertNotOwnedRoot(plainRoot, 'gbrain sync refuses the root');
   if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
   if (managed) return performManagedBranch(engine, opts);
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (filesystemRoot) assertNotOwnedRoot(filesystemRoot, 'gbrain sync refuses the root');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
     let entered = false;
     let result: SyncResult | undefined;
