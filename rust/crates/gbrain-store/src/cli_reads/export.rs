@@ -749,7 +749,10 @@ mod tests {
         assert_eq!(s.read_segmented_version_body_bytes(-1, 1).unwrap(), None);
         assert!(s.list_access_policy_source_ids().unwrap().is_empty());
         s.put_access_policy_state("default").unwrap();
-        assert_eq!(s.list_access_policy_source_ids().unwrap(), vec!["default".to_string()]);
+        assert_eq!(
+            s.list_access_policy_source_ids().unwrap(),
+            vec!["default".to_string()]
+        );
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);
     }

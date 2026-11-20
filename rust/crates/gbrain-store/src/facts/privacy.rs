@@ -968,7 +968,17 @@ mod tests {
         };
         assert!(!page_hidden(&*read, &private, &policy).unwrap());
         // A provenance page judged by the empty identity takes no satisfied rule (`satisfiedFor`).
-        assert!(!member_access_allows(&*read, &private, &[], &policy, false, &super::OwnerOnlySources::read(&*read).unwrap()).unwrap());
+        assert!(
+            !member_access_allows(
+                &*read,
+                &private,
+                &[],
+                &policy,
+                false,
+                &super::OwnerOnlySources::read(&*read).unwrap()
+            )
+            .unwrap()
+        );
     }
 
     #[test]
