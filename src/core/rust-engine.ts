@@ -24,7 +24,7 @@ import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
-import { installOwnerClient } from './rust-engine/owner-ipc/client.ts';
+import { callEndCheck, installOwnerClient } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 
@@ -117,8 +117,12 @@ export class RustEngine {
    * A client whose owner has gone runs the election again on its next call (client.ts `rejoin`): it becomes the owner
    * and opens the store, or a client of the process that did. A disconnected engine does nothing.
    */
-  private _takeOver(): Promise<void> {
-    return this._connected && !this._disconnecting ? this._electOnce() : Promise.resolve();
+  private _takeOver(from: object): Promise<void> {
+    // Only the connection this engine is a client of now may start the election. A member kept from an earlier
+    // connection (a bound method) finds the engine already elected, and does nothing: a second election would make the
+    // owner a client of its own socket and drop the owner lock it holds.
+    const current = this._owner?.role === 'client' && this._owner.connection === from;
+    return current && this._connected && !this._disconnecting ? this._electOnce() : Promise.resolve();
   }
 
   private async _open(generation: number): Promise<void> {
@@ -133,7 +137,7 @@ export class RustEngine {
     if (role.role === 'client') {
       this._owner = role;
       prior?.();
-      this._leaveOwner = installOwnerClient(this, role.connection, { rejoin: () => this._takeOver() });
+      this._leaveOwner = installOwnerClient(this, role.connection, { rejoin: () => this._takeOver(role.connection) });
       this._connected = true;
       return;
     }
@@ -223,8 +227,14 @@ export class RustEngine {
   }
 
   /** The open store a served member runs on, waiting for an open in progress; rejects `engine_closed` otherwise. */
-  async storeFor(member: string): Promise<RustStore> {
-    if (!this._store && this._storeReady && this._owner?.role === 'owner') await this._storeReady;
+  async storeFor(member: string, args: unknown[] = []): Promise<RustStore> {
+    if (!this._store && this._storeReady && this._owner?.role === 'owner') {
+      // A call that waited for the open is checked again before it runs: nothing else ends one that was cancelled or
+      // went past its deadline while the store opened, and it may be a write.
+      const stillWanted = callEndCheck(member, args);
+      await this._storeReady;
+      stillWanted();
+    }
     return this.openStore(member);
   }
 
@@ -266,7 +276,7 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     writable: true,
     enumerable: false,
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
-      return (impl as (brain: unknown, ...rest: unknown[]) => Promise<unknown>)((await this.storeFor(member)).brain, ...args);
+      return (impl as (brain: unknown, ...rest: unknown[]) => Promise<unknown>)((await this.storeFor(member, args)).brain, ...args);
     },
   });
 }

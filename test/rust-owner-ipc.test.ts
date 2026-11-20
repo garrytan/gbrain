@@ -604,6 +604,8 @@ describe('an owner that exits', () => {
     }
     /** Counts store opens, so one election for several callers shows as one open. */
     const countedAddon = (opened: { n: number }, openMs = 0) => ({ target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: class extends ConfigBrain { async open() { opened.n++; if (openMs) await Bun.sleep(openMs); } } }) as never;
+    /** Like `countedAddon`, and a `setConfig` that records what it was asked to write, so a write that ran is told from one that did not. */
+    const writingAddon = (opened: { n: number }, written: string[], openMs = 0) => ({ target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: class extends ConfigBrain { async open() { opened.n++; if (openMs) await Bun.sleep(openMs); } async setConfig(key: string, value: string) { written.push(`${key}=${value}`); } } }) as never;
     const settle = (call: Promise<unknown>) => call.then(value => value, (error: { code?: string; reason?: string }) => `${error.code}/${error.reason}`);
 
     // Value: protects=the first ordinary call after owner death starts the rejoin, and calls at once share one election and one open; fails_when=only whole ops rejoin or each call elects; why_new=failover tests began with a whole op; seam=none; no_claim=handoff
@@ -631,17 +633,47 @@ describe('an owner that exits', () => {
       }
     }, 60_000);
 
+    // Value: protects=a member kept from the client connection (a bound method) never starts a second election once this engine is the owner, so the owner keeps its one lock and server and its calls are served in process; fails_when=a call on a closed connection elects again with no check that the connection is still the engine's own, so the owner connects to its own socket and drops its lock; why_new=every call above goes through the engine's current members; seam=none; no_claim=a method kept from an owner that was replaced by another owner
+    test('a method kept from the client connection, called again after this engine became the owner, runs in process and leaks no second owner', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-kept-'));
+      const db = join(dir, 'brain.rust');
+      const first = await ownerChild(db);
+      const opened = { n: 0 };
+      const rust = openRustEngine({ addon: countedAddon(opened), databasePath: db, ownerWaitMs: 5_000 });
+      try {
+        await rust.connect({});
+        expect(rust.ownerRole).toBe('client');
+        const kept = (rust as unknown as BrainEngine).getConfig.bind(rust);
+        await afterOwnerDeath(first, rust);
+        expect(await settle(kept('who'))).toBe('this-process');
+        expect(rust.ownerRole).toBe('owner');
+        // The connection the kept method belongs to is closed, and this engine is now the owner: it must not elect again.
+        const again = await settle(withReadDeadline(Date.now() + 3_000, () => kept('who')));
+        expect(again).toBe('this-process');
+        expect(rust.ownerRole).toBe('owner');
+        expect(rust.ownerStats()).not.toBeNull();
+        expect(opened.n).toBe(1);
+      } finally {
+        await rust.disconnect();
+        first.child.kill('SIGKILL');
+        // The one owner role was given up: nothing answers on the owner socket, and the brain can be taken again.
+        const answers = await connectOwner(ownerSocketPath(db)).then(c => { c.close(); return true; }, () => false);
+        expect(answers).toBe(false);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+
     // Value: protects=a call cancelled or past its deadline while this process wins the election never runs in process; fails_when=the local member runs after the caller's signal aborted or its deadline passed; why_new=failover tests only ran calls that stayed live; seam=none; no_claim=handoff
     describe('a call that ends during the election', () => {
       /** Kills the owner, starts `start` on the first call after it, and returns its outcome and whether this process owns the brain. */
-      async function duringElection(start: (brain: BrainEngine) => Promise<unknown>) {
+      async function duringElection(start: (brain: BrainEngine) => Promise<unknown>, written: string[] = []) {
         const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-cancel-election-'));
         const db = join(dir, 'brain.rust');
         const first = await ownerChild(db);
         const opened = { n: 0 };
         // The store open takes 20 ms, so a deadline 1 ms away has always passed when the election ends; an election
         // that finished inside the same millisecond let the call run and made the deadline case flaky.
-        const rust = openRustEngine({ addon: countedAddon(opened, 20), databasePath: db, ownerWaitMs: 5_000 });
+        const rust = openRustEngine({ addon: writingAddon(opened, written, 20), databasePath: db, ownerWaitMs: 5_000 });
         try {
           await rust.connect({});
           await afterOwnerDeath(first, rust);
@@ -670,6 +702,79 @@ describe('an owner that exits', () => {
       test('past its deadline: ends timeout not_sent and the local member never runs', async () => {
         const result = await duringElection(brain => withReadDeadline(Date.now() + 1, () => brain.getConfig('who')));
         expect(result).toEqual({ outcome: 'timeout/not_sent', live: 'this-process', role: 'owner' });
+      }, 60_000);
+
+      // Value: protects=a write cancelled or past its deadline while this process wins the election is never written; fails_when=the local member runs after the election with the caller already gone; why_new=the two tests above call getConfig, which writes nothing, so a member that ran and then reported cancelled would still pass them; seam=none; no_claim=a write interrupted inside the native store
+      test('cancelled write: ends cancelled and nothing is written', async () => {
+        const written: string[] = [];
+        const controller = new AbortController();
+        const result = await duringElection(brain => {
+          const call = withRequestSignal(controller.signal, () => brain.setConfig('k', 'v'));
+          controller.abort();
+          return call;
+        }, written);
+        expect(result).toEqual({ outcome: 'cancelled/', live: 'this-process', role: 'owner' });
+        expect(written).toEqual([]);
+      }, 60_000);
+
+      test('write past its deadline: ends timeout not_sent and nothing is written', async () => {
+        const written: string[] = [];
+        const result = await duringElection(brain => withReadDeadline(Date.now() + 1, () => brain.setConfig('k', 'v')), written);
+        expect(result).toEqual({ outcome: 'timeout/not_sent', live: 'this-process', role: 'owner' });
+        expect(written).toEqual([]);
+      }, 60_000);
+    });
+
+    // Value: protects=a call made while this process is still opening the store it just took over (not the call that started the takeover) is checked again after the open, so a write cancelled or past its deadline in that time is never written; fails_when=the call waits for the open and then runs with no check; why_new=the tests above end the call that starts the election, which the owner client checks, not a second call that reaches the engine while the store opens; seam=none; no_claim=how many calls may wait for one open
+    describe('a second call made while the store is still opening after a takeover', () => {
+      async function whileOpening(second: (brain: BrainEngine) => Promise<unknown>, written: string[]) {
+        const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-open-wait-'));
+        const db = join(dir, 'brain.rust');
+        const first = await ownerChild(db);
+        const rust = openRustEngine({ addon: writingAddon({ n: 0 }, written, 400), databasePath: db, ownerWaitMs: 5_000 });
+        try {
+          await rust.connect({});
+          await afterOwnerDeath(first, rust);
+          const brain = rust as unknown as BrainEngine;
+          const starter = settle(brain.getConfig('who'));
+          // The engine is the owner and its own members are in place as soon as the election is decided, while the open still runs.
+          for (let i = 0; i < 500 && rust.ownerRole !== 'owner'; i++) await Bun.sleep(5);
+          expect(rust.ownerRole).toBe('owner');
+          const waiting = second(brain).then(() => null, (error: OperationError) => `${error.code}/${error.reason ?? ''}`);
+          const outcome = await waiting;
+          expect(await starter).toBe('this-process');
+          return outcome;
+        } finally {
+          await rust.disconnect();
+          first.child.kill('SIGKILL');
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+
+      test('cancelled while the store opens: ends cancelled and nothing is written', async () => {
+        const written: string[] = [];
+        const controller = new AbortController();
+        const outcome = await whileOpening(brain => {
+          const call = withRequestSignal(controller.signal, () => brain.setConfig('k', 'v'));
+          setTimeout(() => controller.abort(), 50);
+          return call;
+        }, written);
+        expect(outcome).toBe('cancelled/');
+        expect(written).toEqual([]);
+      }, 60_000);
+
+      test('past its deadline while the store opens: ends timeout not_sent and nothing is written', async () => {
+        const written: string[] = [];
+        const outcome = await whileOpening(brain => withReadDeadline(Date.now() + 50, () => brain.setConfig('k', 'v')), written);
+        expect(outcome).toBe('timeout/not_sent');
+        expect(written).toEqual([]);
+      }, 60_000);
+
+      test('a write that stays live is written once the store has opened', async () => {
+        const written: string[] = [];
+        const outcome = await whileOpening(brain => brain.setConfig('k', 'v'), written);
+        expect(outcome).toBeNull();
+        expect(written).toEqual(['k=v']);
       }, 60_000);
     });
 

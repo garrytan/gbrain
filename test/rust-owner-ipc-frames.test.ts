@@ -202,6 +202,45 @@ describe('frame rules on the client', () => {
     }
   });
 
+  // Value: protects=a hello whose version or pid is an object ends connectOwner with owner_ipc_protocol, not an exception thrown out of the socket reader; fails_when=the detail text converts the field with String(); why_new=the version_mismatch test above sends a number; seam=none; no_claim=a hello of the right version
+  test('an owner hello whose version or pid is an object is refused with owner_ipc_protocol version_mismatch, with no exception out of the reader', async () => {
+    const hostile = { toString: null };
+    for (const helloFrame of [{ ...ownerHello(), version: hostile }, { ...ownerHello(OWNER_IPC_VERSION + 1), pid: hostile }]) {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-frames-h-'));
+      const owner = await rawOwner(dir, helloFrame as Frame, f => ({ t: 'result', id: f.id, ok: true, value: encodeValue(null) }));
+      try {
+        const outcome = await connectOwner(owner.socketPath, { timeoutMs: 1_000 }).then(c => { c.close(); return null; }, e => e as OperationError);
+        expect(outcome).toBeInstanceOf(OperationError);
+        expect({ code: outcome?.code, reason: outcome?.reason }).toEqual({ code: 'owner_ipc_protocol', reason: 'version_mismatch' });
+        expect(outcome?.detail).toContain('=object');
+      } finally {
+        await owner.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  // Value: protects=an answer whose id is an object is ignored and the connection and the next call go on; fails_when=the id is converted with Number() and throws out of the socket reader; why_new=every other answer here carries a number id; seam=none; no_claim=what becomes of the call that frame was meant for
+  test('an answer frame whose id is an object is ignored: no exception out of the reader, the next call works', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-frames-i-'));
+    const owner = await rawOwner(dir, ownerHello(), f => f.id === 1
+      ? { t: 'result', id: { toString: null }, ok: true, value: encodeValue('never') }
+      : { t: 'result', id: f.id, ok: true, value: encodeValue('fine') });
+    const connection = await connectOwner(owner.socketPath);
+    const engine = { kind: 'rust', capabilities: new Set<string>() } as unknown as BrainEngine;
+    const close = installOwnerClient(engine, connection);
+    try {
+      void engine.getConfig('a').catch(() => undefined);
+      await Bun.sleep(100);
+      expect(connection.closed).toBe(false);
+      expect(await engine.getConfig('b')).toBe('fine');
+    } finally {
+      close();
+      await owner.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('an answer this process cannot read fails only that call with result_undecodable; the next call works', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-frames-d-'));
     // The first call's answer holds a function tag, which a result decoder refuses; every later call gets a string.

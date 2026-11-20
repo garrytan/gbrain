@@ -136,6 +136,27 @@ function callerSignals(args: unknown[]): AbortSignal[] {
   return [...found];
 }
 
+/**
+ * What the caller asked for, taken before a wait, so the check the function returns can end the call afterwards: it
+ * throws the call's own `cancelled` or `timeout` (`not_sent`) once a signal in its arguments or on its request has
+ * aborted, or its deadline has passed. A call that waits for an election to settle, and then runs in process where
+ * nothing else checks it, calls this first.
+ */
+export function callEndCheck(member: string, args: unknown[]): () => void {
+  const startedAt = Date.now();
+  const signals = callerSignals(args);
+  const { deadlineAt } = callDeadline();
+  return () => {
+    for (const signal of signals) if (signal.aborted) throw abortError(member, signal, startedAt, false);
+    if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw ownerCallTimeout(member, Date.now() - startedAt, 'not_sent');
+  };
+}
+
+/** A frame field as text for an error detail: scalars only, so a hostile object never runs its own conversion. */
+function fieldText(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value).slice(0, 64) : typeof value;
+}
+
 export interface ConnectOwnerOptions {
   timeoutMs?: number;
   /** This process's uid and the peer-uid reader (default: the platform's); tests inject another user. */
@@ -222,7 +243,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
           clearTimeout(timer);
           socket.destroy();
           reject(ownerIpcProtocol('version_mismatch', null,
-            `client_version=${OWNER_IPC_VERSION} owner_version=${String(frame.version)} owner_pid=${String(frame.pid)}`));
+            `client_version=${OWNER_IPC_VERSION} owner_version=${fieldText(frame.version)} owner_pid=${fieldText(frame.pid)}`));
           return;
         }
         hello = frame as unknown as OwnerHello;
@@ -232,22 +253,23 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         refresh();
         return;
       }
-      const call = pending.get(Number(frame.id));
+      // Ids and keys are read as scalars only: an object field would run its own conversion and throw out of this callback.
+      const call = typeof frame.id === 'number' ? pending.get(frame.id) : undefined;
       if (!call) return;
       if (frame.t === 'cb') {
-        const fn = call.callbacks.get(String(frame.key));
+        const fn = typeof frame.key === 'string' ? call.callbacks.get(frame.key) : undefined;
         try { if (fn) fn(...(decodeValue(frame.args as Wire) as unknown[])); } catch { /* a notification never fails the call */ }
         return;
       }
       if (frame.t !== 'result') return;
-      pending.delete(Number(frame.id));
+      pending.delete(frame.id as number);
       call.cleanup();
       refresh();
       // An answer this process cannot read fails only its own call; the connection and other calls go on.
       let decoded: unknown;
       try { decoded = frame.ok === true ? decodeValue(frame.value as Wire) : decodeError(frame.error as Wire); }
       catch (error) {
-        call.reject(ownerIpcProtocol('result_undecodable', call.member, `id=${String(frame.id)} ${error instanceof Error ? error.message : String(error)}`));
+        call.reject(ownerIpcProtocol('result_undecodable', call.member, `id=${fieldText(frame.id)} ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
       if (frame.ok === true) call.resolve(decoded);
@@ -429,11 +451,9 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
         : (...args: unknown[]) => connection.request('call', member, args);
     const value = !rejoin ? direct : async function viaOwner(...args: unknown[]): Promise<unknown> {
       if (connection.closed) {
-        // What the caller asked for, taken before the wait: once this process is the owner the call runs in process,
-        // where nothing else checks it, so a call cancelled or past its deadline during the election must end here.
-        const startedAt = Date.now();
-        const signals = callerSignals(args);
-        const { deadlineAt } = callDeadline();
+        // Once this process is the owner the call runs in process, where nothing else checks it, so a call cancelled or
+        // past its deadline during the election must end here.
+        const stillWanted = callEndCheck(member, args);
         // An election that fails ends this call with its own error (a store that would not open, a disconnect that won),
         // not with the `engine_closed` the emptied engine would give; a call the election could not place still ends
         // `owner_unavailable` (`not_sent`) below.
@@ -441,8 +461,7 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
         if (failure && !(failure.error instanceof OperationError && failure.error.code === 'owner_unavailable')) throw failure.error;
         const now = record[member];
         if (now !== value && typeof now === 'function') {
-          for (const signal of signals) if (signal.aborted) throw abortError(member, signal, startedAt, false);
-          if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw ownerCallTimeout(member, Date.now() - startedAt, 'not_sent');
+          stillWanted();
           return (now as (...a: unknown[]) => unknown).apply(engine, args);
         }
       }

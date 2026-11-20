@@ -372,6 +372,37 @@ describe('the owner connection cap', () => {
   });
 });
 
+describe('a peer refused for its hello version', () => {
+  // Value: protects=a peer whose hello version is wrong and that never closes its own half neither holds a connection slot nor outlives the drain period; fails_when=the version refusal only half-closes the socket and leaves it counted among the owner's connections; why_new=the refusals tested above are connection-limit and peer-user refusals, never the version one; seam=none; no_claim=how many such peers the owner can answer per second
+  test('holds no connection slot and is cut off after the drain period, so a right-version client still connects', async () => {
+    const { server } = await blockingOwner({ maxConnections: 1 });
+    const peers: Array<{ socket: net.Socket; state: { hello: boolean; closed: boolean } }> = [];
+    // One after the other: each is admitted into the one slot, and its wrong version must give that slot back.
+    for (let n = 0; n < 3; n++) {
+      const socket = net.connect({ path: server.socketPath, allowHalfOpen: true });
+      const state = { hello: false, closed: false };
+      socket.on('error', () => {});
+      socket.on('data', chunk => { if (String(chunk).includes('"hello"')) state.hello = true; });
+      socket.on('close', () => { state.closed = true; });
+      socket.write(`${JSON.stringify({ t: 'hello', version: OWNER_IPC_VERSION + 1 })}\n`);
+      cleanups.push(() => { socket.destroy(); });
+      peers.push({ socket, state });
+      await until(() => state.hello);
+    }
+    expect(peers.map(p => p.state.hello)).toEqual([true, true, true]);
+    // The one slot is free: a client of the right version is admitted while the wrong-version peers are still open.
+    const ok = await connectOwner(server.socketPath).then(c => c, e => e as OperationError);
+    expect(ok).not.toBeInstanceOf(Error);
+    (ok as { close: () => void }).close();
+    expect(peers.some(p => p.state.closed)).toBe(false);
+    await Bun.sleep(OWNER_IPC_REFUSED_DRAIN_MS + 500);
+    // A write to a socket the owner destroyed is answered with a reset; a socket the owner still holds takes it silently.
+    for (const { socket } of peers) socket.write('x\n');
+    await until(() => peers.every(p => p.state.closed));
+    expect(peers.map(p => p.state.closed)).toEqual([true, true, true]);
+  });
+});
+
 test('owner_busy is registered, retryable, with every reason the owner gives', () => {
   const rows = CODES as unknown as Record<string, { reasons?: readonly string[]; class?: string }>;
   expect(rows.owner_busy?.reasons).toEqual(['queue_full', 'inflight_bytes', 'connections']);
