@@ -22,7 +22,9 @@
  * stopwords count on neither side (GBRA-574 A4), so an as-of phrasing does not
  * dilute the share. Its denominator grows with a long fact's own term count,
  * so a fact stuffed with common words cannot match most questions. Order:
- * score, then newest valid_from, then id.
+ * score, then newest valid_from, then id. The keyword arm's own pool is cut by
+ * how many distinct query terms a fact holds first, then ts_rank_cd, newest
+ * valid_from and id.
  *
  * Errors: a missing embedding column or a dimension mismatch skips the cosine
  * arm (expected on old or migrating brains); any other database error throws,
@@ -287,10 +289,14 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const p = armParams(allSim ? simParams : []);
     const doc = factsFtsDocument('f');
     const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
+    // The WHERE stays the OR query (index-friendly); the ORDER BY puts the facts that hold the most distinct query
+    // terms first, so a frequent term (a person's name) repeated in many facts cannot push out the one fact that
+    // holds them all. Each term is matched as its own plainto_tsquery, so stemming and stopwords follow the brain's config.
+    const coverage = `(SELECT count(*) FROM unnest($${p.length + 3}::text[]) AS qt(w) WHERE ${doc} @@ plainto_tsquery('${getFtsLanguage()}'::regconfig, qt.w))`;
     return customPlan<Row>(engine,
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
-       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
-      [...p, searched.join(' '), opts.depth.keyword]);
+       ORDER BY ${coverage} DESC, ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
+      [...p, searched.join(' '), opts.depth.keyword, searched]);
   };
   const nearest = async (): Promise<Row[]> => {
     if (!vec) return [];

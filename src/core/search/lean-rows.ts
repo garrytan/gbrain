@@ -27,7 +27,8 @@
  *     its ranked chunk;
  *   - `evidence_omitted` on a keyword-mode row whose text did not fit;
  *   - `keyword_fill` on a row the keyless any-word fill appended (it holds
- *     only some of the query's words).
+ *     only some of the query's words);
+ *   - `widened` on a page row the exact widening added (`exact`).
  * `fields: "full"`, the `mcp.result_rows: full` host config and gbrain's own
  * thin client get every field; trusted local callers always do.
  */
@@ -45,6 +46,8 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'evidence_omitted',
   // GST-2762: a row the keyless any-word fill appended after the rows that hold every query word.
   'keyword_fill',
+  // A page row the exact widening added: the query's terms as a literal phrase, not returned by ranked retrieval.
+  'widened',
   // #5575 A6: every row says how much it deserves influence.
   'trust_tier', 'origin', 'unconfirmed',
   // #7600: a conversation page's row is a quoted excerpt.

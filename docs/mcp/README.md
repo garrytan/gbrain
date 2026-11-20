@@ -234,7 +234,7 @@ pass it to `get_page`.
 {"result_type":"fact","fact_id":"412","page_slug":"companies/acme-example","follow_up":{"op":"recall","args":{"entity":"companies/acme-example"}},"title":"Saved fact about companies/acme-example","chunk_text":"Saved fact (fact; valid from 2026-09-01; provenance: user update): The billing contact for Acme Example is Bob.","score":0.42,"source_id":"default"}
 ```
 
-`search.query_facts_arm=false` turns these rows off. A `query` that passes
+`search.query_facts_arm=false` turns these rows off in `query`, and `search.search_facts_arm=false` in `search`. A fact that holds every content term of the question may take the place of the lowest page rows (`search.facts_arm_displace=false` keeps them for pages). A `query` that passes
 `token_budget` instead gets the facts block (on by default): dated fact rows
 (copies of one claim take one row, followed by `(stated N times, last DATE)`),
 oldest first, ahead of the pages, within 22% of the budget and at most 40 rows

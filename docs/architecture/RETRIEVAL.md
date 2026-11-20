@@ -354,8 +354,14 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
 - **Facts arm in `query` (default on).** `query` adds up to three active
   saved facts that match the question (by the query embedding it already
   computed, by shared terms or by a named entity) as fact rows in spare
-  capacity only: free slots under the caller's row count, and what the page
-  rows leave of the token budget. A page row is never displaced. It also marks
+  capacity: free slots under the caller's row count, and what the page rows
+  leave of the token budget. A fact that holds every content term of the
+  question may also take the place of the lowest-scoring page rows
+  (`search.facts_arm_displace`, default on; never with a token budget, never an
+  exact or alias hit); a weaker match never displaces a page. Candidates are
+  ordered by how many distinct question terms they hold before ts_rank_cd, so a
+  repeated name no longer buries the fact that names the thing asked about.
+  `search` runs the same arm (`search.search_facts_arm`, default on). It also marks
   a page row `superseded_claim` when a newer fact covers its typed claim
   (`src/core/search/facts-arm.ts`). A fact row is never page-shaped: it carries
   `result_type: "fact"`, `fact_id` and a `follow_up` recall call, no `slug` or
@@ -364,6 +370,15 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   with correction-dated writes it lifted forget-then-remember from 92% to 100%
   correct. `search.query_facts_arm=false` turns it off. Verdict and gates:
   `docs/eval/decisions/query-facts-arm/`.
+- **Exact widening in `search` and `query` (default on).** A result that is
+  degraded (a stage that affects recall; a keyword-only brain's configured
+  `embed_unavailable` does not count) or thin (no row holds every content term
+  of a short query) also runs the `search_exact` literal scan for the terms as a
+  phrase, under the caller's read policy, and merges up to three pages the rows
+  do not hold: into free rows first, and for a thin result over the lowest page
+  rows. Merged rows carry `widened: "exact"`, and `_meta.retrieval.exact_widened`
+  is `true` when the scan ran. Skipped with paging, filters and dates.
+  `search.exact_widen=false` turns it off (`src/core/search/exact-widen.ts`).
 - **Saved facts beside `search` and `query` results.** Both ops return, in
   `retrieval.saved_facts` and a text block after the rows, up to five active
   saved facts: first those about the entity page the query names, then facts
