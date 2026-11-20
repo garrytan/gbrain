@@ -40,7 +40,7 @@ The caller imports the relations in this order (`seed::RELATIONS`), because a ro
 | --- | --- | --- |
 | `sources` | the source record | a row equal to the stored record is skipped; a different one replaces it (the fresh store holds `default`) |
 | `config` | the key and value | a row equal to the stored value is skipped. `version` is never copied: a different value is dropped (`config_version_differs`), so the store keeps its own schema version |
-| `pages` | the page record, its body state, salience, contextual-retrieval state, page signature and extraction record | an id already held is skipped; a slug held by another id is `constraint_violation` |
+| `pages` | the page record, its body state, salience, contextual-retrieval state, page signature, extraction record and projection job | an id already held is skipped; a slug held by another id is `constraint_violation`. The row also carries the page's `page_projection_jobs` row as `projection_job_revision`, `projection_job_reason` and `projection_job_updated_at` (a left join on the page's source incarnation and slug, null when the primary queued no job). A job row is stored with the primary's revision, reason and time |
 | `tags` | the tag and its `tag_source` | the page's `updated_at` and revisions do not move |
 | `content_chunks` | the chunk, its search meta, its vector and embedding state | a retired chunk (`retired_chunk`) and a body-segment chunk (`segment_chunk`) are dropped. An `embedding_text_hash` equal to the md5 of the chunk text becomes the store's own hash, so the chunk does not read as drifted; another hash is kept as it is |
 | `links` | the link and its three index keys | both pages, and the origin page when set, must exist |
@@ -65,6 +65,7 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | `corpus_generation_without_mode` | a corpus generation with no contextual-retrieval mode |
 | `retired_chunk`, `segment_chunk` | the dropped chunk rows |
 | `embedding_image`, `embedding_multimodal` | the chunk's image or multimodal vector |
+| `projection_job_seed_time` | the time of a projection job the page write queued when the primary row gave no job time (no job row, or one with no `updated_at`): the job keeps the seed transaction's time |
 | `vector_without_embedded_at` | the embed time of a vector with none (stored as time 0) |
 | `take_vector_not_current` | a take vector that is not current |
 

@@ -668,3 +668,66 @@ fn decoders_read_postgres_text() {
     assert!(row.date("e").is_err());
     assert_eq!(row.text_array("missing").unwrap(), None);
 }
+
+/// A page whose text projection is behind its knowledge revision, so both engines queue a
+/// projection job for it.
+fn behind_page_row(id: &str, slug: &str) -> SeedRow {
+    let mut p = page_row(id, slug);
+    p.insert("text_projection_revision".into(), None);
+    p
+}
+
+fn job(s: &Store, slug: &str) -> crate::persistence::JobRecord {
+    let read = s.read().unwrap();
+    crate::persistence::read_job(&*read, "default", slug)
+        .unwrap()
+        .expect("a projection job")
+}
+
+#[test]
+fn pages_keep_the_primary_projection_job() {
+    let s = store();
+    let mut p = behind_page_row("5", "notes/behind");
+    p.insert("projection_job_revision".into(), Some(REV.into()));
+    p.insert(
+        "projection_job_reason".into(),
+        Some("rebuild_failed".into()),
+    );
+    p.insert(
+        "projection_job_updated_at".into(),
+        Some("2026-04-05 06:07:08.25+00".into()),
+    );
+    let r = import(&s, "pages", vec![p]);
+    assert_eq!(r.imported, 1);
+    assert!(r.losses.is_empty(), "{:?}", r.losses);
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let j = job(&s, "notes/behind");
+    // The primary's time, revision and reason, not the seed transaction's.
+    assert_eq!(j.updated_at_us, us("2026-04-05T06:07:08.25Z"));
+    assert_eq!(j.revision, REV);
+    assert_eq!(j.reason, "rebuild_failed");
+}
+
+#[test]
+fn a_projection_job_without_a_primary_time_keeps_the_seed_time_and_is_a_loss() {
+    let s = store();
+    // No job columns at all: the store queues its own job at the seed time.
+    let r = import(&s, "pages", vec![behind_page_row("5", "notes/a")]);
+    assert_eq!(r.losses.get("projection_job_seed_time"), Some(&1));
+    assert!(job(&s, "notes/a").updated_at_us > 0);
+    // A job row with no time: the primary's revision and reason, the seed's time.
+    let mut p = behind_page_row("6", "notes/b");
+    p.insert("projection_job_revision".into(), Some(REV.into()));
+    p.insert(
+        "projection_job_reason".into(),
+        Some("rebuild_failed".into()),
+    );
+    let r = import(&s, "pages", vec![p]);
+    assert_eq!(r.losses.get("projection_job_seed_time"), Some(&1));
+    let j = job(&s, "notes/b");
+    assert!(j.updated_at_us > 0);
+    assert_eq!(j.reason, "rebuild_failed");
+    // A projected page has no job, so nothing is lost.
+    let r = import(&s, "pages", vec![page_row("8", "notes/c")]);
+    assert!(r.losses.is_empty(), "{:?}", r.losses);
+}

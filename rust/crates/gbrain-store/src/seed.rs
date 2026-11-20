@@ -420,6 +420,10 @@ static PAGES: Relation = Relation {
         ("truth_lead", Kept),
         ("timeline_lead", Kept),
         ("version_history_gap_at", Kept),
+        // `page_projection_jobs` joined on the page's source incarnation and slug.
+        ("projection_job_revision", Kept),
+        ("projection_job_reason", Kept),
+        ("projection_job_updated_at", Kept),
         ("generation", Unmapped(Some("1"))),
     ],
     import: import_page,
@@ -478,6 +482,14 @@ fn import_page(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<O
     seed_body(tx, row, id, losses)?;
     write_page(tx, &record)?;
     raise_counter(tx, crate::pages::NEXT_PAGE_ID, id)?;
+    let job = crate::persistence::SeedJob {
+        revision: row.text("projection_job_revision"),
+        reason: row.text("projection_job_reason"),
+        updated_at_us: row.ts("projection_job_updated_at")?,
+    };
+    if !crate::persistence::seed_job(tx, &record, job)? {
+        losses.add("projection_job_seed_time");
+    }
 
     let weight = row.f32("emotional_weight")?.unwrap_or(0.0);
     match row.ts("salience_touched_at")? {
