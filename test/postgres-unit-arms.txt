@@ -255,6 +255,8 @@ test/engine-parity/owner-only-reads.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-purge-reads.test.ts
+test/engine-parity/page-purge-stores.test.ts
+test/engine-parity/page-purge-sweep.test.ts
 test/engine-parity/page-purge.test.ts
 test/engine-parity/page-read-options.test.ts
 test/engine-parity/page-snapshot-alias.test.ts

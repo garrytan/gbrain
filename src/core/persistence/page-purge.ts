@@ -278,7 +278,7 @@ type TimelineReceipt = IntentRedactionTarget & { sequence: string; summary: stri
  * The add_timeline_entry receipts of `slugs`, compacted ones included, in sequence order after `after`; their outcome keeps the
  * entry text. `withDiffs` adds the edit_page receipts, whose outcome keeps the edit's unified diff of the page text.
  */
-async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0', withDiffs = false): Promise<TimelineReceipt[]> {
+export async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0', withDiffs = false): Promise<TimelineReceipt[]> {
   return tx.executeRaw<TimelineReceipt>(`SELECT id::text AS id, principal_kind, principal_id, sequence::text AS sequence, outcome->'entry'->>'summary' AS summary,
     outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet, outcome->>'diff' AS diff FROM persistence_requests
     WHERE source_id=$1 AND slug=ANY($2::text[]) AND ((operation='add_timeline_entry' AND outcome ? 'entry') OR ($5::boolean AND operation='edit_page' AND outcome ? 'diff'))
