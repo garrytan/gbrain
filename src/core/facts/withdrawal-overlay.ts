@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, parseFactsFenceFor, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import type { GlobalPurgeMarker, PageWithdrawal } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
-import { factFingerprintV2Sql, mayHaveLegacyFingerprint, normalizeLoweredClaim } from './withdrawal-schema.ts';
+import { legacyFingerprintV2Sql, mayHaveLegacyFingerprint, normalizeLoweredClaim } from './withdrawal-schema.ts';
 
 export const WITHDRAWAL_MARKER_LIMIT = 16_384;
 /** A withdrawal reads a held row's `entity` cell wherever writes let it be (memory/unattributed, GST-2492). */
@@ -151,7 +151,8 @@ export function partialFenceRuns(text: string, entryOpen: boolean): { head: numb
 
 /**
  * `withdrawals` plus, for each fence claim of `texts` whose fingerprint changed at fact_fingerprint_v3 (v330), a copy of
- * every ledger row stored under its pre-v330 fingerprint (gbrain_fact_fingerprint_v2) keyed by its current one, so the
+ * every ledger row stored under its pre-v330 fingerprint (legacyFingerprintV2Sql: only a hash no current fingerprint can
+ * equal) keyed by its current one, so the
  * overlay strikes or drops the row as it does on every engine. With `global`, a '*' purge tombstone stored under the old
  * fingerprint is added the same way (resolveGlobalPurges looks up current fingerprints only). Before v330 Postgres folded
  * the locale's `[[:space:]]`; PGLite's already was the explicit list, so there no claim has two fingerprints. Runs no
@@ -167,7 +168,7 @@ export async function withLegacyLedgerRows(query: <T>(sql: string, params?: unkn
   const marker = global?.marker && global.marker.count > 0 ? global.marker : undefined;
   if (!claims.size || (!withdrawals.length && !marker)) return withdrawals;
   const pairs = await query<{ fp: string; v2: string }>(`SELECT DISTINCT x.fp, x.v2
-    FROM (SELECT gbrain_fact_fingerprint(c) AS fp, ${factFingerprintV2Sql('c')} AS v2 FROM unnest($1::text[]) AS c) x WHERE x.v2 <> x.fp`, [[...claims]]);
+    FROM (SELECT gbrain_fact_fingerprint(c) AS fp, ${legacyFingerprintV2Sql('c')} AS v2 FROM unnest($1::text[]) AS c) x WHERE x.v2 IS NOT NULL`, [[...claims]]);
   if (!pairs.length) return withdrawals;
   const current = new Map<string, string[]>();
   for (const { fp, v2 } of pairs) current.set(v2, [...current.get(v2) ?? [], fp]);

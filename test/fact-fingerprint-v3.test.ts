@@ -134,7 +134,7 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
   });
 
   test('a purge tombstone stored before the migration drops its claim from a fence the purge did not rewrite', async () => {
-    const slug = 'notes/fpv3-stale', claim = 'Iota\u1680purged claim', global = 'Kappa\u0085global claim';
+    const slug = 'notes/fpv3-stale', claim = 'Iota\u0085purged claim', global = 'Kappa\u0085global claim';
     const sourceId = await legacyPage(slug, [claim, global, 'A live claim'], id => engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,purged_at)
       SELECT $1,'world',s,${legacyFingerprintSql('c')},'2026-01-02T00:00:00Z' FROM unnest($2::text[], $3::text[]) u(c, s)`, [id, [claim, global], [slug, '*']]));
     expect(await shownRows(slug, sourceId)).toEqual([[['A live claim', false]], [['A live claim', false]]]);

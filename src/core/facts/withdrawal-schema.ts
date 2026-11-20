@@ -41,6 +41,16 @@ export function factFingerprintV2Sql(claim: string): string {
   return fingerprintBody('[[:space:]]').replace(/\bclaim\b/g, () => claim);
 }
 
+/**
+ * `factFingerprintV2Sql(claim)` where no current fingerprint can equal it, else NULL: the old fold left a character of
+ * FACT_SPACE_CLASS in place (U+0085 on en_US.utf8), which the current fold never leaves. Where the old fold folded a
+ * character the current one keeps (U+1680), the v2 hash is the current hash of another spelling, so a ledger row under it
+ * may be that spelling's and matching it would differ from PGLite and the Rust store; such a row matches that spelling only.
+ */
+export function legacyFingerprintV2Sql(claim: string): string {
+  return `CASE WHEN pg_catalog.regexp_replace(${claim}, '[[:space:]]', '', 'g') ~ '${FACT_SPACE_CLASS}' THEN ${factFingerprintV2Sql(claim)} END`;
+}
+
 /** Every character either fold (the current class, any locale's `[[:space:]]`) may treat as space outside ASCII; a claim with none has one fingerprint. */
 const FOLDS_MAY_DIFFER = /[\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]/;
 
