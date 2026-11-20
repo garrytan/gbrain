@@ -41,7 +41,7 @@ const put = (engine: BrainEngine, slug: string, frontmatter: Record<string, unkn
 describe('git-gap census', () => {
   parityTest(
     'the census reads scope to one source and live pages, group bytewise, and refuse by name on Rust',
-    { methods: [...MEMBERS] },
+    { methods: ['readGitGapSource', 'readGitGapNewestWindow', 'listGitGapPageKeys', 'countGitGapRowsWithoutFile', 'countGitGapSourceRows'] },
     async (engine, backend) => {
       if (backend === 'rust') {
         const errors = await refusals(engine);
