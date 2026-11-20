@@ -47,8 +47,9 @@ export const RUST_ENGINE_MEMBERS = {
   replaceDerivedAliases: 'pages',
   getPageSealState: 'pages',
   refreshPageOrigin: 'pages',
-  readStoredBodyBytes: 'pages',
-  readPageBodySizes: 'pages',
+  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
+  readStoredBodyBytes: 'raw_sql',
+  readPageBodySizes: 'raw_sql',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -237,7 +238,8 @@ export const RUST_ENGINE_MEMBERS = {
   upsertFile: 'files',
   getFile: 'files',
   listFilesForPage: 'files',
-  listFiles: 'files',
+  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
+  listFiles: 'raw_sql',
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
@@ -297,9 +299,10 @@ export const RUST_ENGINE_MEMBERS = {
   readCycleLocks: 'minion_queue',
   deleteCycleLock: 'minion_queue',
   deleteCycleLockIfStale: 'minion_queue',
-  listSegmentedPages: 'facts',
-  invalidateWithdrawnPages: 'facts',
-  hasWithdrawnFenceClaim: 'facts',
+  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
+  listSegmentedPages: 'raw_sql',
+  invalidateWithdrawnPages: 'raw_sql',
+  hasWithdrawnFenceClaim: 'raw_sql',
   // The decide store and proposal lanes, open loops, timeline reads and the write-side reads (engine-sql/decide-*.ts,
   // open-loops.ts, timeline-reads.ts, write-misc.ts). A member with no native method yet is classed raw_sql (the capability of the executeRaw it replaces), so the reported
   // capability list stays as on master; its adapter lands with its native method.

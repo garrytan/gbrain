@@ -2,8 +2,8 @@
  * The page statements a fact withdrawal (recordFactWithdrawal, src/core/facts/withdrawal.ts) runs on the pages that
  * carry the withdrawn claim. They ran through `executeRaw` before they were typed members; each keeps the statement
  * text and parameter order its call site ran, so PGLite and Postgres answer exactly as before
- * (test/withdrawal-pages-sql-pin.test.ts pins the text). A Rust brain answers from its store
- * (rust/crates/gbrain-store/src/facts/withdrawal_pages.rs).
+ * (test/withdrawal-pages-sql-pin.test.ts pins the text). A Rust brain refuses them with
+ * engine_capability_missing until the Rust store gets native methods.
  *
  * - `listSegmentedPages`: the id and slug of the segmented pages among `slugs` in the source, which the withdrawal
  *   strikes segment by segment.
@@ -12,7 +12,8 @@
  *   revision triggers queue the page's projection rebuild in the same transaction.
  *
  * Neither filters soft-deleted pages, as neither statement did. The withdrawal reads a segmented page's new revision
- * after its rewrite through `readWithdrawalDiscovery` (`target_pages`).
+ * after its rewrite with a plain `SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY(...)` in
+ * src/core/facts/withdrawal.ts.
  */
 import type { BrainEngine } from '../engine.ts';
 
