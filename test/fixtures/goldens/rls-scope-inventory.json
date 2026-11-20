@@ -2595,6 +2595,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFactsFencePages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsKeyset#default": {
         "flagOffLanes": [
           "pool"
@@ -3426,6 +3437,28 @@
         "flagOnScopes": []
       },
       "listSupersessions#since+visibility": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSweepDeferredPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSweepStalePages#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6381,6 +6414,7 @@
         "listFactsAbsorbJobsStillDead": "none",
         "listFactsByEntity": "none",
         "listFactsBySession": "none",
+        "listFactsFencePages": "none",
         "listFactsForPage": "none",
         "listFactsForRelevance": "none",
         "listFactsFromQuotedPages": "none",
@@ -6544,6 +6578,8 @@
         "listSubagentToolExecutions": "none",
         "listSubagentWriteOutcomes": "none",
         "listSupersessions": "none",
+        "listSweepDeferredPages": "none",
+        "listSweepStalePages": "none",
         "listSymbolTypesForName": "none",
         "listSynthesisCompletionKeys": "none",
         "listSynthesisPageBodies": "none",
