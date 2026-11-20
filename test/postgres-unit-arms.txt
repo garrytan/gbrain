@@ -148,6 +148,7 @@ test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/calibration-profiles.test.ts
+test/engine-parity/caller-typed-reads.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunk-safe-fence.test.ts

@@ -920,12 +920,9 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
   const row = rowRaw === undefined ? NaN : Number(rowRaw);
   if (!Number.isSafeInteger(row) || row < 1) fail(`--row requires the take's row number (a positive integer), e.g. --row 1.\n${usage}`);
   const sourceId = await resolveSourceId(engine, flagValue(rest, '--source-id') ?? null);
-  const [take] = await engine.executeRaw<{ id: number | string }>(
-    `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND t.row_num = $3 AND p.deleted_at IS NULL`,
-    [sourceId, slug, row]);
-  if (!take) fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: gbrain takes ${slug}`);
-  const takeId = Number(take!.id);
+  const pageId = await engine.readLivePageIdBySlug(slug, sourceId);
+  const takeId = pageId === null ? null : await engine.findTakeId(pageId, row);
+  if (takeId === null) return fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: gbrain takes ${slug}`);
 
   if (sub === 'set') {
     const date = flagValue(rest, '--date') ?? fail(`--date YYYY-MM-DD is required.\n${usage}`);
