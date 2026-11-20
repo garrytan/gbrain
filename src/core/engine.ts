@@ -4111,6 +4111,10 @@ export interface BrainEngine {
   writeOpCheckpointValues(op: string, fingerprint: string, values: readonly unknown[]): Promise<void>;
   /** A checkpoint's `completed_keys` as stored (an array), or null when there is no row. */
   readOpCheckpointValues(op: string, fingerprint: string): Promise<unknown[] | null>;
+  /** Records a propose_takes failure tombstone (a `rejected` take_proposals row); true when it inserted, false when the claim was already recorded for the page, content hash and prompt version (engine-sql/collate-take-proposals.ts). */
+  recordFailureTombstone(input: import('./engine-sql/collate-take-proposals.ts').FailureTombstoneInput): Promise<boolean>;
+  /** A source's unacted `rejected` proposals whose claim text starts with `claimPrefix`, by page slug bytes. */
+  listFailureTombstones(sourceId: string, claimPrefix: string): Promise<import('./engine-sql/collate-take-proposals.ts').FailureTombstoneRow[]>;
   /** The cycle's listing instant (UTC ISO, microseconds), or null when the engine has none; see engine-sql/collate-cycle-window.ts. */
   readCycleListingInstant(): Promise<string | null>;
   /** Up to `limit` live pages of a source after the cursor `(since, slug)` by `(updated_at, slug bytes)`; every page when `since` is null. */

@@ -10,6 +10,7 @@
 //! - `A 0x02 <page id> <row_num>` -> the take id (u64 BE): the `UNIQUE (page_id, row_num)` index.
 //! - `A 0x03 <synthesis page id> <take page id> <take row_num>` -> `EvidenceRecord` (JSON).
 //! - `A 0x04 <take page id> <take row_num> <synthesis page id>` -> empty: the reverse index.
+//! - `A 0x10 ...` -> a `take_proposals` failure tombstone (`take_proposals.rs` owns that sub-tag).
 //! - Id counter: `M next_take_id`. Every row an `addTakesBatch` call reads takes an id, as the
 //!   Postgres sequence default does, inserted or not.
 //!

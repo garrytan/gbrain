@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 968/976
+# covered: 970/978
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -63,6 +63,7 @@
 # collate_command_reads: 3/3
 # collate_identity_downgrades: 4/5
 # collate_cycle_window: 2/2
+# collate_take_proposals: 2/2
 # write_misc: 65/71
 # write_attribution: 5/5
 # telemetry: 10/10
@@ -798,7 +799,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	65	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	64	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -875,6 +876,8 @@ writeOpCheckpointValues	collate_identity_downgrades	yes	1	no	yes	yes	serves
 readOpCheckpointValues	collate_identity_downgrades	no	0	no	-	-	-
 readCycleListingInstant	collate_cycle_window	yes	1	no	yes	yes	serves
 listSourceChangedPagesAfter	collate_cycle_window	yes	1	no	yes	yes	serves
+recordFailureTombstone	collate_take_proposals	yes	1	no	yes	yes	serves
+listFailureTombstones	collate_take_proposals	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
 readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves

@@ -2940,6 +2940,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFailureTombstones#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFenceHoldRows#all": {
         "flagOffLanes": [
           "pool"
@@ -5559,6 +5570,17 @@
         ],
         "flagOnScopes": []
       },
+      "recordFailureTombstone#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "recordHeldGenerationRow#new": {
         "flagOffLanes": [
           "tx"
@@ -7377,6 +7399,7 @@
         "listFactsKeyset": "none",
         "listFactsReconcileBacklog": "none",
         "listFactsSince": "none",
+        "listFailureTombstones": "none",
         "listFenceFactRows": "none",
         "listFenceHoldRows": "none",
         "listFenceRetireCandidates": "none",
@@ -7799,6 +7822,7 @@
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordAccessMigrationPhase": "none",
+        "recordFailureTombstone": "none",
         "recordHeldGenerationRow": "none",
         "recordNotifierSyncerHost": "none",
         "recordPageEmbeddingHold": "none",

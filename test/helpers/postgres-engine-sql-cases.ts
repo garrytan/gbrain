@@ -759,6 +759,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readOpCheckpointValues': OOS.callerRawSql,
   'readCycleListingInstant': OOS.callerRawSql,
   'listSourceChangedPagesAfter': OOS.callerRawSql,
+  'recordFailureTombstone': OOS.callerRawSql,
+  'listFailureTombstones': OOS.callerRawSql,
   'forgetWakeMember': OOS.callerRawSql,
   'forgetWakeCredential': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
@@ -1620,6 +1622,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readOpCheckpointValues', [['default', (e) => e.readOpCheckpointValues('phantom-redirect-cursor', 'default')]]),
   ...variants('readCycleListingInstant', [['default', (e) => e.readCycleListingInstant()]]),
   ...variants('listSourceChangedPagesAfter', [['default', (e) => e.listSourceChangedPagesAfter('default', null, '', 3)]]),
+  ...variants('recordFailureTombstone', [['default', (e) => e.recordFailureTombstone({ sourceId: 'default', slug: 'notes/a', contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: '(extraction failed: x)', modelId: 'm' })]]),
+  ...variants('listFailureTombstones', [['default', (e) => e.listFailureTombstones('default', '(extraction failed: ')]]),
   ...variants('forgetWakeMember', [['default', (e) => e.forgetWakeMember('alice-example')]]),
   ...variants('forgetWakeCredential', [['default', (e) => e.forgetWakeCredential('oauth_client', 'client-a')]]),
   ...variants('readJobPrincipal', [['oauth-client', (e) => e.readJobPrincipal({ kind: 'oauth_client', id: 'client-a' })], ['legacy-token', (e) => e.readJobPrincipal({ kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000a1' })]]),

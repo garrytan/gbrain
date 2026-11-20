@@ -71,12 +71,14 @@ describe('belief walks and cycle listings take pages by byte', () => {
     expect(orphans.samples.map(s => s.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('listFailedProposals lists pages by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('listFailedProposals lists pages by byte', { methods: ['recordFailureTombstone', 'listFailureTombstones'] }, async (engine) => {
     for (const slug of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO take_proposals(source_id, page_slug, content_hash, prompt_version, proposal_run_id, status, claim_text, kind, holder, weight, model_id)
-        VALUES ('default', $1, 'h', 'v1', 'run', 'rejected', $2, 'take', 'self', 0, 'm')`, [slug, failureTombstoneText('llm_error')]);
+      expect(await engine.recordFailureTombstone({ sourceId: 'default', slug, contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: failureTombstoneText('llm_error'), modelId: 'm' })).toBe(true);
     }
-    expect((await listFailedProposals(engine, 'default')).map(r => r.slug)).toEqual([...BYTE_SLUGS]);
+    expect(await engine.recordFailureTombstone({ sourceId: 'default', slug: MIXED_SLUGS[0], contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run2', claimText: failureTombstoneText('llm_error'), modelId: 'm' })).toBe(false);
+    const listed = await listFailedProposals(engine, 'default');
+    expect(listed.map(r => r.slug)).toEqual([...BYTE_SLUGS]);
+    expect(listed.every(r => r.code === 'llm_error' && r.prompt_version === 'v1')).toBe(true);
   });
 
   parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', { methods: ['putPage', 'readSourceState', 'updateSourceConfig', 'readCycleListingInstant', 'listSourceChangedPagesAfter'], testSeeds: true }, async (engine, backend) => {

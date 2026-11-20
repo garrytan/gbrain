@@ -1053,6 +1053,21 @@ const PINS: Pin[] = [
       ORDER BY updated_at, slug COLLATE "C" LIMIT $4`],
   },
   {
+    from: 'src/core/cycle/propose-takes-failures.ts:194 ProposeTakesFailures.settle, at 058fb4a29e (the moved statement now ends in RETURNING id, so the member can say whether it inserted)',
+    case: { method: 'recordFailureTombstone', variant: 'default', run: e => e.recordFailureTombstone({ sourceId: 'default', slug: 'notes/a', contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: '(extraction failed: x)', modelId: 'm' }) },
+    texts: [`INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'fact', 'brain', 0, NULL, '[]'::jsonb, $7, 'rejected')
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING RETURNING id`],
+  },
+  {
+    from: 'src/core/cycle/propose-takes-failures.ts:80 listFailedProposals, at 058fb4a29e',
+    case: { method: 'listFailureTombstones', variant: 'default', run: e => e.listFailureTombstones('default', '(extraction failed: ') },
+    texts: [`SELECT page_slug AS slug, claim_text, prompt_version, proposed_at::text AS proposed_at FROM take_proposals
+      WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug COLLATE "C"`],
+  },
+  {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
     case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
     texts: [

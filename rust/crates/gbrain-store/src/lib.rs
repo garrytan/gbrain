@@ -78,6 +78,7 @@ pub mod salience;
 pub mod session_state;
 pub mod slug_reads;
 pub mod stats;
+pub mod take_proposals;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;

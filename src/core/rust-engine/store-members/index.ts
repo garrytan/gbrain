@@ -74,6 +74,7 @@ import * as writeMisc from './write-misc.ts';
 import * as collateCommandReads from './collate-command-reads.ts';
 import * as collateCycleWindow from './collate-cycle-window.ts';
 import * as collateIdentityDowngrades from './collate-identity-downgrades.ts';
+import * as collateTakeProposals from './collate-take-proposals.ts';
 import * as accessPolicy from './access-policy.ts';
 import * as accessSetup from './access-setup.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
@@ -148,6 +149,8 @@ export const STORE_MEMBERS = {
   ...collateCycleWindow,
   // The identity-downgrade record reads and the checkpoint value rows (rust/docs/store/collate-identity-downgrades.md).
   ...collateIdentityDowngrades,
+  // The propose_takes failure tombstones (rust/docs/store/collate-take-proposals.md).
+  ...collateTakeProposals,
   // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
   ...accessPolicy,
   // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).

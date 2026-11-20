@@ -218,6 +218,7 @@ import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as collateCommandReadsImpl from './engine-sql/collate-command-reads.ts';
 import * as collateCycleWindowImpl from './engine-sql/collate-cycle-window.ts';
 import * as collateIdentityDowngradesImpl from './engine-sql/collate-identity-downgrades.ts';
+import * as collateTakeProposalsImpl from './engine-sql/collate-take-proposals.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
@@ -1541,6 +1542,8 @@ export class PostgresEngine implements BrainEngine {
   countPageCarryRows(sourceId: string, slug: string, pageId: number) { return collateIdentityDowngradesImpl.countPageCarryRows(this.executeRaw.bind(this), sourceId, slug, pageId); }
   writeOpCheckpointValues(op: string, fingerprint: string, values: readonly unknown[]) { return collateIdentityDowngradesImpl.writeOpCheckpointValues(this.executeRaw.bind(this), op, fingerprint, values); }
   readOpCheckpointValues(op: string, fingerprint: string) { return collateIdentityDowngradesImpl.readOpCheckpointValues(this.executeRaw.bind(this), op, fingerprint); }
+  recordFailureTombstone(input: collateTakeProposalsImpl.FailureTombstoneInput) { return collateTakeProposalsImpl.recordFailureTombstone(this.executeRaw.bind(this), input); }
+  listFailureTombstones(sourceId: string, claimPrefix: string) { return collateTakeProposalsImpl.listFailureTombstones(this.executeRaw.bind(this), sourceId, claimPrefix); }
   readCycleListingInstant() { return collateCycleWindowImpl.readCycleListingInstant(this.executeRaw.bind(this)); }
   listSourceChangedPagesAfter(sourceId: string, since: string | null, slug: string, limit: number) { return collateCycleWindowImpl.listSourceChangedPagesAfter(this.executeRaw.bind(this), sourceId, since, slug, limit); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
