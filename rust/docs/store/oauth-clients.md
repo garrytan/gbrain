@@ -19,6 +19,7 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | `brain.oauthClientLive(clientId)` | whether a client not deleted (`deleted_at IS NULL`) has this id |
 | `brain.listUnboundClientIds()` | the ids of the clients not deleted and bound to no member (`member_id` NULL), in byte order (`ORDER BY client_id COLLATE "C"`); `gbrain access serves --owner` offers to bind each |
 | `brain.setOauthClientTokenTtl(clientId, ttl)` | whether the client exists after setting its `token_ttl`; the row is checked again |
+| `brain.listClientsReferencingSource(sourceId)` | `{ clientId, clientName, deleted }` of every client whose `source_id` is this source, soft-deleted ones too (`deleted` is `deleted_at IS NOT NULL`: the foreign key is physical), by client id in byte order (`ORDER BY client_id COLLATE "C"`); the source-delete guard (`clientsReferencingSource`) reads it. SQL: `src/core/engine-sql/collate-store-reads.ts`, store: `jobs/oauth_client_reads.rs` |
 
 TypeScript-only members (`src/core/rust-engine/store-members/jobs-oauth-clients.ts`): `readOauthClientColumns(probe)`
 names every column of the probe (the store keeps every column); `insertOauthClientGrant(row)` writes the client row through

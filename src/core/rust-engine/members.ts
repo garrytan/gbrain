@@ -944,6 +944,7 @@ export const RUST_ENGINE_MEMBERS = {
   readAgentClientSpend: 'minion_queue',
   readOauthClient: 'minion_queue',
   listOauthClients: 'minion_queue',
+  listClientsReferencingSource: 'minion_queue',
   patchOauthClient: 'minion_queue',
   insertAccessToken: 'minion_queue',
   findActiveAccessTokens: 'minion_queue',

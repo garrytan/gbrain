@@ -9,6 +9,7 @@ mod checks;
 mod credentials;
 mod health;
 mod insight;
+mod oauth_client_reads;
 mod ops;
 mod spend;
 mod spend_log;

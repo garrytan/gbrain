@@ -66,6 +66,7 @@ mod health;
 mod inbox;
 mod insight;
 mod mutations;
+mod oauth_client_reads;
 mod oauth_clients;
 mod oauth_tokens;
 mod private_queues;

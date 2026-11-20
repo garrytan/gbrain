@@ -155,6 +155,7 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
@@ -162,7 +163,6 @@ test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-card-option-reads.test.ts
 test/engine-parity/entity-identities.test.ts
-test/engine-parity/decide-store.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-pool-widening.test.ts

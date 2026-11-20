@@ -551,6 +551,14 @@ const PINS: Pin[] = [
       ORDER BY ${slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C", id' : 'filename COLLATE "C", id'} LIMIT $1`],
   })),
   {
+    from: 'src/core/destructive-guard.ts:104 clientsReferencingSource, at dded7edc51',
+    case: { method: 'listClientsReferencingSource', variant: 'default', run: e => e.listClientsReferencingSource('guest-src') },
+    texts: [`SELECT client_id, client_name, (deleted_at IS NOT NULL) AS deleted
+       FROM oauth_clients
+       WHERE source_id = $1
+       ORDER BY client_id COLLATE "C"`],
+  },
+  {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
     texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],

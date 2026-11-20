@@ -96,6 +96,7 @@ import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
+import type { SourceClientReferentRow } from './engine-sql/collate-store-reads.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec } from './engine-sql/takes-reads.ts';
@@ -4500,6 +4501,8 @@ export interface BrainEngine {
   readOauthClient(clientId: string): Promise<OauthClientRow | null>;
   /** Every client's whole row, by name then id in byte order (`gbrain auth clients`). */
   listOauthClients(): Promise<OauthClientRow[]>;
+  /** Every OAuth client that references a source (soft-deleted ones too), by client id in byte order (the source-delete guard). */
+  listClientsReferencingSource(sourceId: string): Promise<SourceClientReferentRow[]>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

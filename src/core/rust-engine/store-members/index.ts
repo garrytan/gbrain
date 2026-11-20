@@ -74,6 +74,7 @@ import * as writeMisc from './write-misc.ts';
 import * as collateCommandReads from './collate-command-reads.ts';
 import * as accessPolicy from './access-policy.ts';
 import * as accessSetup from './access-setup.ts';
+import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -141,6 +142,8 @@ export const STORE_MEMBERS = {
   ...accessPolicy,
   // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).
   ...accessSetup,
+  // Reads callers once ran through executeRaw: clients of a source, feedback, pins, credentials (rust/docs/store).
+  ...collateStoreReads,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,

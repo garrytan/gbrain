@@ -570,6 +570,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // oauth_clients rows (engine-sql/oauth-clients.ts)
   'readOauthClient': OOS.minionJobs,
   'listOauthClients': OOS.minionJobs,
+  'listClientsReferencingSource': OOS.callerRawSql,
   'patchOauthClient': OOS.minionJobs,
   // access_tokens rows (engine-sql/access-tokens.ts)
   'insertAccessToken': OOS.minionJobs,
@@ -1561,6 +1562,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readSessionCursor', [['default', (e) => e.readSessionCursor('default', 'local', 's')]]),
   ...variants('readDeltaSessionRow', [['default', (e) => e.readDeltaSessionRow('default', 'local', 's')]]),
   ...variants('readCheckpointManifestRow', [['default', (e) => e.readCheckpointManifestRow('default', 'local', 's')]]),
+  ...variants('listClientsReferencingSource', [['default', (e) => e.listClientsReferencingSource('guest-src')]]),
   ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] })]]),
   ...variants('listReadableFileRows', [['all', (e) => e.listReadableFileRows(undefined, false)], ['page', (e) => e.listReadableFileRows('people/alice-example', false)], ['private_excluded', (e) => e.listReadableFileRows('people/alice-example', true)]]),
   ...variants('readMayActFor', [
