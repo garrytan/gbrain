@@ -89,11 +89,11 @@ transaction	lifecycle	yes	116	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	126	yes	yes	yes	serves
-readPageSnapshot	pages	yes	32	no	yes	yes	serves
+getPage	pages	yes	127	yes	yes	yes	serves
+readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	541	yes	yes	yes	serves
+putPage	pages	yes	545	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -103,7 +103,7 @@ softDeletePage	pages	yes	152	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
-listPages	pages	yes	12	yes	yes	yes	serves
+listPages	pages	yes	13	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
@@ -366,7 +366,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	27	no	yes	yes	serves
+createVersion	versions	yes	28	no	yes	yes	serves
 getVersions	versions	yes	16	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves

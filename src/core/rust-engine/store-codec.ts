@@ -50,6 +50,27 @@ const PAGE_DATES = ['created_at', 'updated_at', 'deleted_at', 'effective_date', 
  */
 const PAGE_ROW_DEFAULTS = { contextual_retrieval_mode: null, emotional_weight: 0, salience_touched_at: null, withheld_source_path: null } as const;
 
+/**
+ * The `pages` columns in the order PGLite and Postgres return them (a `SELECT *` follows the table, and
+ * `updated_at_iso` is the one computed column, listed after `updated_at`). `JSON.stringify` writes keys in insertion
+ * order, so the order is part of what `gbrain get --json` and an MCP reply print. A column a family adds through the
+ * page-columns hook is not listed: it follows these, as a later migration's column follows the table.
+ */
+const PAGE_KEY_ORDER = [
+  'id', 'slug', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'content_hash', 'source_path', 'knowledge_revision',
+  'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso', 'deleted_at', 'effective_date',
+  'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'withheld_source_path',
+  'ingested_via', 'ingested_at', 'contextual_retrieval_mode', 'source_id',
+] as const;
+
+/** `row` with its keys in the table's order; a key the list does not name keeps its place after the listed ones. */
+function inPageOrder(row: Row): Row {
+  const out: Row = {};
+  for (const key of PAGE_KEY_ORDER) if (key in row) out[key] = row[key];
+  for (const key of Object.keys(row)) if (!(key in out)) out[key] = row[key];
+  return out;
+}
+
 function pageDates(page: Row): Row {
   const { page_kind: _kind, ...rest } = page;
   return withDates(rest, PAGE_DATES);
@@ -73,18 +94,18 @@ function guardNullBody(page: Row): Row {
  */
 export function toPutPage<T extends object>(page: T): T {
   const { source_path: _path, deleted_at: _deleted, updated_at_iso: _iso, ...rest } = pageDates(page as Row);
-  return { ...rest, emotional_weight: undefined } as T;
+  return inPageOrder({ ...rest, emotional_weight: undefined }) as T;
 }
 
 /** The page `getPage` and `readPageSnapshot` return: PGLite's row has the defaulted columns and no `updated_at_iso`. */
 export function toGetPage<T extends object>(page: T): T {
   const { updated_at_iso: _iso, ...rest } = pageDates(page as Row);
-  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...rest }) as T;
+  return guardNullBody(inPageOrder({ ...PAGE_ROW_DEFAULTS, ...rest })) as T;
 }
 
 /** A row of `listPages`: the table's columns plus `updated_at_iso`. */
 export function toListPage<T extends object>(page: T): T {
-  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...pageDates(page as Row) }) as T;
+  return guardNullBody(inPageOrder({ ...PAGE_ROW_DEFAULTS, ...pageDates(page as Row) })) as T;
 }
 
 /** The nullable columns of a chunk row, which PGLite returns as null when a chunk has no value. */
