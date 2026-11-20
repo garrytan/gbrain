@@ -30,6 +30,7 @@ import type { BrainEngine } from './engine.ts';
 import { cliRenderContext, renderAction, type Action, type RenderContext, type RenderedAction } from './agent-output.ts';
 import { parseConsentFlags } from './consent.ts';
 import { opError } from './ops/contract.ts';
+import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
 import { readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX, type OversizedFact } from './facts/embedding-identity.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
@@ -106,7 +107,20 @@ export async function budgetLimitedReport(engine: BrainEngine, opts: { sourceId?
 export async function noteBudgetLimited(engine: BrainEngine, args: readonly string[], result: object, quiet: boolean): Promise<void> {
   const at = args.indexOf('--source');
   const { currentEmbeddingSignature } = await import('./embedding.ts');
-  const found = await budgetLimitedReport(engine, { ...(at >= 0 && args[at + 1] ? { sourceId: args[at + 1] } : {}), signature: currentEmbeddingSignature() });
+  let found: Awaited<ReturnType<typeof budgetLimitedReport>>;
+  try {
+    found = await budgetLimitedReport(engine, { ...(at >= 0 && args[at + 1] ? { sourceId: args[at + 1] } : {}), signature: currentEmbeddingSignature() });
+  } catch (err) {
+    // The embed already ran; an engine with no page embedding ledger says the held count is unknown instead of "none".
+    if (!isEngineCapabilityRefusal(err)) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    Object.assign(result, { budget_limited_unknown: { code: 'engine_capability_missing', message } });
+    if (quiet) return;
+    const line = `[embed] Large pages held for embedding approval are unknown on this brain: ${message}`;
+    if (args.includes('--json')) process.stderr.write(`${line}\n`);
+    else console.log(line);
+    return;
+  }
   if (!found) return;
   Object.assign(result, { budget_limited: { ...found.report, fix: renderAction(found.fix, cliRenderContext()) } });
   if (quiet) return;

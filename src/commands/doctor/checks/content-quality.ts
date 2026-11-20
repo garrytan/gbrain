@@ -237,7 +237,10 @@ async function runPartialEmbedding(ctx: DoctorContext): Promise<Check[]> {
     if (!found) checks.push({ name: 'partial_embedding', status: 'ok', message: 'No large page has chunks waiting for embedding approval (held or capped by embed.max_usd_per_page).' });
     else checks.push({ name: 'partial_embedding', status: 'warn', message: found.message, fix: found.fix, details: found.details });
   } catch (err) {
-    checks.push(checkError('partial_embedding', 'read the per-page embedding budget', err));
+    // An engine that keeps no page embedding ledger refuses by name: health unknown, never "no large page waits".
+    const refusal = capabilityRefusal(err);
+    if (refusal) checks.push(capabilityUnknownCheck('partial_embedding', refusal));
+    else checks.push(checkError('partial_embedding', 'read the per-page embedding budget', err));
   }
   return checks;
 }

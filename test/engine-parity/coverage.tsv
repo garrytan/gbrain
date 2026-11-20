@@ -89,7 +89,7 @@ getPage	pages	yes	93	yes	yes	yes	serves
 readPageSnapshot	pages	yes	27	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	419	yes	yes	yes	serves
+putPage	pages	yes	420	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	11	yes	yes	yes	serves
@@ -561,8 +561,8 @@ listTimelineHistoryBatch	doctor_derived	yes	1	no	yes	yes	serves
 listAtomFenceCandidates	doctor_derived	yes	1	no	yes	yes	serves
 readPageCompiledTruths	doctor_derived	yes	1	no	yes	yes	serves
 readEmbeddingBacklogAge	doctor_derived	yes	1	no	yes	yes	refuses:health
-listBudgetLimitedRows	doctor_derived	yes	1	no	yes	yes	serves
-readBudgetHoldAge	doctor_derived	yes	1	no	yes	yes	serves
+listBudgetLimitedRows	doctor_derived	yes	1	no	yes	yes	refuses:health
+readBudgetHoldAge	doctor_derived	yes	1	no	yes	yes	refuses:health
 listImageAssetFiles	doctor_derived	yes	1	no	yes	yes	serves
 listAmbiguousExtractionInputs	doctor_derived	yes	1	no	yes	yes	serves
 listExtractionInputReceipts	doctor_derived	yes	1	no	yes	yes	refuses:health

@@ -195,16 +195,13 @@ describe('doctor-derived reads', () => {
   parityTest(
     'the reads of tables the Rust store does not keep answer empty on a brain that holds pages',
     {
-      methods: ['putPage', 'listRecordedTombstones', 'listBudgetLimitedRows', 'readBudgetHoldAge', 'listAmbiguousExtractionInputs',
+      methods: ['putPage', 'listRecordedTombstones', 'listAmbiguousExtractionInputs',
         'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations', 'listPendingGenerationMembers',
         'listOrphanGenerationCandidates', 'readExtractRollup7d', 'listRecordedHaltReasons7d'],
     },
     async (engine) => {
       await put(engine, 'notes/a');
       const tombstones = await engine.listRecordedTombstones('24', []);
-      const limited = await engine.listBudgetLimitedRows({ column: 'embedding', signature: null });
-      const limitedSource = await engine.listBudgetLimitedRows({ column: 'embedding', sourceId: 'default', signature: 'sig' });
-      const hold = await engine.readBudgetHoldAge();
       const ambiguous = await engine.listAmbiguousExtractionInputs();
       const covered = await engine.countLedgerCoveredAtomRetirements(SRC);
       const retirements = await engine.listLiveGenerationRetirements(SRC, 30);
@@ -214,7 +211,36 @@ describe('doctor-derived reads', () => {
       const rollup = await engine.readExtractRollup7d(true);
       const rollupLegacy = await engine.readExtractRollup7d(false);
       const halts = await engine.listRecordedHaltReasons7d();
-      return { tombstones, limited, limitedSource, hold, ambiguous, covered, retirements, held, pending, orphans, rollup, rollupLegacy, halts };
+      return { tombstones, ambiguous, covered, retirements, held, pending, orphans, rollup, rollupLegacy, halts };
+    },
+  );
+
+  // The Rust store keeps no page embedding ledger (`page_embedding_budget`), so both reads refuse by name instead of
+  // answering "nothing held". At the join with rust-engine/main they read its ledger (key B 'b') and this case writes one
+  // held row and reads it back on every arm (TODOS.md, rust-page-embedding-budget-join).
+  parityTest(
+    'listBudgetLimitedRows and readBudgetHoldAge answer a brain with no budget row, and refuse by name on Rust',
+    { methods: ['putPage', 'listBudgetLimitedRows', 'readBudgetHoldAge'] },
+    async (engine, backend) => {
+      await put(engine, 'notes/large-candidate');
+      const signature = 'openai:text-embedding-3-large:1536';
+      const reads = {
+        limited: () => engine.listBudgetLimitedRows({ column: 'embedding', signature: null }),
+        limitedSource: () => engine.listBudgetLimitedRows({ column: 'embedding', sourceId: 'default', signature }),
+        hold: () => engine.readBudgetHoldAge(),
+      };
+      if (backend === 'rust') {
+        let last: unknown = null;
+        for (const [read, member] of [[reads.limited, 'listBudgetLimitedRows'], [reads.limitedSource, 'listBudgetLimitedRows'],
+          [reads.hold, 'readBudgetHoldAge']] as const) {
+          last = await (read as () => Promise<unknown>)().then(() => null, (e: unknown) => e);
+          const refusal = last as { code?: string; detail?: string } | null;
+          expect({ member, code: refusal?.code, named: refusal?.detail?.includes(`member=${member} `) })
+            .toEqual({ member, code: 'engine_capability_missing', named: true });
+        }
+        throw last;
+      }
+      return { limited: await reads.limited(), limitedSource: await reads.limitedSource(), hold: await reads.hold() };
     },
   );
 

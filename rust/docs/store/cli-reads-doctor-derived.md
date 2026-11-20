@@ -13,14 +13,16 @@ A doctor-derived member answers one of three ways on the Rust engine:
 1. Served from the store's records (the table below).
 2. Empty, with no store call, because the store keeps no writer for a relation the statement reads. No Rust brain ever holds a
    row there, so the empty answer is the one PGLite gives a brain that never wrote one. The relations: `belief_events`,
-   `page_embedding_budget`, `page_extraction_state`, `derived_generations`, `derived_generation_items`,
-   `derived_generation_activations`, `extract_rollup_7d`. Members: `listRecordedTombstones`, `listBudgetLimitedRows`,
-   `readBudgetHoldAge`, `listAmbiguousExtractionInputs`, `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
+   `page_extraction_state`, `derived_generations`, `derived_generation_items`, `derived_generation_activations`,
+   `extract_rollup_7d`. Members: `listRecordedTombstones`, `listAmbiguousExtractionInputs`,
+   `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
    `listHeldGenerations`, `listPendingGenerationMembers`, `listOrphanGenerationCandidates`, `readExtractRollup7d`,
    `listRecordedHaltReasons7d`. If a Rust writer for one of these relations lands, its member must move to the first kind in the
    same change.
 3. Refused with `engine_capability_missing` (the member is not in `STORE_MEMBERS`). `TODOS.md`, "Rust engine lane 14 follow-ups",
-   lists each one with what it needs.
+   lists each one with what it needs. `listBudgetLimitedRows` and `readBudgetHoldAge` (the `page_embedding_budget` reads) refuse
+   by name: this store keeps no page embedding ledger, and an empty answer would tell doctor `partial_embedding` and
+   `gbrain embed --stale` that no large page waits for approval without reading anything.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
