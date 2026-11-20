@@ -2,6 +2,7 @@
 //! block; napi-rs merges the blocks into one JavaScript class. Every family is listed once, here,
 //! so building a family never edits this list.
 
+mod access_rules;
 mod chunks;
 mod cli_entities;
 mod cli_reads_export;
@@ -18,6 +19,7 @@ mod import_members;
 mod journal;
 mod large_page;
 mod links;
+mod notifier;
 mod op_checkpoint;
 mod page_visibility;
 mod pages;
@@ -29,6 +31,7 @@ mod trust;
 mod trust_fence;
 mod trust_proposals;
 mod versions;
+mod worktrees;
 mod write_attribution;
 mod write_guards;
 mod write_misc;

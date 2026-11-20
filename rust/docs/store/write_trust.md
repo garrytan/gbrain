@@ -66,9 +66,8 @@ retrieval coverage reads apply a trust floor and the flagged-page filter to them
 
 PGLite's settings end with the transaction. Each store has its own context. A store bound to a transaction
 (`begin_transaction`, `transactions.rs`) starts with an empty context, and the shared store never sees it, so two
-transactions never share one. The engine's `applyTransactionSettings` and `readTransactionSettings` route these nine
-names to the transaction's handle (`store-members/transactions.ts`; contract in
-[`transactions.md`](transactions.md), item 12). The transaction clears the context when it ends, at commit and at
+transactions never share one. Once the transactions family lands, the engine's `applyTransactionSettings` and `readTransactionSettings` route these nine
+names to the transaction's handle; in this landing the engine serves no transaction, so only the store-level context exists. The transaction clears the context when it ends, at commit and at
 rollback, and a savepoint rollback sets the nine back to what they were when the savepoint opened.
 
 ## Rust guesses and gaps (1x parity)

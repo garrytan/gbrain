@@ -319,6 +319,17 @@ export function paramCallable(op: OperationMeta, param: string, surface: McpSurf
   return !listed || param in listed.params || STARTER_CALLABLE_PARAMS[op.name]?.[param] !== undefined;
 }
 
+/** GST-3170: ops whose array parameter's items take the op's own parameter names (remember's items[]). */
+const ITEM_PARAMS: Readonly<Record<string, string>> = { remember: 'items' };
+
+/** GST-3170: the op's own parameter names an item of its ITEM_PARAMS array carries, each held to paramCallable as at the top. */
+export function itemParamKeys(op: OperationMeta, params: Record<string, unknown>): string[] {
+  const field = ITEM_PARAMS[op.name];
+  const items = field ? params[field] : undefined;
+  if (!Array.isArray(items)) return [];
+  return [...new Set(items.flatMap(item => item && typeof item === 'object' ? Object.keys(item) : []))].filter(key => key in op.params);
+}
+
 /** #9669: the highest value a narrower surface may pass for a reviewed hidden parameter that only lowers a default. */
 export const STARTER_PARAM_CEILINGS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   submit_agent: { max_turns: SUBMIT_AGENT_DEFAULT_MAX_TURNS },

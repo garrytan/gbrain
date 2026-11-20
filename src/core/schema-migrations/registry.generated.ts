@@ -328,7 +328,9 @@ import { v324 } from './v324-secret-store.ts';
 import { v325 } from './v325-entity-identity-reviews.ts';
 import { v326 } from './v326-pages-title-lower-hash-index.ts';
 import { v327 } from './v327-access-handovers.ts';
-import { v329 } from './v329-projection-jobs-byte-order-index.ts';
+import { v328 } from './v328-owner-only-reads-complete.ts';
+import { v329 } from './v329-serves-since-subsecond.ts';
+import { v331 } from './v331-projection-jobs-byte-order-index.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -655,5 +657,7 @@ export const MIGRATIONS: Migration[] = [
   v325,
   v326,
   v327,
+  v328,
   v329,
+  v331,
 ];

@@ -109,16 +109,14 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
     `Another gbrain process holds the coordination lock for this checkout, so source ${sourceId} was not claimed. Check writer status and run the claim again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   await probe.release();
-  await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-    await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-    await assertWriterAdminState(tx, expectedAdminState);
-    if (!options.automatic) await assertWriterAdminUnlocked(tx);
-    const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+  await engine.claimWorktreeBinding(async (store, tx) => {
+    await store.assertAdminState(expectedAdminState);
+    if (!options.automatic) await store.assertAdminUnlocked();
+    const source = await store.lockSource(sourceId);
     if (!source || source.archived) throw opError('source_changed', 'Only an active registered source can claim a worktree.',
       `Source ${sourceId} is missing or archived, so it cannot own a checkout; nothing was claimed. Check the registered sources; restoring an archived source is the user's decision.`,
       { fix: readFix('Lists the registered sources with their archived state, read-only.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
-    const current = await getWorktreeBinding(tx, sourceId, hostId);
+    const current = await store.binding(sourceId, hostId);
     if (current) {
       if (current.source_incarnation !== source.incarnation || current.owner_host_id !== hostId || current.local_path !== root) {
         throw new OperationError('writer_transfer_required', 'This source already has an owner or a different binding.', 'Use a verified source writer transfer.');
@@ -127,8 +125,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
       return;
     }
-    const local = await tx.executeRaw<{ worktree_id: string; local_path: string; coordination_path: string; owner_host_id: string | null }>(
-      `SELECT h.*,w.owner_host_id FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`, [hostId]);
+    const local = await store.hostWorktrees(hostId);
     const overlap = local.find(b => containsPath(b.local_path, root) || containsPath(root, b.local_path));
     let id: string = candidateId;
     if (overlap) {
@@ -136,15 +133,13 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
       id = overlap.worktree_id; root = overlap.local_path;
       assertPhysicalRoot(root, { worktreeId: id, coordinationPath: overlap.coordination_path });
     } else {
-      const physical = await claimPhysicalRoot(tx, root, { hostId, worktreeId: candidateId, coordinationPath: lockPath });
+      const physical = await claimPhysicalRoot(tx as unknown as SqlEngine, root, { hostId, worktreeId: candidateId, coordinationPath: lockPath }, store);
       id = physical.worktreeId;
-      await tx.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch) VALUES($1::uuid,$2::uuid,1)', [id, hostId]);
-      await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path)
-        VALUES($1::uuid,$2::uuid,$3,$4)`, [id, hostId, root, physical.coordinationPath]);
+      await store.insertWorktree({ id, ownerHostId: hostId, ownerEpoch: 1 });
+      await store.insertHostBinding({ worktreeId: id, hostId, localPath: root, coordinationPath: physical.coordinationPath });
     }
-    await tx.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id,relative_path)
-      VALUES($1,$2::uuid,$3::uuid,$4)`, [sourceId, source.incarnation, id,
-      relative(nativeFilesystemPath(root), nativeFilesystemPath(sourceRoot)).split(sep).join('/')]);
+    await store.insertSourceBinding({ sourceId, incarnation: source.incarnation, worktreeId: id,
+      relativePath: relative(nativeFilesystemPath(root), nativeFilesystemPath(sourceRoot)).split(sep).join('/') });
     await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
   });
   return (await getWorktreeBinding(engine, sourceId, hostId))!;

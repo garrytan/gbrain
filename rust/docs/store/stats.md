@@ -2,7 +2,7 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-This family answers `getStats`, `getHealth`, `countOnboardSignal`, `listEnrichCandidates` and
+This family answers `getStats`, `getHealth`, `countOnboardSignal`, `countBrainLivePages`, `countLivePagesBySource`, `countChunksBySource`, `readBrainMaturity`, `listEnrichCandidates` and
 `findAnomalies` from the
 records the other families keep (pages, chunks, links, tags, timeline entries, sources, config),
 and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`;
@@ -26,6 +26,9 @@ PGLite's `jsonb` holds it: object keys sorted by length, then by bytes.
 | `brain.getStats({ scope })` | the `BrainStats` counters. `page_count` counts live pages; chunks, links, tags and timeline entries count the rows of pages in the scope, soft-deleted pages included, as the PGLite joins do. A scoped link needs both ends in the scope. `pages_by_type` is ordered by count, then type bytes | `getStats` |
 | `brain.getHealth({ scope, entityTypes })` | raw counters: `page_count`, `eligible_chunks`, `embedded_chunks`, `missing_embeddings`, `dead_links`, `link_count`, the entity counters, `linkable` (every live, not quarantined page in the scope with `islanded` and `has_timeline`, before the orphan policy) and `most_connected` (top 5 by degree, then slug bytes) | the counting queries of `engine-sql/health.ts` |
 | `brain.countOnboardSignal({ signal, entityTypes })` | one count, brain-wide (no source scope, no quarantine filter): `stale_chunks` counts chunks with no stored vector on live pages without `embed_skip`; `entities` live pages of an entity type (`entityTypes.per_source` replaces `types` for its source); `linked_entities` and `timeline_entities` those with any inbound link or any timeline entry; `takes` every take; any other signal live pages, as the last arm of the SQL does | `countOnboardSignal` |
+| `brain.countBrainLivePages()` | live pages in every source (no source scope), for backup coverage | `countBrainLivePages` |
+| `brain.liveCountsBySource()` | `{ source_id, pages, chunks, embedded }` per source with a live page, in source id byte order: its live pages, their chunks and the chunks with a stored vector (no source scope), for `gbrain sources status`. `countLivePagesBySource` reads `pages`; `countChunksBySource` reads `chunks` and `embedded` and skips a source with no chunk, as the SQL join does. The store holds one vector column, so `column` must name the text column | `countLivePagesBySource`, `countChunksBySource` |
+| `brain.readBrainMaturity()` | `{ pages, facts, since }`: live pages and unexpired facts in every source, and the earliest `created_at` of any source or page (soft-deleted pages count), null when there is neither; for backup coverage | `readBrainMaturity` |
 | `brain.listEnrichCandidates({ types, thinThreshold, order, limit, enrichedAfter, scope })` | `{ slug, source_id, title, type, body_len, inbound_count }` rows. Live pages of the types in the scope, shorter than `thinThreshold` characters (`compiled_truth` plus `timeline`), not `dream_generated`, not enriched after `enrichedAfter`. Inbound links skip `link_source = 'mentions'` and `link_type = 'amends'` | `listEnrichCandidates` |
 | `brain.findAnomalies({ scope, baselineStartUs, sinceUs, sinceEndUs })` | `{ baseline: { tag, type }, today }`: per cohort, the distinct pages updated on each UTC day of the baseline window, and the cohorts of the pages updated in the `since` day with their slugs. Only live, not quarantined pages of a source that exists and is not archived | the two bucket queries of `findAnomalies` |
 

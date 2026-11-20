@@ -408,3 +408,21 @@ fn stuck_active_jobs_are_a_lapsed_lock_or_two_stalls_and_order_by_count_then_nam
         json!([{"name": "Alpha", "n": 2}, {"name": "work", "n": 2}, {"name": "twice", "n": 1}])
     );
 }
+
+#[test]
+fn waiting_count_keeps_to_waiting_rows_and_can_leave_out_facts_absorb() {
+    let b = brain("jobs_health");
+    assert_eq!(b.count_waiting_jobs(false).unwrap(), 0);
+    add(&b, "work", json!({}));
+    add(&b, "work", json!({}));
+    add(&b, "facts-absorb", json!({}));
+    add(
+        &b,
+        "work",
+        json!({"status": "delayed", "delay_until": "2099-01-01T00:00:00.000Z"}),
+    );
+    add(&b, "busy", json!({}));
+    claim(&b, "c1", "default", "busy", 60_000);
+    assert_eq!(b.count_waiting_jobs(false).unwrap(), 3);
+    assert_eq!(b.count_waiting_jobs(true).unwrap(), 2);
+}

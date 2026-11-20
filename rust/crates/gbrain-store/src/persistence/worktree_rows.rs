@@ -14,8 +14,7 @@ use crate::keys;
 use crate::kv::KvRead;
 use serde::Deserialize;
 
-/// `d 0x09`: the worktree binding's key table (`worktrees.rs`).
-const WORKTREES: u8 = 0x09;
+use super::WORKTREES;
 /// `d 0x09 0x01`: one `persistence_worktrees` row.
 const WORKTREE: u8 = 0x01;
 /// `d 0x09 0x03`: one `persistence_source_bindings` row.
@@ -223,5 +222,56 @@ mod tests {
             err.message,
             "a persistence_worktrees record is not valid JSON"
         );
+    }
+
+    /// The reader reads what the binding's own inserts (`worktrees.rs`) write, at the keys they
+    /// choose: an upper-case id is stored lower-case and read back by either case.
+    #[test]
+    fn the_reader_reads_the_rows_the_binding_inserts_write() {
+        let s = store();
+        let up = WORKTREE.to_uppercase();
+        let insert: crate::persistence::WorktreeInsert =
+            serde_json::from_value(serde_json::json!({
+                "id": up, "ownerHostId": HOST.to_uppercase(), "ownerEpoch": 7, "state": "draining",
+            }))
+            .unwrap();
+        s.insert_worktree(&insert).unwrap();
+        let bare: crate::persistence::WorktreeInsert = serde_json::from_value(serde_json::json!({
+            "id": "f0000000-0000-4000-8000-0000000000b2",
+        }))
+        .unwrap();
+        s.insert_worktree(&bare).unwrap();
+        let inc = s.read_source_membership("default").unwrap().unwrap()["incarnation"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let binding: crate::persistence::SourceBindingInsert =
+            serde_json::from_value(serde_json::json!({
+                "sourceId": "default", "incarnation": inc.to_uppercase(), "worktreeId": up,
+                "relativePath": "notes",
+            }))
+            .unwrap();
+        s.insert_source_binding(&binding).unwrap();
+        let read = s.read().unwrap();
+        for id in [WORKTREE.to_string(), up.clone()] {
+            let row = read_worktree_row(&*read, &id).unwrap().unwrap();
+            assert_eq!(row.owner_host_id.as_deref(), Some(HOST));
+            assert_eq!((row.owner_epoch, row.state.as_str()), (7, "draining"));
+            assert!(row.owned_by(Some(HOST)) && !row.owned_by(None));
+        }
+        let unowned = read_worktree_row(&*read, "f0000000-0000-4000-8000-0000000000b2")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                unowned.owner_host_id.clone(),
+                unowned.owner_epoch,
+                unowned.state.as_str()
+            ),
+            (None, 0, "active")
+        );
+        let b = read_source_binding(&*read, "default").unwrap().unwrap();
+        assert_eq!(b.worktree_id, WORKTREE);
+        assert_eq!(b.source_incarnation, inc.to_lowercase());
     }
 }

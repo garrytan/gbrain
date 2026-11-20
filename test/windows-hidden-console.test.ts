@@ -17,10 +17,11 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnDetachedSupervisor } from '../src/core/minions/detached-stderr.ts';
+import { removeCompiledSmokeDirectory } from '../scripts/native/compiled-smoke-cleanup.ts';
 
 const FIXTURES = join(import.meta.dir, 'fixtures', 'windows-console');
 const HIDDEN = { console: true, visibleWindow: false };
@@ -48,7 +49,7 @@ describe.skipIf(process.platform !== 'win32')('console windows from a detached g
     process.stderr.write(`Windows console windows: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, results })}\n`);
   }, 240_000);
 
-  afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+  afterAll(async () => { if (dir) await removeCompiledSmokeDirectory(dir); });
 
   test('control: the detached process has no console, and an unhidden launch from it shows a window', () => {
     expect(results.launcher).toEqual({ console: false, visibleWindow: false });

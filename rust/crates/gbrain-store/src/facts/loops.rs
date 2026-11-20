@@ -251,7 +251,21 @@ impl Store {
         let now = self.env.now_micros();
         let last_activity_at_us = last.unwrap_or(now);
         let opened_at_us = opened.unwrap_or(now);
-        let confidence = input.confidence.unwrap_or(1.0) as f32;
+        let confidence = input.confidence.unwrap_or(1.0);
+        let narrowed = confidence as f32;
+        // JSON cannot carry a NaN or an infinity, but a direct Rust caller can; either one, like a
+        // finite value past the REAL range, would store a row that no longer deserializes.
+        if !narrowed.is_finite() {
+            return Err(StoreError::new(
+                crate::error::INVALID_ARGUMENT,
+                if confidence.is_finite() {
+                    format!("{op}: \"{confidence}\" is out of range for type real")
+                } else {
+                    format!("{op}: confidence {confidence} is not a finite number")
+                },
+            ));
+        }
+        let confidence = narrowed;
         self.write(|tx| {
             require_source(tx, &input.source_id)?;
             let new_id = next_id(tx, COUNTER)?;
@@ -588,6 +602,25 @@ mod tests {
             "detector": "deterministic_thread", "lastActivityAt": at, "openedAt": at,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_confidence_past_the_real_range_refuses_and_leaves_the_row() {
+        let s = store();
+        source(&s, "src");
+        s.upsert_open_loop(&input("src", "k", T1)).unwrap();
+        for bad in [1e39, -1e39, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let mut again = input("src", "k", T2);
+            again.confidence = Some(bad);
+            let err = s.upsert_open_loop(&again).unwrap_err();
+            assert_eq!(err.code, INVALID_ARGUMENT, "{err:?}");
+            assert!(err.message.contains("for type real") || err.message.contains("finite"));
+            let mut fresh = input("src", "other", T2);
+            fresh.confidence = Some(bad);
+            assert!(s.upsert_open_loop(&fresh).is_err());
+        }
+        // the stored row still reads, and so does the listing
+        assert_eq!(s.upsert_open_loop(&input("src", "k", T2)).unwrap().id, 1);
     }
 
     #[test]

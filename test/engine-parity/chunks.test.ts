@@ -96,6 +96,23 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
+    'getChunks under requireSafeChunks reads a sealed page chunked below the safe fence as no chunks',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      await engine.putPage('notes/fenced', PAGE('Fenced', 'fenced body text.'));
+      await installChunks(engine, 'notes/fenced', [chunk(0, 'fenced body text.', { embedding: basisEmbedding(2) })]);
+      const read = async (requireSafeChunks: boolean) =>
+        (await engine.getChunks('notes/fenced', { includeEmbedding: true, requireSafeChunks })).map((c) => [c.chunk_index, c.embedding != null]);
+      const safe = { off: await read(false), on: await read(true) };
+      await engine.setChunkerVersion('notes/fenced', 3);
+      const short = { off: await read(false), on: await read(true) };
+      expect(safe).toEqual({ off: [[0, true]], on: [[0, true]] });
+      expect(short).toEqual({ off: [[0, true]], on: [] });
+      return { safe, short };
+    },
+  );
+
+  parityTest(
     'sealChunks replaces and seals chunks at the current revision; it refuses a stale revision, a deleted page and an unknown page',
     { methods: ['putPage', 'readPageSnapshot', 'sealChunks', 'getChunks', 'searchKeyword', 'softDeletePage'] },
     async (engine) => {

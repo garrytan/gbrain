@@ -13,7 +13,9 @@ export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: str
   const company = await getCompanyBrainProfile(engine, sourceId);
   if (company?.noWriteback) return { mode: 'preserve_files',
     reason: 'source_writeback_required: the approved company-brain ingestion contract is file-preserving (noWriteback:true). Shared-skill setup cannot modify this repository, even if it contains a pack. Use a separately authorized content source; ingestion approval, files and grants remain unchanged.' };
-  const [source] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  // The typed source read (engine-sql/write-misc.ts readSourceState); an archived source reads as missing.
+  const state = await engine.readSourceState(sourceId);
+  const source = state && !state.archived ? state : null;
   if (!source) {
     throw new OperationError('source_changed', 'The selected content source is missing or archived.',
       `Source ${sourceId} is archived or not registered; choose an active content source (gbrain sources list --json shows them).`);

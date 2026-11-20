@@ -10,6 +10,7 @@ use crate::error::StoreError;
 use crate::facts::{PrivacyPolicy, hidden_by_policy, read_fact};
 use crate::journal::{RequestRecord, read_writer_record};
 use crate::kv::{KvRead, scan_prefix};
+use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
 use crate::pages::{VersionRecord, read_page_by_id};
 use crate::persistence::uuid_param;
 use crate::takes::take_at;
@@ -81,17 +82,38 @@ pub enum RowAttributionTarget {
         #[serde(default)]
         exclude_private: Option<PrivacyPolicy>,
     },
-    /// `takes WHERE page_id AND row_num`, then `holder = ANY(holders)` when holders are given.
+    /// `takes WHERE page_id AND row_num`, then `holder = ANY(holders)` when holders are given, then
+    /// the take's own owner-only test (`ownerOnlyTakeAllowedSql`) in `owner_only`'s form.
     #[serde(rename_all = "camelCase")]
     Take {
         page_id: u64,
         row_num: i32,
         #[serde(default)]
         holders: Option<Vec<String>>,
+        #[serde(default)]
+        owner_only: OwnerOnlyForm,
     },
-    /// `timeline_entries WHERE id AND page_id`.
+    /// `timeline_entries WHERE id AND page_id`, then the entry's own owner-only test
+    /// (`ownerOnlyTimelineAllowedSql`) in `owner_only`'s form.
     #[serde(rename_all = "camelCase")]
-    Timeline { id: u64, page_id: u64 },
+    Timeline {
+        id: u64,
+        page_id: u64,
+        #[serde(default)]
+        owner_only: OwnerOnlyForm,
+    },
+}
+
+/// A take's or timeline entry's own owner-only test for a caller who is not the owner. The
+/// closed form hides every row while the brain holds an owner-only source or a mark. The
+/// function form reads the row's own lineage, and here it has none: the store marks no take or
+/// timeline row and keeps no `derivation_inputs` (owner_only_marks.rs). The row's page is
+/// tested apart, as in SQL. A target that names no form takes `closed`.
+fn row_owner_only_hidden(read: &dyn KvRead, form: OwnerOnlyForm) -> Result<bool> {
+    match form {
+        OwnerOnlyForm::Off | OwnerOnlyForm::Fn => Ok(false),
+        OwnerOnlyForm::Closed => Ok(OwnerOnlySources::read(read)?.guarded()),
+    }
 }
 
 fn version_row(v: &VersionRecord) -> Value {
@@ -256,11 +278,14 @@ impl Store {
                 page_id,
                 row_num,
                 holders,
+                owner_only,
             } => {
                 let Some(t) = take_at(&*read, *page_id, *row_num)? else {
                     return Ok(None);
                 };
-                if holders.as_ref().is_some_and(|h| !h.contains(&t.holder)) {
+                if holders.as_ref().is_some_and(|h| !h.contains(&t.holder))
+                    || row_owner_only_hidden(&*read, *owner_only)?
+                {
                     return Ok(None);
                 }
                 // The store keeps no take trust_tier or write_origin: the tier reads the column
@@ -273,10 +298,17 @@ impl Store {
                     None,
                 )))
             }
-            RowAttributionTarget::Timeline { id, page_id } => {
+            RowAttributionTarget::Timeline {
+                id,
+                page_id,
+                owner_only,
+            } => {
                 let Some(e) = timeline_entry(&*read, *page_id, *id)? else {
                     return Ok(None);
                 };
+                if row_owner_only_hidden(&*read, *owner_only)? {
+                    return Ok(None);
+                }
                 Ok(Some(row_json(
                     e.id,
                     &e.receipt,
@@ -383,6 +415,7 @@ mod tests {
                     page_id: page,
                     row_num: 1,
                     holders: holders.map(|h| h.into_iter().map(String::from).collect()),
+                    owner_only: OwnerOnlyForm::Off,
                 })
                 .unwrap()
         };
@@ -424,5 +457,87 @@ mod tests {
         );
         assert_eq!(read(false, "alt", "people/a"), None);
         assert_eq!(read(false, "default", "people/b"), None);
+    }
+
+    #[test]
+    fn the_closed_owner_only_form_alone_hides_a_take_or_timeline_entry() {
+        use crate::sources::SourceInput;
+        use crate::timeline::{AddTimelineOptions, TimelineInput, TimelineOptions};
+        let store = store();
+        act(&store, R1, "w1");
+        let page = put(&store, "people/a", "one");
+        let take: TakeInput = serde_json::from_value(json!({
+            "page_id": page, "row_num": 1, "claim": "c", "kind": "take", "holder": "garry", "weight": 0.5, "active": true,
+        }))
+        .unwrap();
+        store.add_takes_batch(&[take]).unwrap();
+        let entry = TimelineInput {
+            date: Some("2026-01-02".into()),
+            source: Some("cal".into()),
+            summary: Some("Joined".into()),
+            detail: None,
+        };
+        assert!(
+            store
+                .add_timeline_entry("people/a", &entry, &AddTimelineOptions::default())
+                .unwrap()
+        );
+        let entry_id = store
+            .get_timeline("people/a", &TimelineOptions::default())
+            .unwrap()[0]["id"]
+            .as_u64()
+            .unwrap();
+        let read = |owner_only: OwnerOnlyForm| {
+            let take = store
+                .read_row_attribution(&RowAttributionTarget::Take {
+                    page_id: page,
+                    row_num: 1,
+                    holders: None,
+                    owner_only,
+                })
+                .unwrap()
+                .is_some();
+            let entry = store
+                .read_row_attribution(&RowAttributionTarget::Timeline {
+                    id: entry_id,
+                    page_id: page,
+                    owner_only,
+                })
+                .unwrap()
+                .is_some();
+            (take, entry)
+        };
+        // No owner-only source yet: every form reads both rows, so the hidden case is not vacuous.
+        for form in [OwnerOnlyForm::Off, OwnerOnlyForm::Fn, OwnerOnlyForm::Closed] {
+            assert_eq!(
+                read(form),
+                (true, true),
+                "{form:?} before an owner-only source"
+            );
+        }
+        store
+            .upsert_source(&SourceInput {
+                id: "chat".into(),
+                name: Some("chat".into()),
+                config: Some(json!({"kind": "imessage"}).as_object().unwrap().clone()),
+                ..SourceInput::default()
+            })
+            .unwrap();
+        assert_eq!(
+            read(OwnerOnlyForm::Closed),
+            (false, false),
+            "the closed form hides both"
+        );
+        // The rows have no lineage here (no take or timeline marks, no derivation inputs).
+        assert_eq!(
+            read(OwnerOnlyForm::Fn),
+            (true, true),
+            "the function form reads the lineage"
+        );
+        assert_eq!(
+            read(OwnerOnlyForm::Off),
+            (true, true),
+            "the owner reads both"
+        );
     }
 }

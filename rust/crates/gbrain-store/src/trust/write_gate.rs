@@ -650,7 +650,16 @@ impl Store {
     pub fn delete_stale_write_gate_receipts(&self, older_than_days: i64) -> Result<u64> {
         let op = "deleteStaleWriteGateReceipts";
         let days = int4(op, "olderThanDays", older_than_days)?;
-        let cutoff = self.env.now_micros() - i64::from(days) * MICROS_PER_DAY;
+        // A retention this long is past the timestamp range SQL accepts; wrapping here would put
+        // the cutoff in the future and delete fresh receipts.
+        let cutoff = i64::from(days)
+            .checked_mul(MICROS_PER_DAY)
+            .and_then(|span| self.env.now_micros().checked_sub(span))
+            .ok_or_else(|| {
+                StoreError::invalid(format!(
+                    "{op}: olderThanDays {days} is out of timestamp range"
+                ))
+            })?;
         self.write(|tx| {
             let mut deleted = 0;
             for r in all_receipts(tx)? {
@@ -1025,6 +1034,23 @@ mod tests {
             .unwrap();
         assert_eq!(ids(&left), vec![again]);
         assert_eq!(s.delete_stale_write_gate_receipts(-1).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_retention_past_the_timestamp_range_refuses_and_keeps_every_receipt() {
+        let s = store();
+        s.upsert_write_gate_receipt(receipt("facts", "1", fields("h", "flag")))
+            .unwrap();
+        let err = s
+            .delete_stale_write_gate_receipts(i64::from(i32::MAX))
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::INVALID_ARGUMENT);
+        assert_eq!(
+            s.list_write_gate_receipts_for("facts", "1", 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

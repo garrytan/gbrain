@@ -3,7 +3,8 @@
 //! `pages.contextual_retrieval_mode` / `pages.corpus_generation` columns.
 //!
 //! Members: updateSlug, resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases,
-//! setPageAliases, replaceDerivedAliases, updatePageContextualRetrievalState, aliasCanonicalRefs.
+//! setPageAliases, replaceDerivedAliases, updatePageContextualRetrievalState, aliasCanonicalRefs,
+//! listSlugAliases.
 //!
 //! Keys (every record starts with `keys::ALIAS`, `k`; text parts are joined with `0x00`):
 //!
@@ -882,6 +883,29 @@ impl Store {
                 source_id: source.to_string(),
                 matches,
             }))
+    }
+
+    /// `listSlugAliases(sourceId)`: every `slug_aliases` row of `source_id` as `{ alias_slug,
+    /// canonical_slug }`, in alias byte order (the SQL has no `ORDER BY`; its one caller, link
+    /// extraction, builds a map). A source id with a NUL byte names no row.
+    pub fn list_slug_aliases(&self, source_id: &str) -> Result<Vec<Value>> {
+        if has_nul(&[source_id]) {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for (_, parts) in scan_tails(&*read, &prefix(SLUG_ALIAS, &[source_id]))? {
+            let [alias] = parts.as_slice() else {
+                continue;
+            };
+            if let Some(record) = read_slug_alias(&*read, source_id, alias)? {
+                out.push(serde_json::json!({
+                    "alias_slug": alias,
+                    "canonical_slug": record.canonical_slug,
+                }));
+            }
+        }
+        Ok(out)
     }
 
     /// `updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)`: stamps the

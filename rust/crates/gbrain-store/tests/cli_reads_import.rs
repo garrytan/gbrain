@@ -464,3 +464,37 @@ fn take_writes_stamp_trust_and_fact_and_take_rows_read_it_with_contested_refs() 
         .unwrap_err();
     assert!(refused.message.contains("unknown table"));
 }
+
+#[test]
+fn link_page_metadata_for_slugs_reads_the_named_live_pages_of_one_source_by_slug() {
+    let dir = TempDir::new("link-metadata-for-slugs");
+    let store = open(&dir);
+    source(&store, "work", json!({}));
+    for (slug, src) in [
+        ("b", "default"),
+        ("a", "default"),
+        ("gone", "default"),
+        ("b", "work"),
+    ] {
+        page(&store, src, slug, json!({"aliases": ["Bee"]}));
+    }
+    store.soft_delete_page("gone", None).unwrap();
+    let slugs: Vec<String> = ["b", "a", "gone", "missing", "a"]
+        .map(String::from)
+        .to_vec();
+    let rows = store
+        .read_link_page_metadata_for_slugs("default", &slugs)
+        .unwrap();
+    let keys: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|r| (r.source_id.as_str(), r.slug.as_str()))
+        .collect();
+    assert_eq!(keys, [("default", "a"), ("default", "b")]);
+    assert_eq!(rows[1].aliases, json!(["Bee"]));
+    assert!(
+        store
+            .read_link_page_metadata_for_slugs("default", &[])
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -5,8 +5,10 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 The `calibration_profiles` table: one row per generated calibration profile of a holder in a source. The
 `calibration_profile` cycle phase writes it, `gbrain calibration` and the MCP `get_calibration_profile` op read the
 newest row, the brainstorm and doctor checks read its bias tags and freshness, and `undo-wave` deletes a wave's rows.
-The SQL is written once in `src/core/engine-sql/calibration-profiles.ts` for PGLite and Postgres; this store serves the
-same five members. Timestamps cross the binding as ISO strings; the TypeScript members turn them into `Date`s. All five
+This landing adds the native store and its N-API binding only. The shared SQL module
+(`src/core/engine-sql/calibration-profiles.ts`) and the TypeScript members that would route a Rust brain here arrive in a
+later landing, so nothing in TypeScript calls these members yet and no cross-engine parity file exists. Once wired, the
+store serves the same five members as PGLite and Postgres. Timestamps cross the binding as ISO strings; the TypeScript members turn them into `Date`s. All five
 members are in the `eval_capture` capability.
 
 Keys (under `Z`, the eval-capture tag, in `eval_capture/calibration_profiles.rs`):
@@ -30,8 +32,12 @@ null (no writer sets them) and are not stored. `domain_scorecards` is stored as 
 
 Differences from PGLite:
 
-- The newest-row tie-break `id DESC` and the `id` as text are new in the shared SQL, so all engines agree; the old
-  statements left ties to the planner.
+- The newest-row tie-break `id DESC` and the `id` as text are new in the shared SQL, so all engines agree once the shared SQL
+  lands; the old statements left ties to the planner.
+- A NaN or infinite `REAL` value is native-only input, and the store refuses it with `invalid_argument` on both a write
+  (`insertCalibrationProfile`) and a read (`isCalibrationProfileUnchanged`, whose `brier`, `accuracy` and `partialRate`
+  are `REAL` parameters). PGLite and Postgres accept a `real` NaN, and `NaN IS NOT DISTINCT FROM NaN` is true there, so
+  this refusal is a deliberate divergence.
 
 Gaps:
 

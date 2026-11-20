@@ -19,13 +19,13 @@ export const PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX = {
   sql: 'CREATE INDEX IF NOT EXISTS idx_page_projection_jobs_slug_c ON page_projection_jobs (source_incarnation, slug COLLATE "C")',
 } as const;
 
-export const v329: Migration = {
-  version: 329,
+export const v331: Migration = {
+  version: 331,
   name: 'projection_jobs_byte_order_index',
   idempotent: true,
   transaction: false,
   sql: '',
   handler: async engine => {
-    await buildIndexOnline(engine, 329, PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 331, PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX, { notice: migrationNotice });
   },
 };
