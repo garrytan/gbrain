@@ -34,3 +34,11 @@ cargo test -p gbrain-store --features test-seeds
 
 `strings <addon>.node | grep -c seedPage` is 0 for the default build and non-zero for the seed build; the proof for the
 change that added them is in its notes.
+
+## Without the feature
+
+A case declared `testSeeds: true` that runs on an addon built without the feature stops on the typed
+`engine_capability_missing` refusal naming `test_seeds` (a test-only capability name, raised by the seed fixture in
+`test/engine-parity/rust-arm.ts`). The Rust arm counts it as stopped, so a default addon keeps every parity file green.
+`test/engine-parity/rust-tally.tsv` pins the counts of the default addon; an addon built with the feature does better and
+prints the new counts.

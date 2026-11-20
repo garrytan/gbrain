@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, seedRustPageOrigin, seedRustPageUpdatedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, seedRustPageOrigin, seedRustPageUpdatedAt, TEST_SEEDS_CAPABILITY, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -79,6 +79,12 @@ export interface ParityCaseOpts {
    * `engine_capability_missing` refusal, and an `n/a` capability skips the arm.
    */
   requires?: EngineCapability;
+  /**
+   * The case seeds the Rust arm through a test-only seed member (rust/docs/store/test-seeds.md), which exists only on an addon
+   * built with GBRAIN_RUST_TEST_SEEDS=1. On a default addon the seed fixture raises the typed `engine_capability_missing`
+   * refusal naming `test_seeds`, and the Rust arm counts the case as stopped; the SQL arms are not affected.
+   */
+  testSeeds?: true;
   timeout?: number;
 }
 
@@ -552,6 +558,7 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   // does not store (its capability is still the member's own); `requires` adds the capability a case needs.
   const capabilities = new Set(reached.map((m) => rustMemberCapability(m)).filter((x): x is string => x !== null));
   if (c.opts.requires !== undefined && !armHas('rust', c.opts.requires)) capabilities.add(c.opts.requires);
+  if (c.opts.testSeeds) capabilities.add(TEST_SEEDS_CAPABILITY);
   const refusedBy = (e: unknown) => [...capabilities].some((capability) => isCapabilityRefusal(e, capability as EngineCapability));
   const caught = c.refusals.filter(refusedBy).length;
 

@@ -79,7 +79,7 @@ describe('belief walks and cycle listings take pages by byte', () => {
     expect((await listFailedProposals(engine, 'default')).map(r => r.slug)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', { methods: ['putPage', 'readSourceState', 'updateSourceConfig', 'readCycleListingInstant', 'listSourceChangedPagesAfter'] }, async (engine, backend) => {
+  parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', { methods: ['putPage', 'readSourceState', 'updateSourceConfig', 'readCycleListingInstant', 'listSourceChangedPagesAfter'], testSeeds: true }, async (engine, backend) => {
     await put(engine, MIXED_SLUGS);
     for (const slug of MIXED_SLUGS) await stampUpdatedAtExact(engine, backend, 'default', slug, STAMP);
     const limit = sourceWindow.pageLimit;

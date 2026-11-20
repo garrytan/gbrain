@@ -111,7 +111,7 @@ describe('edge contradiction subjects', () => {
 });
 
 describe('identity downgrade record', () => {
-  parityTest('recordIdentityDowngrades names the lowest page id when soft-deleted pages share one source_path and deleted_at', { methods: ['putPage', 'getPage', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues'] }, async (engine, backend) => {
+  parityTest('recordIdentityDowngrades names the lowest page id when soft-deleted pages share one source_path and deleted_at', { methods: ['putPage', 'getPage', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'writeOpCheckpointValues'], testSeeds: true }, async (engine, backend) => {
     // The pages table allows one live-or-deleted page per (source_id, slug) but not one per source_path: six pages that an
     // old file once backed are soft-deleted in one sync, so they carry one path and one deleted_at.
     const slugs = KEYS.map(key => `notes/${key}`);

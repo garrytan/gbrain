@@ -310,6 +310,9 @@ cases without restarting its sequences. A case must not compare or pass raw
 generated ids: count them from the case's first row, or compare by name.
 For the Rust arm, run `bun run rust:build`, then add
 `GBRAIN_TEST_RUST_ARM=1 GBRAIN_RUST_ENGINE_ADDON=$PWD/rust/target/addon/gbrain_engine.linux-x64-glibc.node`.
+A case that seeds the Rust arm through a test-only seed member (`testSeeds: true`, rust/docs/store/test-seeds.md) needs the
+addon built with `GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`; on a default addon it stops on a typed `test_seeds` refusal
+and the tally counts it as stopped.
 `test/engine-parity/rust-tally.tsv` pins, for each parity file, how many cases
 the Rust arm answers equal to PGLite and how many stop on a typed refusal. A
 file with fewer equal or more stopped cases than its pin fails, so a member

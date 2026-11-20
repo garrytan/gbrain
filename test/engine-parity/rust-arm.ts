@@ -21,6 +21,7 @@ import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { openRustEngine, RustEngine } from '../../src/core/rust-engine.ts';
+import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 
 export const RUST_ARM_FLAG = 'GBRAIN_TEST_RUST_ARM';
 
@@ -107,17 +108,26 @@ export function isoToMicros(iso: string): number {
  * and a soft-deleted page that carries a file path). They exist only on an addon built with the `test-seeds` cargo
  * feature (`GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`); the shipped addon has neither (rust/docs/store/test-seeds.md).
  */
+/**
+ * The capability a case names when it seeds through a test-only member and the addon was built without the `test-seeds`
+ * feature. It is a test-only name (not in src/core/engine-capabilities.ts): the refusal the seed fixture raises carries it,
+ * and a case declared `testSeeds: true` counts as stopped on it.
+ */
+export const TEST_SEEDS_CAPABILITY = 'test_seeds';
+
+/** The seed member `name` on the arm's brain, or the typed refusal naming `test_seeds` when the addon was built without it. */
+function seedMember(engine: unknown, name: string): (...args: never[]) => Promise<void> {
+  const brain = (engine as RustEngine).openStore(name).brain as unknown as Record<string, unknown>;
+  if (typeof brain[name] !== 'function') throw capabilityMissing(TEST_SEEDS_CAPABILITY as never, `${name} (a test-only seed; build the arm addon with GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build)`);
+  return (brain[name] as (...args: never[]) => Promise<void>).bind(brain);
+}
+
 export async function seedRustPageUpdatedAt(engine: unknown, sourceId: string, slug: string, iso: string): Promise<void> {
-  const brain = (engine as RustEngine).openStore('seedPageUpdatedAt').brain as unknown as Record<string, unknown>;
-  if (typeof brain.seedPageUpdatedAt !== 'function') throw new Error('this Rust addon has no test seeds; build the arm addon with GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build');
-  await (brain.seedPageUpdatedAt as (s: string, l: string, us: number) => Promise<void>).call(brain, sourceId, slug, isoToMicros(iso));
+  await (seedMember(engine, 'seedPageUpdatedAt') as (s: string, l: string, us: number) => Promise<void>)(sourceId, slug, isoToMicros(iso));
 }
 
 export async function seedRustPageOrigin(engine: unknown, sourceId: string, slug: string, sourcePath: string | null, deletedAtIso: string | null): Promise<void> {
-  const brain = (engine as RustEngine).openStore('seedPageOrigin').brain as unknown as Record<string, unknown>;
-  if (typeof brain.seedPageOrigin !== 'function') throw new Error('this Rust addon has no test seeds; build the arm addon with GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build');
-  await (brain.seedPageOrigin as (s: string, l: string, p: string | null, d: number | null) => Promise<void>)
-    .call(brain, sourceId, slug, sourcePath, deletedAtIso === null ? null : isoToMicros(deletedAtIso));
+  await (seedMember(engine, 'seedPageOrigin') as (s: string, l: string, p: string | null, d: number | null) => Promise<void>)(sourceId, slug, sourcePath, deletedAtIso === null ? null : isoToMicros(deletedAtIso));
 }
 
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
