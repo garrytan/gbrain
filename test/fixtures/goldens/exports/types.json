@@ -137,6 +137,7 @@
           "countPurgedPageFacts: (sourceIds: string[], cap: number) => Promise<{ evidenced: number; ambiguous: number; capped: boolean; }>",
           "countRecentCompletedJobs: (name: string, withinSeconds: number) => Promise<number>",
           "countRedactedFacts: (sourceIds?: string[]) => Promise<number>",
+          "countReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerRowScope) => Promise<number>",
           "countRelinkCandidates: (sourceId: string) => Promise<number>",
           "countSearchVectorRows: () => Promise<{ pages: number; chunks: number; }>",
           "countSegmentedTimelinePages: (sourceIds: readonly string[], limit: number) => Promise<SegmentedTimelinePages>",
@@ -477,6 +478,7 @@
           "listRecentLeasePressure: (windowMs: number, limit: number) => Promise<LeasePressureRow[]>",
           "listRecentSynthesisCompletions: (sourceId: string, hours: number) => Promise<SynthesisCompletion[]>",
           "listRecordMetadataRows: (pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean; }) => Promise<RecordMetadataRows>",
+          "listReferrerTargetSources: (slug: string, sources: readonly string[]) => Promise<string[]>",
           "listRelationshipNoteRows: (subjects: ReadonlyArray<{ slug: string; source_id: string; }>, opts: { excludePrivate: boolean; }) => Promise<RelationshipNoteRow[]>",
           "listRelinkCandidateRows: (opts: { sourceId: string; afterId: number; since: Date | null; limit: number; }) => Promise<RelinkCandidateRow[]>",
           "listReservationsAfter: (after: string, limit: number) => Promise<Array<{ id: string; sequence: string; compacted: boolean; }>>",
@@ -491,6 +493,7 @@
           "listSharedSkillPackRoots: (hostId: string) => Promise<SharedSkillPackRoot[]>",
           "listSimilarActiveFacts: (opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number; }) => Promise<SimilarActiveFacts>",
           "listSingleFactMetadata: (opts: { sourceId: string; ids: number[]; remoteFloor: boolean; }) => Promise<SingleFactMetadataRow[]>",
+          "listSourceIds: () => Promise<string[]>",
           "listSourceLastCommits: (sourceIds: readonly string[]) => Promise<{ last_commit: string | null; }[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
           "listSourceRecords: () => Promise<SourceRecordRow[]>",
@@ -759,7 +762,11 @@
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
           "readReferrerGroupRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerGroupScope) => Promise<ReferrerGroupRow[]>",
           "readReferrerPageDetails: (ids: readonly number[]) => Promise<ReferrerPageDetailRow[]>",
+          "readReferrerRecordCandidates: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: ReferrerRecordCandidateScope) => Promise<ReferrerRecordCandidateRow[]>",
+          "readReferrerRecordPages: (ids: readonly number[]) => Promise<ReferrerRecordPageRow[]>",
+          "readReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerRowScope & { cursor: readonly [string | null, string, string] | null; limit: number; }) => Promise<ReferrerRow[]>",
           "readReferrerTargetCounts: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: ReferrerTargetCountScope) => Promise<ReferrerTargetCountRow[]>",
+          "readReferrerTypes: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerTypeScope) => Promise<ReferrerTypeRow[]>",
           "readRemoteForgetTier: (spec: { factId: number; sourceId: string; remoteFloor: boolean; }) => Promise<string | null>",
           "readRequestEffects: (requestId: string, kind?: \"git\") => Promise<RequestEffectState[]>",
           "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
@@ -1637,7 +1644,7 @@
         "kind": "variable",
         "name": "PAGE_SORT_SQL",
         "signature": [
-          "Record<NonNullable<\"updated_desc\" | \"updated_asc\" | \"created_desc\" | \"slug\" | undefined>, string>"
+          "Record<NonNullable<\"slug\" | \"updated_desc\" | \"updated_asc\" | \"created_desc\" | undefined>, string>"
         ]
       },
       {
@@ -1689,7 +1696,7 @@
           "offset?: number | undefined",
           "slugAfter?: string | undefined",
           "slugPrefix?: string | undefined",
-          "sort?: \"updated_desc\" | \"updated_asc\" | \"created_desc\" | \"slug\" | undefined",
+          "sort?: \"slug\" | \"updated_desc\" | \"updated_asc\" | \"created_desc\" | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
           "tag?: string | undefined",
@@ -1875,6 +1882,7 @@
           "countPurgedPageFacts: (sourceIds: string[], cap: number) => Promise<{ evidenced: number; ambiguous: number; capped: boolean; }>",
           "countRecentCompletedJobs: (name: string, withinSeconds: number) => Promise<number>",
           "countRedactedFacts: (sourceIds?: string[]) => Promise<number>",
+          "countReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerRowScope) => Promise<number>",
           "countRelinkCandidates: (sourceId: string) => Promise<number>",
           "countSearchVectorRows: () => Promise<{ pages: number; chunks: number; }>",
           "countSegmentedTimelinePages: (sourceIds: readonly string[], limit: number) => Promise<SegmentedTimelinePages>",
@@ -2217,6 +2225,7 @@
           "listRecentLeasePressure: (windowMs: number, limit: number) => Promise<LeasePressureRow[]>",
           "listRecentSynthesisCompletions: (sourceId: string, hours: number) => Promise<SynthesisCompletion[]>",
           "listRecordMetadataRows: (pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean; }) => Promise<RecordMetadataRows>",
+          "listReferrerTargetSources: (slug: string, sources: readonly string[]) => Promise<string[]>",
           "listRelationshipNoteRows: (subjects: ReadonlyArray<{ slug: string; source_id: string; }>, opts: { excludePrivate: boolean; }) => Promise<RelationshipNoteRow[]>",
           "listRelinkCandidateRows: (opts: { sourceId: string; afterId: number; since: Date | null; limit: number; }) => Promise<RelinkCandidateRow[]>",
           "listReservationsAfter: (after: string, limit: number) => Promise<{ id: string; sequence: string; compacted: boolean; }[]>",
@@ -2231,6 +2240,7 @@
           "listSharedSkillPackRoots: (hostId: string) => Promise<SharedSkillPackRoot[]>",
           "listSimilarActiveFacts: (opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number; }) => Promise<SimilarActiveFacts>",
           "listSingleFactMetadata: (opts: { sourceId: string; ids: number[]; remoteFloor: boolean; }) => Promise<SingleFactMetadataRow[]>",
+          "listSourceIds: () => Promise<string[]>",
           "listSourceLastCommits: (sourceIds: readonly string[]) => Promise<{ last_commit: string | null; }[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
           "listSourceRecords: () => Promise<SourceRecordRow[]>",
@@ -2562,7 +2572,11 @@
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
           "readReferrerGroupRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerGroupScope) => Promise<ReferrerGroupRow[]>",
           "readReferrerPageDetails: (ids: readonly number[]) => Promise<ReferrerPageDetailRow[]>",
+          "readReferrerRecordCandidates: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: ReferrerRecordCandidateScope) => Promise<ReferrerRecordCandidateRow[]>",
+          "readReferrerRecordPages: (ids: readonly number[]) => Promise<ReferrerRecordPageRow[]>",
+          "readReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: Parameters<typeof readReferrerRows>[2]) => Promise<ReferrerRow[]>",
           "readReferrerTargetCounts: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: ReferrerTargetCountScope) => Promise<ReferrerTargetCountRow[]>",
+          "readReferrerTypes: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: ReferrerTypeScope) => Promise<ReferrerTypeRow[]>",
           "readRemoteForgetTier: (spec: { factId: number; sourceId: string; remoteFloor: boolean; }) => Promise<string | null>",
           "readRequestEffects: (requestId: string, kind?: \"git\") => Promise<RequestEffectState[]>",
           "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
@@ -2975,7 +2989,7 @@
           "entity_anchored?: \"entity\" | \"linked\" | undefined",
           "evidence?: Evidence | undefined",
           "evidence_omitted?: boolean | undefined",
-          "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
+          "exact_lookup?: \"slug\" | \"title\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
           "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true; } | undefined",
@@ -5164,6 +5178,7 @@
           "countPurgedPageFacts: (sourceIds: string[], cap: number) => Promise<{ evidenced: number; ambiguous: number; capped: boolean; }>",
           "countRecentCompletedJobs: (name: string, withinSeconds: number) => Promise<number>",
           "countRedactedFacts: (sourceIds?: string[]) => Promise<number>",
+          "countReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: LinkTemporalSql.ReferrerRowScope) => Promise<number>",
           "countRelinkCandidates: (sourceId: string) => Promise<number>",
           "countSearchVectorRows: () => Promise<{ pages: number; chunks: number; }>",
           "countSegmentedTimelinePages: (sourceIds: readonly string[], limit: number) => Promise<SegmentedTimelinePages>",
@@ -5504,6 +5519,7 @@
           "listRecentLeasePressure: (windowMs: number, limit: number) => Promise<LeasePressureRow[]>",
           "listRecentSynthesisCompletions: (sourceId: string, hours: number) => Promise<SynthesisCompletion[]>",
           "listRecordMetadataRows: (pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean; }) => Promise<LinkTemporalSql.RecordMetadataRows>",
+          "listReferrerTargetSources: (slug: string, sources: readonly string[]) => Promise<string[]>",
           "listRelationshipNoteRows: (subjects: ReadonlyArray<{ slug: string; source_id: string; }>, opts: { excludePrivate: boolean; }) => Promise<LinkTemporalSql.RelationshipNoteRow[]>",
           "listRelinkCandidateRows: (opts: { sourceId: string; afterId: number; since: Date | null; limit: number; }) => Promise<FactsPurgeSql.RelinkCandidateRow[]>",
           "listReservationsAfter: (after: string, limit: number) => Promise<Array<{ id: string; sequence: string; compacted: boolean; }>>",
@@ -5518,6 +5534,7 @@
           "listSharedSkillPackRoots: (hostId: string) => Promise<SharedSkillPackRoot[]>",
           "listSimilarActiveFacts: (opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number; }) => Promise<FactsPurgeSql.SimilarActiveFacts>",
           "listSingleFactMetadata: (opts: { sourceId: string; ids: number[]; remoteFloor: boolean; }) => Promise<FactsPurgeSql.SingleFactMetadataRow[]>",
+          "listSourceIds: () => Promise<string[]>",
           "listSourceLastCommits: (sourceIds: readonly string[]) => Promise<{ last_commit: string | null; }[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
           "listSourceRecords: () => Promise<SourceRecordRow[]>",
@@ -5786,7 +5803,11 @@
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<ReceiptBudget>",
           "readReferrerGroupRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: LinkTemporalSql.ReferrerGroupScope) => Promise<LinkTemporalSql.ReferrerGroupRow[]>",
           "readReferrerPageDetails: (ids: readonly number[]) => Promise<LinkTemporalSql.ReferrerPageDetailRow[]>",
+          "readReferrerRecordCandidates: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: LinkTemporalSql.ReferrerRecordCandidateScope) => Promise<LinkTemporalSql.ReferrerRecordCandidateRow[]>",
+          "readReferrerRecordPages: (ids: readonly number[]) => Promise<LinkTemporalSql.ReferrerRecordPageRow[]>",
+          "readReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: LinkTemporalSql.ReferrerRowScope & { cursor: readonly [string | null, string, string] | null; limit: number; }) => Promise<LinkTemporalSql.ReferrerRow[]>",
           "readReferrerTargetCounts: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: LinkTemporalSql.ReferrerTargetCountScope) => Promise<LinkTemporalSql.ReferrerTargetCountRow[]>",
+          "readReferrerTypes: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: LinkTemporalSql.ReferrerTypeScope) => Promise<LinkTemporalSql.ReferrerTypeRow[]>",
           "readRemoteForgetTier: (spec: { factId: number; sourceId: string; remoteFloor: boolean; }) => Promise<string | null>",
           "readRequestEffects: (requestId: string, kind?: \"git\") => Promise<RequestEffectState[]>",
           "readRetirementHop: (sourceId: string, slug: string, privacy: RetirementPrivacy) => Promise<RetirementHopRow | null>",
@@ -7905,7 +7926,7 @@
         "kind": "type",
         "name": "LinkExtractionPack",
         "signature": [
-          "Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; identity_keys?: string[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"state\" | \"event\" | undefined; cardinality?: \"many\" | \"one_per_from\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"origin\" | \"format\" | \"subtype\" | \"legacy_type\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"link_types\" | \"frontmatter_links\"> & Partial<Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; identity_keys?: string[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"state\" | \"event\" | undefined; cardinality?: \"many\" | \"one_per_from\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"origin\" | \"format\" | \"subtype\" | \"legacy_type\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"frontmatter\" | \"slug\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"page_types\">>"
+          "Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; identity_keys?: string[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"state\" | \"event\" | undefined; cardinality?: \"many\" | \"one_per_from\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"origin\" | \"format\" | \"subtype\" | \"legacy_type\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"link_types\" | \"frontmatter_links\"> & Partial<Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; identity_keys?: string[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"state\" | \"event\" | undefined; cardinality?: \"many\" | \"one_per_from\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"origin\" | \"format\" | \"subtype\" | \"legacy_type\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"page_types\">>"
         ]
       },
       {
@@ -8445,7 +8466,7 @@
         "kind": "type",
         "name": "ParsedMarkdownFields",
         "signature": [
-          "{ type: PageType; title: string; tags: string[]; slug: string; typeExplicit?: boolean | undefined; inferredSubtype?: { type: string; name: string; } | undefined; errors?: ParseValidationError[] | undefined; warnings?: ParseValidationWarning[] | undefined; recovery?: FrontmatterRecovery | undefined; }"
+          "{ slug: string; type: PageType; title: string; tags: string[]; typeExplicit?: boolean | undefined; inferredSubtype?: { type: string; name: string; } | undefined; errors?: ParseValidationError[] | undefined; warnings?: ParseValidationWarning[] | undefined; recovery?: FrontmatterRecovery | undefined; }"
         ]
       },
       {
@@ -9613,6 +9634,7 @@
           "countPurgedPageFacts: (sourceIds: string[], cap: number) => Promise<{ evidenced: number; ambiguous: number; capped: boolean; }>",
           "countRecentCompletedJobs: (name: string, withinSeconds: number) => Promise<number>",
           "countRedactedFacts: (sourceIds?: string[]) => Promise<number>",
+          "countReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: linkTemporalImpl.ReferrerRowScope) => Promise<number>",
           "countRelinkCandidates: (sourceId: string) => Promise<number>",
           "countSearchVectorRows: () => Promise<{ pages: number; chunks: number; }>",
           "countSegmentedTimelinePages: (sourceIds: readonly string[], limit: number) => Promise<timelineReadsImpl.SegmentedTimelinePages>",
@@ -9954,6 +9976,7 @@
           "listRecentLeasePressure: (windowMs: number, limit: number) => Promise<jobsSpend.LeasePressureRow[]>",
           "listRecentSynthesisCompletions: (sourceId: string, hours: number) => Promise<jobsQueue.SynthesisCompletion[]>",
           "listRecordMetadataRows: (pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean; }) => Promise<linkTemporalImpl.RecordMetadataRows>",
+          "listReferrerTargetSources: (slug: string, sources: readonly string[]) => Promise<string[]>",
           "listRelationshipNoteRows: (subjects: ReadonlyArray<{ slug: string; source_id: string; }>, opts: { excludePrivate: boolean; }) => Promise<linkTemporalImpl.RelationshipNoteRow[]>",
           "listRelinkCandidateRows: (opts: { sourceId: string; afterId: number; since: Date | null; limit: number; }) => Promise<factsPurgeImpl.RelinkCandidateRow[]>",
           "listReservationsAfter: (after: string, limit: number) => Promise<{ id: string; sequence: string; compacted: boolean; }[]>",
@@ -9968,6 +9991,7 @@
           "listSharedSkillPackRoots: (hostId: string) => Promise<writeMiscImpl.SharedSkillPackRoot[]>",
           "listSimilarActiveFacts: (opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number; }) => Promise<factsPurgeImpl.SimilarActiveFacts>",
           "listSingleFactMetadata: (opts: { sourceId: string; ids: number[]; remoteFloor: boolean; }) => Promise<factsPurgeImpl.SingleFactMetadataRow[]>",
+          "listSourceIds: () => Promise<string[]>",
           "listSourceLastCommits: (sourceIds: readonly string[]) => Promise<{ last_commit: string | null; }[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
           "listSourceRecords: () => Promise<SourceRecordRow[]>",
@@ -10283,7 +10307,11 @@
           "readReceiptBudget: (retentionKey: string, floorDays: number) => Promise<housekeepingImpl.ReceiptBudget>",
           "readReferrerGroupRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: linkTemporalImpl.ReferrerGroupScope) => Promise<linkTemporalImpl.ReferrerGroupRow[]>",
           "readReferrerPageDetails: (ids: readonly number[]) => Promise<linkTemporalImpl.ReferrerPageDetailRow[]>",
+          "readReferrerRecordCandidates: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: linkTemporalImpl.ReferrerRecordCandidateScope) => Promise<linkTemporalImpl.ReferrerRecordCandidateRow[]>",
+          "readReferrerRecordPages: (ids: readonly number[]) => Promise<linkTemporalImpl.ReferrerRecordPageRow[]>",
+          "readReferrerRows: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: Parameters<typeof linkTemporalImpl.readReferrerRows>[2]) => Promise<linkTemporalImpl.ReferrerRow[]>",
           "readReferrerTargetCounts: (target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[]; }, scope: linkTemporalImpl.ReferrerTargetCountScope) => Promise<linkTemporalImpl.ReferrerTargetCountRow[]>",
+          "readReferrerTypes: (target: { sources: readonly string[]; slugs: readonly string[]; }, scope: linkTemporalImpl.ReferrerTypeScope) => Promise<linkTemporalImpl.ReferrerTypeRow[]>",
           "readRemoteForgetTier: (spec: { factId: number; sourceId: string; remoteFloor: boolean; }) => Promise<string | null>",
           "readRequestEffects: (requestId: string, kind?: \"git\") => Promise<effectScansImpl.RequestEffectState[]>",
           "readRetirementHop: (sourceId: string, slug: string, privacy: entityReadsImpl.RetirementPrivacy) => Promise<entityReadsImpl.RetirementHopRow | null>",
@@ -13201,7 +13229,7 @@
         "kind": "variable",
         "name": "PAGE_SORT_SQL",
         "signature": [
-          "Record<NonNullable<\"updated_desc\" | \"updated_asc\" | \"created_desc\" | \"slug\" | undefined>, string>"
+          "Record<NonNullable<\"slug\" | \"updated_desc\" | \"updated_asc\" | \"created_desc\" | undefined>, string>"
         ]
       },
       {
@@ -13253,7 +13281,7 @@
           "offset?: number | undefined",
           "slugAfter?: string | undefined",
           "slugPrefix?: string | undefined",
-          "sort?: \"updated_desc\" | \"updated_asc\" | \"created_desc\" | \"slug\" | undefined",
+          "sort?: \"slug\" | \"updated_desc\" | \"updated_asc\" | \"created_desc\" | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
           "tag?: string | undefined",
@@ -13552,7 +13580,7 @@
           "entity_anchored?: \"entity\" | \"linked\" | undefined",
           "evidence?: Evidence | undefined",
           "evidence_omitted?: boolean | undefined",
-          "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
+          "exact_lookup?: \"slug\" | \"title\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
           "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true; } | undefined",

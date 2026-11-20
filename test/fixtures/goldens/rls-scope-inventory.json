@@ -3009,6 +3009,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLastCommits#default": {
         "flagOffLanes": [
           "pool"
@@ -6142,6 +6153,7 @@
         "listSharedSkillPackRoots": "none",
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
+        "listSourceIds": "none",
         "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
         "listSourceRecords": "none",
@@ -6419,6 +6431,7 @@
         "readReferrerRecordPages": "none",
         "readReferrerRows": "none",
         "readReferrerTargetCounts": "none",
+        "readReferrerTypes": "none",
         "readRemoteForgetTier": "none",
         "readRequestEffects": "none",
         "readRetirementHop": "none",

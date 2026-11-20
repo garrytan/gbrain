@@ -201,7 +201,7 @@ describe('engine parity: referrer page and record reads', () => {
       await seed(engine, backend);
       const op = operations.find(o => o.name === 'get_backlinks')!;
       const notices: Notice[] = [];
-      const ctx = { ...ctxFor(engine, notices), sourceId: undefined } as OperationContext;
+      const ctx = { ...ctxFor(engine, notices), sourceId: undefined } as unknown as OperationContext;
       const slugs = (rows: Array<{ slug?: string; from_slug?: string }>) => rows.map(r => r.slug ?? r.from_slug);
       // `note` is no pack type, so the referrers' observed types (readReferrerTypes) accept it.
       const notes = await op.handler(ctx, { slug: ACME, group: 'page', type: 'note' }) as { rows: Row[]; total: number };

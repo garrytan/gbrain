@@ -6,13 +6,13 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 906/906
+# covered: 913/913
 # lifecycle: 9/9
-# pages: 48/48
+# pages: 49/49
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
-# link_temporal: 15/15
+# link_temporal: 21/21
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 47/47
@@ -93,13 +93,13 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	544	yes	yes	yes	serves
+putPage	pages	yes	549	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	154	yes	yes	yes	serves
+softDeletePage	pages	yes	158	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -124,6 +124,7 @@ readOwnerOnlySourceConfig	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
+listSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
@@ -180,7 +181,13 @@ listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
 readReferrerGroupRows	link_temporal	yes	1	no	yes	yes	serves
 readReferrerPageDetails	link_temporal	yes	1	no	yes	yes	serves
-readReferrerTargetCounts	link_temporal	yes	1	no	yes	yes	serves
+readReferrerTargetCounts	link_temporal	yes	2	no	yes	yes	serves
+listReferrerTargetSources	link_temporal	yes	3	no	yes	yes	serves
+countReferrerRows	link_temporal	yes	4	no	yes	yes	serves
+readReferrerRows	link_temporal	yes	4	no	yes	yes	serves
+readReferrerRecordCandidates	link_temporal	yes	1	no	yes	yes	serves
+readReferrerRecordPages	link_temporal	yes	1	no	yes	yes	serves
+readReferrerTypes	link_temporal	yes	1	no	yes	yes	serves
 countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
 replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
@@ -245,7 +252,7 @@ countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	115	yes	yes	yes	serves
-addLinksBatch	links	yes	16	yes	yes	yes	serves
+addLinksBatch	links	yes	21	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
