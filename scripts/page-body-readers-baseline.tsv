@@ -105,7 +105,6 @@ src/core/context/retrieval-reflex.ts	weakTitleHits	sql	LEAD	boundedBodyPrefixSql
 src/core/conversation-parser/body.ts	readSummaryBody	field	STREAM	
 src/core/core-memory.ts	applyCoreSensitivity	field	INLINE	
 src/core/core-memory.ts	listCorePages	field	INLINE	
-src/core/core-memory.ts	listCorePages	sql	INLINE	
 src/core/core-memory.ts	renderCorePage	field	INLINE	
 src/core/cycle/chronicle.ts	discover	sql	STREAM	
 src/core/cycle/concept-publication.ts	composeConceptRepublication	call:serializeMarkdown	INLINE	
@@ -181,7 +180,6 @@ src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
 src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/fence-overlay.ts	worldLinkContexts	sql	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
-src/core/eligibility/scan.ts	SELECT	sql	STREAM	
 src/core/eligibility/scan.ts	assess	field	STREAM	
 src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
@@ -215,6 +213,10 @@ src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segme
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
+src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	field	INLINE	moved from core-memory.ts listCorePages unchanged: the inline compiled_truth core renders; a segmented page is materialized by core
+src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	sql	INLINE	moved from core-memory.ts listCorePages unchanged: composed with sqlFragment; reads the inline compiled_truth core renders and body_bytes for a segmented page
+src/core/engine-sql/trust-tier-reads.ts	listTrustScanRows	sql	STREAM	moved from eligibility/scan.ts unchanged: composed with sqlFragment; the scan reads inline bodies in batches of 100 (a segmented page has none)
+src/core/engine-sql/withdrawal-discovery.ts	inlineFencePages	sql	STREAM	moved from facts/withdrawal-discovery.ts discoverWithdrawalTargets unchanged: composed with sqlFragment; page scan reads inline bodies (NULL never matches); segmented pages are found by the segment fence read
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
 src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a new stub's markdown built from its own short template, never read from a stored body
@@ -280,7 +282,6 @@ src/core/facts/unfenced-facts.ts	planFence	field	NONE	reads compiled_truth from 
 src/core/facts/unfenced-facts.ts	planPageFence	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	withHeldFactsFence	field	NONE	the body object its caller passes (file text or an inline snapshot); no stored page body is read here
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	field	STREAM	inline rows only
-src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	sql	STREAM	page scan reads inline bodies (NULL never matches); segmented pages are found by the chunk scan and their mirror writers refuse or skip (per-segment discovery, PR 2)
 src/core/fence-repair/census.ts	judgePages	field	STREAM	
 src/core/fence-repair/content.ts	contentPass	field	STREAM	
 src/core/fence-repair/hold-fix.ts	fenceFileLine	field	STREAM	
