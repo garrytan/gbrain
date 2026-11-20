@@ -81,11 +81,11 @@ transaction	lifecycle	yes	82	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	94	yes	yes	yes	serves
+getPage	pages	yes	95	yes	yes	yes	serves
 readPageSnapshot	pages	yes	20	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	338	yes	yes	yes	serves
+putPage	pages	yes	339	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	10	yes	yes	yes	serves
@@ -268,7 +268,7 @@ getRawData	raw_files	yes	2	yes	yes	yes	serves
 upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	30	yes	yes	yes	serves
+addTakesBatch	takes	yes	31	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 listTakes	takes	yes	12	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
@@ -299,8 +299,8 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	45	yes	yes	yes	serves
-insertFacts	facts	yes	43	no	yes	yes	serves
+insertFact	facts	yes	47	yes	yes	yes	serves
+insertFacts	facts	yes	45	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	25	no	yes	yes	serves
 listFactsByEntity	facts	yes	18	yes	yes	yes	serves
@@ -692,7 +692,7 @@ hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	1	no	yes	yes	serves
 readRemoteForgetTier	memory_mutation_reads	yes	1	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -720,9 +720,9 @@ setEmotionalWeightBatch	salience_enrich	yes	7	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	3	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	4	yes	yes	yes	serves
-hasCoveringFactWithdrawal	trust	yes	1	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	11	no	yes	yes	serves
-listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
+hasCoveringFactWithdrawal	trust	yes	2	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	14	no	yes	yes	serves
+listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
