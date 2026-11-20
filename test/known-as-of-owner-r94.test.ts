@@ -37,17 +37,48 @@ const at = async (b: BeliefBrain) => {
   return new Date(row!.t).toISOString();
 };
 const priv = (prose: string) => beliefPage({ prose, frontmatter: { visibility: 'private' } });
+const PIN_SLUGS = ['companies/secret-example', 'companies/opening-example', 'companies/fenced-example', 'companies/bob-example', 'companies/handover-example',
+  'companies/moved-example', 'companies/closed-a-example', 'companies/reused-example', 'companies/reused-c-example', 'companies/purged-example'];
+/**
+ * What the world-only ledger rule answers on each fixture page at each instant: get_page's outcome, then get_versions'
+ * interval count or refusal, then any private canary the two returned. Recorded from the base before this change for
+ * another member, an unbound token and the owner's credential speaking for a channel audience; all three matched.
+ */
+const WORLD_ONLY: Record<string, unknown[]> = {
+  'companies/secret-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/secret-example@t2': ['page_not_found', 'page_not_found'],
+  'companies/opening-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/opening-example@t2': ['ok', 1],
+  'companies/fenced-example@t1': ['ok', 1],
+  'companies/fenced-example@t2': ['ok', 1],
+  'companies/bob-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/bob-example@t2': ['page_not_found', 'page_not_found'],
+  'companies/handover-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/handover-example@t2': ['ok', 1],
+  'companies/moved-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/moved-example@t2': ['ok', 1],
+  'companies/closed-a-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/closed-a-example@t2': ['page_not_found', 'page_not_found'],
+  'companies/reused-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/reused-example@t2': ['ok', 1],
+  'companies/reused-c-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/reused-c-example@t2': ['page_not_found', 'page_not_found'],
+  'companies/purged-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/purged-example@t2': ['ok', 3],
+};
+/** Text only a read wider than the world-only rule returns. */
+const PRIVATE_CANARIES = ['Secret first draft.', 'Secret second draft.', 'Private at first.', 'canaryprivrow', 'Bob only notes.', 'Bob era notes.', 'Lifetime A', 'Reused C private.'];
 
 async function mintCallers(engine: BrainEngine, sourceId: string): Promise<Record<string, string>> {
   const tokens: Record<string, string> = {};
   for (const id of [OWNER, 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
-  const mint = async (name: string, member?: string) => {
+  const mint = async (name: string, member?: string, mayActFor?: string[]) => {
     const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [sourceId] });
     tokens[name] = minted.token;
-    if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+    if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member, ...(mayActFor ? { mayActFor } : {}) });
     else await readsUnscopedOnPurpose(engine, minted.id);
   };
-  await mint('owner', OWNER);
+  await mint('owner', OWNER, [`member:${OWNER}`, 'member:bob-example']);
   await mint('bob', 'bob-example');
   await mint('unbound');
   await setOwner(engine, OWNER);
@@ -87,12 +118,14 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
 
       const tokens = await mintCallers(b.engine, b.sourceId);
       const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(b.engine), transaction: fn => b.engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      /** `owner-channel`: the owner's credential speaking for a channel audience that holds another member. */
       const call = async (who: string, op: string, params: Record<string, unknown>) => {
-        const auth = await provider.verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
+        const header = who === 'owner-channel' ? `member:${OWNER},member:bob-example` : undefined;
+        const auth = await provider.verifyAccessToken(tokens[header ? 'owner' : who]!) as unknown as AuthInfo;
         const sourceId = auth.sourceId ?? b.sourceId;
         const localFederated = await noGrantFederatedScope(b.engine, auth.hasSourceGrant, sourceId);
         const out = await dispatchToolCall(b.engine, op, { ...params }, { remote: true, transport: 'http', auth, sourceId,
-          takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'], ...(localFederated ? { localFederatedSourceIds: localFederated } : {}) });
+          takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'], ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...(header ? { onBehalfOf: { header } } : {}) });
         return { isError: out.isError === true, text: out.content.map(c => c.text).join('\n') };
       };
       const now = (who: string, slug: string) => call(who, 'get_page', { slug, source_id: b.sourceId });
@@ -102,6 +135,24 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         const out = await call(who, 'get_versions', { slug, known_as_of: t, source_id: b.sourceId });
         return out.isError ? JSON.parse(out.text).code : (JSON.parse(out.text).versions as Array<{ event: string }>).length;
       };
+
+      // Pin: no caller but the owner's own credential gains a recorded-time read. Every other caller, the owner's credential
+      // speaking for a channel audience included, gets exactly the world-only ledger rule's answer on every fixture page.
+      const signature = async (who: string) => {
+        const seen: Record<string, unknown> = {};
+        for (const slug of PIN_SLUGS) {
+          for (const [label, t] of [['t1', t1], ['t2', t2]] as const) {
+            const page = await known(who, slug, t);
+            const listing = await call(who, 'get_versions', { slug, known_as_of: t, include_body: true, diff: true, source_id: b.sourceId });
+            const text = page.text + listing.text;
+            seen[`${slug}@${label}`] = [page.isError ? JSON.parse(page.text).code : 'ok',
+              listing.isError ? JSON.parse(listing.text).code : (JSON.parse(listing.text).versions as unknown[]).length,
+              ...PRIVATE_CANARIES.filter(c => text.includes(c))];
+          }
+        }
+        return seen;
+      };
+      for (const who of ['bob', 'unbound', 'owner-channel']) expect({ who, seen: await signature(who) }).toEqual({ who, seen: WORLD_ONLY });
 
       // Fixture control: the owner's current-time read shows the private page and the private fence row; nobody else's does.
       expect((await now('owner', 'companies/secret-example')).text).toContain('Secret second draft.');
@@ -162,6 +213,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         const fenced = await known(who, 'companies/fenced-example', t2);
         expect({ who, profile: fenced.text.includes('Fenced profile.'), row: fenced.text.includes('canaryprivrow') }).toEqual({ who, profile: true, row: false });
       }
+
     }, { managed: false, databaseUrl: engineCase.databaseUrl }), 180_000);
   });
 }
