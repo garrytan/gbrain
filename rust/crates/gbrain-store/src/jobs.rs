@@ -87,10 +87,13 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use oauth_clients::ClientInsert;
+pub(crate) use oauth_clients::seed_client;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
+pub(crate) use spend::{SeedReservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
+pub(crate) use spend_log::{SeedLog, seed_log};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
@@ -260,7 +263,6 @@ fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
 
 /// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
 /// seed, which copies rows with their ids).
-#[allow(dead_code)] // the seed groups that copy job-family rows call it; drop this once they do
 pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
     let mut k = prefix(SEQ);
     k.extend_from_slice(name.as_bytes());

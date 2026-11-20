@@ -261,6 +261,24 @@ pub(crate) fn seed_page_alias(
     Ok(true)
 }
 
+/// The shadow seed (`seed.rs`): stores a `slug_rename_history` row copied from another engine, the one key
+/// `recordRenameAlias` writes for it and nothing else (the alias rows are their own relation). `false` when the row is
+/// already stored.
+pub(crate) fn seed_rename(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    old: &str,
+    new: &str,
+) -> Result<bool> {
+    refuse_nul("seed slug_rename_history", &[source, old, new])?;
+    let key = rename_key(source, old, new);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    tx.put(&key, &[])?;
+    Ok(true)
+}
+
 /// The shadow seed (`seed.rs`): stores a page's `contextual_retrieval_mode` and `corpus_generation`
 /// as another engine holds them.
 pub(crate) fn seed_cr_state(
