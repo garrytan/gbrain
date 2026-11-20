@@ -73,6 +73,7 @@ import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as accessMembers from './access-members.ts';
+import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as linkTemporal from './link-temporal.ts';
@@ -147,6 +148,8 @@ export const STORE_MEMBERS = {
   ...writeMisc,
   // The access member reads (rust/docs/store/access-members.md).
   ...accessMembers,
+  // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).
+  ...collateStoreReads,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
