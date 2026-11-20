@@ -3652,6 +3652,8 @@ export interface BrainEngine {
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
+  /** Records a page purge's content-hash tombstones under the slug; a hash already tombstoned takes the new slug, request and time. Write; run it in the purge transaction. */
+  upsertPagePurges(row: FactsPurgeSql.PagePurgeUpsert): Promise<void>;
   // The facts purge statements of gone-page-facts.ts, purge-reasons.ts, held-fact-move.ts and purge-verify.ts (engine-sql/facts-purge.ts). Each runs the statement its caller ran through executeRaw.
   /** Expires the facts a retention purge takes with its deleted pages (filed on them, their conversation slots, extracted from them, about them and held by no page): four updates in order over the paired source ids and slugs. Writes facts; run it in the purge transaction. */
   expireFactsOfGonePages(sourceIds: string[], slugs: string[]): Promise<void>;

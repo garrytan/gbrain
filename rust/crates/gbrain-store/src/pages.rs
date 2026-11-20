@@ -589,8 +589,12 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 ///
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
+/// Before that, a write that stores a content hash tombstoned in its source is refused with
+/// `purged_content`, as the `pages_refuse_purged` trigger refuses it
+/// (`facts::page_purges::refuse_purged_page`).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
+    crate::facts::page_purges::refuse_purged_page(&*tx, before.as_ref(), record)?;
     let stamped = stamp_page_trust(before.as_ref(), record)?;
     store_page(tx, before.as_ref(), &stamped)
 }
@@ -1251,6 +1255,9 @@ pub(crate) fn put_page_in(
     // PGLite's `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) rewrites the
     // page keyword vector on every `putPage`, also when the values are unchanged.
     forget_search_timeline(tx, record.id)?;
+    // `putPage` is `INSERT ... ON CONFLICT DO UPDATE`: the `BEFORE INSERT` purge trigger fires for the
+    // insert attempt, so a tombstoned hash is refused here even when the page already holds it.
+    crate::facts::page_purges::refuse_purged_page(&*tx, None, &record)?;
     write_page(tx, &record)?;
     if let Some(stamp) = &options.contextual_retrieval {
         crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;

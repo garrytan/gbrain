@@ -279,6 +279,15 @@ export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert):
   return rows.length > 0;
 }
 
+/** A page purge's content-hash tombstones, the rows the page purge sweep writes into `page_purges`. */
+export interface PagePurgeUpsert { sourceId: string; contentHashes: string[]; slug: string; requestId: string | null }
+
+/** tombstonePage: records each content hash under the slug; a hash already tombstoned takes the new slug, request and time. */
+export async function upsertPagePurges(raw: EngineRawRead, row: PagePurgeUpsert): Promise<void> {
+  await raw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
+    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [row.sourceId, row.contentHashes, row.slug, row.requestId]);
+}
+
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})

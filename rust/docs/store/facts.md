@@ -311,11 +311,16 @@ journal), so both stop on the typed `raw_sql` refusal and `listUnwithdrawnFacts`
 binds the ledger must also delete a source's generations with the source. The store also keeps no
 `version_history_gap_at` (`page-state/versions.ts` sets it with raw SQL), so `history_gap` is always false.
 
-No member writes `page_purges` on Rust. Its two writers, the page purge sweep (`persistence/page-purge.ts`) and the
-restore replay (`belief/purge-mirror.ts`), write it with raw SQL inside the write journal's transaction, so they stop on
-the typed `raw_sql` refusal and the Rust ledger stays empty: every fact `countPurgedPageFacts` counts on Rust is
-ambiguous. A writer that binds the ledger must also add `F 0x0C` to the source cascade and give `putPage` the
-`purged_content` guard of the Postgres pages trigger.
+`upsertPagePurges({ sourceId, contentHashes, slug, requestId })` writes `page_purges` (`facts/page_purges.rs`): one
+tombstone per hash under the slug; a hash already tombstoned in the source takes the new slug, request id and time
+(`ON CONFLICT ... DO UPDATE`). The time is the open transaction's clock. An empty list writes nothing and reads no
+source; a repeated hash, a `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing
+source refuses as the foreign key does. The page purge sweep (`persistence/page-purge.ts` `tombstonePage`) writes its
+tombstones through it. The restore replay (`belief/purge-mirror.ts`) still writes the ledger with raw SQL and stops on
+the typed `raw_sql` refusal. Deleting a source deletes its tombstones. A page write that stores a hash tombstoned in its
+source refuses with `purged_content`, as the Postgres `pages_refuse_purged` trigger does: `putPage` always (it is an
+upsert, so the `BEFORE INSERT` trigger fires even when the page already holds the hash), every other page write
+(`pages::write_page`) on insert or when the hash or source changes.
 
 | Member | What it answers | Rust |
 | --- | --- | --- |

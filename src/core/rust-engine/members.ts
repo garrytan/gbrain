@@ -449,6 +449,7 @@ export const RUST_ENGINE_MEMBERS = {
   listWithdrawalSlugs: 'facts',
   expireFactsByWithdrawal: 'facts',
   insertFactPurge: 'facts',
+  upsertPagePurges: 'facts',
   // A fact purge's plan, dry run and --match (engine-sql/facts-purge-plan.ts; rust/docs/store/purge-plan.md)
   listRequestsCarryingClaim: 'facts',
   listRequestsHoldingStagings: 'facts',

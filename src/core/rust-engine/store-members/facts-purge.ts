@@ -95,3 +95,7 @@ export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain
 
 export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
   storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));
+
+export const upsertPagePurges: Member<'upsertPagePurges'> = async (brain, row) => {
+  await storeCall({ member: 'upsertPagePurges', sourceId: row.sourceId }, () => brain.upsertPagePurges(row));
+};
