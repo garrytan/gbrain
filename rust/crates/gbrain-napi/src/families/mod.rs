@@ -54,6 +54,7 @@ mod extraction;
 mod facts;
 mod facts_captured;
 mod facts_cycle;
+mod facts_cycle_fence;
 mod facts_doctor;
 mod facts_forget;
 mod facts_held;

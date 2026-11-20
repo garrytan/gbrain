@@ -1129,6 +1129,27 @@ those members are compared on empty tables only; `insertTakePurge` returns nothi
 by running without error. `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
 (holding-page-purges.test.ts).
 
+## Fence reconcile and deleted-page expiry (`facts/cycle_fence.rs`, family `facts_cycle_fence`)
+
+The statements `runExtractFacts` (`src/core/cycle/extract-facts.ts`) runs on a page's fence rows, which pass 1 of the
+maintenance sweep reaches. The SQL is in `src/core/engine-sql/facts-cycle.ts`. Each write goes through `write_fact`, so
+the trust stamp, the purge ledger and the unique fence key apply. `updateFenceFactCells` names `visibility` and
+`expired_at`, so the withdrawal guard (`preserve_withdrawal`) runs. A statement with no `ORDER BY` answers in id order;
+no caller depends on that order. `now()` is the store's clock.
+
+| Member | Answers or writes |
+| --- | --- |
+| `listFenceRowSupersession(sourceId, slug)` | `{ id, row_num, expired_at, superseded_by }` of the coordinate's rows that hold a `row_num`, by id. |
+| `setFactSupersededBy(sourceId, id, supersededBy)` | Sets or clears `superseded_by`. A successor that names no row is refused, as `facts_superseded_by_fkey` refuses it. |
+| `expireFactInPlace(sourceId, id)` | `expired_at = COALESCE(expired_at, now())`; the row keeps its number. |
+| `expireAndDetachFact(sourceId, id)` | As `expireFactInPlace`, and `row_num = NULL`. |
+| `updateFenceFactCells(sourceId, id, cells)` | Writes a fence row's cells onto the fact. A null `validFrom` keeps the stored one; `validUntil` is written only with `setValidUntil`; a null `expiredAt` clears the expiry and a time keeps an existing one. |
+| `listHeldWideningFactIds(sourceId, ids)` | `{ id }` for each pending, rejected or undone `supersede_fact` or `confirm` proposal of the source whose related fact is in `ids` and whose before state has a `visibility` key. A fact two proposals hold is named twice. |
+| `listDeletedPageSlugsWithActiveFacts(sourceId)` | `{ slug }` of each soft-deleted page of the source that still has an unexpired fence row, in byte order. |
+| `listExpirableFactIdsOfDeletedPage(sourceId, slug, pageId)` | `{ id }` of the coordinate's unexpired fence rows when its page is soft-deleted (and, with `pageId`, has that id), by id. |
+| `readDeletedPageBody(sourceId, slug)` | `{ compiled_truth, timeline, body_storage }` of the coordinate's soft-deleted page; null when the page is live or missing. |
+| `expireFactsByIds(sourceId, ids)` | Expires the unexpired rows of the source among `ids` now; `{ id }` of each row it expired, by id. |
+
 ## Not modeled
 
 The write-attribution trigger. Inputs whose PGLite outcome the store cannot

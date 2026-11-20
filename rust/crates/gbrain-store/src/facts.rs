@@ -43,6 +43,7 @@
 pub mod captured;
 mod collapse;
 pub mod cycle;
+pub mod cycle_fence;
 pub mod doctor;
 mod embedding;
 pub mod extractor_classify;
