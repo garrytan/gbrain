@@ -887,10 +887,10 @@ the store would need:
 ## Facts cycle, phantom redirect and fence-guard statements (`engine-sql/facts-cycle.ts`, item 4.2)
 
 Thirty-four members replace the 37 `executeRaw` sites of eight files. Each runs the statement its caller ran at base
-`5e22f0c134`, with the same text and parameters (`test/facts-cycle-sites-sql-pin.test.ts` pins both). The Rust engine refuses
-each of them with `engine_capability_missing` naming the member until the store serves it
-(`test/engine-parity/facts-cycle-sites.test.ts` is the parity arm). Three members serve two callers each, so 37 sites are
-34 members. Data the store needs, by caller:
+`5e22f0c134`, with the same text and parameters (`test/facts-cycle-sites-sql-pin.test.ts` pins both). The Rust engine serves
+all 34 (`test/engine-parity/facts-cycle-sites.test.ts` is the parity arm): `facts/cycle.rs`, `facts/cycle_fence.rs`,
+`facts/held_moves.rs`, `facts/write_path.rs` and, for the phantom redirect, `facts/phantom.rs` and `links/phantom_merge.rs`
+("Phantom redirect" below). Three members serve two callers each, so 37 sites are 34 members. What each reads, by caller:
 
 `cycle/phantom-redirect.ts`
 - `listPhantomFactRows(sourceId, slug)` (`movePhantomFacts`): `id` and `row_num` of every fact on the coordinate, no set order.
@@ -964,6 +964,25 @@ of the keys, not the collation order a Postgres brain uses.
 
 `facts/fence-fact-append.ts`
 - `countSegmentedVersionsOfPage(sourceId, slug)` (`heldRowsInVersions`): how many of the page's versions are `segmented`.
+### Phantom redirect (`facts/phantom.rs`, `links/phantom_merge.rs`, family `facts_phantom`)
+
+Twelve store methods serve the fourteen phantom-redirect members; `maxFenceRowNumOfPage` and `readFenceRowNumHint` call
+`maxFenceRowNum` (`facts/cycle.rs`), which runs the same `MAX(row_num)` statement. Each method takes one JSON object in
+`camelCase` and refuses an unknown key, except `listOntologyObservationSlugs` (the source id), `pageHasTimelineEntries`
+(the page id or null) and `listOwnLinkIds` (the page id).
+
+- The reads answer in fact or link id order, and `listRootPageSlugsAfter` and `listOntologyObservationSlugs` in byte
+  order of slug; the statements set no order (or `ORDER BY slug`), and their callers depend on none.
+- `moveFactToPage` runs the withdrawal guard before it writes, as `facts_preserve_withdrawal` fires on its `SET` of
+  `entity_slug` and `expired_at`, then writes through the fact writer (trust stamp, purge ledger, by-page index and
+  unique fence key). A row number another fact of the page holds refuses with `constraint_violation`; a row number
+  that is not an `integer` refuses with `invalid_argument`. A fact of another source, or no fact, is left alone.
+- `repointInboundLinks` and `repointOutboundLinks` move each link under its own id, in one transaction. A link whose
+  new identity (`from_page_id`, `to_page_id`, `link_type`, `link_source`, `origin_page_id`, nulls equal) another link
+  held before the statement ran stays; so does a link that would point a page at itself. A move onto a page id no
+  page has refuses with `constraint_violation`, as the `links` foreign keys do.
+- `listFactIdsStillOnPage` has no source filter, as its statement has none.
+
 ## Purge, held-move and purge receipt statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
 
 The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and

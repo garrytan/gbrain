@@ -59,6 +59,7 @@ mod kept_rows;
 pub mod loops;
 pub mod ontology_repair;
 mod page_purges;
+pub mod phantom;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
