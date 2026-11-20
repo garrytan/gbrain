@@ -289,4 +289,26 @@ describe('engine parity: fact purge plan, dry run and --match reads', () => {
     expect(n).toBe(0);
     return n;
   });
+
+  parityTest('countPurgeProbe refuses a table outside the inventory, a column the table does not have and a named probe of a table with no named-row probe', {
+    methods: ['countPurgeProbe'],
+  }, async (engine) => {
+    // Each probe names a store the inventory does not vouch for; every engine must refuse it before it reads anything,
+    // so no caller-supplied table or column text ever reaches a statement.
+    const refusal = async (probe: Parameters<BrainEngine['countPurgeProbe']>[0]) => {
+      try { return { counted: await engine.countPurgeProbe(probe, 1000) }; }
+      catch (error) { return { refused: (error as Error).message }; }
+    };
+    const refusals = {
+      catalogTable: await refusal({ kind: 'table', table: 'pg_class', sourceId: SRC, needles: [CLAIM] }),
+      injectedColumn: await refusal({ kind: 'table', table: 'wanted_links', sourceId: SRC, needles: [CLAIM], probe: ['summary) OR (true'] }),
+      unnamedTable: await refusal({ kind: 'named', table: 'wanted_links' as never, sourceId: SRC, needles: [CLAIM] }),
+    };
+    expect(refusals).toEqual({
+      catalogTable: { refused: 'purge probe: pg_class is not an inventory table' },
+      injectedColumn: { refused: 'purge probe: wanted_links has no column summary) OR (true' },
+      unnamedTable: { refused: 'purge probe: wanted_links has no named-row probe' },
+    });
+    return refusals;
+  });
 });
