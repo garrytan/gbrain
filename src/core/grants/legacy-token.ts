@@ -207,6 +207,8 @@ async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, gr
   const before = sourcesOf(grantFromTokenRow(row).sources).reads;
   await assertScopeSourceGrant(tx, { kind: 'token', id: String(row.id) }, sourcesOf(grant.sources).reads.filter(s => !before.includes(s)), { writeSource: sourcesOf(grant.sources).write });
   const written = await tx.writeAccessTokenGrant(String(row.id), { columns: tokenGrantColumnArrays(grant), scopes: scopes ?? null, permissions: permissionsMirror(grant, row.permissions) });
+  // No row updated: refuse with the text the raw RETURNING read threw, never a silent revision 0.
+  if (written === null) throw new TypeError("undefined is not an object (evaluating 'written.grant_revision')");
   return Number(written);
 }
 
