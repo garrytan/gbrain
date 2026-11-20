@@ -89,11 +89,11 @@ transaction	lifecycle	yes	116	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	128	yes	yes	yes	serves
+getPage	pages	yes	129	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	545	yes	yes	yes	serves
+putPage	pages	yes	547	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -247,7 +247,7 @@ replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	22	yes	yes	yes	serves
+getLinks	links	yes	23	yes	yes	yes	serves
 getBacklinks	links	yes	12	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -378,7 +378,7 @@ getStats	stats_ingest	yes	5	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	25	no	yes	yes	serves
+updateSlug	sync_aliases	yes	27	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -500,9 +500,9 @@ readRetirementHop	entity_reads	yes	5	no	yes	yes	serves
 readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-readLiveSlugAliases	entity_reads	yes	1	no	yes	yes	serves
-probeSourceSlugFingerprint	entity_reads	yes	1	no	yes	yes	serves
-readSourceSlugFingerprint	entity_reads	yes	1	no	yes	yes	serves
+readLiveSlugAliases	entity_reads	yes	3	no	yes	yes	serves
+probeSourceSlugFingerprint	entity_reads	yes	2	no	yes	yes	serves
+readSourceSlugFingerprint	entity_reads	yes	3	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves

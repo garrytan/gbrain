@@ -32,6 +32,7 @@ const { parityTest } = parityArms(testBackends());
 
 const putPage = operations.find((o) => o.name === 'put_page')!;
 const putPages = operations.find((o) => o.name === 'put_pages')!;
+const getPageOp = operations.find((o) => o.name === 'get_page')!;
 
 type Path = 'cli' | 'mcp';
 
@@ -112,6 +113,10 @@ async function putCase<T extends { links: unknown }>(backend: string, path: Path
 
 const page = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${body}\n`;
 const BATCH_COUNTS = { committed: 2, failed: 0, pending: 0, total: 2 };
+/** A page a world-only caller must never read. */
+const PRIVATE = { type: 'person', title: 'Secret Example', compiled_truth: 'The private body that must not leave.', frontmatter: { visibility: 'private' } };
+const HIDDEN = { found: false, leaked: false };
+// The public page both bodies also link to: its link shows the links effect ran, so a missing link to the private page means something.
 const REQUEST = 'b0000000-0000-4000-8000-0000000000d1';
 
 /** The links a written page ends with, in a fixed order, by their endpoints and type. */
@@ -132,6 +137,21 @@ async function seed(engine: BrainEngine): Promise<void> {
   await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'A person.' });
   await engine.putPage('people/bob-old', { type: 'person', title: 'Bob Example', compiled_truth: 'Another person.' });
   await engine.updateSlug('people/bob-old', 'people/bob-example');
+}
+
+/** The MCP-style caller that reads world pages only: remote, with the fail-closed `['world']` holder grant. */
+async function worldOnlyContext(engine: BrainEngine): Promise<OperationContext> {
+  await registerServeLocalWriters(engine);
+  return { engine, config: { engine: engine.kind }, remote: true, dryRun: false, sourceId: 'default', takesHoldersAllowList: ['world'],
+    logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+}
+
+/** What get_page shows that caller for `slug`: whether it found the page, and whether the private body reached it. */
+async function readAsCaller(ctx: OperationContext, slug: string) {
+  let shown: unknown;
+  try { shown = await getPageOp.handler(ctx, { slug }); } catch (error) { shown = { thrown: (error as { code?: string }).code ?? String(error) }; }
+  const text = JSON.stringify(shown);
+  return { found: !text.includes('"thrown"') && !text.includes('"error"'), leaked: text.includes('must not leave') };
 }
 
 async function putOne(engine: BrainEngine, path: Path, slug: string, body: string) {
@@ -190,5 +210,42 @@ describe('engine parity: put with a wikilink', () => {
       }, { state: 'committed', counts: BATCH_COUNTS, pages: [{ slug: 'notes/batch-a', state: 'committed', status: 'created_or_updated' }, { slug: 'notes/batch-b', state: 'committed', status: 'created_or_updated' }],
         stored: [{ slug: 'notes/batch-a', type: 'note', title: 'notes/batch-a' }, { slug: 'notes/batch-b', type: 'note', title: 'notes/batch-b' }], links: [aLinks, []] }, true);
     }));
+  }
+
+  // A write whose link target is a `visibility: private` page, from a remote caller that may read world pages only. Link
+  // preparation is a writer-side, source-scoped read (it has no visibility filter), so the private page is a target like any
+  // other; the caller still never reads its content.
+  for (const [label, target] of [
+    ['a private page', 'people/secret-example'],
+    ['an alias slug whose canonical page is private', 'people/secret-old'],
+  ] as const) {
+    for (const path of ['cli', 'mcp'] as const) {
+    const slug = `notes/links-${path}-${label.includes('alias') ? 'private-alias' : 'private'}`;
+    parityTest(`${path}${path === 'mcp' ? ', world-only caller' : ', read back by a world-only caller'}: put_page with a [[wikilink]] to ${label}`, {
+      methods: ['putPage', 'updateSlug', 'getLinks', 'getPage', 'readLiveSlugAliases', 'readSourceSlugFingerprint'], requires: 'raw_sql', timeout: 120_000,
+    }, (engine, backend) => inFreshHome(() => {
+      // The CLI path (a local writer) links the private page, resolving an alias to its canonical page; the MCP effect links the
+      // public page only, as it does not link an alias slug and does not link a private target.
+      const expectedLinks: Link[] = [link(slug, 'people/alice-example'), ...(path === 'cli' ? [link(slug, 'people/secret-example')] : [])];
+      return putCase(backend, path, async () => {
+        // Both cases hold the same pages: a private page renamed from `secret-old`, so `secret-old` is its alias.
+        await engine.putPage('people/secret-old', PRIVATE);
+        await engine.updateSlug('people/secret-old', 'people/secret-example');
+        await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'A person.' });
+        const ctx = await worldOnlyContext(engine);
+        const putCtx = path === 'cli' ? await contextFor(engine, 'cli', putPage) : ctx;
+        const answer = await putPage.handler(putCtx, { slug, content: page(slug, `See [[people/alice-example]] and [[${target}]] for context.`), request_id: REQUEST }) as Record<string, unknown>;
+        const links = await linksOf(engine, slug, expectedLinks.length);
+        const fingerprint = await engine.readSourceSlugFingerprint('default');
+        const aliases = await engine.readLiveSlugAliases('default', [target]);
+        return { answer: { status: answer.status, slug: answer.slug }, stored: await storedPage(engine, slug), links,
+          read: await readAsCaller(ctx, 'people/secret-example'), readAlias: await readAsCaller(ctx, 'people/secret-old'),
+          fingerprint: { n: fingerprint.n, slugs: [...fingerprint.slugs].sort() }, aliases: aliases.map((a) => ({ ...a })) };
+      }, { answer: { status: 'created_or_updated', slug }, stored: { slug, type: 'note', title: slug }, links: expectedLinks,
+        read: HIDDEN, readAlias: HIDDEN,
+        fingerprint: { n: 3, slugs: [slug, 'people/alice-example', 'people/secret-example'].sort() },
+        aliases: label.includes('alias') ? [{ alias_slug: 'people/secret-old', canonical_slug: 'people/secret-example' }] : [] }, expectedLinks.length > 0);
+    }));
+    }
   }
 });

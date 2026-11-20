@@ -65,4 +65,25 @@ describe('engine parity: link preparation reads', () => {
     expect(rows).toEqual([{ alias_slug: 'people/bob-old', canonical_slug: 'people/bob' }]);
     return { rows: rows.map((r) => ({ ...r })).sort((a, b) => (a.alias_slug < b.alias_slug ? -1 : 1)), empty, otherSource };
   });
+
+  parityTest('the fingerprint and the alias read count a visibility: private page and an alias of one', {
+    methods: ['putPage', 'updateSlug', 'readSourceSlugFingerprint', 'probeSourceSlugFingerprint', 'readLiveSlugAliases'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'A person.' });
+    const before = await engine.readSourceSlugFingerprint('default');
+    const secret = { type: 'person', title: 'Secret Example', compiled_truth: 'Private.', frontmatter: { visibility: 'private' } };
+    await engine.putPage('people/secret-old', secret);
+    await engine.updateSlug('people/secret-old', 'people/secret-example');
+    const all = await engine.readSourceSlugFingerprint('default');
+    const probe = await engine.probeSourceSlugFingerprint('default', before.m);
+    const aliases = await engine.readLiveSlugAliases('default', ['people/secret-old', 'people/secret-example']);
+    expect(all.n).toBe(2);
+    expect(all.slugs).toContain('people/secret-example');
+    expect(probe.added).toEqual(['people/secret-example']);
+    expect(aliases).toEqual([{ alias_slug: 'people/secret-old', canonical_slug: 'people/secret-example' }]);
+    // The highest id (`m`) is left out: a Postgres sequence keeps counting across cases, so it is not the same number on every engine.
+    const { m: _allId, ...allRest } = all;
+    const { m: _probeId, ...probeRest } = probe;
+    return { all: { ...allRest, slugs: sorted(all.slugs) }, probe: probeRest, aliases: aliases.map((r) => ({ ...r })) };
+  });
 });
