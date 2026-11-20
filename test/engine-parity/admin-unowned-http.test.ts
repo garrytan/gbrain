@@ -8,8 +8,9 @@
  *    and a client bound to a source that does not exist (400); provisions a harness grant (preview, then real) and
  *    recovers a client's setup; lists API keys with an active and a revoked key; links, lists, refuses a second link of
  *    one id and unlinks a member link; an OAuth client and a legacy key queue an /ingest capture (202) and a
- *    member-bound client is refused (403); the jobs snapshot reads its recent errors and budget owners without a
- *    refusal. GET /admin/api/ops is not here: its doctor checks (capacity counters, persistence and checkpoint reads)
+ *    member-bound client is refused (403); a retry of a capture recorded under the pre-v0.60.609.0 key (no slug part)
+ *    answers the recorded job for its slug, frees a dead row's key and queues anew, and queues anew for another slug;
+ *    the jobs snapshot reads its recent errors and budget owners without a refusal. GET /admin/api/ops is not here: its doctor checks (capacity counters, persistence and checkpoint reads)
  *    still send raw SQL that the doctor lane moves to typed members.
  *    Every answer equals PGLite's once times and generated ids are reduced to their shape.
  *  - Regression: a route handler that reads or writes with raw SQL the Rust store refuses (the route then answers 503,
@@ -32,6 +33,7 @@ import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
+import { computeContentHash } from '../../src/core/ingestion/types.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -230,6 +232,69 @@ describe('engine parity: the unowned admin and serve routes over HTTP', () => {
         if ((out.client.raw as { job_id?: unknown }).job_id !== (out.clientAgain.raw as { job_id?: unknown }).job_id) throw new Error(`repeat: ${JSON.stringify(out)}`);
         if (typeof (out.member.raw as { code?: unknown }).code !== 'string') throw new Error(`member refusal: ${JSON.stringify(out.member)}`);
         return drop(out);
+      });
+    });
+
+  parityTest('an /ingest retry of a capture recorded under the old key answers the recorded job or frees a dead one the same way on every engine',
+    { methods: ['insertOauthClient', 'admitJob', 'claimNextJob', 'completeJob', 'failJob', 'readJobDataByIdempotencyKey', 'coalesceOnIdempotencyKey', 'getJob'], timeout: 120_000 },
+    async (engine: BrainEngine) => {
+      await seedClient(engine, 'parity-legacy-key', 'parity-legacy-key-secret');
+      const queue = new MinionQueue(engine);
+      const note = (line: string) => `---\ntype: note\ntitle: Legacy capture\n---\n# Legacy capture\n\n${line}\n`;
+      /** A capture as a server before v0.60.609.0 recorded it: its key has no slug part; the job then ended as `how`. */
+      const recorded = async (line: string, slug: string, how: 'completed' | 'dead') => {
+        const key = `ingest:webhook:parity-legacy-key:default:${computeContentHash(note(line))}`;
+        const job = await queue.add('ingest_capture', { slug, sourceId: 'default' }, { idempotency_key: key });
+        const claimed = await queue.claim('t:legacy', 30_000, 'default', ['ingest_capture']);
+        if (claimed?.id !== job.id) throw new Error(`claim: ${JSON.stringify(claimed)}`);
+        if (how === 'completed') await queue.completeJob(job.id, 't:legacy');
+        else await queue.failJob(job.id, 't:legacy', 'gone', 'dead');
+        return { id: job.id, key };
+      };
+      const done = await recorded('A completed capture.', 'notes/legacy-done', 'completed');
+      const dead = await recorded('A dead capture.', 'notes/legacy-dead', 'dead');
+      const moved = await recorded('A capture sent to another slug.', 'notes/legacy-first', 'completed');
+      return withAdmin(engine, async (_call, bare, base) => {
+        const form = { 'Content-Type': 'application/x-www-form-urlencoded' };
+        const token = ((await bare('/token', { grant_type: 'client_credentials', client_id: 'parity-legacy-key', client_secret: 'parity-legacy-key-secret', scope: 'read write' }, form)).raw as { access_token?: string }).access_token!;
+        const retry = async (line: string, slug: string) => {
+          const res = await fetch(`${base}/ingest`, { method: 'POST', body: note(line),
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/markdown', 'X-Gbrain-Slug': slug } });
+          const text = await res.text();
+          let raw: unknown;
+          try { raw = JSON.parse(text); } catch { raw = text; }
+          return { status: res.status, raw: raw as { job_id?: number } };
+        };
+        const out = {
+          sameSlug: await retry('A completed capture.', 'notes/legacy-done'),
+          deadRow: await retry('A dead capture.', 'notes/legacy-dead'),
+          otherSlug: await retry('A capture sent to another slug.', 'notes/legacy-second'),
+        };
+        expectStatuses(out, { sameSlug: 202, deadRow: 202, otherSlug: 202 });
+        const freed = await engine.getJob(dead.id);
+        const kept = await engine.getJob(moved.id);
+        const data = (row: { data?: unknown } | null) => (typeof row?.data === 'string' ? JSON.parse(row.data) : row?.data) as Record<string, unknown> | undefined;
+        /** A job a retry queued anew: a stored row other than the recorded one, waiting, for the slug the retry named. */
+        const queuedAnew = async (jobId: unknown, recordedId: number, slug: string) => {
+          if (typeof jobId !== 'number' || jobId === recordedId) return false;
+          const row = await engine.getJob(jobId);
+          return row?.status === 'waiting' && data(row)?.slug === slug;
+        };
+        const got = {
+          // Not vacuous: each retry is compared with the recorded job's id, a fresh job is read back, and the freed key is
+          // read back from the row.
+          answers: {
+            sameSlug: out.sameSlug.raw.job_id === done.id,
+            deadRow: await queuedAnew(out.deadRow.raw.job_id, dead.id, 'notes/legacy-dead'),
+            otherSlug: await queuedAnew(out.otherSlug.raw.job_id, moved.id, 'notes/legacy-second'),
+          },
+          freed: { key: freed?.idempotency_key ?? null, releasedKeyKept: data(freed)?.__released_idempotency_key === dead.key, status: freed?.status },
+          kept: { keyHeld: kept?.idempotency_key === moved.key, status: kept?.status },
+        };
+        const want = { answers: { sameSlug: true, deadRow: true, otherSlug: true }, freed: { key: null, releasedKeyKept: true, status: 'dead' },
+          kept: { keyHeld: true, status: 'completed' } };
+        if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`legacy retry: ${JSON.stringify({ got, out }).slice(0, 4000)}`);
+        return got;
       });
     });
 
