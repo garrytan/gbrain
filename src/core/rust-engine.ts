@@ -67,6 +67,8 @@ export class RustEngine {
   private _storeReady: Promise<void> | null = null;
   /** Bumped by every `disconnect`, so an open that started before it knows it was abandoned. */
   private _generation = 0;
+  /** Above zero while a `disconnect` runs: no election may start then, so none can outlive the disconnect. */
+  private _disconnecting = 0;
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
   private readonly _ownerWaitMs: number | undefined;
   private _owner: OwnerRole | null = null;
@@ -116,7 +118,7 @@ export class RustEngine {
    * and opens the store, or a client of the process that did. A disconnected engine does nothing.
    */
   private _takeOver(): Promise<void> {
-    return this._connected ? this._electOnce() : Promise.resolve();
+    return this._connected && !this._disconnecting ? this._electOnce() : Promise.resolve();
   }
 
   private async _open(generation: number): Promise<void> {
@@ -172,6 +174,13 @@ export class RustEngine {
   }
 
   async disconnect(): Promise<void> {
+    // Counted before any await: a call that finds the owner gone while this runs must not start an election that
+    // publishes a store after `disconnect` has resolved.
+    this._disconnecting++;
+    try { await this._disconnect(); } finally { this._disconnecting--; }
+  }
+
+  private async _disconnect(): Promise<void> {
     // Abandon a pending open first, before any await: an open that finishes while a stop hook is still running must see
     // the new generation, close the store it made, and reject its `connect` (it would otherwise publish the store and
     // resolve `connected`). The store that is already open stays reachable until the hooks have run, since a hook may

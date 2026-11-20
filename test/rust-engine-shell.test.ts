@@ -355,6 +355,37 @@ describe('openRustEngine', () => {
     }
   }, 30_000);
 
+  // Value: protects=a call that finds the owner gone while disconnect runs does not start an election that outlives the disconnect; fails_when=the late call opens a store and takes the owner lock after disconnect resolved; why_new=failover tests never overlapped a call with disconnect; seam=none; no_claim=takeover success
+  test('a call made while disconnect runs after the owner went away does not take the brain over', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-late-call-'));
+    const db = join(dir, 'brain.rust');
+    const config = { engine: 'pglite', database_path: db } as const;
+    const first = openRustEngine({ addon, databasePath: db });
+    const engine = openRustEngine({ addon, databasePath: db, ownerWaitMs: 3_000 });
+    try {
+      await first.connect(config);
+      await engine.connect(config);
+      expect(engine.ownerRole).toBe('client');
+      await first.disconnect();
+      for (let i = 0; i < 200 && !ownerConnectionFor(engine)?.closed; i++) await Bun.sleep(10);
+      expect(ownerConnectionFor(engine)?.closed).toBe(true);
+      const stopping = engine.disconnect();
+      const late = engine.getConfig('k').then(() => 'resolved', (error: { code?: string }) => error.code ?? 'rejected');
+      await Promise.all([stopping, late]);
+      // Give a leaked election the time it would need to publish its store.
+      await Bun.sleep(300);
+      expect({ connected: engine.connected, role: engine.ownerRole, stats: engine.ownerStats() }).toEqual({ connected: false, role: null, stats: null });
+      expect(await late).not.toBe('resolved');
+      const lock = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(lock).not.toBeNull();
+      await lock?.release();
+    } finally {
+      await engine.disconnect();
+      await first.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test('a partial or unknown outcome says what may have been written', () => {
     expect(capabilityMissing('raw_sql', 'x', 'partial').detail).toContain('written=partial');
     expect(capabilityMissing('raw_sql', 'x', 'unknown').message).not.toContain('nothing ran');

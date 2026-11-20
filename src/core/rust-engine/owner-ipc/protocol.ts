@@ -43,6 +43,9 @@ export const OWNER_IPC_MAX_QUEUED = 1024;
 export const OWNER_IPC_MAX_INFLIGHT_BYTES = 256 * 1024 * 1024;
 /** Client connections the owner keeps open at once; one more gets a `refused` frame and is closed. */
 export const OWNER_IPC_MAX_CONNECTIONS = 256;
+/** Refusals the owner holds open at once, and how long it waits for a refused peer to close before it destroys the socket. */
+export const OWNER_IPC_REFUSED_LIMIT = 64;
+export const OWNER_IPC_REFUSED_DRAIN_MS = 1000;
 
 /**
  * The store directory with symlinks resolved, so every alias of one brain names one owner lock and one socket. A

@@ -121,6 +121,20 @@ function abortError(member: string, signal: AbortSignal, startedAt: number, sent
     : ownerCallCancelled(member, sent);
 }
 
+/** The signals that end a call: the request's own and any `AbortSignal` in its arguments (looked for three levels deep). */
+function callerSignals(args: unknown[]): AbortSignal[] {
+  const found = new Set<AbortSignal>();
+  const ambient = requestSignal();
+  if (ambient) found.add(ambient);
+  const walk = (value: unknown, depth: number): void => {
+    if (value instanceof AbortSignal) { found.add(value); return; }
+    if (depth === 0 || value === null || typeof value !== 'object') return;
+    for (const inner of Array.isArray(value) ? value : Object.values(value)) walk(inner, depth - 1);
+  };
+  walk(args, 3);
+  return [...found];
+}
+
 export interface ConnectOwnerOptions {
   timeoutMs?: number;
   /** This process's uid and the peer-uid reader (default: the platform's); tests inject another user. */
@@ -414,9 +428,18 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
         : (...args: unknown[]) => connection.request('call', member, args);
     const value = !rejoin ? direct : async function viaOwner(...args: unknown[]): Promise<unknown> {
       if (connection.closed) {
+        // What the caller asked for, taken before the wait: once this process is the owner the call runs in process,
+        // where nothing else checks it, so a call cancelled or past its deadline during the election must end here.
+        const startedAt = Date.now();
+        const signals = callerSignals(args);
+        const { deadlineAt } = callDeadline();
         await rejoin().catch(() => undefined);
         const now = record[member];
-        if (now !== value && typeof now === 'function') return (now as (...a: unknown[]) => unknown).apply(engine, args);
+        if (now !== value && typeof now === 'function') {
+          for (const signal of signals) if (signal.aborted) throw abortError(member, signal, startedAt, false);
+          if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw ownerCallTimeout(member, Date.now() - startedAt, 'not_sent');
+          return (now as (...a: unknown[]) => unknown).apply(engine, args);
+        }
       }
       return direct(...args);
     };

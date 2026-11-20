@@ -17,10 +17,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import net from 'node:net';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { serveOwnerEngine, type OwnerServerOptions } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { connectOwner } from '../src/core/rust-engine/owner-ipc/client.ts';
-import { OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { OWNER_IPC_REFUSED_DRAIN_MS, OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { decodeError, encodeValue, type Wire } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -238,6 +239,31 @@ describe('the owner connection cap', () => {
     // The connection that was admitted still works.
     await first.send(call(1, 'getConfig', ['still']));
     expect((await first.next(f => f.t === 'result' && f.id === 1))?.ok).toBe(true);
+  });
+
+  // Value: protects=a peer that reads its refusal and never closes its own half cannot keep an owner descriptor open for good; fails_when=a refused socket waits on the peer to close; why_new=refused peers in the tests close themselves, never half-open; seam=none; no_claim=socket count
+  test('a refused peer that keeps its half open is cut off after the drain period', async () => {
+    const { server } = await blockingOwner({ maxConnections: 1 });
+    const first = rawSession(server.socketPath);
+    cleanups.push(() => { first.destroy(); });
+    await first.send(hello);
+    expect(await first.next(f => f.t === 'hello')).not.toBeNull();
+    const peers = Array.from({ length: 3 }, () => {
+      const socket = net.connect({ path: server.socketPath, allowHalfOpen: true });
+      const state = { refused: false, closed: false };
+      socket.on('error', () => {});
+      socket.on('data', chunk => { if (String(chunk).includes('"refused"')) state.refused = true; });
+      socket.on('close', () => { state.closed = true; });
+      cleanups.push(() => { socket.destroy(); });
+      return { socket, state };
+    });
+    for (let i = 0; i < 100 && !peers.every(p => p.state.refused); i++) await Bun.sleep(20);
+    expect(peers.map(p => p.state.refused)).toEqual([true, true, true]);
+    await Bun.sleep(OWNER_IPC_REFUSED_DRAIN_MS + 500);
+    // A write to a socket the owner destroyed is answered with a reset; a socket the owner still holds takes it silently.
+    for (const { socket } of peers) socket.write('x\n');
+    for (let i = 0; i < 100 && !peers.every(p => p.state.closed); i++) await Bun.sleep(20);
+    expect(peers.map(p => p.state.closed)).toEqual([true, true, true]);
   });
 });
 

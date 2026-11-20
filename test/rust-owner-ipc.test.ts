@@ -583,6 +583,46 @@ describe('an owner that exits', () => {
       }
     }, 60_000);
 
+    // Value: protects=a call cancelled or past its deadline while this process wins the election never runs in process; fails_when=the local member runs after the caller's signal aborted or its deadline passed; why_new=failover tests only ran calls that stayed live; seam=none; no_claim=handoff
+    describe('a call that ends during the election', () => {
+      /** Kills the owner, starts `start` on the first call after it, and returns its outcome and whether this process owns the brain. */
+      async function duringElection(start: (brain: BrainEngine) => Promise<unknown>) {
+        const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-cancel-election-'));
+        const db = join(dir, 'brain.rust');
+        const first = await ownerChild(db);
+        const opened = { n: 0 };
+        const rust = openRustEngine({ addon: countedAddon(opened), databasePath: db, ownerWaitMs: 5_000 });
+        try {
+          await rust.connect({});
+          await afterOwnerDeath(first, rust);
+          const outcome = await start(rust as unknown as BrainEngine)
+            .then(() => null, (error: OperationError) => `${error.code}/${error.reason ?? ''}`);
+          // The election still ran, so a call that stays live is served in process.
+          const live = await settle((rust as unknown as BrainEngine).getConfig('who'));
+          return { outcome, live, role: rust.ownerRole };
+        } finally {
+          await rust.disconnect();
+          first.child.kill('SIGKILL');
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+
+      test('cancelled: ends cancelled and the local member never runs', async () => {
+        const controller = new AbortController();
+        const result = await duringElection(brain => {
+          const call = withRequestSignal(controller.signal, () => brain.getConfig('who'));
+          controller.abort();
+          return call;
+        });
+        expect(result).toEqual({ outcome: 'cancelled/', live: 'this-process', role: 'owner' });
+      }, 60_000);
+
+      test('past its deadline: ends timeout not_sent and the local member never runs', async () => {
+        const result = await duringElection(brain => withReadDeadline(Date.now() + 1, () => brain.getConfig('who')));
+        expect(result).toEqual({ outcome: 'timeout/not_sent', live: 'this-process', role: 'owner' });
+      }, 60_000);
+    });
+
     // Value: protects=the first ordinary call after owner death reaches a new owner in another process on a fresh connection; fails_when=it ends owner_unavailable or runs locally; why_new=failover tests began with a whole op, never an ordinary call, for a new owner elsewhere; seam=none; no_claim=takeover
     test('a first ordinary call after the owner dies goes to the new owner on a new connection, without opening this store', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-first-handoff-'));

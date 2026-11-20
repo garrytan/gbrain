@@ -41,7 +41,7 @@ import { claimLocalIpcBinding, isWindowsIpcPipe } from '../../context/ipc-path.t
 import { peerCredSupport, peerUid, type PeerCredSupport } from '../../cli-socket/peer-cred.ts';
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
-  OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_CONNECTIONS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_MAX_INFLIGHT_BYTES, OWNER_IPC_MAX_QUEUED,
+  OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_CONNECTIONS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_MAX_INFLIGHT_BYTES, OWNER_IPC_MAX_QUEUED, OWNER_IPC_REFUSED_DRAIN_MS, OWNER_IPC_REFUSED_LIMIT,
   OWNER_IPC_VERSION, frameLine, readFrames, type OwnerHello,
 } from './protocol.ts';
 import {
@@ -228,9 +228,14 @@ export async function serveOwnerEngine(
     if (closing) { socket.destroy(); return; }
     // A refused connection gets one frame naming why, then closes; nothing it sends is read.
     const refuseConnection = (error: unknown) => {
-      // Half-closed so the client reads the frame before the socket goes; close() destroys any still open.
+      // Half-closed so the client reads the frame before the socket goes. A peer that never closes its own half must not
+      // hold the socket: it is destroyed after REFUSED_DRAIN_MS, and past REFUSED_LIMIT refusals in flight the next is
+      // dropped with no frame, so refusals cost the owner a bounded number of descriptors.
+      if (refused.size >= OWNER_IPC_REFUSED_LIMIT) { socket.destroy(); return; }
       refused.add(socket);
-      socket.once('close', () => refused.delete(socket));
+      const drain = setTimeout(() => socket.destroy(), OWNER_IPC_REFUSED_DRAIN_MS);
+      drain.unref();
+      socket.once('close', () => { clearTimeout(drain); refused.delete(socket); });
       socket.end(frameLine({ t: 'refused', error: encodeError(error) })!);
     };
     if (peerCred?.ok) {
