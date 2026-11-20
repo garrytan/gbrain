@@ -17,6 +17,10 @@ export interface FieldUsageQuery {
   maxTypes: number;
   /** The most pages to sample per type (at least 1). */
   samplePerType: number;
+  /** One page type; omitted reads every type. */
+  type?: string;
+  /** True returns the types and counts with no sampled pages. */
+  countsOnly?: boolean;
 }
 
 /** One sampled page: its frontmatter object and its compiled_truth (null for a segmented page). */
@@ -33,17 +37,20 @@ function frontmatterObject(value: unknown): Record<string, unknown> {
 /**
  * The live page types of the scope with their page counts, most pages first, ties in byte order, at most `maxTypes`;
  * per type, the frontmatter and compiled_truth of at most `samplePerType` live pages in page id order. Pages carry no
- * id in the answer.
+ * id in the answer. `type` narrows the read to one type; `countsOnly` skips the samples, so a caller can read the
+ * types first and then one type's sample at a time, never holding every type's bodies at once.
  */
 export async function readFieldUsageSamples(exec: LegacyUnscopedRead, query: FieldUsageQuery): Promise<FieldUsageTypeSample[]> {
   const scope = query.sourceId !== undefined && query.sourceId !== ''
     ? sqlFragment` AND pages.source_id = ${query.sourceId}` : sqlFragment``;
+  const only = query.type !== undefined ? sqlFragment` AND pages.type = ${query.type}` : sqlFragment``;
   const types = await rows<{ type: string; pages: number }>(exec, sqlFragment`SELECT pages.type, count(*)::int AS pages FROM pages
-      WHERE pages.deleted_at IS NULL AND coalesce(pages.type, '') <> ''${scope}
+      WHERE pages.deleted_at IS NULL AND coalesce(pages.type, '') <> ''${scope}${only}
       GROUP BY pages.type ORDER BY count(*) DESC, pages.type COLLATE "C" LIMIT ${Math.max(0, Math.floor(query.maxTypes))}`);
   const sample = Math.max(1, Math.floor(query.samplePerType));
   const out: FieldUsageTypeSample[] = [];
   for (const { type, pages } of types) {
+    if (query.countsOnly === true) { out.push({ type: String(type), pages: Number(pages), rows: [] }); continue; }
     const sampled = await rows<{ frontmatter: unknown; compiled_truth: string | null }>(exec, sqlFragment`SELECT pages.frontmatter, pages.compiled_truth FROM pages
         WHERE pages.deleted_at IS NULL AND pages.type = ${type}${scope}
         ORDER BY pages.id LIMIT ${sample}`);
