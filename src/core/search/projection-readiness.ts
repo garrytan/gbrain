@@ -42,8 +42,10 @@ function scopeKey(scope: ProjectionReadinessScope): string {
  * call for the same scope reuses the last answer while the generation it was
  * computed under still holds (`readProjectionReadinessGeneration`: the page
  * clock, the pages relation file and the sources' archived flags; null, so
- * never cached, while a transaction is in flight or on an engine without
- * one); `GBRAIN_PROJECTION_READINESS_CACHE=0` always probes. An `unknown`
+ * never cached, while this transaction has written or another session holds
+ * a write on `pages`, or on an engine without one; a transaction open
+ * elsewhere on the server leaves it on); `GBRAIN_PROJECTION_READINESS_CACHE=0`
+ * always probes. An `unknown`
  * answer (the probe failed) is never reused. A refused engine capability is
  * not a failed probe: it throws (engine-capability-refusal.ts).
  */

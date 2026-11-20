@@ -223,7 +223,7 @@ describe('projection readiness cache', () => {
     const busy = readinessOver(async (sql: string, params?: unknown[]) => {
       if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1')) probes++;
       const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
-      return sql.includes('pg_current_snapshot') ? rows.map(row => ({ ...row, quiescent: false })) : rows;
+      return sql.includes('pg_locks') ? rows.map(row => ({ ...row, quiescent: false })) : rows;
     });
     await probeProjectionReadiness(busy);
     await probeProjectionReadiness(busy);
