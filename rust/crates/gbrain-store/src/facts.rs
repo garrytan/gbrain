@@ -4,7 +4,8 @@
 //! listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions,
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
 //! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
-//! the `pageCollapseFacts` search read (`facts/collapse.rs`). Other families read the rows
+//! the `pageCollapseFacts` search read (`facts/collapse.rs`) and the `moveKeptFactRows` fence
+//! row move (`facts/kept_rows.rs`). Other families read the rows
 //! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
@@ -54,6 +55,7 @@ pub mod generations;
 mod held_cells;
 pub mod held_moves;
 pub mod holding_purges;
+mod kept_rows;
 pub mod loops;
 pub mod ontology_repair;
 mod page_purges;
@@ -77,7 +79,7 @@ mod withdrawal_guard;
 pub mod withdrawal_pages;
 
 pub use crate::owner_only::OwnerOnlyForm;
-pub use fence::{FenceContext, FenceTarget};
+pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;

@@ -145,7 +145,7 @@ const PINS: Pin[] = [
     from: 'src/core/repair/facts-rehome.ts:85 sourcesOf',
     member: 'listSourceIncarnations',
     runs: [{ run: e => e.listSourceIncarnations(['s1']), params: [['s1']] }],
-    text: `SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id`,
+    text: `SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"`,
   },
   {
     from: 'src/core/repair/facts-rehome.ts:134 apply',

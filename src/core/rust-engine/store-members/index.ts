@@ -56,6 +56,7 @@ import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
+import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
@@ -64,6 +65,8 @@ import * as factsTrust from './facts-trust.ts';
 import * as factsForget from './facts-forget.ts';
 import * as factsRecall from './facts-recall.ts';
 import * as factsRemember from './facts-remember.ts';
+import * as derivationTrust from './derivation-trust.ts';
+import * as chronicleEvents from './chronicle-events.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
@@ -119,8 +122,10 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...ontologyRepair, ...factsTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
+  // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
+  ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).

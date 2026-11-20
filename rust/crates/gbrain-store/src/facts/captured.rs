@@ -217,7 +217,7 @@ impl Store {
     }
 
     /// `listSourceIncarnations(sourceIds)`: `SELECT id, incarnation::text FROM sources WHERE id = ANY(sourceIds) ORDER
-    /// BY id`. An unknown id is skipped; an archived source answers.
+    /// BY id COLLATE "C"` (byte order). An unknown id is skipped; an archived source answers.
     pub fn list_source_incarnations(&self, a: &SourceIdsArgs) -> Result<Vec<Value>> {
         const OP: &str = "listSourceIncarnations";
         let sources = source_set(OP, &a.source_ids)?;

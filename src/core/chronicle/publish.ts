@@ -183,8 +183,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
 /** The live content hash of each proposed event (what the chronicle ledger records as the extractor's). */
 async function writtenEvents(engine: BrainEngine, sourceId: string, items: readonly ProposedItem[]): Promise<Array<{ slug: string; hash: string }>> {
   if (!items.length) return [];
-  const rows = await engine.executeRaw<{ slug: string; content_hash: string | null }>(
-    'SELECT slug, content_hash FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, items.map(item => item.key)]);
+  const rows = await engine.listPageContentHashes({ sourceId, match: 'live_slugs', slugs: items.map(item => item.key) });
   const hashes = new Map(rows.map(row => [row.slug, row.content_hash]));
   return items.flatMap(item => hashes.get(item.key) ? [{ slug: item.key, hash: String(hashes.get(item.key)) }] : []);
 }
@@ -303,6 +302,6 @@ async function stampRetired(tx: BrainEngine, sourceId: string, slug: string): Pr
 /** A flagged event projection's receipt on its timeline row (found by its event page and date). */
 async function recordProjectionFlag(tx: BrainEngine, assessment: WriteGateAssessment, eventPageId: number, date: string, sourceId: string, requestId?: string): Promise<void> {
   if (assessment.verdict !== 'flag') return;
-  const [entry] = await tx.executeRaw<{ id: number }>('SELECT id FROM timeline_entries WHERE event_page_id=$1 AND date=$2::date', [eventPageId, date]);
-  if (entry) await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: Number(entry.id), sourceId, assessment, requestId });
+  const entryId = await tx.readEventProjectionId(eventPageId, date);
+  if (entryId !== null) await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: entryId, sourceId, assessment, requestId });
 }
