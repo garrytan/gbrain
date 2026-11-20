@@ -1,5 +1,5 @@
 /**
- * Alias fan-out reads: the case-sensitive alias read of `resolveQueryEntities`, and the page
+ * Alias fan-out reads: the exact-title lookup and case-sensitive alias read of `resolveQueryEntities`, and the page
  * title and alias rows `namesOf` reads (search/alias-fanout.ts), which ran through `engine.executeRaw`, once for both
  * engines.
  *
@@ -11,15 +11,40 @@
  * before.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** Bytewise order, the order a Rust store sorts strings in. */
 const byteCmp = (a: string | null, b: string | null): number => Buffer.compare(Buffer.from(a ?? ''), Buffer.from(b ?? ''));
+
+/** A live page whose lower-cased title is one of the asked titles: `t` is `lower(title)`. */
+export interface TitleHitRow { slug: string; source_id: string; t: string }
 
 /** A case-sensitive `page_aliases` row: the alias matches only as written (`alias_text`). */
 export interface CaseSensitiveAliasRow { slug: string; alias_norm: string; alias_text: string | null }
 
 /** One `page_aliases` row of a fan-out page. */
 export interface PageAliasRow { slug: string; source_id: string; alias_norm: string; alias_text: string | null; origin: string | null }
+
+/**
+ * Live pages of `sources` with a type in `types` whose `lower(title)` is in `norms`, by source then slug;
+ * `scope.excludePrivate` adds the caller's page policy (`privatePagesFilterForCaller`). Quarantined pages and archived
+ * sources are not filtered, as on master.
+ */
+export async function findPagesByTitles(
+  exec: LegacyUnscopedRead,
+  norms: readonly string[],
+  sources: readonly string[],
+  types: readonly string[],
+  scope: { excludePrivate?: boolean } = {},
+): Promise<TitleHitRow[]> {
+  if (!norms.length || !sources.length || !types.length) return [];
+  const privacy = scope.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, source_id, lower(title) AS t FROM pages
+        WHERE lower(title) = ANY(${[...norms]}::text[]) AND source_id = ANY(${[...sources]}::text[]) AND type = ANY(${[...types]}::text[]) AND deleted_at IS NULL${privacy}`);
+  const rows = await exec.executeRaw<TitleHitRow>(text, params);
+  return rows.sort((a, b) => byteCmp(a.source_id, b.source_id) || byteCmp(a.slug, b.slug));
+}
 
 /** The case-sensitive alias rows of `norms` in `sources`, by source, slug, then alias. */
 export async function resolveCaseSensitiveAliases(exec: LegacyUnscopedRead, norms: readonly string[], sources: readonly string[]): Promise<CaseSensitiveAliasRow[]> {

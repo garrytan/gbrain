@@ -99,17 +99,13 @@ export async function resolveQueryEntities(engine: BrainEngine, query: string, s
   }
   const norms = [...new Set(grams.map(g => g.norm))];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
-  const { privatePagesFilterForCaller } = await import('./private-visibility.ts');
   // The alias, title and case-sensitive reads depend on nothing but the n-grams (the title read also on the
   // linkable types, which the request's config snapshot answers), so they run at once: on a pooled Postgres
   // one round trip of wall time instead of three in series (#6721). A policy or pack failure still throws.
   const titleRead = (async () => {
     const policy = await readMentionPolicy(engine);
     const types = [...new Set((await Promise.all(sources.map(async s => linkableTypesFor(await loadSourcePack(engine, s), policy)))).flat())];
-    return engine.executeRaw<{ slug: string; source_id: string; t: string }>(
-      `SELECT slug, source_id, lower(title) AS t FROM pages
-        WHERE lower(title) = ANY($1::text[]) AND source_id = ANY($2::text[]) AND type = ANY($3::text[]) AND deleted_at IS NULL
-        ${scope.excludePrivate ? `AND ${privatePagesFilterForCaller('pages')}` : ''}`, [norms, sources, types]).catch(() => []);
+    return engine.findPagesByTitles(norms, sources, types, { excludePrivate: scope.excludePrivate }).catch(() => []);
   })();
   const [aliasHits, titleRows, caseRows] = await Promise.all([
     engine.resolveAliases(norms, scope).catch(() => new Map<string, Array<{ slug: string; source_id: string }>>()),

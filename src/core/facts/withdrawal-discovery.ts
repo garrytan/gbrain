@@ -7,7 +7,6 @@ import { fenceTooLargeError, readStoredFence } from '../page-body/read-range.ts'
 import { FENCE_MAX_BYTES } from '../page-body/limits.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import type { BodyRegion } from '../page-body/types.ts';
-import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import type { WithdrawalDiscoveryCandidate, WithdrawalDiscoveryKey } from '../engine-sql/withdrawal-discovery.ts';
 
 export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanMs: 10_000, batch: 128, matchRows: 16_384, matchBytes: 8 * 1024 * 1024 } as const;
@@ -110,18 +109,12 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
   const deadline = performance.now() + WITHDRAWAL_LIMITS.scanMs;
   const keyed: KeyedClaim[] = await engine.readWithdrawalDiscovery({ kind: 'claim_keys', sourceId,
     claims: claims.map(c => ({ visibility: c.visibility, fact_hash: c.fact_hash, subject: c.subject ?? '*', claim: c.claim ?? null })) });
-  const keyList: WithdrawalDiscoveryKey[] = keyed.map(k => ({ ...k,
+  const keys: WithdrawalDiscoveryKey[] = keyed.map(k => ({ ...k,
     patterns: (k.norm ? k.norm.split(' ').filter(Boolean) : []).map(token => `%${token.replace(/[\\%_]/g, '\\$&')}%`),
   }));
-  const keys = JSON.stringify(keyList);
   const subjects = keyed.some(k => k.subject === '*') ? null : [...new Set(keyed.map(k => k.subject))];
   const affected = new Set<number>();
-  const provenance = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT p.id
-    FROM jsonb_to_recordset($2::text::jsonb) k(visibility text,fact_hash text,subject text,norm text)
-    JOIN facts f ON f.source_id=$1 AND f.visibility=k.visibility
-      AND gbrain_fact_fingerprint(f.fact)=COALESCE(encode(sha256(convert_to(k.norm,'UTF8')),'hex'),k.fact_hash)
-      AND (k.subject='*' OR f.entity_slug=k.subject OR (${onOwnedMemoryPageSql('f')} AND f.source_markdown_slug=k.subject))
-    JOIN pages p ON p.source_id=f.source_id AND p.slug=COALESCE(f.source_markdown_slug,f.entity_slug)`, [sourceId, keys]);
+  const provenance = await engine.readWithdrawalDiscovery({ kind: 'provenance_pages', sourceId, keys });
   for (const row of provenance) affected.add(row.id);
   if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
   const match = async (incoming: WithdrawalDiscoveryCandidate[], splitFence?: string) => {
@@ -131,42 +124,29 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
       if (splitFence !== undefined) splitFenceTooLarge(sourceId, splitFence, incoming.length, bytes);
       refuse();
     }
-    const matches = await engine.readWithdrawalDiscovery({ kind: 'claim_matches', incoming, keys: keyList });
+    const matches = await engine.readWithdrawalDiscovery({ kind: 'claim_matches', incoming, keys });
     if (matches.some(row => row.ambiguous)) refuse('withdrawal_provenance');
     for (const row of matches) affected.add(row.id);
     if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
   };
-  const shortlist = (text: string) => `lower(${text}) LIKE ALL(k.patterns)`;
   for (let after = 0; ;) {
     if (performance.now() > deadline) refuse();
-    const pages = await engine.executeRaw<{ id: number; slug: string; compiled_truth: string; timeline: string }>(`SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p
-      WHERE p.source_id=$1 AND p.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
-        AND (strpos(p.compiled_truth,'gbrain:facts:')>0 OR strpos(p.timeline,'gbrain:facts:')>0)
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[])
-          WHERE (k.subject='*' OR k.subject=p.slug) AND ((${shortlist('p.compiled_truth')}) OR (${shortlist('p.timeline')})))
-      ORDER BY p.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
+    const pages = await engine.readWithdrawalDiscovery({ kind: 'inline_fence_pages', sourceId, keys, after, limit: WITHDRAWAL_LIMITS.batch, subjects });
     await match(pages.flatMap(page => [page.compiled_truth, page.timeline].flatMap(body => fenceClaims(page.id, page.slug, body))));
     if (pages.length < WITHDRAWAL_LIMITS.batch) break;
     after = pages[pages.length - 1].id;
   }
   // Wave B (spec 11): a segmented page's fences live in its segments; only live rows flagged with facts slots are
   // read, and only each slot's bytes; a fence split by a forced cut is joined across it (splitFactsFences).
-  const slotText = `convert_from(substring(t.body from (s->>'start')::int + 1 for (s->>'end')::int - (s->>'start')::int),'UTF8')`;
-  for (let after = [0, 0]; ;) {
+  for (let after: [number, number] = [0, 0]; ;) {
     if (performance.now() > deadline) refuse();
-    const rows = await engine.executeRaw<{ id: number; occurrence_id: string; slug: string; fences: string[] }>(`SELECT p.id,m.occurrence_id::text AS occurrence_id,p.slug,
-        ARRAY(SELECT ${slotText} FROM jsonb_array_elements(m.facts_slots) s WHERE NOT s ? 'open_start') AS fences
-      FROM page_body_manifest m JOIN pages p ON p.id=m.page_id JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
-      WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb
-        AND (m.page_id,m.occurrence_id)>($3::int,$6::bigint) AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[]), jsonb_array_elements(m.facts_slots) s
-          WHERE (k.subject='*' OR k.subject=p.slug) AND NOT s ? 'open_start' AND ${shortlist(slotText)})
-      ORDER BY m.page_id,m.occurrence_id LIMIT $4`, [sourceId, keys, after[0], WITHDRAWAL_LIMITS.batch, subjects, after[1]]);
+    const rows = await engine.readWithdrawalDiscovery({ kind: 'segment_fence_rows', sourceId, keys, after, limit: WITHDRAWAL_LIMITS.batch, subjects });
     await match(rows.flatMap(row => row.fences.flatMap(fence => fenceClaims(Number(row.id), row.slug, fence))));
     if (rows.length < WITHDRAWAL_LIMITS.batch) break;
     after = [Number(rows[rows.length - 1].id), Number(rows[rows.length - 1].occurrence_id)];
   }
   for await (const split of splitFactsFences(engine, sourceId, keyed, subjects, deadline)) await match(fenceClaims(split.id, split.slug, split.fence), split.slug);
+  const shortlist = (text: string) => `lower(${text}) LIKE ALL(k.patterns)`;
   for (let after = 0; ;) {
     if (performance.now() > deadline) refuse();
     const chunks = await engine.executeRaw<{ id: number; page_id: number; slug: string; chunk_text: string }>(`SELECT c.id,c.page_id,p.slug,c.chunk_text
@@ -174,7 +154,7 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
       WHERE p.source_id=$1 AND c.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
         AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[])
           WHERE (k.subject='*' OR k.subject=p.slug) AND ${shortlist('c.chunk_text')})
-      ORDER BY c.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
+      ORDER BY c.id LIMIT $4`, [sourceId, JSON.stringify(keys), after, WITHDRAWAL_LIMITS.batch, subjects]);
     await match(chunks.flatMap(chunk => {
       const rows = [{ id: chunk.page_id, slug: chunk.slug, claim: chunk.chunk_text, visibility: null as string | null, ambiguous: false }];
       for (const line of chunk.chunk_text.split('\n')) {

@@ -26,12 +26,14 @@ import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
-import type { PageTypeRef } from './engine-sql/trust-tier-reads.ts';
+import type {
+  BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, PageTypeRef,
+} from './engine-sql/trust-tier-reads.ts';
 import type {
   PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
 } from './engine-sql/jobs-health.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
-import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow } from './engine-sql/alias-fanout-reads.ts';
+import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
@@ -1361,6 +1363,8 @@ export interface BrainEngine {
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
   /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
   readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
+  /** Alias fan-out's exact-title lookup, case-sensitive alias read, page title and alias rows (SQL and contracts in engine-sql/alias-fanout-reads.ts). */
+  findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }): Promise<TitleHitRow[]>;
   resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
   readPageTitle(sourceId: string, slug: string): Promise<string | null>;
   readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]): Promise<PageAliasRow[]>;
@@ -3108,14 +3112,26 @@ export interface BrainEngine {
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 
-  // Group D (trust tier reads): the stamped-tier reads of page history and the quote path.
+  // Group D (trust tier reads): the stamped-tier reads of core memory, the trust scan, belief history, page history and valid time.
+  /** The live `always_load` pages, by source then slug, with the trust columns a delivery read asks for. */
+  listCorePageRows(spec: CorePageRowSpec): Promise<CorePageRow[]>;
+  /** Rows of one scanned table above an id whose stored tier is listed, by id. */
+  listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
+  /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */
+  countUnscannedTrustRows(spec: UnscannedTrustSpec): Promise<number>;
+  /** One page of a source's belief events, with the per-row visibility facts the remote filter reads. */
+  readBeliefHistoryRows(spec: BeliefHistoryRowQuery): Promise<Array<Record<string, unknown>>>;
+  /** The listed page lifetimes that are live and whose page passes the remote read floor. */
+  listVisibleBeliefLifetimes(lifetimes: readonly string[]): Promise<string[]>;
   /** The stored snapshot tier of each listed page version, by id. */
   listVersionTrustTiers(ids: readonly number[]): Promise<Array<{ id: number; trust_tier: string | null }>>;
   /** The type and tier of the write that replaced each listed version (the next snapshot, or the live page), by id. */
   listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
   /** The stored type of each listed page, deleted or not, by id (the quoting reads); unknown ids answer nothing. */
   listPageTypesByIds(ids: readonly number[]): Promise<PageTypeRef[]>;
-  /** One read withdrawal discovery makes (WithdrawalDiscoveryRead: claim keys, fence and chunk matches, split fence slots, targets, sample slugs). */
+  /** Whether a purge hid the page until it is derived again (a `needs_rederive` row names it). */
+  pageAwaitsRederive(pageId: number): Promise<boolean>;
+  /** One read withdrawal discovery makes (WithdrawalDiscoveryRead: claim keys, provenance pages, fence and chunk matches, targets). */
   readWithdrawalDiscovery<K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K }>): Promise<WithdrawalDiscoveryRows[K]>;
   /** The id and slug of the segmented pages among `slugs` in the source (engine-sql/withdrawal-pages.ts). */
   listSegmentedPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
