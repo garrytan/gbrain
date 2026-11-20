@@ -176,7 +176,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listFenceRetireCandidates', 'listFenceFactRows',
   // The trust decision queue (engine-sql/trust-proposals.ts).
   'insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor', 'updatePendingTrustProposalAfter',
-  'transitionTrustProposal',
+  'transitionTrustProposal', 'listUnreadablePrivacyHoldIds',
   // The connect gate's persistence reads (engine-sql/connect-gate.ts).
   'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
   // Search

@@ -17,6 +17,7 @@ import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
 import { makeFakeSql, type FakeSql, type RecordedStatement, type Responder } from './fake-postgres-sql.ts';
 import { withEnv } from './with-env.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './legacy-embedding-config.ts';
 
 export const W1_DOMAINS = [
@@ -651,6 +652,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFactIdsAtTrustRank': OOS.callerRawSql,
   'listBeliefStreamSlugs': OOS.callerRawSql,
   'listActivationVerdictRows': OOS.callerRawSql,
+  'listUnreadablePrivacyHoldIds': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
   'readDeltaSessionRow': OOS.callerRawSql,
   'readCheckpointManifestRow': OOS.callerRawSql,
@@ -1560,6 +1562,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['takes', (e) => e.listActivationVerdictRows('takes', [1])],
     ['timeline_entries', (e) => e.listActivationVerdictRows('timeline_entries', [1])],
     ['pages', (e) => e.listActivationVerdictRows('pages', [1])],
+  ]),
+  ...variants('listUnreadablePrivacyHoldIds', [
+    ['world-only', (e) => e.listUnreadablePrivacyHoldIds([1, 2])],
+    ['granted', (e) => withCallerAccess({ privateFactSources: ['default'] }, () => e.listUnreadablePrivacyHoldIds([1, 2]))],
   ]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],

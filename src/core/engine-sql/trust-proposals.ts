@@ -11,6 +11,8 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { TrustTable } from '../trust/schema.ts';
 import { TRUST_PROPOSAL_ACTIONS, TRUST_PROPOSAL_STATUSES } from '../trust/schema.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../access/member-facts.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 export type TrustProposalAction = typeof TRUST_PROPOSAL_ACTIONS[number];
 export type TrustProposalStatus = typeof TRUST_PROPOSAL_STATUSES[number];
@@ -125,6 +127,21 @@ export async function insertTrustProposal(exec: SqlExecutor, input: NewTrustProp
 export async function getTrustProposal(exec: LegacyUnscopedRead, id: number, lock = false): Promise<TrustProposalRow | null> {
   const [row] = await exec.executeRaw<Record<string, unknown>>(lock ? 'SELECT * FROM trust_proposals WHERE id = $1 FOR UPDATE' : 'SELECT * FROM trust_proposals WHERE id = $1', [id]);
   return row ? normalizeTrustProposal(row) : null;
+}
+
+/**
+ * The privacy holds among `ids` (a supersede_fact proposal whose before state names a visibility) whose target fact is
+ * missing or one the current caller's widened world-only fact reads do not admit (memberFactAdmitSql,
+ * grantedPrivateFactSql, rendered in the caller context this runs in), ascending. trust/privacy-hold-reply.ts hides
+ * these refs from the caller.
+ */
+export async function listUnreadablePrivacyHoldIds(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<number[]> {
+  if (!ids.length) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f ON tp.target_table = 'facts' AND f.id = tp.target_id
+        WHERE tp.id = ANY(${[...ids]}::bigint[]) AND tp.action = 'supersede_fact' AND tp.before_state->'visibility' IS NOT NULL
+          AND (f.id IS NULL OR NOT (${trustedSql(memberFactAdmitSql('f'))} OR ${trustedSql(grantedPrivateFactSql('f'))}))`);
+  const rows = await exec.executeRaw<{ id: number | string }>(text, params);
+  return rows.map(r => Number(r.id)).sort((a, b) => a - b);
 }
 
 /** Proposals by status (`pending` by default; `all`), source, action and creation time, oldest first. */

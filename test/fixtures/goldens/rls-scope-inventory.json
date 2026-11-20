@@ -3693,6 +3693,28 @@
         ],
         "flagOnScopes": []
       },
+      "listUnreadablePrivacyHoldIds#granted": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnreadablePrivacyHoldIds#world-only": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listWriteRequestRows#default": {
         "flagOffLanes": [
           "pool"
@@ -7339,6 +7361,7 @@
         "listUnfencedFactRows": "none",
         "listUnlinkedConversationSlugs": "none",
         "listUnpreviewedTrustFacts": "none",
+        "listUnreadablePrivacyHoldIds": "none",
         "listUnreviewedJobs": "none",
         "listUnwithdrawnFacts": "none",
         "listValidTimeIdentities": "none",

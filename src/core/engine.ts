@@ -3321,6 +3321,8 @@ export interface BrainEngine {
   insertTrustProposal(input: NewTrustProposal): Promise<{ id: number; created: boolean }>;
   /** One trust proposal by id, or null; `lock` takes it `FOR UPDATE` for the decision that follows. */
   getTrustProposal(id: number, lock?: boolean): Promise<TrustProposalRow | null>;
+  /** The privacy holds among `ids` whose target fact the current caller's widened world-only fact reads do not admit, ascending (trust/privacy-hold-reply.ts). */
+  listUnreadablePrivacyHoldIds(ids: number[]): Promise<number[]>;
   /** Trust proposals by status (`pending` by default; `all`), source, action and creation time, oldest first (500 by default, at most 5000). */
   listTrustProposals(filter?: TrustProposalFilter): Promise<TrustProposalRow[]>;
   /** The pending trust proposals naming a row as target or related, by id. */

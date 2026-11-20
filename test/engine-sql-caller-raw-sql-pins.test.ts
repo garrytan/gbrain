@@ -34,6 +34,8 @@ import { OAUTH_TOKEN_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { hashToken } from '../src/core/utils.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../src/core/eligibility/sql.ts';
 import { trustRankSql } from '../src/core/trust/tier.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../src/core/access/member-facts.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 
@@ -590,6 +592,16 @@ const PINS: Pin[] = [
     from: 'src/core/search/transcript-quote.ts:511 ownerTierFacts, at d2671f1342',
     case: { method: 'listFactIdsAtTrustRank', variant: 'default', run: e => e.listFactIdsAtTrustRank([1, 2], 5) },
     texts: () => [`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${trustRankSql('trust_tier')} >= $2`],
+  },
+  {
+    from: 'src/core/trust/privacy-hold-reply.ts:67 hiddenHoldRefs (a private-facts grant), at d2671f1342',
+    case: { method: 'listUnreadablePrivacyHoldIds', variant: 'granted', run: e => withCallerAccess({ privateFactSources: ['default'] }, () => e.listUnreadablePrivacyHoldIds([1, 2])) },
+    texts: () => withCallerAccess({ privateFactSources: ['default'] }, () => {
+      const admits = [memberFactAdmitSql('f'), grantedPrivateFactSql('f')];
+      return [`SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f ON tp.target_table = 'facts' AND f.id = tp.target_id
+        WHERE tp.id = ANY($1::bigint[]) AND tp.action = 'supersede_fact' AND tp.before_state->'visibility' IS NOT NULL
+          AND (f.id IS NULL OR NOT (${admits.join(' OR ')}))`];
+    }),
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',

@@ -259,7 +259,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   relational_reads: ['readAdmittedPageRefs', 'readPageSynopses', 'readSeedTitleSlugs'],
   trust_fence: ['listFenceFactRows'],
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
-    'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions'],
+    'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions', 'listUnreadablePrivacyHoldIds'],
   connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],
 
   // jobs_wake: the Wakeshift report-back tables (engine-sql/jobs-wake.ts), group A of the jobs-tables slice

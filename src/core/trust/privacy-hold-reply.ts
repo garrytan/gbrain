@@ -54,7 +54,7 @@ const isPrivacyHold = (p: { action: string; before_state: unknown } | null): boo
  * the typed proposal read; only a caller whose fact reads are widened (a member page, a private-facts grant) needs the
  * readability join, and only over the holds.
  */
-async function hiddenHoldRefs(engine: Pick<BrainEngine, 'executeRaw' | 'getTrustProposal'>, refs: readonly string[], grant: readonly string[] | undefined): Promise<Set<string>> {
+async function hiddenHoldRefs(engine: Pick<BrainEngine, 'listUnreadablePrivacyHoldIds' | 'getTrustProposal'>, refs: readonly string[], grant: readonly string[] | undefined): Promise<Set<string>> {
   const parsed = new Map(refs.map(ref => [parseTrustProposalRef(ref), ref] as const).filter((e): e is [number, string] => e[0] !== null));
   if (!parsed.size) return new Set();
   try {
@@ -64,17 +64,15 @@ async function hiddenHoldRefs(engine: Pick<BrainEngine, 'executeRaw' | 'getTrust
     const underGrant = <R>(build: () => R): R => grant?.length && currentReadMode() === undefined ? withCallerAccess({ privateFactSources: grant }, build) : build();
     const admits = underGrant(() => [memberFactAdmitSql('f'), grantedPrivateFactSql('f')]);
     if (admits.every(sql => sql === 'FALSE')) return new Set(ids.values());
-    const rows = await engine.executeRaw<{ id: number | string }>(`SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f ON tp.target_table = 'facts' AND f.id = tp.target_id
-        WHERE tp.id = ANY($1::bigint[]) AND tp.action = 'supersede_fact' AND tp.before_state->'visibility' IS NOT NULL
-          AND (f.id IS NULL OR NOT (${admits.join(' OR ')}))`, [[...ids.keys()]]);
-    return new Set(rows.map(r => ids.get(Number(r.id))!).filter(Boolean));
+    const hidden = await underGrant(() => engine.listUnreadablePrivacyHoldIds([...ids.keys()]));
+    return new Set(hidden.map(id => ids.get(id)!).filter(Boolean));
   } catch {
     return new Set(refs);
   }
 }
 
 /** `result` as `remote`'s caller reads it: privacy-hold refs it cannot read, even with `grant` (a write's private-facts sources), removed from every `contested`. */
-export async function hidePrivacyHoldRefs<T>(engine: Pick<BrainEngine, 'executeRaw' | 'getTrustProposal'>, remote: boolean | undefined, result: T, grant?: readonly string[]): Promise<T> {
+export async function hidePrivacyHoldRefs<T>(engine: Pick<BrainEngine, 'listUnreadablePrivacyHoldIds' | 'getTrustProposal'>, remote: boolean | undefined, result: T, grant?: readonly string[]): Promise<T> {
   if (!worldOnlyFacts(remote) || !isRecord(result) && !Array.isArray(result)) return result;
   const refs = new Set<string>();
   collectRefs(result, refs);

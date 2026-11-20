@@ -591,6 +591,7 @@ export const RUST_ENGINE_MEMBERS = {
   // trust: the trust decision queue (engine-sql/trust-proposals.ts)
   insertTrustProposal: 'facts',
   getTrustProposal: 'facts',
+  listUnreadablePrivacyHoldIds: 'facts',
   listTrustProposals: 'facts',
   pendingTrustProposalsFor: 'facts',
   updatePendingTrustProposalAfter: 'facts',

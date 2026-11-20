@@ -96,6 +96,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',
   factsFtsDocument: 'src/core/fts-language.ts: constant facts full-text document expression over a caller alias; the language passes VALID_CONFIG_NAME or falls back to the default',
   getFtsLanguage: 'src/core/fts-language.ts: the brain full-text config name; passes VALID_CONFIG_NAME ([a-z][a-z0-9_]*) or falls back to the default',
+  memberFactAdmitSql: 'src/core/access/member-facts.ts: own-member-page fact predicate over a caller alias; the member id passed ACCESS_ID_RE (no quote) and the page test is privatePagesFilterForCaller; no values',
   grantedPrivateFactSql: 'src/core/access/member-facts.ts: private-facts grant predicate over a caller alias; granted source ids passed isValidSourceId, so they embed as literals',
   trustRankSql: 'src/core/trust/tier.ts: CASE mapping a caller column expression to a rank from the constant tier table; callers pass a column, never a value',
   claimPendingSql: 'src/core/trust/claim-state.ts: constant claim-pending predicate over a caller sources alias; config keys are module constants',
