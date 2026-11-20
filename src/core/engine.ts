@@ -1,6 +1,6 @@
 import type { LiveEmbedSegmentRow, OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope, SegmentChunkRowRow, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from './engine-sql/segmented-writes.ts';
 import type * as PageSpendSql from './engine-sql/page-spend.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline, UntiledPage, UntiledPagesQuery } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
@@ -3239,6 +3239,8 @@ export interface BrainEngine {
   readManifestSeqAt(pageId: number, generation: number, byteOffset: number): Promise<number | null>;
   /** A segmented body read: body_bytes of the newest segmented version that references `generation` and records a size, or null (engine-sql/export-reads.ts). */
   readSegmentedVersionBodyBytes(pageId: number, generation: number): Promise<number | null>;
+  /** GST-1209's doctor and repair read: the live segmented pages of unarchived sources whose live rows do not tile the body, by source then slug in byte order (engine-sql/export-reads.ts). */
+  listUntiledSegmentedPages(q?: UntiledPagesQuery): Promise<UntiledPage[]>;
   /** A segmented write: the state of body staging `stagingId`, row-locked for the rest of the transaction, or null (engine-sql/segmented-writes.ts). */
   lockBodyStagingState(stagingId: string): Promise<string | null>;
   /** A segmented write: delete page `pageId`'s chunk rows at `generation` whose chunk_index is not in `keepIndexes` (engine-sql/segmented-writes.ts). */

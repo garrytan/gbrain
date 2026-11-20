@@ -225,7 +225,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
   'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
   // The segmented-body reads of page-body/ (engine-sql/export-reads.ts).
-  'listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes',
+  'listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes', 'listUntiledSegmentedPages',
   'claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed',
   'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).

@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline, UntiledPage, UntiledPagesQuery } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -84,3 +84,12 @@ export const readManifestSeqAt: StoreMember<[pageId: number, generation: number,
 /** A segmented body read: the size the newest segmented version of a generation records (`cli_reads::export::read_segmented_version_body_bytes`). */
 export const readSegmentedVersionBodyBytes: StoreMember<[pageId: number, generation: number], number | null> = async (brain, pageId, generation) =>
   (await storeCall({ member: 'readSegmentedVersionBodyBytes' }, () => brain.readSegmentedVersionBodyBytes(pageId, generation))) ?? null;
+
+/**
+ * GST-1209's doctor and repair read: the live segmented pages of unarchived sources whose live rows do not tile the body,
+ * by source then slug in byte order (`cli_reads::export::list_untiled_segmented_pages`).
+ */
+export const listUntiledSegmentedPages: StoreMember<[q?: UntiledPagesQuery], UntiledPage[]> = (brain, q = {}) =>
+  storeCall({ member: 'listUntiledSegmentedPages' }, () => brain.listUntiledSegmentedPages({
+    ...(q.sourceIds ? { sourceIds: [...q.sourceIds] } : {}), ...(q.slugs ? { slugs: [...q.slugs] } : {}), ...(q.limit === undefined ? {} : { limit: q.limit }),
+  }));
