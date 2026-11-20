@@ -308,15 +308,26 @@ async function adminAddMember(b: Brain, id: string): Promise<void> {
   }
 }
 
-async function threeOwnerClients(b: Brain): Promise<void> {
-  await mint(b, 'owner_muse', OWNER);
-  await mint(b, 'owner_grok', OWNER);
-  for (const name of ['owner_http', 'owner_muse', 'owner_grok']) {
+/** owner_http and two more clients bound to `member` (null: nobody), each used over HTTP; the two are not matrix callers. */
+async function clientsUsed(b: Brain, member: string | null): Promise<void> {
+  await mint(b, 'client_muse', member);
+  await mint(b, 'client_grok', member);
+  for (const name of ['owner_http', 'client_muse', 'client_grok']) {
     for (const op of ['search', 'get_page', 'query']) await http(b, b.tokens[name]!, op, op === 'get_page' ? { slug: 'notes/adworldqzx' } : { query: 'harbor', limit: 3 });
   }
-  delete b.tokens.owner_muse; delete b.tokens.owner_grok;
+  delete b.tokens.client_muse; delete b.tokens.client_grok;
+}
+
+async function threeUnboundClients(b: Brain): Promise<void> {
+  await clientsUsed(b, null);
   const audience = await G.classifyBrainAudience(b.engine);
-  if (audience.audience !== 'shared') throw new Error('setup: three owner clients did not make the brain read as shared: ' + audience.reasons.join('; '));
+  if (audience.audience !== 'shared') throw new Error('setup: three clients bound to nobody did not make the brain read as shared: ' + audience.reasons.join('; '));
+}
+
+async function threeOwnerBoundClients(b: Brain): Promise<void> {
+  await clientsUsed(b, OWNER);
+  const audience = await G.classifyBrainAudience(b.engine);
+  if (audience.audience !== 'personal') throw new Error('setup: three of the owner\'s own clients made the brain read as shared: ' + audience.reasons.join('; '));
 }
 
 export const SCENARIOS: Scenario[] = [
@@ -329,12 +340,13 @@ export const SCENARIOS: Scenario[] = [
     change: b => access(b, ['serves', 'several', '--members', OWNER + ',' + OTHER, '--yes']) },
   { name: 'explicit sharing, then the next archive run', shared: true, mintOther: true,
     change: async b => { await access(b, ['serves', 'several', '--members', OWNER + ',' + OTHER, '--yes']); await archiveRun(b); } },
-  { name: "MCP-client count: three of the owner's own clients in 30 days, no command", shared: true, change: threeOwnerClients },
-  { name: "MCP-client count: three of the owner's own clients, then the next archive run", shared: true, change: async b => { await threeOwnerClients(b); await archiveRun(b); } },
-  { name: 'MCP-client count, then a second member joins over the admin path (addMember, no CLI)', shared: true, mintOther: true,
-    change: async b => { await threeOwnerClients(b); await G.addMember(b.engine, OTHER); } },
-  { name: 'MCP-client count, then a second member joins on the owner admin page (POST /admin/api/access/members)', shared: true, mintOther: true,
-    change: async b => { await threeOwnerClients(b); await adminAddMember(b, OTHER); } },
+  { name: "MCP-client count: three of the owner's own clients in 30 days, no command", shared: false, change: threeOwnerBoundClients },
+  { name: 'MCP-client count: three clients bound to nobody in 30 days, no command', shared: true, change: threeUnboundClients },
+  { name: 'MCP-client count: three clients bound to nobody, then the next archive run', shared: true, change: async b => { await threeUnboundClients(b); await archiveRun(b); } },
+  { name: 'MCP-client count from three clients bound to nobody, then a second member joins over the admin path (addMember, no CLI)', shared: true, mintOther: true,
+    change: async b => { await threeUnboundClients(b); await G.addMember(b.engine, OTHER); } },
+  { name: 'MCP-client count from three clients bound to nobody, then a second member joins on the owner admin page (POST /admin/api/access/members)', shared: true, mintOther: true,
+    change: async b => { await threeUnboundClients(b); await adminAddMember(b, OTHER); } },
   { name: 'shared with no owner, then gbrain access owner set alice-example', ownerSet: false, shared: true, mintOther: true,
     change: async b => { await access(b, ['member', 'add', OTHER]); await access(b, ['owner', 'set', OWNER]); } },
   { name: 'shared, then back to personal (member disable, brain.audience personal, archive run)', shared: false, otherEnabledAfter: false,
@@ -361,9 +373,9 @@ export const SAMPLE_PATHS: ReadonlySet<ReadPath> = new Set(['get_page_unscoped',
  */
 const ARCHIVE_PATHS: ReadPath[] = ['get_page', 'search', 'query', 'list_pages', 'get_page_unscoped', 'search_unscoped', 'query_unscoped', 'list_unscoped'];
 export const EXPECTED_BAD: Array<{ scenario: string; callers: string[]; item: string; paths: ReadPath[]; reason: string }> = [
-  { scenario: "MCP-client count: three of the owner's own clients in 30 days, no command", callers: ['nonmember_http'], item: 'archive', paths: ARCHIVE_PATHS,
+  { scenario: 'MCP-client count: three clients bound to nobody in 30 days, no command', callers: ['nonmember_http'], item: 'archive', paths: ARCHIVE_PATHS,
     reason: 'Documented wait: the brain reads as shared from client usage alone, and the personal-era archive pages are re-scoped on the next archive run; archive_rescope_pending is reported until then (conversation-archive.md).' },
-  { scenario: 'MCP-client count, then a second member joins over the admin path (addMember, no CLI)', callers: ['member_http', 'nonmember_http'], item: 'archive', paths: ARCHIVE_PATHS,
+  { scenario: 'MCP-client count from three clients bound to nobody, then a second member joins over the admin path (addMember, no CLI)', callers: ['member_http', 'nonmember_http'], item: 'archive', paths: ARCHIVE_PATHS,
     reason: 'The scenario calls the library addMember with no beforeWrite hook. Every caller in src passes one (gbrain access member add, gbrain access serves several, the admin member route), and member enable re-scopes first on both paths, so no user path reaches this state; archive_rescope_pending is reported.' },
 ];
 

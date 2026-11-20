@@ -17,7 +17,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runAccess, whoCanRead } from '../src/commands/access.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { addFolderRules } from '../src/commands/access-rules.ts';
+import { addFolderRules, currentFolderRules, writeApprovedRules } from '../src/commands/access-rules.ts';
 import { handoverCmd } from '../src/commands/access-handover.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -212,6 +212,88 @@ async function noOwner(engine: BrainEngine): Promise<void> {
   expect(keep.items).toEqual([]);
 }
 
+/** The approved set and the handover row belong to the member they were previewed for: another member's apply refuses. */
+async function memberBinding(engine: BrainEngine): Promise<void> {
+  await engine.setConfig('access.owner_member', 'owner-example');
+  for (const id of ['gina-example', 'hank-example']) await addMember(engine, id);
+  await importFromContent(engine, 'notes/gina-example', '---\ntype: note\ntitle: gina\nreadable_by: [gina-example]\n---\nSynthetic.\n', { sourceId: SRC });
+  await access(engine, ['member', 'disable', 'gina-example']);
+  await access(engine, ['member', 'disable', 'hank-example']);
+  const p = await json<Preview>(engine, ['member', 'handover', 'gina-example']);
+  expect(p.items.length).toBeGreaterThan(0);
+  const rows = async () => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_handovers'))[0]!.n;
+  const before = await rows();
+  const other = await refusal(() => access(engine, ['member', 'handover', 'hank-example', '--yes', '--expect', p.plan_hash]));
+  expect(other.code).toBe('preview_changed');
+  expect(await readers(engine, 'notes/gina-example')).toEqual(['gina-example']);
+  expect(await rows()).toBe(before);
+  await access(engine, ['member', 'enable', 'gina-example']);
+  const reEnabled = await refusal(() => access(engine, ['member', 'handover', 'hank-example', '--yes', '--expect', p.plan_hash]));
+  expect(reEnabled.code).toBe('preview_changed');
+  expect(await readers(engine, 'notes/gina-example')).toEqual(['gina-example']);
+  await access(engine, ['member', 'disable', 'gina-example']);
+  const applied = await json<Record>(engine, ['member', 'handover', 'gina-example', '--yes', '--expect', p.plan_hash]);
+  expect(applied.state).toBe('applied');
+  const resumedByOther = await refusal(() => access(engine, ['member', 'handover', 'hank-example', '--yes', '--expect', p.plan_hash]));
+  expect(resumedByOther.code).toBe('preview_changed');
+}
+
+/** A folder rule whose prefix moved after the preview, under the same id and readers, is never rewritten at its new prefix. */
+async function rulePrefixMoved(engine: BrainEngine): Promise<void> {
+  await engine.setConfig('access.owner_member', 'owner-example');
+  await addMember(engine, 'ivy-example');
+  const rule = (prefix: string) => addFolderRules(engine, SRC, [{ id: 'ivy-folder', prefix, readable_by: ['member:ivy-example'] } as never], { apply: true, json: true });
+  const move = async (prefix: string) => writeApprovedRules(engine, SRC, (await currentFolderRules(engine, SRC)).map(r => r.id === 'ivy-folder' ? { ...r, prefix, readable_by: ['member:ivy-example'] } : r), 'access: move ivy-folder to ' + prefix);
+  const ruleNow = async () => (await engine.executeRaw<{ prefix: string; readable_by: string[] }>('SELECT prefix, readable_by FROM access_rules WHERE source_id = $1 AND rule_id = $2', [SRC, 'ivy-folder']))[0];
+  await rule('people/ivy-example/');
+  await importFromContent(engine, 'people/ivy-example/plan', '---\ntype: note\ntitle: plan\n---\nSynthetic.\n', { sourceId: SRC });
+  await importFromContent(engine, 'moved-ivy/page-example', '---\ntype: note\ntitle: moved\n---\nSynthetic.\n', { sourceId: SRC });
+  await access(engine, ['member', 'disable', 'ivy-example']);
+  const p = await json<Preview>(engine, ['member', 'handover', 'ivy-example']);
+  expect(p.items.some(i => i.kind === 'rule')).toBe(true);
+  await move('moved-ivy/');
+  const fresh = await refusal(() => access(engine, ['member', 'handover', 'ivy-example', '--yes', '--expect', p.plan_hash]));
+  expect(fresh.code).toBe('preview_changed');
+  expect(await ruleNow()).toEqual({ prefix: 'moved-ivy/', readable_by: ['member:ivy-example'] });
+
+  await move('people/ivy-example/');
+  const applied = await json<Record>(engine, ['member', 'handover', 'ivy-example', '--yes', '--expect', p.plan_hash]);
+  const [row] = await engine.executeRaw<{ items: unknown }>('SELECT items FROM access_handovers WHERE id = $1', [applied.id]);
+  const items = (typeof row!.items === 'string' ? JSON.parse(row!.items) : row!.items) as Array<{ kind: string; outcome?: string }>;
+  for (const item of items) if (item.kind === 'rule') delete item.outcome;
+  await engine.executeRaw("UPDATE access_handovers SET state = 'applying', items = $2::text::jsonb WHERE id = $1", [applied.id, JSON.stringify(items)]);
+  await move('moved-ivy/');
+  const resumed = await refusal(() => access(engine, ['member', 'handover', 'ivy-example', '--yes', '--expect', p.plan_hash]));
+  expect(resumed.code).toBe('preview_changed');
+  expect(await ruleNow()).toEqual({ prefix: 'moved-ivy/', readable_by: ['member:ivy-example'] });
+}
+
+/** An undo approval belongs to the handover it was previewed for: naming another handover of the same member refuses. */
+async function undoBinding(engine: BrainEngine): Promise<void> {
+  await engine.setConfig('access.owner_member', 'owner-example');
+  await addMember(engine, 'jo-example');
+  const page = (slug: string) => importFromContent(engine, slug, '---\ntype: note\ntitle: jo\nreadable_by: [jo-example]\n---\nSynthetic.\n', { sourceId: SRC });
+  await page('notes/jo-first-example');
+  await access(engine, ['member', 'disable', 'jo-example']);
+  const first = await json<Preview>(engine, ['member', 'handover', 'jo-example']);
+  const h1 = await json<Record>(engine, ['member', 'handover', 'jo-example', '--yes', '--expect', first.plan_hash]);
+  await access(engine, ['member', 'enable', 'jo-example']);
+  await page('notes/jo-second-example');
+  await access(engine, ['member', 'disable', 'jo-example']);
+  const second = await json<Preview>(engine, ['member', 'handover', 'jo-example']);
+  const h2 = await json<Record>(engine, ['member', 'handover', 'jo-example', '--yes', '--expect', second.plan_hash]);
+  expect(h2.id).not.toBe(h1.id);
+  await access(engine, ['member', 'enable', 'jo-example']);
+  const undo1 = await json<{ plan_hash: string }>(engine, ['member', 'handover', 'jo-example', '--undo', h1.id]);
+  const crossed = await refusal(() => access(engine, ['member', 'handover', 'jo-example', '--undo', h2.id, '--yes', '--expect', undo1.plan_hash]));
+  expect(crossed.code).toBe('preview_changed');
+  expect(await readers(engine, 'notes/jo-first-example')).toEqual(['owner-example']);
+  expect((await json<Record>(engine, ['member', 'handover', '--status', h2.id])).state).toBe('applied');
+  const undone = await json<Record>(engine, ['member', 'handover', 'jo-example', '--undo', h1.id, '--yes', '--expect', undo1.plan_hash]);
+  expect(undone.undo_of).toBe(h1.id);
+  expect(await readers(engine, 'notes/jo-first-example')).toEqual(['jo-example']);
+}
+
 for (const backend of testBackends()) {
   describe('member handover on a repo-less brain (' + backend + ')', () => {
     let engine: BrainEngine;
@@ -227,6 +309,9 @@ for (const backend of testBackends()) {
     test('a default handover after an undo applies again', () => reapplyAfterUndo(engine), 120_000);
     test('a resumed handover refuses while another rule change is held', () => resumeWithHeldRule(engine), 120_000);
     test('a brain with no owner refuses the default and allows keep', () => noOwner(engine), 60_000);
+    test("another member's apply of an approved handover refuses", () => memberBinding(engine), 120_000);
+    test('a folder rule moved to a new prefix after the preview is never rewritten', () => rulePrefixMoved(engine), 120_000);
+    test('an undo approval applies only to the handover it was previewed for', () => undoBinding(engine), 120_000);
   });
 
   describe('member handover on a managed git source (' + backend + ')', () => {

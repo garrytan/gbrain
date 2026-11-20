@@ -67,11 +67,12 @@ export const DEFAULT_ALIASES: Record<string, string> = {
   haiku:  'anthropic:claude-haiku-4-5-20251001',
   // `gemini` repointed (#2507): `gemini-3-pro` only ever existed as a preview
   // id (`gemini-3-pro-preview`) and was shut down — it was never chat-listed
-  // in the google recipe nor priced. 2.5-flash is the recipe's chat models[0];
-  // there is NO GA pro-class Gemini chat target today, so the alias
-  // deliberately sits a capability class below the opus convention until
-  // Google ships a GA pro. Guarded by test/default-alias-liveness.test.ts.
-  gemini: 'google:gemini-2.5-flash',
+  // in the google recipe nor priced. Repointed again (#9776) when Google
+  // retired gemini-2.5-flash (2026-12-01) and named 3.5-flash-lite its
+  // replacement; 3.5-flash-lite is the recipe's chat models[0]. The alias
+  // deliberately sits a capability class below the opus convention.
+  // Guarded by test/default-alias-liveness.test.ts.
+  gemini: 'google:gemini-3.5-flash-lite',
   // `gpt` resolves DYNAMICALLY in resolveAlias (account-discovered OpenAI
   // flagship, recipe-ranked static floor) — this entry keeps the alias
   // enumerable but the value here is only the documentation floor; a pinned

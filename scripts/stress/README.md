@@ -155,7 +155,8 @@ iterations nightly and the spare capacity rotates by day, so each file still
 reaches 10 iterations within the week. When 3 iterations of every file do not
 fit 12 shards, every file runs 3 in up to 24 shards; the second 12 queue behind
 the first (`max-parallel: 12`), so the night runs longer on the same number of
-concurrent runners. Files are never dropped: what does not
+concurrent runners. Listed files take that floor before helper importers, so a
+widely imported helper never pushes a listed arm out. Files are never dropped: what does not
 fit fails the job with "race hunt over budget" and the unrun files. A red
 prints one `::error` line per failing file with its reproduce command, which
 the Test nightly-red issue carries; the response is a repair PR, never a
