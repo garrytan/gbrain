@@ -5,10 +5,11 @@ import type { Action } from '../agent-output.ts';
 import { policyFix } from './fixes.ts';
 import { sourceScopeOpts } from '../ops/context.ts';
 import { hasScope } from '../scope.ts';
-import { currentVerifiedLocalWriter, type LocalGrant } from '../persistence/identity.ts';
+import { currentVerifiedLocalWriter } from '../persistence/identity.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
-import type { SqlEngine, WriteAuthority } from '../persistence/model.ts';
+import type { WriteAuthority } from '../persistence/model.ts';
+import type { BrainEngine } from '../engine.ts';
 import { stringList } from './manifest.ts';
 import type { SharedSkillPolicy, SkillFileClass, StoredSkillFile } from './model.ts';
 import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
@@ -42,8 +43,7 @@ export async function authorizeSkillRead(ctx: OperationContext, operation: strin
   const auth = ctx.auth;
   const verified = currentVerifiedLocalWriter();
   if (!auth?.principal && verified) {
-    const [row] = await ctx.engine.executeRaw<{ revoked_at: unknown; grant_ceiling: LocalGrant }>(
-      'SELECT revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [verified.principal.id]);
+    const row = await ctx.engine.readLocalWriterRow(verified.principal.id);
     if (!verified.remote || !row || row.revoked_at != null || auth && (auth.clientId !== verified.principal.id ||
       auth.grantProjectionDegraded || auth.fenceProjectionDegraded || auth.sourceActive === false ||
       auth.effectiveSurface === 'verbs' || !hasScope(auth.scopes, 'read') ||
@@ -92,8 +92,7 @@ export async function authorizeSkillRead(ctx: OperationContext, operation: strin
     liveOperations = auth.allowedOperations == null ? row.allowed_operations : row.allowed_operations == null ? auth.allowedOperations : intersect(auth.allowedOperations, row.allowed_operations);
     grantRevision = row.grant_revision;
   } else {
-    const [row] = await ctx.engine.executeRaw<Record<string, unknown>>(
-      'SELECT * FROM access_tokens WHERE id=$1 AND revoked_at IS NULL', [auth.principal.id]);
+    const row = await ctx.engine.readAccessTokenMemberGrant(auth.principal.id, { lock: false });
     const tokenGrant = row ? grantFromTokenRow(row) : undefined;
     if (!tokenGrant || !hasScope(tokenGrant.scopes, 'read')) {
       throw opError('permission_denied', 'The shared skill reader token was revoked.',
@@ -133,24 +132,25 @@ export function assertSkillCapability(ctx: OperationContext, capability: 'skill_
       message: `This operation requires explicit ${capability} authority and an operation grant.` });
   }
 }
-export async function assertStoredSkillCapability(engine: SqlEngine, authority: WriteAuthority, capability: 'skill_editor' | 'skill_publisher', lock = false): Promise<void> {
+/** The engine members assertStoredSkillCapability reads a principal's current grant through. */
+type GrantReader = Pick<BrainEngine, 'readOAuthClientReceiptGrant' | 'readAccessTokenReceiptGrant' | 'readLocalWriterRow'>;
+export async function assertStoredSkillCapability(engine: GrantReader, authority: WriteAuthority, capability: 'skill_editor' | 'skill_publisher', lock = false): Promise<void> {
   if (!authority.remote && authority.principal.kind === 'local_cli') return;
   if (!authority.scopes.includes(capability)) {
     throw opError('permission_denied', `The accepted request lacks ${capability}.`,
       `This request was accepted without ${capability}, so it cannot publish. Ask the brain host's operator to grant ${capability} to this connection, then submit a new request.`,
       { fix: grantFix(authority.principal.kind, `Shows the grant of the principal that submitted the request; it needs ${capability}.`) });
   }
-  const suffix = lock ? ' FOR SHARE' : '';
   let scopes: string[] = [];
   if (authority.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<{ scope: string }>(`SELECT scope FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL${suffix}`, [authority.principal.id]);
-    scopes = row?.scope?.split(/\s+/) ?? [];
+    const row = await engine.readOAuthClientReceiptGrant(authority.principal.id, { lock });
+    scopes = row && row.deleted_at == null ? row.scope?.split(/\s+/) ?? [] : [];
   } else if (authority.principal.kind === 'legacy_token') {
-    const [row] = await engine.executeRaw<{ scopes: unknown }>(`SELECT scopes FROM access_tokens WHERE id=$1 AND revoked_at IS NULL${suffix}`, [authority.principal.id]);
-    scopes = normalizeTokenScopes(row?.scopes) ?? [];
+    const row = await engine.readAccessTokenReceiptGrant(authority.principal.id, { lock });
+    scopes = row && row.revoked_at == null ? normalizeTokenScopes(row.scopes) ?? [] : [];
   } else if (authority.principal.kind === 'local_stdio') {
-    const [row] = await engine.executeRaw<{ grant_ceiling: { scopes: string[] } }>(`SELECT grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid AND revoked_at IS NULL${suffix}`, [authority.principal.id]);
-    scopes = row?.grant_ceiling?.scopes ?? [];
+    const row = await engine.readLocalWriterRow(authority.principal.id, { lock });
+    scopes = row && row.revoked_at == null ? row.grant_ceiling?.scopes ?? [] : [];
   }
   if (!scopes.includes(capability) || !hasScope(scopes, capability === 'skill_publisher' ? 'admin' : 'write')) {
     throw opError('permission_denied', `The current grant lacks ${capability} or its base scope.`,
@@ -173,10 +173,9 @@ export function normalizePolicy(value: unknown): SharedSkillPolicy {
   return { version: 1, enabled: p.enabled, allow_follow: p.allow_follow, classes: classes as SkillFileClass[],
     audiences: stringList(p.audiences, 'audiences'), requirements: stringList(p.requirements, 'requirements') };
 }
-export async function readSharedSkillPolicy(engine: SqlEngine, sourceId: string, incarnation: string, legacyEnabled: boolean, lock = false): Promise<{ epoch: string; policy: SharedSkillPolicy }> {
-  const [row] = await engine.executeRaw<{ epoch: string; policy: SharedSkillPolicy }>(
-    `SELECT epoch,policy FROM shared_skill_policies WHERE source_id=$1 AND source_incarnation=$2::uuid${lock ? ' FOR SHARE' : ''}`, [sourceId, incarnation]);
-  if (row) return { epoch: row.epoch, policy: normalizePolicy(row.policy) };
+export async function readSharedSkillPolicy(engine: BrainEngine, sourceId: string, incarnation: string, legacyEnabled: boolean, lock = false): Promise<{ epoch: string; policy: SharedSkillPolicy }> {
+  const row = await engine.readSharedSkillPolicyRow(sourceId, incarnation, lock);
+  if (row) return { epoch: row.epoch, policy: normalizePolicy(row.policy as SharedSkillPolicy) };
   return legacySharedSkillPolicy(legacyEnabled);
 }
 export function legacySharedSkillPolicy(legacyEnabled: boolean): { epoch: string; policy: SharedSkillPolicy } {
@@ -195,7 +194,7 @@ export async function setSharedSkillPolicy(ctx: OperationContext, sourceId: stri
   const { initializeLocalPersistence } = await import('../persistence/page-mutations.ts');
   await initializeLocalPersistence(ctx);
   return ctx.engine.transaction(async tx => {
-    const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+    const source = await tx.readSourceMembership(sourceId, { lock: 'update' });
     if (!source || source.archived) {
       throw opError('source_changed', 'Publication requires an active source.',
         `Source ${sourceId} is archived or not registered; approve a policy for an active source.`, { fix: SOURCES_FIX });
@@ -214,12 +213,8 @@ export async function setSharedSkillPolicy(ctx: OperationContext, sourceId: stri
         { fix: policyFix(sourceId) });
     }
     const epoch = randomUUID();
-    await tx.executeRaw(`INSERT INTO shared_skill_policies(source_id,source_incarnation,epoch,policy) VALUES($1,$2::uuid,$3::uuid,$4::text::jsonb)
-      ON CONFLICT(source_id,source_incarnation) DO UPDATE SET epoch=excluded.epoch,policy=excluded.policy,updated_at=now()`,
-    [sourceId, source.incarnation, epoch, JSON.stringify(policy)]);
-    await tx.executeRaw(`INSERT INTO shared_skill_policy_audit(source_id,source_incarnation,principal_kind,principal_id,previous_epoch,epoch,policy)
-      VALUES($1,$2::uuid,$3,$4,$5,$6::uuid,$7::text::jsonb)`,
-    [sourceId, source.incarnation, authority.principal.kind, authority.principal.id, existing.epoch, epoch, JSON.stringify(policy)]);
+    await tx.writeSharedSkillPolicy({ sourceId, incarnation: source.incarnation, epoch, policy,
+      principalKind: authority.principal.kind, principalId: authority.principal.id, previousEpoch: existing.epoch });
     return { policy_epoch: epoch };
   });
 }
@@ -233,7 +228,8 @@ export async function getSharedSkillPolicy(ctx: OperationContext, sourceId: stri
       `This connection's grant does not cover source ${sourceId}. Read the policy of a granted source, or ask the brain host's operator to extend the grant.`,
       { fix: grantFix(ctx.auth?.principal?.kind ?? (ctx.remote === false ? 'local_cli' : undefined), `Shows this connection's granted sources; ${sourceId} must be among them.`) });
   }
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const membership = await ctx.engine.readSourceMembership(sourceId);
+  const source = membership && !membership.archived ? membership : null;
   if (!source) {
     throw opError('source_changed', 'The publication policy source is not active.',
       `Source ${sourceId} is archived or not registered.`, { fix: SOURCES_FIX });

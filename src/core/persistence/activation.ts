@@ -102,7 +102,7 @@ async function gitDurabilityWarnings(bindings: WorktreeBinding[]): Promise<{ war
   return warnings.length ? { warnings } : {};
 }
 interface SourceRoot { id: string; incarnation: string; root: string | null; connector: boolean; }
-const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
+export const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
   WRITER_INSPECTION_HINT);
 
 const writerStatusFix = (why: string, sourceId?: string): Action => readFix(why,

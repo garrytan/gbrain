@@ -182,7 +182,7 @@ src/core/persistence/worktree-refresh.ts	kind_compare	1
 src/core/pglite-leftovers-check.ts	kind_compare	1
 src/core/pglite-repair-consent.ts	kind_compare	1
 src/core/planner-stats.ts	kind_compare	6
-src/core/readiness.ts	kind_compare	5
+src/core/readiness.ts	kind_compare	4
 src/core/remediation/run.ts	kind_compare	2
 src/core/repair/missing-tables.ts	kind_compare	2
 src/core/schema-migrations/helpers.ts	kind_compare	3

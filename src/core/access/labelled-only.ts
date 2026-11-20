@@ -38,7 +38,7 @@ export async function setMemberLabelledOnly(engine: BrainEngine, rawId: unknown,
   }
   if (on && await ownerMemberId(engine) === member.id) throw labelledOnlyOwnerError(member.id, 'grant');
   if (member.labelled_only === on) return { member, changed: false };
-  await engine.executeRaw('UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, on]);
+  await engine.setAccessMemberLabelledOnly(member.id, on);
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
