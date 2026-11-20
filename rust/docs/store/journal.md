@@ -54,9 +54,9 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readFenceHoldFiles(sourceIds, slugs)` (same file) | page reads | One `readPageSnapshot` per source and slug; `database_only` when the page records no `source_path`. |
 | `readReasonPurgeTombstones(sourceId)`, `readSourcePurgeEpoch(sourceId)` | `[]`; `0` for a known source, `null` otherwise | The store keeps no change reasons and purges no facts, so no (commit, path) is tombstoned and a source's purge epoch stays 0 (`getSource` tells a known source). On PGLite and Postgres the reads are the statements `reason-trailers.ts` `scanSyncReasons` and `cachedSyncReasonScan` ran through `executeRaw` (`src/core/engine-sql/sync-reason-reads.ts`). |
 | `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
-| `readOAuthClientWriteGrant(clientId, opts?)` | `null` | The store keeps no OAuth clients (its writers are `local_cli` and `local_stdio`), so a write owned by one finds no live grant and `authorizeWrite` refuses `permission_denied`, as a Postgres or PGLite brain without that client does. |
-| `readAccessTokenWriteGrant(tokenId, opts?)` | `null` | The store keeps no legacy access tokens; same answer and refusal as above. |
-| `shareLockWriteCredential(kind, id)` | no-op | No credential row exists to hold; a missing row locks nothing on Postgres either. |
+| `readOAuthClientWriteGrant(clientId, opts?)` | `null` | The store keeps OAuth clients ([oauth-clients.md](oauth-clients.md)), but this member does not read them yet. A write owned by a client therefore finds no live grant and `authorizeWrite` refuses `permission_denied`, where Postgres and PGLite admit a write from a live client whose grant allows it. |
+| `readAccessTokenWriteGrant(tokenId, opts?)` | `null` | The store keeps access tokens ([access-tokens.md](access-tokens.md)), but this member does not read them yet; same answer and refusal as above. |
+| `shareLockWriteCredential(kind, id)` | no-op | The grant reads above read no credential row, so there is nothing to hold; the store also runs one write transaction at a time. |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
 (SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):

@@ -647,7 +647,7 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: a revoked token or a deleted client must permit nothing, and one credential's list never answers for
-  // another. The Rust store keeps no tokens or clients (null above), so the token write stops on the raw_sql refusal.
+  // another. The Rust store binds no member to its tokens or clients yet (null above), so the token write stops on the raw_sql refusal.
   parityTest('readMayActFor reads only the live row it names: a revoked token, a deleted client and another credential permit nothing', { methods: ['readMayActFor'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, may_act_for, revoked_at) VALUES
@@ -885,7 +885,7 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a revoked token and a deleted client never answer; a token name matches only tokens with exactly that
   // name (never a client's name, another case or an injected predicate); a member binding answers only that member's
-  // credentials. The Rust store keeps no tokens or clients (empty above), so the token write stops on the raw_sql refusal.
+  // credentials. The Rust store binds no member to its tokens or clients yet (empty above), so the token write stops on the raw_sql refusal.
   parityTest('readAccessCredentials answers only live credentials with the exact token name or member binding', { methods: ['readAccessCredentials'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
@@ -943,8 +943,8 @@ describe('engine parity: write misc', () => {
     });
 
   // Leak case (access checks): a revoke by name revokes only live tokens with exactly that name, a revoke by id only
-  // that live token, a client delete only that client id; a repeat finds nothing. The Rust store keeps no tokens or
-  // clients (empty above), so the token write stops on the raw_sql refusal.
+  // that live token, a client delete only that client id; a repeat finds nothing. The Rust store binds no member to its
+  // tokens or clients yet (empty above), so the token write stops on the raw_sql refusal.
   parityTest('revoking a token by name or id and deleting an OAuth client touch only the exact live credential',
     { methods: ['revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient'] }, async (engine, backend) => {
       const write = await engine.executeRaw(

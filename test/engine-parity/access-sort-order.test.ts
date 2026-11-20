@@ -6,7 +6,10 @@
  *    one prefix and several), listAppliedPolicyRevisions (by source id), readFolderAccess coverage (by source id,
  *    prefix), readAccessMembers (by id, each member's groups by group id), readLiveMember and readAudiencePrincipals
  *    (groups by group id), listAudienceAccessMembers (by id), readAccessGroups (by id, each group's members by member
- *    id) and listPagesNamingReader (by source id, slug, at most 51) return the same order on every engine arm (PGLite
+ *    id), listPagesNamingReader (by source id, slug, at most 51), listActiveAccessMembers and the serves view's
+ *    enabled members (by id), and the raw-SQL caller copies (a credential's verified member groups, an attested
+ *    actor's linked groups, labelled-only member ids, doctor's audience members, open pages' source fallback) return
+ *    the same order on every engine arm (PGLite
  *    always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1): byte order, as PGLite and the Rust
  *    store sort. A rulebook digest does not depend on the order the database returns rules in, so an identical
  *    rulebook proposed again in another order is unchanged on every arm, with no new revision and nothing held.
@@ -24,6 +27,14 @@ import { rulebookDigest, type FolderRule } from '../../src/core/access/folder-ru
 import { listRevisions, policyStatus, proposeRevision } from '../../src/core/access/policy.ts';
 import type { AccessMemberInsert } from '../../src/core/engine-sql/access-members.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { brainServes } from '../../src/core/access/serves.ts';
+import { tokenMemberBinding } from '../../src/core/access/token-binding.ts';
+import { linkedMember } from '../../src/core/access/actor.ts';
+import { labelledOnlyMemberIds } from '../../src/core/access/labelled-only.ts';
+import { openPages } from '../../src/core/access/open-pages.ts';
+import { accessLineageEntry } from '../../src/commands/doctor/checks/access-lineage.ts';
+import type { DoctorContext } from '../../src/commands/doctor/context.ts';
+import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -121,6 +132,39 @@ describe('access reads sort text keys by byte', () => {
     }
     const out = (await engine.listPagesNamingReader('member:alice-example')).map(p => `${p.source_id}:${p.slug}`);
     expect(out).toEqual(['a-z', 'ab'].flatMap(s => BYTES.map(id => `${s}:${id}/p`)));
+    return out;
+  });
+
+  parityTest('listActiveAccessMembers and the serves view list the enabled members by byte id', {
+    methods: ['insertAccessMember', 'listActiveAccessMembers', 'getConfig'],
+  }, async (engine) => {
+    for (const id of MIXED) await engine.insertAccessMember(member(id));
+    const out = { active: await engine.listActiveAccessMembers(), serves: (await brainServes(engine)).enabled_members };
+    expect(out).toEqual({ active: BYTES, serves: BYTES });
+    return out;
+  });
+
+  // These callers read through raw SQL, so a Rust brain stops on the typed raw_sql refusal.
+  parityTest('the raw-SQL caller copies list member groups, member ids and sources by byte', {
+    methods: ['executeRaw', 'insertAccessMember'], requires: 'raw_sql',
+  }, async (engine, backend) => {
+    for (const source of SOURCES) await createSource(engine, backend, source);
+    for (const id of MIXED) await engine.insertAccessMember(member(id, { groups: GROUPS }));
+    for (const id of MIXED) await engine.insertAccessMember(member(`x${id}`, { kind: 'audience' }));
+    await engine.executeRaw('UPDATE access_members SET labelled_only = true WHERE id = ANY($1::text[])', [MIXED]);
+    await engine.executeRaw("INSERT INTO access_member_links (system, external_id, member_id) VALUES ('qm', 'ext-1', 'ab')");
+    const checks = await accessLineageEntry.run({ engine } as unknown as DoctorContext) as Array<{ name: string; details?: { members?: string[] } }>;
+    const out = {
+      verified: (await tokenMemberBinding(sqlQueryForEngine(engine), { member_id: 'ab' }, null)).member?.groups,
+      linked: (await linkedMember(engine, 'qm', 'ext-1'))?.groups,
+      labelledOnly: await labelledOnlyMemberIds(engine),
+      audience: checks.find(c => c.name === 'access_audience_members')?.details?.members,
+      sources: (await openPages(engine)).sources,
+    };
+    expect(out).toEqual({
+      verified: GROUP_BYTES, linked: GROUP_BYTES, labelledOnly: BYTES, audience: BYTES.map(id => `x${id}`),
+      sources: [...SOURCES, 'default'].sort(),
+    });
     return out;
   });
 });

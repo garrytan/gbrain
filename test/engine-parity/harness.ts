@@ -128,7 +128,7 @@ async function openArm(backend: ParityBackend): Promise<ParityArm> {
         unconnected: () => ({ engine: new PGLiteEngine(), config: { engine: 'pglite' } }) };
     }
     case 'postgres': {
-      const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+      const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 4, { collation: 'en_US' });
       return { backend, engine, close,
         unconnected: () => ({ engine: new PostgresEngine(), // An instance pool, never the module-level singleton other code shares.
         config: { engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig }) };

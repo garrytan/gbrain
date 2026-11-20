@@ -300,8 +300,8 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.writeCredentialReadsUnscoped(target, true))).toBe('engine_capability_missing');
     // bindCredential (gbrain auth rescope --member none) stops at the locked read, so applyAttestSources never runs.
     expect(await code(() => bindCredential(engine, target, { member: null }))).toBe('engine_capability_missing');
-    // gbrain access member add --bind-token looks the token up first. The store keeps no tokens, so the lookup finds none
-    // and the command refuses before it writes.
+    // gbrain access member add --bind-token looks the token up first. The fresh store has no token 'laptop', so the lookup
+    // finds none and the command refuses before it writes.
     expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('invalid_params');
     expect(await getMember(engine, 'alice-example')).toBeNull();
     expect(await engine.getConfig('access.restrictions_present')).toBeNull();
@@ -533,7 +533,7 @@ describe('access member reads on a Rust brain', () => {
     expect(raw).toEqual([]);
   });
 
-  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the store keeps no tokens or clients', async () => {
+  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the fresh store has no token or client', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);

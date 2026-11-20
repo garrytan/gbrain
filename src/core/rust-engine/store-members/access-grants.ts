@@ -2,7 +2,7 @@
  * The access-grant reads (engine-sql/access-grants.ts) and the request-id lookup of the receipt operations, on the
  * Rust store (rust/docs/store/persistence.md, "Access grants").
  *
- * The store keeps no OAuth clients and no access tokens, so their grant reads refuse with engine_capability_missing
+ * The store keeps OAuth clients and access tokens, but these grant reads do not read them yet, so they refuse with engine_capability_missing
  * rather than answer "no row": a caller never mistakes an engine that cannot read a grant for a grant that is gone.
  * The local writer grant comes from the writer registration the store keeps; the store runs one write transaction at
  * a time, so the FOR SHARE the SQL engines take changes nothing here. The store keeps no shared-skill state table:
@@ -18,8 +18,8 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { readLocalWriterRow } from './persistence.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 
-const NO_CLIENTS = 'the store keeps no OAuth clients';
-const NO_TOKENS = 'the store keeps no access tokens';
+const NO_CLIENTS = 'a grant read of the store\'s OAuth clients';
+const NO_TOKENS = 'a grant read of the store\'s access tokens';
 
 export const readOAuthClientReceiptGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], ReceiptClientGrant | undefined> =
   async () => refuseMember('readOAuthClientReceiptGrant', NO_CLIENTS);

@@ -16,11 +16,11 @@ import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 
-/** Names requests and local writers; an OAuth client or legacy token id refuses (the store keeps neither table). */
+/** Names requests and local writers; an OAuth client or legacy token id refuses (not read from the store's clients and tokens yet). */
 export const readWriteAttributionNames: StoreMember<[ids: WriteAttributionNameIds], WriteAttributionNames> = async (brain, ids) => {
   const member = 'readWriteAttributionNames';
-  if (ids.oauthClientIds.length) refuseMember(member, 'OAuth client names: the store keeps no oauth_clients table');
-  if (ids.legacyTokenIds.length) refuseMember(member, 'legacy token names: the store keeps no access_tokens table');
+  if (ids.oauthClientIds.length) refuseMember(member, 'OAuth client names: not read from the store\'s OAuth clients yet');
+  if (ids.legacyTokenIds.length) refuseMember(member, 'legacy token names: not read from the store\'s access tokens yet');
   const [requests, writers] = await Promise.all([
     ids.requestIds.length
       ? storeCall({ member }, () => brain.readWriteRequestAttributions([...ids.requestIds])) as Promise<WriteRequestAttributionRow[]> : [],

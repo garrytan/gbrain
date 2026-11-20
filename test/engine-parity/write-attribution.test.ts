@@ -14,8 +14,8 @@
  *    engine refuses, and test/write-attribution-read.test.ts runs on PGLite and Postgres only.
  *  - Seam: rows are written through typed members inside transactions whose write settings name the request and
  *    principal, as the persistence scope sets them. Ids and times differ between arms, so rows are compared by label
- *    and times by presence. The Rust store keeps no oauth_clients or access_tokens table: a name read for an OAuth
- *    client or legacy token stops there on the typed refusal (rust/docs/store/write_attribution.md).
+ *    and times by presence. The Rust store keeps OAuth clients and access tokens but does not read their names yet:
+ *    a name read for an OAuth client or legacy token stops there on the typed refusal (rust/docs/store/write_attribution.md).
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';

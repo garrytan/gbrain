@@ -473,7 +473,7 @@ export async function verifiedMember(sql: SqlQuery, memberId: unknown, engine?: 
   if (memberId == null) return null;
   if (typeof memberId !== 'string' || !ACCESS_ID_RE.test(memberId)) throw new MemberBindingRefused(String(memberId), 'malformed');
   const [row] = engine ? await engine.readAccessMembers({ id: memberId }) : await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
-    COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+    COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
     FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
     WHERE m.id = ${memberId} GROUP BY m.id`;
   if (!row) throw new MemberBindingRefused(memberId, 'missing');

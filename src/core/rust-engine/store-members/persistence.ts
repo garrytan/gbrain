@@ -160,12 +160,12 @@ export const countOutstandingBySource: StoreMember<[principalKind: string, princ
 export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 
 /**
- * The Rust store keeps no OAuth clients or legacy access tokens (its writers are local_cli and local_stdio), so a
- * write owned by either finds no live grant row, as a Postgres or PGLite brain without that credential does.
+ * The Rust store keeps OAuth clients and access tokens, but these grant reads do not read them yet, so a write owned
+ * by either finds no live grant row and refuses permission_denied (rust/docs/store/journal.md).
  */
 export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
 export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
-/** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
+/** The grant reads above read no credential row, so the lock holds nothing (the store runs one write at a time). */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
