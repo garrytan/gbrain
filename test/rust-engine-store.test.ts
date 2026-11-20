@@ -142,6 +142,19 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
+  withAddon('a transaction setting the engine does not keep refuses before any work', async () => {
+    const { engine } = await open();
+    // gbrain.topology_change is read by a PGLite guard trigger the store does not run: setting it would be a guard
+    // nobody enforces, so both setting members refuse it (transaction-settings parity covers the kept names).
+    for (const run of [
+      (tx: RustEngine): Promise<unknown> => tx.readTransactionSettings(['gbrain.topology_change']),
+      (tx: RustEngine): Promise<unknown> => tx.applyTransactionSettings(['gbrain.topology_change'], ['true']),
+    ]) {
+      const refusal = await engine.transaction((tx) => run(tx as RustEngine)).then(() => null, (error: unknown) => error);
+      expect(refusal).toMatchObject({ code: 'engine_capability_missing', reason: 'transactions' });
+    }
+  });
+
   withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
