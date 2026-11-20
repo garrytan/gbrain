@@ -31,6 +31,7 @@ import { slugifyPath } from '../sync.ts';
 import { nextSlackDay, slackAlignToDay, slackDayKey, slackDayStartMs } from '../slack/render.ts';
 import { IMESSAGE_THREADS_LIMIT, helperNotRunning, imessageHelper, type IMessageHelper } from '../apple/helper-client.ts';
 import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessageDay, shownMessages } from './render.ts';
+import { connectorSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 
 export interface IMessageChatState {
@@ -113,6 +114,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   };
   // Always the database: message text never reaches a directory, a commit or a push, whatever the brain has.
   const ctx: ConnectorPublishCtx = { engine, sourceId, managed, summary, label: 'iMessage', tag: 'imessage', record: 'database', dir: null, gated: true };
+  const ownerStamp = await connectorSpeakerOwnerStamp(engine, sourceId);
   const handle = async (key: string, work: () => Promise<void>, slug: string | null): Promise<boolean> => {
     try { await work(); holds.succeed(key); return true; } catch (error) {
       if (stopsRun(error)) throw error;
@@ -126,7 +128,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     const relPath = imessagePagePath(chatKey, day);
     await publishConnectorPage(ctx, {
       relPath,
-      markdown: connectorRender(renderIMessageDay({ thread, chatKey, day, timezone: cfg.timezone, messages }), { path: relPath, imessage_chat: chatKey }),
+      markdown: connectorRender(renderIMessageDay({ thread, chatKey, day, timezone: cfg.timezone, messages, ...(ownerStamp ? { owner: ownerStamp } : {}) }), { path: relPath, imessage_chat: chatKey }),
       commitMessage: `imessage(${sourceId}): ${chatKey} ${day}`,
       privateMessage: `imessage(${sourceId}): ${chatKey} ${day} is private; database only`,
       retireReason: 'the iMessage day changed on the Mac',

@@ -15,6 +15,7 @@ import { renderAttachmentInspection, threadAttachmentReceipts } from './attachme
 
 import { emailCitation } from '../output/scaffold.ts';
 import { neutralizeOutsideText } from '../outside-content.ts';
+import { speakerOwnerFromTurns, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { DEFAULT_CONTACTS_DIR, type CalendarEventData, type ContactData, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 
 // ── Noise + signature rules (recipes/email-to-brain.md, now code) ───────────
@@ -270,7 +271,13 @@ export interface RenderedPage {
  * Render one Gmail thread as a page. Returns null for pure noise (every
  * message from a noise sender) — those threads never materialize.
  */
-export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
+/**
+ * GST-3216: the account's own messages are the ones Gmail filed as SENT or that came from one of the account's
+ * addresses; `addresses` holds them lower-cased (the account and its send-as aliases).
+ */
+export interface GmailOwner { stamp: SpeakerOwnerStamp; addresses: ReadonlySet<string> }
+
+export function renderThreadPage(thread: GmailThreadData, owner?: GmailOwner): RenderedPage | null {
   if (thread.messages.length === 0) return null;
   const nonNoise = thread.messages.filter((m) => !isNoiseSender(m.fromAddress));
   if (nonNoise.length === 0) return null;
@@ -308,8 +315,14 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     `senders: ${yamlList([...senders].sort())}`,
     `labels: ${yamlList([...new Set(thread.messages.flatMap((m) => m.labelIds))].sort())}`,
     ...(signature ? [`noise: signature-request`] : []),
-    '---',
   ];
+  if (owner) {
+    const turns = thread.messages.map((m) => ({ label: m.from || m.fromAddress, sent: m.labelIds.includes('SENT'),
+      owner: m.labelIds.includes('SENT') || owner.addresses.has(m.fromAddress.toLowerCase()) }));
+    const marker = speakerOwnerFromTurns(turns, turns.every((t) => !t.owner || t.sent) ? 'gmail_sent' : 'provider_account', owner.stamp.member);
+    if (marker) fm.push(`speaker_owner: ${JSON.stringify(marker)}`);
+  }
+  fm.push('---');
 
   const body: string[] = ['', neutralizeOutsideText(`# ${subject}`), ''];
   for (const m of thread.messages) {
