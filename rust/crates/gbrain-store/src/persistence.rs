@@ -56,6 +56,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod checkpoint_rows;
 mod effect_scans;
 mod effect_worker;
 mod effects;

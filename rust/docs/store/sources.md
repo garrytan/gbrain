@@ -21,6 +21,9 @@ first advance; `getSource`, `listSourceRecords` and the notifier reads return th
 | `brain.advanceSourceCommit(id, commit, setNewest, newestContentAt)` | nothing; one write that sets `last_commit` and `last_sync_at` (the process clock), and `newest_content_at` when `setNewest` is true (`null` clears it); archived sources advance too, and an unknown source changes nothing | `advanceSourceCommit` (the sync anchor) |
 | `brain.readSourceLastCommit(id)` | the source's `last_commit`, archived sources included, or `null` before a sync and for a missing source | `readSourceLastCommit` (the resident notifier's `lastCommit`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
+| `brain.holdPageEmbedding(pageId, reason)` | `null`; sets the page's embedding hold to `{ state: 'held', reason }`, replacing a held reason; an unknown page id refuses `page_not_found`; a hard page delete drops the hold | `holdPageEmbedding` (page-embedding-budget.ts) |
+| `brain.readReasonPurgeTombstones(sourceId, pair)` | `{ commit_sha, path }[]`, the source's purged change-reason pairs by commit then path, or only `pair` (when not `null`) if it is stored | `readReasonPurgeTombstones` (`reason_purge_tombstones`) |
+| `brain.writeReasonPurgeTombstones(sourceId, pairs)` | `number`, the pairs added; a stored or repeated pair adds nothing; an unknown source refuses `source_not_found` and stores nothing; a source delete drops its pairs | `writeReasonPurgeTombstones` (facts purge) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
@@ -51,6 +54,14 @@ The source members below behave differently on the Rust engine. Each difference 
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
+- The store keeps only the `state` and `reason` of a page's `page_embedding_budget` row
+  (`holdPageEmbedding`, key tag `h`). The spend columns (signature, spent, reserved, cap) have no
+  record: the embedding plan that writes them still runs raw SQL and refuses on this engine.
+  `readPageSizeRows` reads the kept hold, so it reports the same `state` and `reason` as the SQL
+  engines and lists a held page of any size.
+- `readReasonPurgeTombstones` sorts pairs by commit, then path, in byte order. The SQL engines
+  sort them by the database collation. The callers put the pairs in a set or a map, so no caller
+  reaches this difference.
 - Restore-target and connector status sort sources by id in byte order on every engine.
 - `insertSource` refuses an id outside `[a-z0-9-]{1,32}` with `invalid_argument`. The SQL engines
   have no check on the id column, so they accept such an id. `sources add` validates the id

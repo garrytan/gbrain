@@ -181,16 +181,51 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
 | `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+| `brain.purgeStaleCheckpoints(ttlDays)` | how many parents it deleted: each `d 0x02` parent (housekeeping turns included) stamped more than `ttlDays` days ago that no exemption keeps, with its paths. The exemptions read the rows as they were before the purge. A `ttlDays` that is not a finite number refuses with `invalid_input` | `purgeStaleCheckpoints` (the cycle's purge phase, `bookkeeping-gc.ts`) |
 
 Differences from the SQL engines:
 
 - The SQL read names no order; the store lists the paths in path order. `resumeFilter` and every caller
   use the keys as a set.
-- `purgeStaleCheckpoints` (the cycle's 7-day purge) is still raw SQL, which this engine refuses, so a
-  checkpoint that no run clears stays until an op clears it.
-- The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
-  persistence receipts) are still raw SQL. Their rows are not in this store.
+- The purge keeps the exemptions whose data the store has: the ops never purged, the sync delete
+  tombstone and identity downgrade while their page has the recorded `deleted_at` (read as
+  `::timestamptz` reads the writers' text: ISO with `Z`, or the Postgres jsonb form with the
+  session's offset, such as `2026-11-19T09:05:00.123456-08:00`), the rows kept
+  while their source incarnation lives, and the managed sync run and manifest rules. The store keeps
+  no `source_ingestion_receipts`, so the incomplete-receipt exemption never holds. A recorded time or
+  hold count the store cannot read keeps the row, where Postgres fails the whole purge (and the
+  caller answers 0).
+- The sync holds, their summary and the managed sync pass row are whole rows written through the
+  checkpoint row methods below. The other `op_checkpoints` writers (sync delete tombstones, sync
+  identity downgrades, fence repair, the persistence receipts) are still raw SQL. Their rows are
+  not in this store, so the store's unit test is the only check of the tombstone and downgrade
+  exemptions on this engine.
 
+## Checkpoint rows
+
+A whole `op_checkpoints` row, read and written as one JSON value (checkpoint_rows.rs). The rows use
+the op checkpoint keys (`d 0x02 <op> 0x00 <fingerprint>`), so the purge above and `deleteOpCheckpoint`
+see them. The TypeScript members in `src/core/rust-engine/store-members/sync-hold-store.ts` build the
+sync hold, hold summary and managed sync pass members on these methods. An op or fingerprint with a
+NUL byte reads nothing and refuses a write with `invalid_input`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readOpCheckpointRow(op, fingerprint)` | `{ fingerprint, completed_keys, updated_at }`, or `null` when no row exists | `readGitHoldRow`, `readSyncPassRow`, `countGitHolds` |
+| `brain.putOpCheckpointRow(op, fingerprint, completedKeys)` | the row created or replaced, stamped now; its paths stay | `writeGitHoldRow`, `lockGitHoldSummary` (a new summary), `writeSyncPassRow` (a new row) |
+| `brain.replaceOpCheckpointRow(op, fingerprint, expected, completedKeys)` | `true` when the row held `expected` and now holds `completedKeys`, stamped now; `false`, writing nothing, when the row is gone or holds anything else | `replaceGitHoldRow`, `adjustGitHoldSummary`, `writeSyncPassRow` (an existing row) |
+| `brain.listOpCheckpointRows(op, fingerprintPrefix)` | the op's rows whose fingerprint starts with the prefix (every row for `""`), in fingerprint byte order | `readGitHoldRecords`, `readHeldPageRows`, `readLiveSyncPassRows` |
+| `brain.readPageRevisions(ids)` | `{ id, revision }` of each listed page, deleted or not, once each in id order; an unknown or negative id answers nothing | the page join of `readHeldPageRows` |
+
+Differences from the SQL engines:
+
+- The SQL members change a row inside one statement. The TypeScript members read the row, then
+  write it with `replaceOpCheckpointRow`, which lands only on the row they read. The summary
+  adjustment retries up to 8 times and then throws, where Postgres waits on the row lock.
+- `lockGitHoldSummary` takes no lock: it creates a missing summary or re-stamps an existing one.
+  Two concurrent hold writes of one path are not serialized; the summary counts stay right because
+  each adjustment is a compare-and-replace.
+- `read_at` of a pass row is the process clock at the read; the SQL engines use the database clock.
 ## Commit notifier
 
 The resident commit notifier's host lease, host source list, per-source rows and freshness reads

@@ -110,6 +110,12 @@ pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
+/// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
+/// `reason_purge_tombstones`, `y source \0 commit \0 path`.
+pub const REASON_TOMBSTONE: u8 = b'y';
+/// Family `embedding_holds` (`embedding_holds.rs`): a page's `page_embedding_budget` state and
+/// reason, `h page_id`.
+pub const EMBEDDING_HOLD: u8 = b'h';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
