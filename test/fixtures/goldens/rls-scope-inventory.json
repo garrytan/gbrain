@@ -353,6 +353,17 @@
         ],
         "flagOnScopes": []
       },
+      "countBaselinedSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countChunklessPagesWithContent#default": {
         "flagOffLanes": [
           "pool"
@@ -2255,6 +2266,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasBaselineEvent#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "hasClaimableWrite#default": {
         "flagOffLanes": [
           "pool"
@@ -2322,6 +2344,28 @@
         "flagOnScopes": []
       },
       "insertAccessPolicyRevision#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "insertBeliefEvents#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "insertBeliefRedaction#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3654,6 +3698,17 @@
         ],
         "flagOnScopes": []
       },
+      "listPendingBaselineSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPendingSegmentedProjections#default": {
         "flagOffLanes": [
           "pool"
@@ -3745,6 +3800,17 @@
         "flagOnScopes": [
           "src-a,src-b"
         ]
+      },
+      "listPurgedFingerprints#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "listReadableFileRows#all": {
         "flagOffLanes": [
@@ -4896,6 +4962,28 @@
         "flagOnScopes": []
       },
       "readAudiencePrincipals#members-and-groups": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readBeliefCoverage#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readBeliefRedactions#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6197,6 +6285,17 @@
         ],
         "flagOnScopes": []
       },
+      "recordBeliefCommitMarks#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "recordFailureTombstone#default": {
         "flagOffLanes": [
           "pool"
@@ -6264,6 +6363,17 @@
         "flagOnScopes": []
       },
       "refreshPageBody#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "releaseBeliefRedactions#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7739,6 +7849,7 @@
         "convertLegacyAccessTokenGrant": "none",
         "cosinesByChunkIds": "none",
         "countAtomFacts": "none",
+        "countBaselinedSlugs": "none",
         "countBrainLivePages": "none",
         "countChunkVectorCoverage": "none",
         "countChunklessPagesWithContent": "direct",
@@ -7952,6 +8063,7 @@
         "getWorktreeBinding": "none",
         "getWriteGateHoldRow": "none",
         "hasAccessPolicyState": "none",
+        "hasBaselineEvent": "none",
         "hasClaimableWrite": "none",
         "hasCodeEdgesSymbol": "none",
         "hasCompanyBrainReceipt": "none",
@@ -7979,6 +8091,8 @@
         "insertAccessMigration": "none",
         "insertAccessPolicyRevision": "none",
         "insertAccessToken": "none",
+        "insertBeliefEvents": "none",
+        "insertBeliefRedaction": "none",
         "insertDecideCalibration": "none",
         "insertDecideReceipts": "none",
         "insertDecideSpend": "none",
@@ -8144,6 +8258,7 @@
         "listPages": "direct",
         "listPagesNamingReader": "none",
         "listPagesTitledIn": "none",
+        "listPendingBaselineSlugs": "none",
         "listPendingContradictions": "none",
         "listPendingSegmentedProjections": "none",
         "listPinnedQuestions": "none",
@@ -8151,6 +8266,7 @@
         "listPoolUnbackedKeys": "none",
         "listPrefixSampledPages": "direct",
         "listPrivateQueueHealth": "none",
+        "listPurgedFingerprints": "none",
         "listQualifiedSymbolNames": "none",
         "listQueueWedgeCounts": "none",
         "listReadableFileRows": "none",
@@ -8345,7 +8461,9 @@
         "readAdmittedPageRefs": "none",
         "readAgentClientSpend": "none",
         "readAudiencePrincipals": "none",
+        "readBeliefCoverage": "none",
         "readBeliefHistoryRows": "none",
+        "readBeliefRedactions": "none",
         "readBrainMaturity": "none",
         "readCallerPageAccess": "none",
         "readCanonicalTwin": "none",
@@ -8554,6 +8672,7 @@
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordAccessMigrationPhase": "none",
+        "recordBeliefCommitMarks": "none",
         "recordFailureTombstone": "none",
         "recordHeldGenerationRow": "none",
         "recordNotifierSyncerHost": "none",
@@ -8570,6 +8689,7 @@
         "registerBeforeDisconnect": "none",
         "relationalChainHop": "none",
         "relationalFanout": "none",
+        "releaseBeliefRedactions": "none",
         "releaseCycleLock": "none",
         "releaseNotifierLease": "none",
         "releasePageEmbeddingLease": "none",
