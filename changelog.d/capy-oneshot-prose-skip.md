@@ -1,5 +1,0 @@
-**A dream synthesis model that answers a routine transcript in prose instead of the skip JSON is asked once for the JSON, so the skip is recorded and the transcript isn't paid for again every cycle (#9648).**
-
-### Fixed
-- When the oneshot synthesize call's answer contains no JSON at all, gbrain sends one follow-up turn asking for the JSON object the system message requires. A skip in that answer is banked like any other oneshot skip. Before, the prose answer fell through to the agentic loop, which also ended without a write, so the job dead-lettered under `require_writes` and the next cycle synthesized the same transcript again. Reported by @andreineacsu: about 1.2% of oneshot jobs over 7 days, with one transcript dying 4 times in 25 hours.
-- Answers that attempted JSON (truncated or malformed) and answers that stopped for length or refusal are not re-asked, and both calls share the original oneshot time budget. A full rate-lease bucket at the re-ask keeps the first answer instead of requeueing a job that already paid for a call.

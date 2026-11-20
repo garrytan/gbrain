@@ -2,7 +2,7 @@
  * GST-3064 (write side): a remote put_page never edits or deletes a private Facts row, the brain owner's included, and
  * the owner changes private rows remotely by naming them: forget_fact deletes one, a put_page that adds a row adds one.
  *
- * 1. Protects (R94): every view that hides a page's private rows (known_as_of, a declared room, a member, an unbound
+ * 1. Protects (R94): every view that hides a page's private rows (a member's known_as_of, a declared room, a member, an unbound
  *    token, an agent job, fetch's paged read view, the markdown view with a holders list), written back by the owner with
  *    the revision it returned, keeps every private row. The owner's client and token find a private fact's id with
  *    recall, forget it, and add its replacement as a new private row: get_page shows the old row struck and the new one,
@@ -141,7 +141,7 @@ for (const kind of testBackends()) {
       const head = '---\ntype: note\ntitle: Edit Example\nvalid_from: 2026-01-01\n---\n';
       const fromBody = (o: Record<string, unknown>) => typeof o.content === 'string' ? o.content : head + String(o.compiled_truth ?? '') + (o.timeline ? '\n\n---\n\n' + String(o.timeline) : '');
       const filtered: Array<[string, Shape, (slug: string) => Promise<{ text: string; revision: string }>]> = [
-        ['known_as_of', 'small', async slug => { await Bun.sleep(5); const o = JSON.parse(await call('ownerC', 'get_page', { slug, known_as_of: new Date().toISOString() })); return { text: fromBody(o), revision: o.revision }; }],
+        ['known_as_of as a member', 'small', async slug => { await Bun.sleep(5); const o = JSON.parse(await call('bobW', 'get_page', { slug, known_as_of: new Date().toISOString() })); return { text: fromBody(o), revision: o.revision }; }],
         ['as_of in a room', 'small', async slug => { const o = JSON.parse(await call('ownerC', 'get_page', { slug, as_of: '2099-01-01', ...room })); return { text: fromBody(o), revision: o.revision }; }],
         ['get_page in a room', 'small', async slug => { const o = JSON.parse(await call('ownerC', 'get_page', { slug, include_content: true, body: 'full', ...room })); return { text: o.content, revision: o.revision }; }],
         ['member', 'small', slug => read('bobW', slug, 'content')],
@@ -164,6 +164,13 @@ for (const kind of testBackends()) {
         const after = await stored(slug);
         expect({ name, edited: after.includes('Edit world fact, edited'), after: rows(after) }).toEqual({ name, edited: true, after: KEPT_ALL });
       }
+      const slug = await seed('small');
+      await Bun.sleep(5);
+      const owner = JSON.parse(await call('ownerC', 'get_page', { slug, known_as_of: new Date().toISOString() }));
+      expect({ ownerKnownAsOf: rows(fromBody(owner)) }).toEqual({ ownerKnownAsOf: KEPT_ALL });
+      await put('ownerC', slug, fromBody(owner).replace('Edit world fact', 'Edit world fact, edited'), owner.revision);
+      const after = await stored(slug);
+      expect({ edited: after.includes('Edit world fact, edited'), after: rows(after) }).toEqual({ edited: true, after: KEPT_ALL });
     }, 1_800_000);
 
     test('the owner\'s client and token forget a private fact and add its replacement as a new private row', async () => {
