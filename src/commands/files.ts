@@ -496,7 +496,7 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
 
 async function verifyFiles(engine: BrainEngine) {
   const sql = sqlQueryForEngine(engine);
-  const rows = await sql`SELECT * FROM files ORDER BY storage_path LIMIT 1000`;
+  const rows = await sql`SELECT * FROM files ORDER BY storage_path COLLATE "C" LIMIT 1000`;
 
   if (rows.length === 0) {
     console.log('No files to verify.');

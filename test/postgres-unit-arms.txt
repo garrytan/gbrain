@@ -160,6 +160,7 @@ test/engine-parity/cli-reads-import.test.ts
 test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/collate-aggregated-lists.test.ts
+test/engine-parity/collate-command-listings.test.ts
 test/engine-parity/collate-ontology-config.test.ts
 test/engine-parity/collate-slug-sources.test.ts
 test/engine-parity/config-ingest.test.ts

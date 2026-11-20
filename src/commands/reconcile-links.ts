@@ -118,7 +118,7 @@ export async function runReconcileLinks(
   // so filter at call time via page_kind. Not using getAllSlugs because we
   // also need compiled_truth + timeline for extractCodeRefs.
   const mdSlugs = (await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug`,
+    `SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`,
     [sourceId],
   )).map(r => r.slug);
 
