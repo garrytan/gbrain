@@ -933,6 +933,7 @@ src/core/schema-migrations/v245-page-search-vector-bounded-timeline.ts	execute_r
 src/core/schema-migrations/v275-rls-backfill-unguarded-tables.ts	execute_raw	4
 src/core/schema-migrations/v281-derived-state-maintainers-fail-closed.ts	execute_raw	1
 src/core/schema-migrations/v302-link-transitions-source.ts	execute_raw	5
+src/core/schema-migrations/v330-fact-fingerprint-v3.ts	execute_raw	1	names the fact and take guards another role owns whose body is not the one v330 installs (ember ruling A); the catalog read has no engine method, and PGLite answers it empty
 src/core/schema-missing-tables.ts	execute_raw	1
 src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1

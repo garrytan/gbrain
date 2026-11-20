@@ -4,6 +4,19 @@ import { pgliteLowerSql } from '../pg-fold.ts';
 import { FACT_INSERT_GUARD_FUNCTION_SQL } from '../facts/insert-guard-schema.ts';
 import { REFUSE_PURGED_FACT_FUNCTION_SQL, REFUSE_PURGED_TAKE_FUNCTION_SQL } from '../facts/purge-schema.ts';
 
+/**
+ * One guard's CREATE OR REPLACE in its own block. Like v321, a guard another role owns (42501) is left, never an abort,
+ * and the handler names it on stderr; until a role that owns it runs a migration (failClosedLedgerGuards reads the
+ * v330 marker, legacy_fold), it matches purge tombstones by the earlier fold only. The fingerprint functions stay
+ * fail-closed: the fingerprint index is built from them.
+ */
+const replaceGuardIfOwned = (sql: string): string =>
+  `DO $v330_guard$ BEGIN EXECUTE $v330_body$${sql}$v330_body$; EXCEPTION WHEN insufficient_privilege THEN NULL; END $v330_guard$;`;
+
+const GUARD_SQL = [FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL, FACT_INSERT_GUARD_FUNCTION_SQL, REFUSE_PURGED_FACT_FUNCTION_SQL, REFUSE_PURGED_TAKE_FUNCTION_SQL];
+/** Each guard's name and the body v330 installs (the text between its $fn$ quotes, as pg_proc.prosrc holds it). */
+const GUARD_BODIES = GUARD_SQL.map(sql => ({ name: /FUNCTION\s+(?:public\.)?(\w+)\(/.exec(sql)![1]!, body: /\$fn\$([\s\S]*)\$fn\$/.exec(sql)![1]! }));
+
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
@@ -27,10 +40,7 @@ import { REFUSE_PURGED_FACT_FUNCTION_SQL, REFUSE_PURGED_TAKE_FUNCTION_SQL } from
 // them. A brain with no fact and no withdrawal skips the scan. PGLite folds the same way, so there the block finds no
 // differing character and reads no row.
 export const FACT_FINGERPRINT_V3_SQL = `${FACT_FINGERPRINT_FUNCTION_STATEMENTS.join(';\n')};
-${FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL};
-${FACT_INSERT_GUARD_FUNCTION_SQL};
-${REFUSE_PURGED_FACT_FUNCTION_SQL};
-${REFUSE_PURGED_TAKE_FUNCTION_SQL};
+${GUARD_SQL.map(replaceGuardIfOwned).join('\n')}
 DO $fp_v3$
 DECLARE differing text[];
 BEGIN
@@ -90,4 +100,16 @@ export const v330: Migration = {
   name: 'fact_fingerprint_v3',
   idempotent: true,
   sql: FACT_FINGERPRINT_V3_SQL,
+  // Names each guard the block above left: another role owns it and its body is not the one v330 installs.
+  handler: async engine => {
+    const left = await engine.executeRaw<{ sig: string; qualified: string; role: string }>(
+      `SELECT p.oid::regprocedure::text AS sig, quote_ident(n.nspname) || '.' || quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')' AS qualified,
+              quote_ident(current_user) AS role
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN unnest($1::text[], $2::text[]) AS g(name, body) ON g.name = p.proname
+        WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.prosrc IS DISTINCT FROM g.body AND NOT pg_has_role(current_user, p.proowner, 'USAGE') ORDER BY 1`,
+      [GUARD_BODIES.map(g => g.name), GUARD_BODIES.map(g => g.body)]);
+    if (left.length === 0) return;
+    process.stderr.write(`  guards: ${left.length} purge or withdrawal guard(s) keep their body from before the PGLite case fold (${left.map(g => g.sig).join(', ')}): `
+      + `CREATE OR REPLACE FUNCTION needs the owner. As that role run ${left.map(g => `ALTER FUNCTION ${g.qualified} OWNER TO ${g.role};`).join(' ')} or connect gbrain as it; the next migration run re-creates them (docs/ENGINES.md#purge-and-withdrawal-guards).\n`);
+  },
 };
