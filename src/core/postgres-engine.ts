@@ -1338,6 +1338,11 @@ export class PostgresEngine implements BrainEngine {
   listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.executeRaw.bind(this)); }
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.executeRaw.bind(this)); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.executeRaw.bind(this), sourceIds); }
+  listTruncatedMarkdownBodies() { return doctorSearchImpl.listTruncatedMarkdownBodies(this.executeRaw.bind(this)); }
+  countSegmentedMarkdownBodies() { return doctorSearchImpl.countSegmentedMarkdownBodies(this.executeRaw.bind(this)); }
+  listRecentPageBodies(sourceIds: string[] | null) { return doctorSearchImpl.listRecentPageBodies(this.executeRaw.bind(this), sourceIds); }
+  countSegmentedRecentPages(sourceIds: string[] | null) { return doctorSearchImpl.countSegmentedRecentPages(this.executeRaw.bind(this), sourceIds); }
+  countPagesHiddenByPrefix(pattern: string, sourceIds: string[] | null) { return doctorSearchImpl.countPagesHiddenByPrefix(this.executeRaw.bind(this), pattern, sourceIds); }
   listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.executeRaw.bind(this)); }
   readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.executeRaw.bind(this)); }
   listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.executeRaw.bind(this)); }

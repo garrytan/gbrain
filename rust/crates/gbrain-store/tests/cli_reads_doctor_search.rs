@@ -59,6 +59,12 @@ fn put(s: &Store, slug: &str, input: Value) -> i64 {
         .unwrap()
 }
 
+fn slugs(rows: &[Value], key: &str) -> Vec<String> {
+    rows.iter()
+        .map(|r| r[key].as_str().unwrap().to_owned())
+        .collect()
+}
+
 fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| (*s).to_owned()).collect()
 }
@@ -121,4 +127,149 @@ fn page_type_pairs_are_distinct_live_source_type_pairs_in_bytewise_order() {
             json!({ "source_id": "default", "type": "person" }),
         ]
     );
+}
+
+/// A raw `content` of `n` characters with an H2 heading.
+fn raw_content(n: usize) -> String {
+    format!("intro\n## Heading\n{}", "x".repeat(n))
+}
+
+fn put_raw(s: &Store, slug: &str, content: &str) {
+    s.put_raw_data(
+        slug,
+        Some("import"),
+        Some(&json!({ "content": content }).to_string()),
+        None,
+    )
+    .unwrap();
+}
+
+#[test]
+fn truncated_bodies_need_long_raw_content_with_a_heading_and_a_body_under_thirty_percent() {
+    let s = brain("truncated");
+    assert!(s.list_truncated_markdown_bodies().unwrap().is_empty());
+    put(&s, "notes/short-body", json!({ "compiled_truth": "tiny" }));
+    put_raw(&s, "notes/short-body", &raw_content(2000));
+    // A body at 30% or more of the raw text is complete enough.
+    put(
+        &s,
+        "notes/full-body",
+        json!({ "compiled_truth": "y".repeat(800) }),
+    );
+    put_raw(&s, "notes/full-body", &raw_content(2000));
+    // No heading, raw text of 1000 characters or fewer, and a one-hash line never qualify.
+    put(&s, "notes/no-heading", json!({ "compiled_truth": "tiny" }));
+    put_raw(&s, "notes/no-heading", &"z".repeat(3000));
+    put(&s, "notes/small-raw", json!({ "compiled_truth": "tiny" }));
+    put_raw(&s, "notes/small-raw", &format!("## H\n{}", "x".repeat(990)));
+    put(&s, "notes/one-hash", json!({ "compiled_truth": "tiny" }));
+    put_raw(&s, "notes/one-hash", &format!("# H\n{}", "x".repeat(2000)));
+    put(
+        &s,
+        "notes/hash-no-space",
+        json!({ "compiled_truth": "tiny" }),
+    );
+    put_raw(
+        &s,
+        "notes/hash-no-space",
+        &format!("##H\n{}", "x".repeat(2000)),
+    );
+    // A heading on the first line counts; a soft-deleted page is still listed (the SQL has no filter).
+    put(&s, "notes/first-line", json!({ "compiled_truth": "tiny" }));
+    put_raw(
+        &s,
+        "notes/first-line",
+        &format!("### H\n{}", "x".repeat(2000)),
+    );
+    put(&s, "notes/gone", json!({ "compiled_truth": "tiny" }));
+    put_raw(&s, "notes/gone", &raw_content(2000));
+    s.soft_delete_page("notes/gone", None).unwrap();
+    let rows = s.list_truncated_markdown_bodies().unwrap();
+    assert_eq!(
+        slugs(&rows, "slug"),
+        ["notes/short-body", "notes/first-line", "notes/gone"]
+    );
+    assert_eq!(rows[0]["body_len"], 4);
+    assert_eq!(rows[0]["raw_len"], raw_content(2000).chars().count());
+}
+
+#[test]
+fn segmented_markdown_bodies_count_only_segmented_pages() {
+    let s = brain("segmented-md");
+    assert_eq!(s.count_segmented_markdown_bodies().unwrap(), 0);
+    put(&s, "notes/inline", json!({}));
+    put_raw(&s, "notes/inline", &raw_content(2000));
+    assert_eq!(s.count_segmented_markdown_bodies().unwrap(), 0);
+}
+
+#[test]
+fn recent_bodies_are_the_newest_live_pages_in_scope_and_none_are_segmented_inline() {
+    let s = brain("recent");
+    assert!(s.list_recent_page_bodies(None).unwrap().is_empty());
+    put(
+        &s,
+        "notes/a",
+        json!({ "compiled_truth": "first", "timeline": "t1" }),
+    );
+    put(&s, "notes/b", json!({ "compiled_truth": "second" }));
+    put(&s, "notes/gone", json!({ "compiled_truth": "gone" }));
+    s.soft_delete_page("notes/gone", None).unwrap();
+    let rows = s.list_recent_page_bodies(None).unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            json!({ "compiled_truth": "second", "timeline": "" }),
+            json!({ "compiled_truth": "first", "timeline": "t1" }),
+        ]
+    );
+    assert!(
+        s.list_recent_page_bodies(Some(vec!["other".into()]))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        s.list_recent_page_bodies(Some(vec!["default".into()]))
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(s.count_segmented_recent_pages(None).unwrap(), 0);
+}
+
+#[test]
+fn hidden_by_prefix_counts_served_chunked_pages_under_the_pattern() {
+    let s = brain("hidden");
+    assert_eq!(
+        s.count_pages_hidden_by_prefix("test/%".into(), None)
+            .unwrap(),
+        0
+    );
+    for slug in ["test/a", "test/b", "test/gone", "notes/x", "test_under/a"] {
+        put(&s, slug, json!({}));
+    }
+    // A page with no text has no chunk.
+    put(&s, "test/unchunked", json!({ "compiled_truth": "" }));
+    put(
+        &s,
+        "test/quarantined",
+        json!({ "frontmatter": { "quarantine": {} } }),
+    );
+    put(
+        &s,
+        "test/pinned",
+        json!({ "frontmatter": { "pinned_question": true } }),
+    );
+    s.soft_delete_page("test/gone", None).unwrap();
+    let count = |pattern: &str, sources: Option<Vec<String>>| {
+        s.count_pages_hidden_by_prefix(pattern.into(), sources)
+            .unwrap()
+    };
+    assert_eq!(count("test/%", None), 2);
+    // `_` is a wildcard unless escaped, so the escaped pattern matches only the literal underscore.
+    assert_eq!(count("test_%", None), 3);
+    assert_eq!(count("test\\_%", None), 1);
+    assert_eq!(count("test/%", Some(vec!["default".into()])), 2);
+    assert_eq!(count("test/%", Some(vec!["other".into()])), 0);
+    s.set_source_archived("default", true).unwrap();
+    assert_eq!(count("test/%", None), 0);
 }

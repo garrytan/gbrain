@@ -21,8 +21,6 @@ src/commands/core.ts	setMarking	call:serializePageToMarkdown	INLINE
 src/commands/core.ts	suggestCandidates	field	INLINE	
 src/commands/core.ts	suggestCandidates	sql	INLINE	
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	LEAD	
-src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEAD	
-src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/export.ts	runExport	sql	STREAM	
@@ -202,6 +200,9 @@ src/core/engine-sql/doctor-pages.ts	OVERSIZED_PAGES_SQL	sql	META	moved from doct
 src/core/engine-sql/doctor-pages.ts	SCRAPER_JUNK_ALL_SQL	sql	LEAD	moved from doctor/checks/content-quality.ts runContentSanity unchanged: LEFT(compiled_truth, 2048) and LEFT(timeline, 1024) heads only; a segmented page has a null body head
 src/core/engine-sql/doctor-pages.ts	SCRAPER_JUNK_LIMITED_SQL	sql	LEAD	moved from doctor/checks/content-quality.ts runContentSanity unchanged: LEFT(compiled_truth, 2048) and LEFT(timeline, 1024) heads only; a segmented page has a null body head
 src/core/engine-sql/doctor-persistence.ts	OVERWRITE_CANDIDATES_SQL	sql	STREAM	moved from persistence/overwritten-edits.ts scanOverwrittenEdits with CONTENT_COLUMNS inlined: selects body_storage beside the inline body columns; a segmented version has NULL bodies and its overwrite is reported unknown (reason segmented)
+src/core/engine-sql/doctor-search.ts	RECENT_PAGE_BODIES_IN_SOURCES_SQL	sql	LEAD	
+src/core/engine-sql/doctor-search.ts	RECENT_PAGE_BODIES_SQL	sql	LEAD	
+src/core/engine-sql/doctor-search.ts	TRUNCATED_MARKDOWN_BODIES_SQL	sql	META	
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)

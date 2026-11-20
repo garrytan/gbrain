@@ -2,7 +2,7 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-These are the statements that nine `gbrain doctor` checks ran through `executeRaw`, which a Rust brain refuses with
+These are the statements that `gbrain doctor` checks ran through `executeRaw`, which a Rust brain refuses with
 `raw_sql`. PGLite and Postgres run the same SQL as before (`src/core/engine-sql/doctor-search.ts`; the text is pinned by
 `test/doctor-search-sql.test.ts`). The store answers from the records each statement read
 (`crates/gbrain-store/src/cli_reads/doctor_search.rs`) and has no keys of its own. The TypeScript side is
@@ -17,10 +17,25 @@ table the SQL reads, so the answer is what an empty table gives), or refused (th
 | `listOrphanedAliasCounts()` | per source, the `slug_aliases` rows whose canonical page row is absent and the `page_aliases` rows whose page row is absent; sources with none are not listed | served | `dangling_aliases` |
 | `readSoftDeletedAliasCounts()` | `{slug_redirects, page_aliases}`: alias rows whose page is soft-deleted | served | `dangling_aliases` |
 | `listPageTypePairs()` | the distinct `(source_id, type)` of live typed pages, by source then type | served | `type_proliferation` |
+| `listTruncatedMarkdownBodies()` | `{slug, body_len, raw_len}` per `raw_data` row whose `content` is over 1000 characters with an H2 or deeper heading and whose page body is under 30% of it; at most 101 rows (the check lists 100 and reads one more to know the list was capped) | served | `markdown_body_completeness` |
+| `countSegmentedMarkdownBodies()` | segmented pages with such a raw `content` (the length comparison above passes a segmented page by, as its body is NULL) | served | `markdown_body_completeness` |
+| `listRecentPageBodies(sourceIds)` | `{compiled_truth, timeline}` of the 1000 newest live pages (by id, newest first), in the sources when given | served | `link_resolution_opportunity` |
+| `countSegmentedRecentPages(sourceIds)` | how many of those 1000 pages are segmented | served | `link_resolution_opportunity` |
+| `countPagesHiddenByPrefix(pattern, sourceIds)` | live pages with a chunk, served by search (sealed text, source not archived, no `quarantine` or `pinned_question` key), whose slug matches the escaped `LIKE` pattern, in the sources when given | served | `hidden_by_search_policy` |
 
 ## How each read follows the SQL
 
 - An alias row is "orphaned" when its page row is absent (a hard delete), "soft-deleted" when the page row is present
   with `deleted_at` set. The store reads the alias keys (`alias_row_targets` in `crates/gbrain-store/src/aliases.rs`)
   and looks each target page up by `(source, slug)`.
-- Order is bytewise, as PGLite's C.UTF-8 collation orders it.
+- Order is bytewise, as PGLite's C.UTF-8 collation orders it. A Postgres database with another collation can order the
+  `listPageTypePairs` rows differently for mixed-case or non-ASCII types.
+- The truncated-body read joins every `raw_data` row of a page, so a page with two matching raw rows lists twice, as
+  the SQL does. A page whose `compiled_truth` is NULL (segmented) never passes the length comparison. Soft-deleted pages
+  are listed, as the SQL has no `deleted_at` test there.
+- The recent-pages sample takes the newest 1000 live pages first and scopes by source inside the same window, as the SQL
+  does (`ORDER BY id DESC LIMIT 1000` after the source filter).
+- `countPagesHiddenByPrefix` takes one pattern. The check used to count every prefix in one statement; it now makes one
+  call per prefix (the answers are the same, the round trips are not). `served` is the store's own test of the text
+  projection seal (`link_queries/retrieval_coverage.rs`). The `LIKE` pattern is `crate::facts::like`, with `\` as
+  the escape.

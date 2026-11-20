@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1166/1173
+# covered: 1171/1178
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -49,7 +49,7 @@
 # doctor_derived: 26/26
 # doctor_persistence: 37/37
 # doctor_pages: 19/19
-# doctor_search: 3/3
+# doctor_search: 8/8
 # doctor_reads_acc: 32/32
 # doctor_checkpoints: 17/17
 # doctor_sources: 6/6
@@ -98,13 +98,13 @@ getPage	pages	yes	115	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	564	yes	yes	yes	serves
+putPage	pages	yes	568	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	173	yes	yes	yes	serves
+softDeletePage	pages	yes	176	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -224,7 +224,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	5	no	yes	yes	serves
 upsertChunks	chunks	yes	30	yes	yes	yes	serves
-sealChunks	chunks	yes	55	no	yes	yes	serves
+sealChunks	chunks	yes	56	no	yes	yes	serves
 getChunks	chunks	yes	30	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
 getChunkWindows	chunks	yes	4	no	yes	yes	serves
@@ -316,7 +316,7 @@ mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
-putRawData	raw_files	yes	7	yes	yes	yes	serves
+putRawData	raw_files	yes	9	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	5	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
@@ -381,7 +381,7 @@ stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	15	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	18	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	9	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	3	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	9	no	yes	yes	serves
@@ -913,6 +913,11 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listFactsPageBodies	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+listTruncatedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves
+countSegmentedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves
+listRecentPageBodies	doctor_search	yes	1	no	yes	yes	serves
+countSegmentedRecentPages	doctor_search	yes	1	no	yes	yes	serves
+countPagesHiddenByPrefix	doctor_search	yes	1	no	yes	yes	serves
 listOrphanedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 readSoftDeletedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 listPageTypePairs	doctor_search	yes	1	no	yes	yes	serves

@@ -277,6 +277,16 @@ fn collect_values<T: serde::de::DeserializeOwned>(
         .collect()
 }
 
+/// The `raw_data` rows of a page, in source order.
+pub(crate) fn raw_rows_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect(),
+    )
+}
+
 /// Every `files` row, in file id order.
 pub(crate) fn all_file_records(read: &dyn KvRead) -> Result<Vec<FileRecord>> {
     let mut files: Vec<FileRecord> = collect_values(read, &[keys::RAW_FILES, FILE])?

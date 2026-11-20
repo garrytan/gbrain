@@ -149,7 +149,7 @@ impl<'a> Sources<'a> {
 }
 
 /// `servedTextProjectionFilter`.
-fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     page.text_projection_revision
         .as_deref()
         .is_some_and(|r| r == page.knowledge_revision || r == ACTIVATION_SERVED_REVISION)

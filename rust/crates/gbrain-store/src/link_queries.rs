@@ -64,7 +64,7 @@ pub use link_temporal::{
     ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput, ReferrerTypeRow,
     RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput, StateWrite,
 };
-mod retrieval_coverage;
+pub(crate) mod retrieval_coverage;
 pub use retrieval_coverage::{
     CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
     RebuildProgress,

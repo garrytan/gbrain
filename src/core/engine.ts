@@ -5228,6 +5228,16 @@ export interface BrainEngine {
   listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
   /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  /** Pages whose body is under 30% of their raw content (over 1000 characters, with H2/H3 headings), at most 101. */
+  listTruncatedMarkdownBodies(): Promise<DoctorSearchSql.TruncatedMarkdownBody[]>;
+  /** Segmented pages whose raw content is over 1000 characters with H2/H3 headings (the length comparison skips them). */
+  countSegmentedMarkdownBodies(): Promise<number>;
+  /** Bodies of the 1000 newest live pages (NULL for a segmented page), within sourceIds when given. */
+  listRecentPageBodies(sourceIds: string[] | null): Promise<DoctorSearchSql.RecentPageBody[]>;
+  /** How many of the 1000 newest live pages are stored in segments, within sourceIds when given. */
+  countSegmentedRecentPages(sourceIds: string[] | null): Promise<number>;
+  /** Chunked pages search serves whose slug matches the LIKE pattern (backslash escapes), within sourceIds when given. */
+  countPagesHiddenByPrefix(pattern: string, sourceIds: string[] | null): Promise<number>;
   // Doctor search and knowledge reads (engine-sql/doctor-search.ts): the statements the alias, type, entity, body, link, search-policy, hold, projection and atom doctor checks ran through executeRaw.
   /** Alias rows (both tables) whose target page row is absent, per source, in source order. */
   listOrphanedAliasCounts(): Promise<DoctorSearchSql.OrphanedAliasCount[]>;
