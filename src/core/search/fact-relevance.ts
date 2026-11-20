@@ -223,7 +223,7 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     if (!vec) return [];
     const p = armParams(simParams);
     const sql = `SELECT ${COLS}, ${simSql} FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
-       ORDER BY f.embedding <=> $${n + 1}${vec.cast} LIMIT $${p.length + 1}`;
+       ORDER BY f.embedding <=> $${n + 1}${vec.cast}, f.id LIMIT $${p.length + 1}`;
     const bound = [...p, opts.depth.cosine];
     if (!opts.hnswIterativeScan) return engine.executeRaw<Row>(sql, bound);
     return engine.transaction(async tx => {

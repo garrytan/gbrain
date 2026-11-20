@@ -476,7 +476,7 @@ async function vectorProbe(engine: BrainEngine, target: PurgeTarget): Promise<Re
     const rows = await engine.executeRaw<{ id: number; similarity: number; contains_claim: boolean }>(`SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,
         strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
       FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
-      ORDER BY embedding <=> $1::halfvec LIMIT 5`, [target.embedding, target.source_id, target.embedding_model, target.fact]);
+      ORDER BY embedding <=> $1::halfvec, id LIMIT 5`, [target.embedding, target.source_id, target.embedding_model, target.fact]);
     return { status: 'checked', gate: false, model: target.embedding_model,
       candidates: rows.map(r => ({ fact_id: Number(r.id), similarity: Math.round(Number(r.similarity) * 1000) / 1000, contains_claim: r.contains_claim === true })),
       note: 'Nearest same-model facts are possible rewordings for the user to review; a neighbour always exists, so this is not a residual count.' };
@@ -723,7 +723,7 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   residuals.push(...outOfReach(engine).filter(r => !(r.store === 'git_history' && residuals.length)));
   residuals.push(...stores.filter(s => s.reason === 'source_prose' || s.reason === 'probed_reported'));
   const [row] = await engine.executeRaw<Pick<WriteRequest, 'id' | 'request_id' | 'state' | 'source_id' | 'outcome'>>(`SELECT id,request_id,state,source_id,outcome FROM persistence_requests
-    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC LIMIT 1`, [src, input.requestId]);
+    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC, id LIMIT 1`, [src, input.requestId]);
   return { summary: 'Removed from live stores. Residuals below are copies purge cannot reach; this is not physical erasure.',
     residuals, stores, page_tombstones: Number(tombstones?.n ?? 0),
     ...(row ? await purgeCompletion(engine, row, { stores }) : {}),

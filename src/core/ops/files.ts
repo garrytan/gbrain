@@ -44,7 +44,7 @@ const file_list: Operation = {
     const slug = p.slug as string | undefined;
     const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
       FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${await fileReadableSql(ctx)}
-      ORDER BY ${slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C"' : 'filename COLLATE "C"'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+      ORDER BY ${slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C", id' : 'filename COLLATE "C", id'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
     // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
     // throws on those, breaking MCP callers. PGLite returns Number already.
     // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
