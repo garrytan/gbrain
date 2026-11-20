@@ -6380,6 +6380,7 @@
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
+        "readOpCheckpointRecords": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
@@ -6624,6 +6625,7 @@
         "writeMiscRead": "none",
         "writeMiscReads": "none",
         "writeOpCheckpointKeys": "none",
+        "writeOpCheckpointRecords": "none",
         "writeTextProjectionSeal": "none"
       }
     }

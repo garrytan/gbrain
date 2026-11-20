@@ -725,6 +725,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'notifierCoverageRecorded': OOS.writeMisc,
   'readOpCheckpointKeys': OOS.writeMisc,
   'writeOpCheckpointKeys': OOS.writeMisc,
+  'readOpCheckpointRecords': OOS.callerRawSql,
+  'writeOpCheckpointRecords': OOS.callerRawSql,
   'appendOpCheckpointPaths': OOS.writeMisc,
   'deleteOpCheckpoint': OOS.writeMisc,
   'deleteOpCheckpointPaths': OOS.writeMisc,

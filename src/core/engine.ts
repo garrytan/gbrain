@@ -1493,6 +1493,14 @@ export interface BrainEngine {
   deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
   /** The checkpoint's paths deleted, its parent kept (op-checkpoint.ts clearOpCheckpoint's second sweep). */
   deleteOpCheckpointPaths(op: string, fingerprint: string): Promise<void>;
+  /**
+   * The first completed key of each named checkpoint parent (`completed_keys->0`; null for an empty array), one entry
+   * per parent found, in no stated order (engine-sql/op-checkpoint.ts). The sync import provenance records
+   * (persistence/sync-holds.ts) are read this way; inside `transaction()` the read sees the transaction's writes.
+   */
+  readOpCheckpointRecords(op: string, fingerprints: readonly string[]): Promise<unknown[]>;
+  /** Each row's checkpoint parent set to the one-element array `[record]`, stamped now; each fingerprint at most once (sync-holds.ts recordSyncImportProvenances). */
+  writeOpCheckpointRecords(op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>): Promise<void>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

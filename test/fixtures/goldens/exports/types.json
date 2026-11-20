@@ -726,6 +726,7 @@
           "readOldestVersionAttribution: (pageId: number) => Promise<ActorAttributionRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
           "readOpCheckpointKeys: (op: string, fingerprint: string) => Promise<{ keys: string[]; corruptParent: boolean; }>",
+          "readOpCheckpointRecords: (op: string, fingerprints: readonly string[]) => Promise<unknown[]>",
           "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
           "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<PageAliasRow[]>",
@@ -958,6 +959,7 @@
           "writeLinkRelationshipState: (write: RelationshipStateWrite) => Promise<number>",
           "writeManualLinkTransitions: (rel: ManualLinkRelationship, rows: ReadonlyArray<{ kind: \"start\" | \"end\"; occurred_on: string; }>) => Promise<{ inserted: number; key: RelationshipKey | null; }>",
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
+          "writeOpCheckpointRecords: (op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown; }>) => Promise<void>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
         ],
         "name": "BrainEngine"
@@ -2526,6 +2528,7 @@
           "readOldestVersionAttribution: (pageId: number) => Promise<ActorAttributionRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
           "readOpCheckpointKeys: (op: string, fingerprint: string) => Promise<{ keys: string[]; corruptParent: boolean; }>",
+          "readOpCheckpointRecords: (op: string, fingerprints: readonly string[]) => Promise<unknown[]>",
           "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
           "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<PageAliasRow[]>",
@@ -2760,6 +2763,7 @@
           "writeLinkRelationshipState: (write: RelationshipStateWrite) => Promise<number>",
           "writeManualLinkTransitions: (rel: ManualLinkRelationship, rows: ReadonlyArray<{ kind: \"start\" | \"end\"; occurred_on: string; }>) => Promise<{ inserted: number; key: RelationshipKey | null; }>",
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
+          "writeOpCheckpointRecords: (op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown; }>) => Promise<void>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
         ],
         "name": "PostgresEngine",
@@ -5747,6 +5751,7 @@
           "readOldestVersionAttribution: (pageId: number) => Promise<ActorAttributionRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
           "readOpCheckpointKeys: (op: string, fingerprint: string) => Promise<{ keys: string[]; corruptParent: boolean; }>",
+          "readOpCheckpointRecords: (op: string, fingerprints: readonly string[]) => Promise<unknown[]>",
           "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
           "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<PageAliasRow[]>",
@@ -5979,6 +5984,7 @@
           "writeLinkRelationshipState: (write: RelationshipStateWrite) => Promise<number>",
           "writeManualLinkTransitions: (rel: LinkTemporalSql.ManualLinkRelationship, rows: ReadonlyArray<{ kind: \"start\" | \"end\"; occurred_on: string; }>) => Promise<{ inserted: number; key: RelationshipKey | null; }>",
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
+          "writeOpCheckpointRecords: (op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown; }>) => Promise<void>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
         ],
         "name": "BrainEngine"
@@ -10241,6 +10247,7 @@
           "readOldestVersionAttribution: (pageId: number) => Promise<writeAttributionImpl.ActorAttributionRow | null>",
           "readOldestWaitingAge: (queue: string, opts?: { signal?: AbortSignal; }) => Promise<number | null>",
           "readOpCheckpointKeys: (op: string, fingerprint: string) => Promise<{ keys: string[]; corruptParent: boolean; }>",
+          "readOpCheckpointRecords: (op: string, fingerprints: readonly string[]) => Promise<unknown[]>",
           "readOwnerOnlySourceConfig: (sourceId: string) => Promise<{ config: unknown; } | null>",
           "readOwnerOnlySourcesPresent: () => Promise<boolean>",
           "readPageAliasRows: (sourceIds: readonly string[], slugs: readonly string[]) => Promise<aliasFanoutReadsImpl.PageAliasRow[]>",
@@ -10475,6 +10482,7 @@
           "writeLinkRelationshipState: (write: RelationshipStateWrite) => Promise<number>",
           "writeManualLinkTransitions: (rel: linkTemporalImpl.ManualLinkRelationship, rows: ReadonlyArray<{ kind: \"start\" | \"end\"; occurred_on: string; }>) => Promise<{ inserted: number; key: RelationshipKey | null; }>",
           "writeOpCheckpointKeys: (op: string, fingerprint: string, keys: string[]) => Promise<void>",
+          "writeOpCheckpointRecords: (op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown; }>) => Promise<void>",
           "writeTextProjectionSeal: (slug: string, opts: { sourceId: string; revision: string; timelineText: string; }) => Promise<void>"
         ],
         "name": "PGLiteEngine",

@@ -700,6 +700,7 @@
         "readOldestVersionAttribution",
         "readOldestWaitingAge",
         "readOpCheckpointKeys",
+        "readOpCheckpointRecords",
         "readOwnerOnlySourceConfig",
         "readOwnerOnlySourcesPresent",
         "readPageAliasRows",
@@ -935,6 +936,7 @@
         "writeManualLinkTransitions",
         "writeMiscReads",
         "writeOpCheckpointKeys",
+        "writeOpCheckpointRecords",
         "writeTextProjectionSeal"
       ],
       "PostgresEngine": [
@@ -1642,6 +1644,7 @@
         "readOldestVersionAttribution",
         "readOldestWaitingAge",
         "readOpCheckpointKeys",
+        "readOpCheckpointRecords",
         "readOwnerOnlySourceConfig",
         "readOwnerOnlySourcesPresent",
         "readPageAliasRows",
@@ -1886,6 +1889,7 @@
         "writeMiscRead",
         "writeMiscReads",
         "writeOpCheckpointKeys",
+        "writeOpCheckpointRecords",
         "writeTextProjectionSeal"
       ]
     },

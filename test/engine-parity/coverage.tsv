@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 905/905
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 34/34
+# write_misc: 36/36
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -85,7 +85,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	116	no	yes	yes	serves
+transaction	lifecycle	yes	117	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -853,10 +853,12 @@ hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	2	no	yes	yes	serves
 notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
-writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
+writeOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
+readOpCheckpointRecords	write_misc	yes	4	no	yes	yes	serves
+writeOpCheckpointRecords	write_misc	yes	3	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves

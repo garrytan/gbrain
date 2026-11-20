@@ -329,6 +329,20 @@ const PINS: Pin[] = [
     case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
     texts: ['SELECT config FROM sources WHERE id = $1'],
   },
+  {
+    // readSyncImportProvenance (the one-page form, `fingerprint=$2`) now sends this statement with a one-element list.
+    from: 'src/core/persistence/sync-holds.ts:1360 readSyncImportProvenances',
+    case: { method: 'readOpCheckpointRecords', variant: 'default', run: e => e.readOpCheckpointRecords('sync-import-provenance', ['default:inc-1:1']) },
+    texts: ['SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])'],
+  },
+  {
+    // recordSyncImportProvenance (the one-page `VALUES($1,$2,$3::text::jsonb)` form) now sends this statement with one row.
+    from: 'src/core/persistence/sync-holds.ts:1349 recordSyncImportProvenances',
+    case: { method: 'writeOpCheckpointRecords', variant: 'default', run: e => e.writeOpCheckpointRecords('sync-import-provenance', [{ fingerprint: 'default:inc-1:1', record: { page_id: 1 } }]) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

@@ -32,3 +32,12 @@ export const deleteOpCheckpoint: StoreMember<[op: string, fingerprint: string], 
 export const deleteOpCheckpointPaths: StoreMember<[op: string, fingerprint: string], void> = async (brain, op, fingerprint) => {
   await storeCall({ member: 'deleteOpCheckpointPaths' }, () => brain.deleteOpCheckpointPaths(op, fingerprint));
 };
+
+/** Each found parent's first completed key (`completed_keys->0`, null for an empty array), one per parent found. */
+export const readOpCheckpointRecords: StoreMember<[op: string, fingerprints: readonly string[]], unknown[]> =
+  (brain, op, fingerprints) => storeCall({ member: 'readOpCheckpointRecords' }, () => brain.readOpCheckpointRecords(op, [...fingerprints]));
+
+/** Each row's parent set to `[record]`, stamped now; the child paths stay. A record holding NUL is refused whole. */
+export const writeOpCheckpointRecords: StoreMember<[op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>], void> = async (brain, op, rows) => {
+  await storeCall({ member: 'writeOpCheckpointRecords' }, () => brain.writeOpCheckpointRecords(op, rows.map(({ fingerprint, record }) => ({ fingerprint, record }))));
+};
