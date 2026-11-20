@@ -8,7 +8,7 @@ import { prepareMarkdownChunks } from '../markdown-chunks.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
-import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from './types.ts';
+import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
@@ -63,16 +63,7 @@ export interface ProjectionSnapshot {
   fenceOverlay?: FenceChunkOverlay;
 }
 
-export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
-
-/** Canonical state can stay unchanged while another worker replaces its projection. */
-export class PageProjectionConflictError extends PageRevisionConflictError {
-  constructor(expected: string, current: string, readonly changed: readonly ProjectionConflictField[], readonly slug: string, readonly sourceId: string) {
-    super(expected, current);
-    this.name = 'PageProjectionConflictError';
-    this.message = `The search projection of ${slug} (source ${sourceId}) changed during preparation (${changed.join(', ')}) at the same page revision; nothing was installed. Re-read its current snapshot before retrying.`;
-  }
-}
+export { PageProjectionConflictError, type ProjectionConflictField } from './types.ts';
 
 /**
  * The loser of a concurrent projection installation re-reads and prepares
