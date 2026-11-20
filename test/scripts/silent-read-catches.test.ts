@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ts from 'typescript';
-import { scanFile, scanTree } from '../../scripts/check-silent-read-catches.ts';
+import { riseFix, scanFile, scanTree } from '../../scripts/check-silent-read-catches.ts';
 import { SILENT_READ_RULES, WRITE_ONLY_METHODS, handlerAnswersEmpty, isReadShaped, type SilentReadRule } from '../../scripts/silent-read-rules.ts';
 
 const REPO = resolve(import.meta.dir, '..', '..');
@@ -75,8 +75,8 @@ describe('what counts', () => {
 
   test('an assignment of an empty answer counts; a doctor-style ok result counts', () => {
     expect(scan('export async function f(engine: any) { let n: any = 1; try { n = await engine.getCount(); } catch { n = 0; } return n; }')).toEqual(['src/x.ts#f catch_empty 1']);
-    expect(scan("export async function check(engine: any, checks: any[]) { try { await engine.executeRaw('select 1'); } catch (err) { const msg = String(err); checks.push({ name: 'x', status: 'ok', message: `Skipped (${msg})` }); } }")).toEqual(['src/x.ts#check catch_empty 1']);
-    expect(scan("export async function check(engine: any) { try { await engine.executeRaw('select 1'); return { name: 'x', status: 'warn' }; } catch (e) { return { name: 'x', status: 'ok', message: 'Skipped' }; } }")).toEqual(['src/x.ts#check catch_empty 1']);
+    expect(scan("export async function check(engine: any, checks: any[]) { try { await engine.executeRaw('select 1'); } catch (err) { const msg = String(err); checks.push({ name: 'x', status: 'ok', message: `Skipped (${msg})` }); } }")).toEqual(['src/x.ts#check capability_refusal_swallowed 1', 'src/x.ts#check catch_empty 1']);
+    expect(scan("export async function check(engine: any) { try { await engine.executeRaw('select 1'); return { name: 'x', status: 'warn' }; } catch (e) { return { name: 'x', status: 'ok', message: 'Skipped' }; } }")).toEqual(['src/x.ts#check capability_refusal_swallowed 1', 'src/x.ts#check catch_empty 1']);
   });
 
   test('bounded local fallbacks count: new Map(), new Set() and an initialized array, declared before the try in the same function', () => {
@@ -226,7 +226,26 @@ describe('plug-in point', () => {
   test('rule names and metrics are unique, and the baseline metrics are the rules\' metrics', () => {
     expect(new Set(SILENT_READ_RULES.map(r => r.name)).size).toBe(SILENT_READ_RULES.length);
     expect(new Set(SILENT_READ_RULES.map(r => r.metric)).size).toBe(SILENT_READ_RULES.length);
-    expect(SILENT_READ_RULES.map(r => r.metric)).toEqual(['catch_empty', 'promise_catch_empty']);
+    expect(SILENT_READ_RULES.map(r => r.metric)).toEqual(['catch_empty', 'promise_catch_empty', 'capability_refusal_swallowed']);
+  });
+
+  test('the capability-refusal rule is registered: it counts in a scan, under its own metric and opt-out marker', () => {
+    const swallow = "export async function f(engine: any) { try { return (await engine.executeRaw('select mode'))[0]; } catch (err) { console.warn(err); return { mode: 'git' }; } }";
+    expect(scan(swallow)).toEqual(['src/x.ts#f capability_refusal_swallowed 1']);
+    // Rethrowing the refusal first passes this rule.
+    expect(scan(swallow.replace('console.warn(err);', 'rethrowCapabilityRefusal(err);'))).toEqual([]);
+    // Each rule has its own opt-out: the empty-answer marker does not exempt this rule, its own marker does.
+    expect(scan(swallow.replace('catch (err) {', 'catch (err) { // silent-read-ok: fallback is right\n'))).toEqual(['src/x.ts#f capability_refusal_swallowed 1']);
+    expect(scan(swallow.replace('catch (err) {', 'catch (err) { // capability-refusal-ok: fallback is right on every engine\n'))).toEqual([]);
+    // Engine implementation files are out of scope.
+    expect(scan(swallow, 'src/core/postgres-engine.ts')).toEqual([]);
+  });
+
+  test('the rise message names each rule\'s fix, once per distinct fix', () => {
+    const msg = riseFix(SILENT_READ_RULES);
+    expect(msg).toContain('catch_empty / promise_catch_empty: return a typed degraded marker');
+    expect(msg).toContain('capability_refusal_swallowed: let the refusal through');
+    expect(msg).toContain('capability-refusal-ok: <reason>');
   });
 
   test('a new rule is one list entry: "a catch around an engine call must call rethrowCapabilityRefusal" is expressible', () => {

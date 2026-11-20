@@ -183,6 +183,17 @@ does not exempt a site. The user then hears "nothing found" or "healthy" when
 the truth is "I could not look", and the Rust engine copies that answer. The
 header of the script lists the shapes it does not count.
 
+A third metric, `capability_refusal_swallowed` (rule in
+`scripts/capability-refusal-rule.ts`), counts a catch around a raw-SQL engine
+call (`executeRaw`, `executeRawJsonb`) whose handler can fall back before it
+lets a capability refusal through. A Rust brain refuses untyped SQL by name
+(`engine_capability_missing`); such a catch turns that refusal into a quiet
+default. Fix: make `rethrowCapabilityRefusal(err)` the handler's first
+statement, or `if (isEngineCapabilityRefusal(err)) throw err`; where the
+fallback is right on every engine, write `// capability-refusal-ok: <reason>`.
+Engine implementation files (the engines, `engine-sql/`, migrations) are out of
+scope, because Rust never runs them.
+
 A new site fails with the file, function and fix. The three fixes:
 
 1. Return a typed degraded marker (`DegradedStageEntry`,
@@ -204,7 +215,9 @@ column names the behavior-audit finding that a fix deletes the row for.
 
 **Adding a rule.** Rules are one exported list, `SILENT_READ_RULES` in
 `scripts/silent-read-rules.ts`: `{ name, metric, matcher }` (plus an optional
-`okMarker`). The matcher receives the catch node, the try block or `.catch`
+`okMarker` and a one-line `fix` the guard prints when the count rises). A rule
+may live in its own file and be added as one entry, as the capability-refusal
+rule is. The matcher receives the catch node, the try block or `.catch`
 receiver, the handler statements, the enclosing function and the error name,
 and returns true for a violation. Add one entry, its fixtures (a
 `bad-<rule>/` tree and a case in `good/` under

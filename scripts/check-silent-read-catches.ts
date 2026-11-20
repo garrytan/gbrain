@@ -14,6 +14,9 @@
  *                        nothing: it is empty (`catch {}`, comment only, rethrow-only), or its
  *                        last statement returns / assigns / pushes an empty answer
  *   promise_catch_empty  the same for `.catch(fn)` handlers: `.catch(() => [])`, `.catch(() => {})`
+ *   capability_refusal_swallowed  a catch or `.catch(fn)` around a raw-SQL engine call (executeRaw,
+ *                        executeRawJsonb) whose handler can fall back before it rethrows a capability
+ *                        refusal (scripts/capability-refusal-rule.ts; engine implementation files excluded)
  *   Read-shaped: the guarded code calls an engine/db receiver (engine, tx, exec, db, sql, store, ...)
  *   or a read-verb name (read, load, get, list, find, count, search, fetch, query, select, lookup,
  *   resolve, has, exists, executeRaw, traverse, hybrid), minus the named write-only methods in
@@ -158,6 +161,16 @@ function markerReason(lines: readonly string[], lineIdx: number, marker: string)
   return null;
 }
 
+/** The fix text for a count rise: each rule's `fix`, grouped by metric (rules that share a fix print it once). */
+export function riseFix(rules: readonly SilentReadRule[]): string {
+  const byFix = new Map<string, string[]>();
+  for (const r of rules) {
+    const fix = r.fix ?? 'see the rule in scripts/silent-read-rules.ts';
+    byFix.set(fix, [...(byFix.get(fix) ?? []), r.metric]);
+  }
+  return [...byFix].map(([fix, metrics]) => metrics.join(' / ') + ': ' + fix).join('\n            ');
+}
+
 export function scanFile(text: string, rel: string, rules: readonly SilentReadRule[] = SILENT_READ_RULES): FileScan {
   const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const lines = text.split('\n');
@@ -245,8 +258,8 @@ if (import.meta.main) {
     baselineRel: BASELINE_REL,
     anchor: 'docs/ci-guards.md#silent-read-catches',
     metrics: METRICS,
-    why: 'a catch that turns a failed read into an empty answer reads as "nothing found" or "healthy"; these sites only fall, and the Rust engine copies every one that stays.',
-    riseFix: 'return a typed degraded marker instead of the empty value (call rethrowCapabilityRefusal(err) first); in a doctor check use checkError(name, what, err); where an empty answer is truly right, catch only that error and add `// silent-read-ok: <reason>` on the catch line or the line above',
+    why: 'a catch that turns a failed read into an empty answer (or a Rust capability refusal into a quiet default) reads as "nothing found" or "healthy"; these sites only fall, and the Rust engine copies every one that stays.',
+    riseFix: riseFix(SILENT_READ_RULES),
     scan: () => scan.counts,
   }, ROOT, process.argv);
 }

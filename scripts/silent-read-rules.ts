@@ -19,17 +19,18 @@
  *              site.enclosingFunction   the nearest function-like node, or the SourceFile
  *              site.errorName           the caught error's name, when the handler names it
  *              site.sourceFile          the SourceFile
+ *   fix      optional one-line fix the guard prints when this rule's count rises.
  *   okMarker optional comment keyword that opts one site out (default `silent-read-ok`),
  *            written `// <okMarker>: <reason>` on the catch line or the line above.
  *            An empty reason fails the guard.
  *
- * The rule an owner will add later, "a catch around an engine call must call
- * rethrowCapabilityRefusal", is expressible here: its matcher takes
- * `site.guarded` (walk it for a call on an `engine` receiver) and `site.handlerStatements` (does one call
- * `rethrowCapabilityRefusal(<errorName>)`), and returns true when the first is
- * true and the second false. It is not built here.
+ * The third rule, "a catch around a raw-SQL engine call must rethrow a capability
+ * refusal before its fallback" (metric capability_refusal_swallowed, opt-out
+ * `capability-refusal-ok`), lives in scripts/capability-refusal-rule.ts and is
+ * added below as one entry, the way any later rule is added.
  */
 import ts from 'typescript';
+import { CAPABILITY_REFUSAL_RULE } from './capability-refusal-rule.ts';
 
 export type SiteKind = 'try-catch' | 'promise-catch';
 
@@ -48,8 +49,13 @@ export interface SilentReadRule {
   name: string;
   metric: string;
   okMarker?: string;
+  /** One line: how to fix a site this rule counts (shown when its count rises). Rules may share one. */
+  fix?: string;
   matcher(site: SiteContext): boolean;
 }
+
+/** The fix for the two empty-answer rules. */
+export const EMPTY_ANSWER_FIX = 'return a typed degraded marker instead of the empty value (call rethrowCapabilityRefusal(err) first); in a doctor check use checkError(name, what, err); where an empty answer is truly right, catch only that error and add `// silent-read-ok: <reason>` on the catch line or the line above';
 
 /**
  * Engine methods that only write (or manage the connection), so a try around
@@ -301,16 +307,23 @@ export function handlerAnswersEmpty(site: SiteContext): boolean {
   return isRethrowCall(last) || isEmptyAnswerStatement(last, site);
 }
 
-/** The first two rules: a failed read answers nothing. One per form so the baseline counts them apart. */
+/** The rules. The first two: a failed read answers nothing, one per form so the baseline counts them apart. */
 export const SILENT_READ_RULES: readonly SilentReadRule[] = [
   {
     name: 'silent-read-try-catch',
     metric: 'catch_empty',
+    fix: EMPTY_ANSWER_FIX,
     matcher: site => site.kind === 'try-catch' && isReadShaped(site) && handlerAnswersEmpty(site),
   },
   {
     name: 'silent-read-promise-catch',
     metric: 'promise_catch_empty',
+    fix: EMPTY_ANSWER_FIX,
     matcher: site => site.kind === 'promise-catch' && isReadShaped(site) && handlerAnswersEmpty(site),
+  },
+  // A Rust brain refuses untyped raw SQL by name; a catch must not turn that refusal into a quiet fallback.
+  {
+    ...CAPABILITY_REFUSAL_RULE,
+    fix: 'let the refusal through before the fallback: `rethrowCapabilityRefusal(err)` as the handler\'s first statement, or `if (isEngineCapabilityRefusal(err)) throw err`; where the fallback is right on every engine, add `// capability-refusal-ok: <reason>` on the catch line or the line above',
   },
 ];
