@@ -1233,6 +1233,7 @@ SELECT source_id, type FROM pairs`],
     from: 'src/core/search/relational-chain.ts:321 resolveChainAnchors, at 746062e471',
     case: { method: 'listChainAnchors', variant: 'default', run: e => e.listChainAnchors('notes/a', {}) },
     texts: () => [`SELECT p.id, p.source_id FROM pages p WHERE p.slug = $1 AND ${pageReadFilter('p', {}, ['notes/a'], true)} ORDER BY p.source_id COLLATE "C"`],
+  },
   // The command read its rows through its tagged template (`SELECT * ... LIMIT 1000`); the member names the columns and binds the limit.
   {
     from: 'src/commands/files.ts:498 files verify, at 746062e471',
