@@ -13,6 +13,7 @@ import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
 import type * as CoreNoticesSql from './engine-sql/core-notices.ts';
+import type * as GitGapCensusSql from './engine-sql/git-gap-census.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
@@ -4184,6 +4185,18 @@ export interface BrainEngine {
   // Core edit notices (engine-sql/core-notices.ts): the pending remote-edit notices the core block, core status and doctor read.
   /** The newest unacknowledged remote-edit notice per core page (at most 50, by source then slug, bytewise); `sourceIds` narrows it. */
   listPendingCoreNotices(sourceIds?: readonly string[] | null): Promise<CoreNoticesSql.PendingCoreNotice[]>;
+
+  // Git-gap census (engine-sql/git-gap-census.ts): the database side of `gbrain sources git-gap` and doctor db_ahead_of_git.
+  /** The source a census compares: checkout path, incarnation and live page count; null when no source has that id. */
+  readGitGapSource(sourceId: string): Promise<GitGapCensusSql.GitGapSourceRow | null>;
+  /** The `newest` most recently updated live pages of a source, and the fenced facts on its other live pages. */
+  readGitGapNewestWindow(sourceId: string, newest: number): Promise<GitGapCensusSql.GitGapNewestWindow>;
+  /** Up to `limit` live page keys of a source in id order, after an id or among ids, with the page-privacy verdict. */
+  listGitGapPageKeys(sourceId: string, window: GitGapCensusSql.GitGapKeyWindow, limit: number): Promise<GitGapCensusSql.GitGapPageKey[]>;
+  /** Fenced fact rows on `slugs` of a source and timeline rows on `pageIds`: the rows of pages with no committed file. */
+  countGitGapRowsWithoutFile(sourceId: string, slugs: readonly string[], pageIds: readonly string[]): Promise<{ facts: number; timeline_entries: number }>;
+  /** A source's rows with no Git home, its open holds of `holdOp` by code and its parked targets (groups sort bytewise). */
+  countGitGapSourceRows(sourceId: string, opts: { derivedLinkSources: readonly string[]; holdOp: string }): Promise<GitGapCensusSql.GitGapSourceRows>;
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
   /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */

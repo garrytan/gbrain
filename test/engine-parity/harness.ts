@@ -235,6 +235,66 @@ export async function seedCoreEditNotice(engine: BrainEngine, backend: ParityBac
   }
 }
 
+/** The rows a git-gap census counts that no typed member writes: fact rows, Git holds and parked effect targets. */
+export interface GitGapRowsSeed {
+  /** Fact rows on `slug` (the fact's source markdown page): `fenced` sets a row_num, `expired` an expired_at. */
+  facts?: Array<{ slug: string; fenced: boolean; expired?: boolean }>;
+  /** Open Git holds (op_checkpoints op 'sync-hold') keyed to the source's current incarnation, or to `staleIncarnation`. */
+  holds?: Array<{ code: string | null; staleIncarnation?: boolean }>;
+  /** One persistence effect per entry, of `kind`, whose data.parked lists one target per code (null: no error_code). */
+  parked?: Array<{ kind: string; codes: Array<string | null> }>;
+}
+
+/**
+ * Fixture: write the fact, hold and parked-effect rows a git-gap census counts. Harness-only SQL behind the backend
+ * switch (their writers have no typed member taking these exact rows). The Rust engine serves no git-gap census (its
+ * members refuse by name), so a case that reaches this on Rust is wrong: it must stop on the refusal first.
+ */
+export async function seedGitGapRows(engine: BrainEngine, backend: ParityBackend, sourceId: string, seed: GitGapRowsSeed): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      throw new Error('seedGitGapRows: the Rust engine serves no git-gap census; stop on the readGitGapSource refusal first');
+    case 'pglite':
+    case 'postgres': {
+      let n = 0;
+      for (const fact of seed.facts ?? []) {
+        n++;
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, source_markdown_slug, valid_from, row_num, expired_at)
+            VALUES ($1, 'people/entity', $2, 'fact', 'world', 'fixture', $3, now(), $4, CASE WHEN $5::boolean THEN now() END)`,
+          [sourceId, `fixture fact ${n}`, fact.slug, fact.fenced ? n : null, fact.expired === true],
+        );
+      }
+      for (const hold of seed.holds ?? []) {
+        n++;
+        await engine.executeRaw(
+          `INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
+            SELECT 'sync-hold', $1, jsonb_build_array(jsonb_build_object('source_id', s.id, 'code', $2::text,
+              'incarnation', CASE WHEN $3::boolean THEN gen_random_uuid()::text ELSE s.incarnation::text END)) FROM sources s WHERE s.id = $4`,
+          [`fixture-hold-${sourceId}-${n}`, hold.code, hold.staleIncarnation === true, sourceId],
+        );
+      }
+      for (const effect of seed.parked ?? []) {
+        const [request] = await engine.executeRaw<{ id: string }>(
+          `INSERT INTO persistence_requests (principal_kind, principal_id, request_id, operation, source_id, source_incarnation, slug, digest, authority, intent_bytes, terminal_reservation)
+            SELECT 'local_cli', 'fixture', gen_random_uuid(), 'put_page', s.id, s.incarnation, 'fixture/parked', 'digest', '{}'::jsonb, 0, 0 FROM sources s WHERE s.id = $1
+            RETURNING id::text AS id`,
+          [sourceId],
+        );
+        const parked = effect.codes.map((code, i) => (code === null ? { target: `t${i}` } : { target: `t${i}`, error_code: code }));
+        await engine.executeRaw(
+          `INSERT INTO persistence_effects (request_id, kind, data, state, source_id, source_incarnation)
+            SELECT $1::uuid, $2, $3::text::jsonb, 'failed', s.id, s.incarnation FROM sources s WHERE s.id = $4`,
+          [request!.id, effect.kind, JSON.stringify({ parked }), sourceId],
+        );
+      }
+      return;
+    }
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
 export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
   switch (backend) {

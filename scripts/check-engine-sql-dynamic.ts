@@ -110,6 +110,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   buildRecencyComponentSql: 'src/core/search/sql-ranking.ts: inlines LIKE literals + numeric coefficients from the decay map, as master (planner behavior)',
   readPolicyFragment: 'src/core/search/private-visibility.ts: accessAllowedForAllSql (readers identities checked by validIdentity before they are quoted in) AND the constant privacyPartSql or TRUE over a caller page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
+  privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy rules (visibility, derived origin, declared lineage) over a caller page alias; no values',
   callerAccessAllowedSql: 'src/core/search/private-visibility.ts: the member-access part of privatePagesFilterForCaller alone (callerAccessSql); readers identities pass validIdentity before they are quoted in, and a satisfied rule id that is not a valid qualified id empties the set (fail closed); no values',
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',

@@ -153,6 +153,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_reads: ['countPageChildOrphans'],
   // core_notices: the pending core-edit notices core memory ran through executeRaw (engine-sql/core-notices.ts)
   core_notices: ['listPendingCoreNotices'],
+  // git_gap_census: the git-gap census reads sources git-gap and doctor db_ahead_of_git ran through executeRaw (engine-sql/git-gap-census.ts)
+  git_gap_census: ['readGitGapSource', 'readGitGapNewestWindow', 'listGitGapPageKeys', 'countGitGapRowsWithoutFile', 'countGitGapSourceRows'],
   // doctor_derived: the derived-state reads doctor checks, repair scans and the purge ran through executeRaw (engine-sql/doctor-derived.ts)
   doctor_derived: [
     'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner',

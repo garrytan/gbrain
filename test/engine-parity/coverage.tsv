@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 805/805
+# covered: 810/810
 # lifecycle: 9/9
 # pages: 36/36
 # search: 7/7
@@ -44,6 +44,7 @@
 # embedding_catalog: 5/5
 # doctor_reads: 1/1
 # core_notices: 1/1
+# git_gap_census: 5/5
 # doctor_derived: 27/27
 # doctor_persistence: 38/38
 # doctor_pages: 19/19
@@ -552,6 +553,11 @@ hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 countPageChildOrphans	doctor_reads	yes	1	no	yes	yes	serves
 listPendingCoreNotices	core_notices	yes	1	no	yes	yes	refuses:pages
+readGitGapSource	git_gap_census	yes	1	no	yes	yes	refuses:sources
+readGitGapNewestWindow	git_gap_census	yes	1	no	yes	yes	refuses:pages
+listGitGapPageKeys	git_gap_census	yes	1	no	yes	yes	refuses:pages
+countGitGapRowsWithoutFile	git_gap_census	yes	1	no	yes	yes	refuses:facts
+countGitGapSourceRows	git_gap_census	yes	1	no	yes	yes	refuses:facts
 readIgnoredPrivacyLabelCounts	doctor_derived	yes	1	no	yes	yes	refuses:health
 countSafeIndexPending	doctor_derived	yes	1	no	yes	yes	serves
 countCredentialProjectionPending	doctor_derived	yes	1	no	yes	yes	refuses:health

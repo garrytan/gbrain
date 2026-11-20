@@ -891,6 +891,12 @@ export const RUST_ENGINE_MEMBERS = {
   listCorePageRows: 'pages',
   // The store keeps no core edit notices: the read refuses by name (rust/docs/store/core-notices.md).
   listPendingCoreNotices: 'pages',
+  // The store does not serve the git-gap census, so its reads refuse by name (rust/docs/store/git-gap-census.md).
+  readGitGapSource: 'sources',
+  readGitGapNewestWindow: 'pages',
+  listGitGapPageKeys: 'pages',
+  countGitGapRowsWithoutFile: 'facts',
+  countGitGapSourceRows: 'facts',
   listTrustScanRows: 'facts',
   countUnscannedTrustRows: 'facts',
   readBeliefHistoryRows: 'belief_ledger',
