@@ -22,10 +22,11 @@ let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
 afterAll(async () => { await engine.disconnect(); });
 
-/** The engine with every statement matching `match` failing the way a cancelled statement does. */
-function failing(match: RegExp): BrainEngine {
+/** The engine with every statement matching `match`, and every typed read named in `members`, failing the way a cancelled statement does. */
+function failing(match: RegExp, members: readonly string[] = []): BrainEngine {
   return new Proxy(engine, { get(target, key) {
     const value = Reflect.get(target, key);
+    if (typeof key === 'string' && members.includes(key)) return () => Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
     if (key !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
     return (sql: string, params?: unknown[]) => match.test(sql)
       ? Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }))
@@ -48,7 +49,7 @@ describe('#7145 unknown reads', () => {
   });
 
   test('dangling_aliases whose read failed is unknown, not clear', async () => {
-    const result = await checkDanglingAliases(failing(/slug_aliases|page_aliases|slug_redirects/));
+    const result = await checkDanglingAliases(failing(/slug_aliases|page_aliases|slug_redirects/, ['listOrphanedAliasCounts']));
     expect(result.check).toMatchObject({ name: 'dangling_aliases', status: 'warn', details: { health: 'unknown' } });
     expect(result.check.message).toContain('Dangling aliases unknown');
   });

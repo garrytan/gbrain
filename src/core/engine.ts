@@ -28,6 +28,7 @@ import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
 import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
 import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
 import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
+import type * as DoctorSearchSql from './engine-sql/doctor-search.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
 import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
@@ -5227,6 +5228,13 @@ export interface BrainEngine {
   listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
   /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  // Doctor search and knowledge reads (engine-sql/doctor-search.ts): the statements the alias, type, entity, body, link, search-policy, hold, projection and atom doctor checks ran through executeRaw.
+  /** Alias rows (both tables) whose target page row is absent, per source, in source order. */
+  listOrphanedAliasCounts(): Promise<DoctorSearchSql.OrphanedAliasCount[]>;
+  /** Alias rows (both tables) whose target page is soft-deleted. */
+  readSoftDeletedAliasCounts(): Promise<DoctorSearchSql.SoftDeletedAliasCounts>;
+  /** Every distinct (source, type) among live typed pages, in source then type order. */
+  listPageTypePairs(): Promise<DoctorSearchSql.PageTypePair[]>;
   // Doctor reads, second set (engine-sql/doctor-acc.ts): the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer statements doctor checks ran through executeRaw.
   /** Sources that hold folder access state, by id. */
   listPolicySourceIds(): Promise<string[]>;
