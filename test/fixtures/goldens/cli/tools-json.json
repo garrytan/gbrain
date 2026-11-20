@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301562,
-    "stdoutSha256": "a64c392b8c1aa49d823429c8a5e2598b01ee694c449d0d25b889b4b7e7b4856e",
+    "stdoutBytes": 307230,
+    "stdoutSha256": "362ca725545eb92ceae9f235d61a4c2347b1265b32290ad8841dbbcb90f79bd9",
     "toolNames": [
       "remember",
       "entity",
@@ -94,6 +94,11 @@
       "file_url",
       "file_register",
       "file_verify",
+      "file_upload_begin",
+      "file_upload_part",
+      "file_upload_commit",
+      "file_upload_abort",
+      "file_get",
       "storage_find",
       "storage_get",
       "storage_list",
@@ -4409,9 +4414,9 @@
         "scope": "admin"
       },
       {
-        "description": "List files stored in the brain's file storage, optionally for one page. Use when finding attachments before file_url. Needs admin scope and the local stdio server.",
+        "description": "List files stored in the brain's file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs files scope (admin implies it).",
         "idempotent": true,
-        "local_only": true,
+        "local_only": false,
         "mutating": false,
         "name": "file_list",
         "parameters": {
@@ -4428,7 +4433,7 @@
           "required": [],
           "type": "object"
         },
-        "scope": "admin"
+        "scope": "files"
       },
       {
         "description": "Upload a local file into brain storage and attach it to a page. Use when a page needs its source document or image. Needs admin scope and the local stdio server; agent callers may only upload files under the server's working directory.",
@@ -4460,9 +4465,9 @@
         "scope": "admin"
       },
       {
-        "description": "Return a URL for a stored file. Use when a user needs to open an attachment listed by file_list. Needs admin scope and the local stdio server. On storage_error: list the files again with file_list.",
+        "description": "Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs files scope (admin implies it). On storage_error: list the files again with file_list.",
         "idempotent": true,
-        "local_only": true,
+        "local_only": false,
         "mutating": false,
         "name": "file_url",
         "parameters": {
@@ -4472,6 +4477,7 @@
         "schema": {
           "properties": {
             "storage_path": {
+              "description": "Stored path of the file, as file_list lists it",
               "type": "string"
             }
           },
@@ -4480,7 +4486,7 @@
           ],
           "type": "object"
         },
-        "scope": "admin"
+        "scope": "files"
       },
       {
         "description": "Record the files row for an object the host already stored at the path file_upload would use (<page_slug>/<filename>, or unsorted/<first 8 hash chars>-<filename>), after reading it back and matching its size and SHA-256. Use when an embedded host writes bytes to storage itself. Runs only on an engine opened from settings; registering the same path again updates its row.",
@@ -4557,6 +4563,174 @@
           "type": "object"
         },
         "scope": "admin"
+      },
+      {
+        "description": "Start uploading a file (image, PDF, any binary) into the brain's file storage from anywhere, remote callers included. Answers mode \"direct\" with a short-lived URL: send the raw file bytes as the body of an HTTP PUT to it with exactly the returned headers, or mode \"parts\": send the bytes base64-encoded with file_upload_part in parts of at most part_max_bytes. Then call file_upload_commit. With import: true an image also becomes a searchable image page (visual embedding + OCR). Needs files scope (admin implies it).",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "file_upload_begin",
+        "parameters": {
+          "filename": "string",
+          "import": "boolean?",
+          "mime_type": "string?",
+          "mode": "string?",
+          "page_slug": "string?",
+          "sha256": "string",
+          "size_bytes": "integer"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "filename": {
+              "description": "File name to store under, e.g. whiteboard.png",
+              "type": "string"
+            },
+            "import": {
+              "description": "Also import an image as a searchable image page (embedding + OCR)",
+              "type": "boolean"
+            },
+            "mime_type": {
+              "description": "Content type, e.g. image/png (sniffed from the bytes on commit for images and PDFs)",
+              "type": "string"
+            },
+            "mode": {
+              "description": "Force a transfer mode; default direct when the backend can sign URLs",
+              "enum": [
+                "direct",
+                "parts"
+              ],
+              "type": "string"
+            },
+            "page_slug": {
+              "description": "Attach to this page; the file is stored as <page_slug>/<filename>",
+              "type": "string"
+            },
+            "sha256": {
+              "description": "SHA-256 of the file, 64 hex characters (sha256sum / shasum -a 256)",
+              "type": "string"
+            },
+            "size_bytes": {
+              "description": "Exact size of the file in bytes",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "filename",
+            "size_bytes",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        "scope": "files"
+      },
+      {
+        "description": "Send one part of an upload begun with file_upload_begin in mode \"parts\": the base64 of bytes [(part-1)*part_max_bytes, part*part_max_bytes). Resending a part replaces it. Needs files scope (admin implies it).",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "file_upload_part",
+        "parameters": {
+          "data_base64": "string",
+          "part": "integer",
+          "upload_id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "data_base64": {
+              "description": "The part's bytes, base64-encoded",
+              "type": "string"
+            },
+            "part": {
+              "description": "1-based part number",
+              "type": "integer"
+            },
+            "upload_id": {
+              "description": "The upload_id file_upload_begin returned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "upload_id",
+            "part",
+            "data_base64"
+          ],
+          "type": "object"
+        },
+        "scope": "files"
+      },
+      {
+        "description": "Finish an upload begun with file_upload_begin: checks the received bytes against the declared size and SHA-256, stores the file (<page_slug>/<filename>, or unsorted/<hash>-<filename>) and records it, and with import: true turns an image into a searchable image page. A failed import never loses the stored file. Needs files scope (admin implies it).",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "file_upload_commit",
+        "parameters": {
+          "upload_id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "upload_id": {
+              "description": "The upload_id file_upload_begin returned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "upload_id"
+          ],
+          "type": "object"
+        },
+        "scope": "files"
+      },
+      {
+        "description": "Drop a pending upload begun with file_upload_begin and every byte staged for it. Needs files scope (admin implies it).",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "file_upload_abort",
+        "parameters": {
+          "upload_id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "upload_id": {
+              "description": "The upload_id file_upload_begin returned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "upload_id"
+          ],
+          "type": "object"
+        },
+        "scope": "files"
+      },
+      {
+        "description": "Return a stored file's bytes: png/jpeg/gif/webp images as an image you can see, any other file as data_base64. Files larger than this connection's result cap are refused (result_too_large); use file_url for a download link instead. Find storage_path with file_list. Needs files scope (admin implies it).",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "file_get",
+        "parameters": {
+          "storage_path": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "storage_path": {
+              "description": "Stored path of the file, as file_list lists it",
+              "type": "string"
+            }
+          },
+          "required": [
+            "storage_path"
+          ],
+          "type": "object"
+        },
+        "scope": "files"
       },
       {
         "description": "Find archived items on the storage shelf (files moved to B2, Supabase Storage, S3 and similar) by a plain phrase, such as \"the October Gmail dataset\". Ranks exact id, then exact alias, then cards matching most of the phrase's words in title, aliases and description. When nothing matches, not_found is true and closest lists the nearest cards. Then call storage_get with the id for where it is stored and how to restore it.",

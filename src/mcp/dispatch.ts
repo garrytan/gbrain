@@ -12,7 +12,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { asSegmentedWriteRefusal } from '../core/page-body/page-shape.ts';
-import type { Operation, OperationMeta } from '../core/ops/contract.ts';
+import { mcpExtraContent, type Operation, type OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { currentCallerAccess, withCallerAccess } from '../core/search/private-visibility.ts';
@@ -1200,6 +1200,7 @@ function assembleToolResult(
   // failure can never drop the retrieval channel. Per-key merge, never
   // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
   attachResponseMeta(built, meta, degradedStampFor(call.name, call.result, meta, stamped)); if (call.tail) appendToolTail(built, call.tail);
+  if (!call.batchError) (built.content as unknown[]).push(...(mcpExtraContent(call.result) ?? [])); // file_get's image block, after the text block
   if (hook && Object.keys(hook).length > 0) built._meta = { ...(built._meta ?? {}), ...hook };
   return built;
 }

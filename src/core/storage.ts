@@ -24,6 +24,25 @@ export interface StorageBackend {
   getUrl(path: string): Promise<string>;
   /** Size and SHA-256 of a stored object, streamed; a backend without it is hashed from one download (hashStoredObject). */
   hashObject?(path: string): Promise<{ size: number; sha256: string }>;
+  /**
+   * A short-lived URL a remote caller PUTs the bytes of `path` to directly, so they never cross the MCP connection or the
+   * brain host's disk. Backends that cannot sign one leave it out; remote uploads then send the bytes inline in parts.
+   */
+  createUploadUrl?(path: string, opts?: UploadUrlOptions): Promise<SignedUpload>;
+}
+
+export interface UploadUrlOptions {
+  /** Content type the PUT must send (signed into the URL). */
+  mime?: string;
+  /** Lifetime in seconds. */
+  expiresIn?: number;
+}
+
+/** A presigned upload: send the bytes as the body of `method` to `url` with exactly `headers`. */
+export interface SignedUpload {
+  url: string;
+  method: 'PUT';
+  headers: Record<string, string>;
 }
 
 export interface StorageConfig {
@@ -109,6 +128,7 @@ export function prefixedStorage(backend: StorageBackend, prefix: string | undefi
     list: async listPrefix => (await backend.list(key(listPrefix, true))).map(path => path.slice(prefix.length + 1)),
     getUrl: async path => backend.getUrl(key(path)),
     ...(backend.hashObject ? { hashObject: async (path: string) => backend.hashObject!(key(path)) } : {}),
+    ...(backend.createUploadUrl ? { createUploadUrl: async (path: string, opts?: UploadUrlOptions) => backend.createUploadUrl!(key(path), opts) } : {}),
   };
 }
 

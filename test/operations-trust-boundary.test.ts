@@ -98,6 +98,7 @@ describe('operations contract — every op has scope + correct mutability shape'
       'sources_admin',
       'users_admin',
       'agent',
+      'files', // remote file transfer: file_upload_begin/part/commit/abort write file bytes
     ]);
     // Remote-gated exception (#2598, same allowlist as test/oauth.test.ts):
     // `think` is read-scoped for OAuth/MCP because its handler forces
@@ -138,6 +139,7 @@ describe('operations contract — every op has scope + correct mutability shape'
       'sources_admin',
       'users_admin',
       'agent',
+      'files',
     ]);
     for (const op of operations) {
       expect(
@@ -234,10 +236,8 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'entity_identity_link',
       'entity_identity_unlink',
       'extraction_review',
-      'file_list',
       'file_register',
       'file_upload',
-      'file_url',
       'file_verify',
       'get_recent_transcripts',
       'get_skill_retention',

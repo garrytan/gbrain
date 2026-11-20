@@ -839,6 +839,20 @@ export interface ExplicitReadBinding {
  * - `{ exempt }`: returns stored text deliberately raw; the reason is required.
  * - `'no_stored_text'`: returns no page, chunk, fact, take or transcript text.
  */
+/**
+ * A handler result may carry extra MCP content blocks under this symbol (file_get's image block): the dispatcher appends
+ * them after the JSON text block. A symbol key never reaches JSON.stringify, so the text body never carries the bytes.
+ */
+export const MCP_EXTRA_CONTENT = Symbol.for('gbrain.mcp_extra_content');
+export type McpExtraContent = { type: 'image'; data: string; mimeType: string };
+
+/** The extra content blocks a handler result carries, if any. */
+export function mcpExtraContent(result: unknown): McpExtraContent[] | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const extra = (result as Record<symbol, unknown>)[MCP_EXTRA_CONTENT];
+  return Array.isArray(extra) ? extra as McpExtraContent[] : undefined;
+}
+
 export type OutputRedactionPolicy =
   | 'retrieval'
   | { retrieval: { localVerbatim: readonly string[] } }
@@ -881,7 +895,7 @@ export interface Operation {
    * Local CLI callers (ctx.remote === false) bypass scope enforcement
    * because the trust boundary there is the OS, not OAuth scopes.
    */
-  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'files';
   requiredScopes?: readonly string[];
   localOnly?: boolean;
   /**

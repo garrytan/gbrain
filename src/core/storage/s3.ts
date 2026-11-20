@@ -13,13 +13,15 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { FileDigest, type StorageBackend, type StorageConfig } from '../storage.ts';
+import { FileDigest, type SignedUpload, type StorageBackend, type StorageConfig, type UploadUrlOptions } from '../storage.ts';
 
 const MIN_PART_SIZE = 16 * 1024 * 1024;
 const MAX_PART_SIZE = 5 * 1024 * 1024 * 1024;
 const MAX_PARTS = 10_000;
 /** Lifetime of a presigned GET (getUrl): one hour, as the Supabase backend's signed URL. */
 const SIGNED_URL_EXPIRY_S = 3600;
+/** Default lifetime of a presigned PUT (createUploadUrl): 15 minutes. */
+const SIGNED_UPLOAD_EXPIRY_S = 900;
 
 /** Multipart part size for `size` bytes within S3's limits: 5 MiB..5 GiB per part, at most 10,000 parts. */
 export function multipartPartSize(size: number): number {
@@ -34,6 +36,8 @@ export function multipartPartSize(size: number): number {
  */
 export class S3Storage implements StorageBackend {
   private client: S3Client;
+  /** Signs upload URLs (createUploadUrl); see there. */
+  private presignClient: S3Client;
   private bucket: string;
 
   constructor(config: StorageConfig, client?: S3Client) {
@@ -43,6 +47,7 @@ export class S3Storage implements StorageBackend {
     // as-is — no construction, no credential validation.
     if (client) {
       this.client = client;
+      this.presignClient = client;
       return;
     }
 
@@ -52,7 +57,7 @@ export class S3Storage implements StorageBackend {
       throw new Error('S3 storage requires accessKeyId and secretAccessKey in config');
     }
 
-    this.client = new S3Client({
+    const clientConfig = {
       region,
       ...(config.endpoint ? {
         endpoint: config.endpoint,
@@ -62,7 +67,11 @@ export class S3Storage implements StorageBackend {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
       },
-    });
+    };
+    this.client = new S3Client(clientConfig);
+    // A presigned PUT has no body when it is signed, so the SDK's default flexible checksum would sign the CRC32 of an
+    // empty body into the URL and every real upload would fail its check. Checksums only when an API requires them.
+    this.presignClient = new S3Client({ ...clientConfig, requestChecksumCalculation: 'WHEN_REQUIRED' });
   }
 
   async upload(path: string, data: Buffer, mime?: string): Promise<void> {
@@ -175,6 +184,17 @@ export class S3Storage implements StorageBackend {
   /** A SigV4 presigned GET for `path` that expires after SIGNED_URL_EXPIRY_S, so a private bucket's object opens from anywhere. */
   async getUrl(path: string): Promise<string> {
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: path }), { expiresIn: SIGNED_URL_EXPIRY_S });
+  }
+
+  /**
+   * A SigV4 presigned PUT for `path`. Content-Type is signed, so the PUT must send exactly the returned headers. Works
+   * against any S3-compatible endpoint, Google Cloud Storage's XML API with HMAC keys included.
+   */
+  async createUploadUrl(path: string, opts: UploadUrlOptions = {}): Promise<SignedUpload> {
+    const contentType = opts.mime || 'application/octet-stream';
+    const url = await getSignedUrl(this.presignClient, new PutObjectCommand({ Bucket: this.bucket, Key: path, ContentType: contentType }),
+      { expiresIn: opts.expiresIn ?? SIGNED_UPLOAD_EXPIRY_S, signableHeaders: new Set(['content-type']) });
+    return { url, method: 'PUT', headers: { 'Content-Type': contentType } };
   }
 
   async getContentHash(path: string): Promise<string | null> {

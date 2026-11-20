@@ -20,6 +20,7 @@ const load_entity_identity = () => import('./ops/entity-identity.ts') as Promise
 const load_extraction = () => import('./ops/extraction.ts') as Promise<Record<string, unknown>>;
 const load_facts = () => import('./ops/facts.ts') as Promise<Record<string, unknown>>;
 const load_feedback = () => import('./ops/feedback.ts') as Promise<Record<string, unknown>>;
+const load_file_transfer = () => import('./ops/file-transfer.ts') as Promise<Record<string, unknown>>;
 const load_files = () => import('./ops/files.ts') as Promise<Record<string, unknown>>;
 const load_find_pages = () => import('./ops/find-pages.ts') as Promise<Record<string, unknown>>;
 const load_graph_rank = () => import('./ops/graph-rank.ts') as Promise<Record<string, unknown>>;
@@ -153,6 +154,11 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "file_url": [load_files, "filesOperations"],
   "file_register": [load_files, "filesOperations"],
   "file_verify": [load_files, "filesOperations"],
+  "file_upload_begin": [load_file_transfer, "fileTransferOperations"],
+  "file_upload_part": [load_file_transfer, "fileTransferOperations"],
+  "file_upload_commit": [load_file_transfer, "fileTransferOperations"],
+  "file_upload_abort": [load_file_transfer, "fileTransferOperations"],
+  "file_get": [load_file_transfer, "fileTransferOperations"],
   "storage_find": [load_storage_manifest, "storageManifestOperations"],
   "storage_get": [load_storage_manifest, "storageManifestOperations"],
   "storage_list": [load_storage_manifest, "storageManifestOperations"],

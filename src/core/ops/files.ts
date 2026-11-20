@@ -24,7 +24,7 @@ const FILE_LIST_LIMIT = 100;
  * GBRA-218: a caller under the read policy (every remote caller, stdio included) sees no file attached to a page it
  * cannot read, by the page's id or by its slug in any source (a file row names its page loosely, so it fails closed).
  */
-async function fileReadableSql(ctx: OperationContext): Promise<string> {
+export async function fileReadableSql(ctx: OperationContext): Promise<string> {
   if (!await resolveExcludePrivatePages(ctx.engine, ctx.remote)) return 'TRUE';
   return `NOT EXISTS (SELECT 1 FROM pages fp WHERE (fp.id = f.page_id OR fp.slug = f.page_slug) AND NOT ${privatePagesFilterForCaller('fp')})`;
 }
@@ -34,12 +34,11 @@ const file_list: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_url. Needs admin scope and the local stdio server.',
+  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs files scope (admin implies it).',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
-  scope: 'admin',
-  localOnly: true,
+  scope: 'files',
   handler: async (ctx, p) => {
     const slug = p.slug as string | undefined;
     const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
@@ -123,84 +122,110 @@ const file_upload: Operation = {
     }
     const { createStorage } = await import('../storage.ts');
     const storage = embedded?.storage ?? await createStorage(ctx.config.storage as any);
-
-    // #8513: the row names the caller's source and the page's id there, so purging that page finds it in any source.
-    // The source is checked before any bytes are written, so a refused upload leaves the object at storagePath as it was.
-    const sourceId = ctx.sourceId ?? 'default';
-    if (!(await ctx.engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) throw opError('unknown_source',
-      `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (gbrain sources list).');
-    const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
-
-    const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
-    const [owner] = await ctx.engine.executeRaw<{ source_id: string; page_id: number | null; content_hash: string }>(
-      'SELECT source_id, page_id, content_hash FROM files WHERE storage_path = $1', [storagePath]);
-    // A row with a live page in another source is that source's attachment: an upload never moves it or replaces its bytes.
-    const foreign = owner !== undefined && owner.page_id !== null && owner.source_id !== sourceId;
-    if (owner?.content_hash === hash) {
-      // #4302: only claim already_exists when the BACKEND really holds the
-      // object — a DB row whose bytes vanished must re-upload, not lie.
-      let inBackend = false;
-      try {
-        inBackend = await storage.exists(storagePath);
-      } catch { /* probe failure → treat as absent, re-upload below */ }
-      if (inBackend) {
-        if (page && !foreign) await ctx.engine.executeRaw('UPDATE files SET source_id = $2, page_id = $3 WHERE storage_path = $1', [storagePath, sourceId, page.id]);
-        return { status: 'already_exists', storage_path: storagePath };
-      }
-    }
-    if (foreign) throw opError('invalid_params', `${storagePath} holds the attachment of a page in source '${owner!.source_id}', so nothing was uploaded.`,
-      'Upload it under another filename; an upload never replaces another source\'s attachment.');
-
-    try {
-      await uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined);
-    } catch (uploadErr) {
-      throw opError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
-        'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `gbrain doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');
-    }
-
-    try {
-      // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id when that source has the page.
-      // #4910: stamp the storage lane (doctor image_assets / files verify
-      // classify on it) and merge metadata on conflict so legacy `{}` rows
-      // heal on their next content change. Real object via executeRawJsonb —
-      // never a JSON string into ::jsonb (#2339).
-      await executeRawJsonb(
-        ctx.engine,
-        `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-         ON CONFLICT (storage_path) DO UPDATE SET
-           content_hash = EXCLUDED.content_hash,
-           size_bytes = EXCLUDED.size_bytes,
-           mime_type = EXCLUDED.mime_type,
-           source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
-           page_id = COALESCE(EXCLUDED.page_id, files.page_id),
-           ${FILES_METADATA_MERGE_SQL}`,
-        [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
-        [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
-      );
-    } catch (dbErr) {
-      // Rollback: clean up storage if DB write failed
-      try {
-        await storage.delete(storagePath);
-      } catch { /* best effort cleanup */ }
-      throw dbErr;
-    }
-
-    return { status: 'uploaded', storage_path: storagePath, size_bytes: stat.size };
+    return storeAndRecordFile(ctx, storage, embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }, {
+      storagePath, filename, pageSlug, hash, size: stat.size, mimeType,
+      put: () => uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined),
+    });
   },
 };
+
+/** What storeAndRecordFile records: the object at storagePath, written by `put` once every check passed. */
+export interface StoredFileInput {
+  storagePath: string;
+  filename: string;
+  pageSlug: string | null;
+  /** SHA-256 hex of the bytes `put` writes. */
+  hash: string;
+  size: number;
+  mimeType: string | null;
+  put: () => Promise<void>;
+}
+
+/**
+ * The one recording path for an uploaded file (file_upload and file_upload_commit): the caller's source must exist, an
+ * attachment of another source's page is never replaced, unchanged bytes the backend still holds answer
+ * already_exists, and the files row is written only after the bytes are stored (the object is removed again if the
+ * row cannot be written).
+ */
+export async function storeAndRecordFile(ctx: OperationContext, storage: import('../storage.ts').StorageBackend,
+  metadata: Record<string, unknown>, input: StoredFileInput): Promise<{ status: 'uploaded' | 'already_exists'; storage_path: string; size_bytes?: number }> {
+  const { storagePath, filename, pageSlug, hash, mimeType } = input;
+
+  // #8513: the row names the caller's source and the page's id there, so purging that page finds it in any source.
+  // The source is checked before any bytes are written, so a refused upload leaves the object at storagePath as it was.
+  const sourceId = ctx.sourceId ?? 'default';
+  if (!(await ctx.engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) throw opError('unknown_source',
+    `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (gbrain sources list).');
+  const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
+
+  const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
+  const [owner] = await ctx.engine.executeRaw<{ source_id: string; page_id: number | null; content_hash: string }>(
+    'SELECT source_id, page_id, content_hash FROM files WHERE storage_path = $1', [storagePath]);
+  // A row with a live page in another source is that source's attachment: an upload never moves it or replaces its bytes.
+  const foreign = owner !== undefined && owner.page_id !== null && owner.source_id !== sourceId;
+  if (owner?.content_hash === hash) {
+    // #4302: only claim already_exists when the BACKEND really holds the
+    // object — a DB row whose bytes vanished must re-upload, not lie.
+    let inBackend = false;
+    try {
+      inBackend = await storage.exists(storagePath);
+    } catch { /* probe failure → treat as absent, re-upload below */ }
+    if (inBackend) {
+      if (page && !foreign) await ctx.engine.executeRaw('UPDATE files SET source_id = $2, page_id = $3 WHERE storage_path = $1', [storagePath, sourceId, page.id]);
+      return { status: 'already_exists', storage_path: storagePath };
+    }
+  }
+  if (foreign) throw opError('invalid_params', `${storagePath} holds the attachment of a page in source '${owner!.source_id}', so nothing was uploaded.`,
+    'Upload it under another filename; an upload never replaces another source\'s attachment.');
+
+  try {
+    await input.put();
+  } catch (uploadErr) {
+    throw opError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+      'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `gbrain doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');
+  }
+
+  try {
+    // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id when that source has the page.
+    // #4910: stamp the storage lane (doctor image_assets / files verify
+    // classify on it) and merge metadata on conflict so legacy `{}` rows
+    // heal on their next content change. Real object via executeRawJsonb —
+    // never a JSON string into ::jsonb (#2339).
+    await executeRawJsonb(
+      ctx.engine,
+      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+       ON CONFLICT (storage_path) DO UPDATE SET
+         content_hash = EXCLUDED.content_hash,
+         size_bytes = EXCLUDED.size_bytes,
+         mime_type = EXCLUDED.mime_type,
+         source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
+         page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+         ${FILES_METADATA_MERGE_SQL}`,
+      [pageSlug, filename, storagePath, mimeType, input.size, hash, sourceId, page?.id ?? null],
+      [metadata],
+    );
+  } catch (dbErr) {
+    // Rollback: clean up storage if DB write failed
+    try {
+      await storage.delete(storagePath);
+    } catch { /* best effort cleanup */ }
+    throw dbErr;
+  }
+
+  return { status: 'uploaded', storage_path: storagePath, size_bytes: input.size };
+}
 
 const file_url: Operation = {
   name: 'file_url',
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Return a URL for a stored file. Use when a user needs to open an attachment listed by file_list. Needs admin scope and the local stdio server. On storage_error: list the files again with file_list.',
+  description: 'Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs files scope (admin implies it). On storage_error: list the files again with file_list.',
   params: {
-    storage_path: { type: 'string', required: true },
+    storage_path: { type: 'string', required: true, description: 'Stored path of the file, as file_list lists it' },
   },
-  scope: 'admin',
-  localOnly: true,
+  scope: 'files',
   handler: async (ctx, p) => {
     const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT storage_path, mime_type, size_bytes FROM files f
       WHERE storage_path = $1 AND ${await fileReadableSql(ctx)}`, [p.storage_path as string]);
@@ -236,6 +261,19 @@ const file_url: Operation = {
   },
 };
 
+/**
+ * The storage backend file ops write to, with the metadata its files rows carry: the engine's settings.storage on an
+ * engine opened from settings, else the configured `storage` block. No backend refuses with storage_error before
+ * anything is written.
+ */
+export async function resolveFileStorage(ctx: OperationContext, op: string): Promise<{ storage: import('../storage.ts').StorageBackend; metadata: Record<string, unknown> }> {
+  if (isEmbeddedEngine(ctx.engine)) return embeddedFileStore(ctx, op);
+  if (!ctx.config.storage) throw opError('storage_error', `No storage backend configured, so ${op} cannot store or read file bytes.`,
+    'Configure `storage` in the brain host\'s gbrain config (s3 | supabase | local).');
+  const { createStorage } = await import('../storage.ts');
+  return { storage: await createStorage(ctx.config.storage as any), metadata: { storage: (ctx.config.storage as { backend: string }).backend } };
+}
+
 /** file_register and file_verify serve a host that stores bytes itself: they run only on an engine opened from settings, against its settings.storage, which every file op on such an engine uses. */
 async function embeddedStorage(ctx: OperationContext, op: string) {
   if (!isEmbeddedEngine(ctx.engine)) throw opError('embedded_engine_required', `${op} runs only on an engine an embedding host opened from settings (embedded_core: true).`,
@@ -259,7 +297,7 @@ function storeUnavailable(op: string, error: unknown) {
 }
 
 /** The path file_upload stores a file under; file_register accepts no other, so a registered row only names what an upload could have written. */
-function uploadLayoutPath(pageSlug: string | null, filename: string, hash: string): string {
+export function uploadLayoutPath(pageSlug: string | null, filename: string, hash: string): string {
   return pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 }
 

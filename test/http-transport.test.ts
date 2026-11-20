@@ -443,7 +443,7 @@ describe('http-transport: localOnly confinement (WP1/D7)', () => {
     });
     const body = await r.json();
     const names = new Set(body.result.tools.map((t: { name: string }) => t.name));
-    for (const localOnlyName of ['file_list', 'file_upload', 'file_url', 'sync_brain']) {
+    for (const localOnlyName of ['file_upload', 'file_register', 'file_verify', 'sync_brain']) {
       expect(names.has(localOnlyName)).toBe(false);
     }
     // Non-localOnly ops are still present (the filter is targeted).
@@ -454,7 +454,7 @@ describe('http-transport: localOnly confinement (WP1/D7)', () => {
     const r = await fetch(`${srv.url}/mcp`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
-      body: rpc('tools/call', { name: 'file_list', arguments: {} }),
+      body: rpc('tools/call', { name: 'file_upload', arguments: {} }),
     });
     expect(r.status).toBe(200);
     const body = await r.json();
@@ -462,7 +462,7 @@ describe('http-transport: localOnly confinement (WP1/D7)', () => {
     const parsed = JSON.parse(body.result.content[0].text);
     expect(parsed.error).toBe('unknown_tool');
     // Byte-identical message to a nonexistent op: no existence oracle.
-    expect(parsed.message).toBe('Unknown tool: file_list');
+    expect(parsed.message).toBe('Unknown tool: file_upload');
   });
 });
 

@@ -934,7 +934,7 @@ describe('operation scope annotations', () => {
       // v0.28 added sources_admin and users_admin to the union.
       // v0.38 added 'agent' for submit_agent (D13).
       expect([
-        'read', 'write', 'admin', 'sources_admin', 'users_admin', 'agent',
+        'read', 'write', 'admin', 'sources_admin', 'users_admin', 'agent', 'files',
       ]).toContain(op.scope);
     }
   });
@@ -971,7 +971,7 @@ describe('operation scope annotations', () => {
         // the handler writes. v0.38: 'agent' is a mutating-axis scope for
         // submit_agent (creates jobs, spends money, but contained by bindings).
         expect(
-          ['write', 'admin', 'sources_admin', 'users_admin', 'agent'],
+          ['write', 'admin', 'sources_admin', 'users_admin', 'agent', 'files'],
           `${op.name} is mutating but not a write-axis scope`,
         ).toContain(op.scope);
       }
@@ -984,10 +984,13 @@ describe('operation scope annotations', () => {
     expect(operationsByName.file_upload.localOnly).toBe(true);
   });
 
-  test('file_list and file_url are localOnly', () => {
+  test('path-based file_upload stays localOnly; the byte-based file ops are remote-callable under the files scope', () => {
     const { operationsByName } = require('../src/core/operations.ts');
-    expect(operationsByName.file_list.localOnly).toBe(true);
-    expect(operationsByName.file_url.localOnly).toBe(true);
+    expect(operationsByName.file_upload.localOnly).toBe(true);
+    for (const name of ['file_list', 'file_url', 'file_get', 'file_upload_begin', 'file_upload_part', 'file_upload_commit', 'file_upload_abort']) {
+      expect(operationsByName[name].localOnly).toBeUndefined();
+      expect(operationsByName[name].scope).toBe('files');
+    }
   });
 });
 
