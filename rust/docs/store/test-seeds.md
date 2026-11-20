@@ -31,10 +31,15 @@ GBRAIN_TEST_RUST_ARM=1 GBRAIN_TEST_RUST_ENGINE_ADDON=<the built .node> GBRAIN_RU
 cargo test -p gbrain-store --features test-seeds
 ```
 
+On a seed addon the parity harness checks each file against `test/engine-parity/rust-tally-seeds.tsv` read over
+`rust-tally.tsv`. The Rust engine workflow's `addon-seeds` job builds this addon and runs every parity file that way;
+the addon is never uploaded or released.
+
 ## The shipped build does not export them
 
-`strings <addon>.node | grep -c seedPage` is 0 for the default build and non-zero for the seed build; the proof for the
-change that added them is in its notes.
+`strings <addon>.node | grep -c seedPage` is 0 for the default build and non-zero for the seed build. The smoke case
+"store: the shipped addon has no test-only seed members" (`rust/smoke/cases.ts`) fails when the addon the `addon` job
+builds and uploads has any `seed*` member.
 
 ## Without the feature
 

@@ -37,9 +37,9 @@ import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
-import { checkRustTally } from './rust-tally.ts';
+import { checkRustTally, readPins, SEEDS_REQUIRED_ENV } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, seedRustBeliefLifetimes, seedRustPageOrigin, seedRustPageUpdatedAt, TEST_SEEDS_CAPABILITY, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, seedRustBeliefLifetimes, seedRustPageOrigin, seedRustPageUpdatedAt, TEST_SEEDS_CAPABILITY, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmHasTestSeeds, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -470,10 +470,16 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   afterAll(async () => {
     const closing = arms;
     arms = [];
+    // Read before the brains close: a seed addon (test-seeds) is checked against rust-tally-seeds.tsv over the default pins.
+    const rustArm = closing.find((arm) => arm.backend === 'rust');
+    const seeds = rustArm !== undefined && rustArmHasTestSeeds(rustArm.engine);
     for (const arm of closing) await arm.close();
-    if (closing.some((arm) => arm.backend === 'rust')) {
-      console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`);
-      const better = checkRustTally(testFile, { ...tally, skipped }, registered);
+    if (rustArm !== undefined) {
+      console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences${seeds ? ' (seed addon)' : ''}`);
+      if (process.env[SEEDS_REQUIRED_ENV] === '1' && !seeds) {
+        throw new Error(`[rust arm] ${SEEDS_REQUIRED_ENV}=1, but the arm's addon has no test seed members; build it with GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`);
+      }
+      const better = checkRustTally(testFile, { ...tally, skipped }, registered, readPins(seeds));
       if (better !== null) console.log(better);
     }
   }, 60_000);

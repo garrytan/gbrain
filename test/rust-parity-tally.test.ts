@@ -3,9 +3,9 @@
  * cases against its pin fails; one that does better passes and names the new counts; an incomplete run is not checked.
  */
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkRustTally, parsePins, renderPins, RUST_TALLY_PATH } from './engine-parity/rust-tally.ts';
+import { checkRustTally, parsePins, readPins, renderPins, RUST_TALLY_PATH, RUST_TALLY_SEEDS_PATH, seedRows } from './engine-parity/rust-tally.ts';
 
 const FILE = 'test/engine-parity/search.test.ts';
 const pins = parsePins(renderPins([[FILE, { equal: 14, stopped: 2 }]]));
@@ -54,6 +54,35 @@ describe('Rust parity tally pin', () => {
     const pinned = [...parsePins(text).keys()].sort();
     expect({ missing: files.filter((f) => !pinned.includes(f)), stale: pinned.filter((f) => !files.includes(f)) })
       .toEqual({ missing: [], stale: [] });
+    expect(renderPins(parsePins(text))).toBe(text);
+  });
+
+  test('a note column names the owner of the stopped cases and survives a round trip', () => {
+    const text = renderPins([[FILE, { equal: 14, stopped: 2, note: 'readX: owner lane 1, reason' }], ['test/engine-parity/a.test.ts', { equal: 3, stopped: 0 }]]);
+    expect(text).toBe('file\tequal\tstopped\tnote\ntest/engine-parity/a.test.ts\t3\t0\n' +
+      `${FILE}\t14\t2\treadX: owner lane 1, reason\n`);
+    expect(parsePins(text).get(FILE)).toEqual({ equal: 14, stopped: 2, note: 'readX: owner lane 1, reason' });
+    expect(renderPins(parsePins(text))).toBe(text);
+  });
+
+  test('seed rows keep only the files whose seed-addon counts differ, with their notes', () => {
+    const base = parsePins(renderPins([[FILE, { equal: 14, stopped: 2, note: 'two seed cases' }], ['test/engine-parity/a.test.ts', { equal: 3, stopped: 0 }]]));
+    const measured = parsePins(renderPins([[FILE, { equal: 16, stopped: 0 }], ['test/engine-parity/a.test.ts', { equal: 3, stopped: 0 }]]));
+    expect([...seedRows(measured, base, new Map())]).toEqual([[FILE, { equal: 16, stopped: 0, note: 'two seed cases' }]]);
+    const kept = parsePins(renderPins([[FILE, { equal: 15, stopped: 1, note: 'seed note' }]]));
+    expect(seedRows(measured, base, kept).get(FILE)?.note).toBe('seed note');
+  });
+
+  test('the checked-in seed rows name parity files, differ from the default pin, and round-trip', () => {
+    expect(existsSync(RUST_TALLY_SEEDS_PATH)).toBe(true);
+    const text = readFileSync(RUST_TALLY_SEEDS_PATH, 'utf8');
+    const base = readPins();
+    const merged = readPins(true);
+    for (const [file, pin] of parsePins(text)) {
+      expect(base.has(file)).toBe(true);
+      expect([pin.equal, pin.stopped]).not.toEqual([base.get(file)!.equal, base.get(file)!.stopped]);
+      expect(merged.get(file)).toEqual(pin);
+    }
     expect(renderPins(parsePins(text))).toBe(text);
   });
 });

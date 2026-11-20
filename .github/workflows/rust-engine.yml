@@ -324,6 +324,78 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The parity suite's Rust arm on an addon built with the test-only seed members (rust/docs/store/test-seeds.md).
+  # Cases that seed the Rust arm through them stop on the shipped addon; here they run, and each parity file is checked
+  # against test/engine-parity/rust-tally-seeds.tsv read over rust-tally.tsv. This addon is never uploaded or released;
+  # the addon job above builds and smoke-tests the shipped one, which has no seed members.
+  addon-seeds:
+    name: Parity Rust arm on the test-seeds addon / linux-x64-glibc
+    needs: scope
+    if: github.event_name != 'schedule'
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+      # A cache of its own: the seed build compiles the store with another feature set.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-seeds-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-seeds-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the addon with the test seed members
+        env:
+          GBRAIN_RUST_TEST_SEEDS: '1'
+        run: bun run rust:build
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # GBRAIN_TEST_RUST_SEEDS_REQUIRED makes an addon without the seed members fail every file instead of passing it
+      # on the default pins.
+      - name: The parity suite's Rust arm against the seed tally
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RUST_ARM: '1'
+          GBRAIN_TEST_RUST_SEEDS_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          for file in test/engine-parity/*.test.ts; do
+            bun test --timeout=60000 "$file"
+          done
+
   # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
   without-rust:
     name: Builds and runs with no Rust installed

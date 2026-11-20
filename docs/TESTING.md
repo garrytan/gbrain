@@ -319,6 +319,14 @@ file with fewer equal or more stopped cases than its pin fails, so a member
 that falls back to a refusal cannot pass. A file that does better prints the
 new counts. After a change to Rust coverage, or at each merge, regenerate the
 pin with `bun test/engine-parity/rust-tally.ts --write` and commit it.
+A row's optional fourth column is a note: the owner and the reason of each
+stopped case. Regenerating keeps it.
+`test/engine-parity/rust-tally-seeds.tsv` holds the rows that differ on a seed
+addon (`GBRAIN_RUST_TEST_SEEDS=1 bun run rust:build`). The harness reads them
+over the default pins when the arm's addon has the seed members; regenerate
+them on a seed addon with `bun test/engine-parity/rust-tally.ts --write --seeds`.
+The Rust engine workflow's `addon-seeds` job checks them, with
+`GBRAIN_TEST_RUST_SEEDS_REQUIRED=1` so an addon without the seed members fails.
 
 With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
 

@@ -569,6 +569,23 @@ export const cases: Case[] = [
       });
     },
   },
+  {
+    // The shipped build has none of the parity suite's test-only seed members (rust/docs/store/test-seeds.md): they
+    // write page state no engine member writes, so they exist only on an addon built with GBRAIN_RUST_TEST_SEEDS=1.
+    name: 'store: the shipped addon has no test-only seed members',
+    async run(addon) {
+      const pool = new addon.Pool(1);
+      const brain = new addon.Brain(pool) as unknown as Record<string, unknown>;
+      const names = new Set<string>();
+      for (let proto = Object.getPrototypeOf(brain); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+        for (const name of Object.getOwnPropertyNames(proto)) names.add(name);
+      }
+      assert.ok(names.has('putPage'), 'the brain\'s members are readable here');
+      assert.deepEqual([...names].filter(name => /^seed[A-Z]/.test(name)), []);
+      assert.equal(typeof brain.seedPageUpdatedAt, 'undefined');
+      await pool.shutdown(1000);
+    },
+  },
 ];
 
 /** The cases that make sense inside a compiled executable (everything in-process and quick). */

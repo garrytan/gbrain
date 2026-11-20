@@ -115,6 +115,15 @@ export function isoToMicros(iso: string): number {
  */
 export const TEST_SEEDS_CAPABILITY = 'test_seeds';
 
+/** The test-only seed members (rust/docs/store/test-seeds.md); an addon built with `test-seeds` has every one of them. */
+export const TEST_SEED_MEMBERS = ['seedPageUpdatedAt', 'seedPageOrigin', 'seedBeliefPageLifetimes'] as const;
+
+/** Whether the arm's addon was built with the `test-seeds` feature: its brain has every seed member. */
+export function rustArmHasTestSeeds(engine: unknown): boolean {
+  const brain = (engine as RustEngine).openStore('rustArmHasTestSeeds').brain as unknown as Record<string, unknown>;
+  return TEST_SEED_MEMBERS.every((name) => typeof brain[name] === 'function');
+}
+
 /** The seed member `name` on the arm's brain, or the typed refusal naming `test_seeds` when the addon was built without it. */
 function seedMember(engine: unknown, name: string): (...args: never[]) => Promise<void> {
   const brain = (engine as RustEngine).openStore(name).brain as unknown as Record<string, unknown>;

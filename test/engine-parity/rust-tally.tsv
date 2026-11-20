@@ -1,4 +1,4 @@
-file	equal	stopped
+file	equal	stopped	note
 test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/access-grants.test.ts	3	4
 test/engine-parity/access-members.test.ts	14	1
@@ -18,16 +18,16 @@ test/engine-parity/cli-reads-import.test.ts	17	0
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	6	0
-test/engine-parity/collate-belief-cycle-walks.test.ts	2	4
-test/engine-parity/collate-command-listings.test.ts	6	2
-test/engine-parity/collate-core-page-lists.test.ts	16	2
+test/engine-parity/collate-belief-cycle-walks.test.ts	2	4	enableBeliefLedger baseline, scanBeliefDrift: owner belief lane (rust-belief-batch c75951f858 lane 8, rust-belief-ledger, rust-belief-purge lane 3), flips when the belief lane reaches rust-engine/main; 2 more stop on test_seeds on the default addon (rust-tally-seeds.tsv)
+test/engine-parity/collate-command-listings.test.ts	6	2	git-gap census: owner lane 14; proposeVisibility: owner lane 10
+test/engine-parity/collate-core-page-lists.test.ts	16	2	pendingCoreNotices: owner lane 14; readForecastJournal: owner lane 5, named refusal until Rust has take_horizons and take_grade_cache
 test/engine-parity/collate-facts-home.test.ts	1	0
-test/engine-parity/collate-ontology-config.test.ts	5	1
+test/engine-parity/collate-ontology-config.test.ts	5	1	keyed config fallback: raw_sql by design, the case tests the readKeyedConfig fallback for a handle without getConfigValues
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	4	0
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
 test/engine-parity/collate-slug-sources.test.ts	8	0
-test/engine-parity/collate-store-listings.test.ts	17	4
+test/engine-parity/collate-store-listings.test.ts	17	4	readBudgetLimited x3: owner lane 14, flips at main join (legacy-id case stays raw_sql); readMissingTables: raw_sql by design, the case tests the SQL catalog path
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
@@ -116,8 +116,8 @@ test/engine-parity/stats.test.ts	9	0
 test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	26	1
 test/engine-parity/telemetry.test.ts	10	0
-test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	1	3
-test/engine-parity/tie-purge-files-links-facts.test.ts	2	3
+test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	1	3	runPhaseEdgeContradictions: owner lane 4, raw SQL in its phase reads; 2 more stop on test_seeds on the default addon (rust-tally-seeds.tsv)
+test/engine-parity/tie-purge-files-links-facts.test.ts	2	3	purge receipt probe, page purge receipt (verifyPagePurge): owner lane 13; fact pool nearest arm: owner not ruled yet (collectFactCandidates raw read)
 test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	32	0
 test/engine-parity/transaction-settings.test.ts	9	1
