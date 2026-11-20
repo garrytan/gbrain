@@ -4020,6 +4020,28 @@
         ],
         "flagOnScopes": []
       },
+      "readExtractReceiptPrior#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readExtractReceiptSealed#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readExtractionLagCounts#default": {
         "flagOffLanes": [
           "reserved"
@@ -5883,6 +5905,28 @@
         ],
         "flagOnScopes": []
       },
+      "upsertExtractRollup#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "upsertExtractRollup#pre-v141": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertFile#default": {
         "flagOffLanes": [
           "pool"
@@ -6763,6 +6807,8 @@
         "readEntityRehomeState": "none",
         "readEventProjectionId": "none",
         "readExactSnippetChunks": "none",
+        "readExtractReceiptPrior": "none",
+        "readExtractReceiptSealed": "none",
         "readExtractionLagCounts": "none",
         "readFactActivity": "none",
         "readFactCacheWatermark": "none",
@@ -7109,6 +7155,7 @@
         "upsertCliFileRow": "none",
         "upsertDecideState": "none",
         "upsertEventProjection": "none",
+        "upsertExtractRollup": "none",
         "upsertFactRelinkAttempt": "none",
         "upsertFile": "none",
         "upsertOpFileRow": "none",

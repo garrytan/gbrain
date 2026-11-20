@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1141/1144
+# covered: 1141/1147
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -16,7 +16,7 @@
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 46/46
-# extraction: 8/11
+# extraction: 8/14
 # links: 23/23
 # tags: 5/5
 # timeline: 23/23
@@ -234,6 +234,9 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	no	0	no	-	-	-
+upsertExtractRollup	extraction	no	0	no	-	-	-
+readExtractReceiptPrior	extraction	no	0	no	-	-	-
+readExtractReceiptSealed	extraction	no	0	no	-	-	-
 addLink	links	yes	110	yes	yes	yes	serves
 addLinksBatch	links	yes	14	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	14	no	yes	yes	serves
@@ -405,7 +408,7 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	112	yes	yes	yes	serves
-insertFacts	facts	yes	137	no	yes	yes	serves
+insertFacts	facts	yes	138	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	75	no	yes	yes	serves
 listFactsByEntity	facts	yes	37	yes	yes	yes	serves
@@ -777,7 +780,7 @@ listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	12	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	13	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
@@ -800,19 +803,19 @@ listLinkIdsOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 readPageFileOrigin	facts_cycle_sites	yes	3	no	yes	yes	serves
 listFenceRowClaims	facts_cycle_sites	yes	1	no	yes	yes	serves
 adoptFactIntoFence	facts_cycle_sites	yes	2	no	yes	yes	serves
-listFenceRowSupersession	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-setFactSupersededBy	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-listHeldWideningFactIds	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-expireFactInPlace	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-expireAndDetachFact	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-updateFenceFactCells	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-listExpirableFactIdsOfDeletedPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-readDeletedPageBody	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-expireFactsByIds	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
+listFenceRowSupersession	facts_cycle_sites	yes	1	no	yes	yes	serves
+setFactSupersededBy	facts_cycle_sites	yes	1	no	yes	yes	serves
+listHeldWideningFactIds	facts_cycle_sites	yes	1	no	yes	yes	serves
+expireFactInPlace	facts_cycle_sites	yes	1	no	yes	yes	serves
+expireAndDetachFact	facts_cycle_sites	yes	1	no	yes	yes	serves
+updateFenceFactCells	facts_cycle_sites	yes	1	no	yes	yes	serves
+listExpirableFactIdsOfDeletedPage	facts_cycle_sites	yes	1	no	yes	yes	serves
+readDeletedPageBody	facts_cycle_sites	yes	1	no	yes	yes	serves
+expireFactsByIds	facts_cycle_sites	yes	1	no	yes	yes	serves
 listOntologyObservationSlugs	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-listDeletedPageSlugsWithActiveFacts	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
+listDeletedPageSlugsWithActiveFacts	facts_cycle_sites	yes	1	no	yes	yes	serves
 scanUnfencedFactRows	facts_cycle_sites	yes	2	no	yes	yes	serves
-listHeldFactRows	facts_cycle_sites	yes	2	no	yes	yes	serves
+listHeldFactRows	facts_cycle_sites	yes	3	no	yes	yes	serves
 listFencedFactsOfMissingPages	facts_cycle_sites	yes	2	no	yes	yes	serves
 readFenceRowNumHint	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 readSourceCheckoutPath	facts_cycle_sites	yes	1	no	yes	yes	serves
@@ -957,8 +960,8 @@ lockAgentWritebackSetting	facts_trust	yes	2	no	yes	yes	serves
 listFactsToRetireFromPage	facts_trust	yes	2	no	yes	yes	serves
 listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	serves
 listFactProvenance	facts_trust	yes	2	no	yes	yes	serves
-recordDerivationEdges	facts_trust	yes	2	no	yes	yes	refuses:facts
-listDerivedRows	facts_trust	yes	1	no	yes	yes	refuses:facts
+recordDerivationEdges	facts_trust	yes	3	no	yes	yes	serves
+listDerivedRows	facts_trust	yes	2	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
 deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
 softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts
