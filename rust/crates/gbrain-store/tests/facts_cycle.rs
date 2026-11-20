@@ -7,8 +7,9 @@ use gbrain_store::env::iso;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::facts::cycle::{
     BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
-    PageCoordinate, WorldFactCount,
+    PageCoordinate, PageFileOriginQuery, WorldFactCount,
 };
+use gbrain_store::import_members::PageOriginRefresh;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use memory_env::{Brain, T0, brain};
@@ -485,4 +486,39 @@ fn world_fact_count_hides_deleted_and_quarantined_pages_but_not_lapsed_rows() {
         4
     );
     assert_eq!(b.count_world_facts(&q(json!([]), false)).unwrap(), 0);
+}
+
+#[test]
+fn page_file_origin_reads_a_live_page_and_a_deleted_one_only_when_asked() {
+    let b = brain("cycle-file-origin");
+    for slug in ["has-origin", "no-origin", "gone"] {
+        page(&b, slug, "default", json!({}));
+    }
+    for slug in ["has-origin", "gone"] {
+        let refresh: PageOriginRefresh = args(json!({
+            "sourceId": "default", "sourcePath": format!("notes/{slug}.md"), "sourceUri": format!("file:///notes/{slug}.md"),
+        }));
+        b.refresh_page_origin(slug, &refresh).unwrap();
+    }
+    b.soft_delete_page("gone", Some("default")).unwrap();
+    let read = |slug: &str, include_deleted: bool| {
+        let q: PageFileOriginQuery =
+            args(json!({ "sourceId": "default", "slug": slug, "includeDeleted": include_deleted }));
+        b.read_page_file_origin(&q).unwrap()
+    };
+    let origin = json!({ "source_path": "notes/has-origin.md", "source_uri": "file:///notes/has-origin.md" });
+    assert_eq!(read("has-origin", false), origin);
+    assert_eq!(read("has-origin", true), origin);
+    assert_eq!(
+        read("no-origin", false),
+        json!({ "source_path": null, "source_uri": null })
+    );
+    assert_eq!(read("gone", false), Value::Null);
+    assert_eq!(
+        read("gone", true),
+        json!({ "source_path": "notes/gone.md", "source_uri": "file:///notes/gone.md" })
+    );
+    assert_eq!(read("never", true), Value::Null);
+    let other: PageFileOriginQuery = args(json!({ "sourceId": "other", "slug": "has-origin" }));
+    assert_eq!(b.read_page_file_origin(&other).unwrap(), Value::Null);
 }

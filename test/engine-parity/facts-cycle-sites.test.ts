@@ -137,25 +137,32 @@ describe('engine parity: facts cycle, phantom redirect and fence-guard statement
     return answers;
   });
 
-  parityTest('readPageFileOrigin reads the recorded origin of a live page, null for a missing or deleted page', {
+  parityTest('readPageFileOrigin reads the recorded origin of a live page, of a deleted page only with includeDeleted, null for a missing page', {
     methods: ['readPageFileOrigin', 'refreshPageOrigin', 'softDeletePage'],
   }, async (engine) => {
     await engine.putPage('has-origin', note('A'));
     await engine.putPage('no-origin', note('B'));
     await engine.putPage('gone', note('C'));
     await engine.refreshPageOrigin('has-origin', { sourceId: SRC, sourcePath: 'notes/has-origin.md', sourceUri: 'file:///notes/has-origin.md' });
+    await engine.refreshPageOrigin('gone', { sourceId: SRC, sourcePath: 'notes/gone.md', sourceUri: 'file:///notes/gone.md' });
     await engine.softDeletePage('gone');
     const answers = {
       has: await engine.readPageFileOrigin(SRC, 'has-origin'),
+      hasWithDeleted: await engine.readPageFileOrigin(SRC, 'has-origin', { includeDeleted: true }),
       none: await engine.readPageFileOrigin(SRC, 'no-origin'),
       deleted: await engine.readPageFileOrigin(SRC, 'gone'),
-      missing: await engine.readPageFileOrigin(SRC, 'never'),
+      deletedWithDeleted: await engine.readPageFileOrigin(SRC, 'gone', { includeDeleted: true }),
+      missing: await engine.readPageFileOrigin(SRC, 'never', { includeDeleted: true }),
+      otherSource: await engine.readPageFileOrigin('other-src', 'has-origin'),
     };
     expect(answers).toEqual({
       has: { source_path: 'notes/has-origin.md', source_uri: 'file:///notes/has-origin.md' },
+      hasWithDeleted: { source_path: 'notes/has-origin.md', source_uri: 'file:///notes/has-origin.md' },
       none: { source_path: null, source_uri: null },
       deleted: null,
+      deletedWithDeleted: { source_path: 'notes/gone.md', source_uri: 'file:///notes/gone.md' },
       missing: null,
+      otherSource: null,
     });
     return answers;
   });

@@ -3614,8 +3614,8 @@ export interface BrainEngine {
   listFactIdsStillOnPage(ids: number[], slug: string): Promise<Array<{ id: number }>>;
   /** Which of links `ids` now start at page `pageId`. */
   listLinkIdsOnPage(ids: number[], pageId: number | string): Promise<Array<{ id: number }>>;
-  /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page. */
-  readPageFileOrigin(sourceId: string, slug: string): Promise<FactsCycleSql.PageFileOrigin | null>;
+  /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page; with `includeDeleted`, a soft-deleted page counts too. */
+  readPageFileOrigin(sourceId: string, slug: string, opts?: { includeDeleted?: boolean }): Promise<FactsCycleSql.PageFileOrigin | null>;
   /** The facts of a page coordinate that hold a fence row number, with their claim text and source (no set order). */
   listFenceRowClaims(sourceId: string, slug: string): Promise<FactsCycleSql.FenceRowClaim[]>;
   /** Gives unfenced fact `id` fence row `rowNum` on page `slug` with claim text `fact`; only a row that still has no fence row changes. */

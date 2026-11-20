@@ -790,7 +790,7 @@ listOwnLinkIds	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listActiveFactIdsOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listFactIdsStillOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listLinkIdsOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-readPageFileOrigin	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
+readPageFileOrigin	facts_cycle_sites	yes	1	no	yes	yes	serves
 listFenceRowClaims	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 adoptFactIntoFence	facts_cycle_sites	yes	2	no	yes	yes	refuses:facts
 listFenceRowSupersession	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts

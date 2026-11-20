@@ -406,9 +406,9 @@ export async function listLinkIdsOnPage(raw: EngineRawRead, ids: number[], pageI
 /** Where a live page says its file came from. */
 export interface PageFileOrigin { source_path: string | null; source_uri: string | null }
 
-/** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page. */
-export async function readPageFileOrigin(raw: EngineRawRead, sourceId: string, slug: string): Promise<PageFileOrigin | null> {
-  const [page] = await raw<PageFileOrigin>('SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
+/** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page; with `includeDeleted`, a soft-deleted page counts too. */
+export async function readPageFileOrigin(raw: EngineRawRead, sourceId: string, slug: string, opts: { includeDeleted?: boolean } = {}): Promise<PageFileOrigin | null> {
+  const [page] = await raw<PageFileOrigin>(`SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2${opts.includeDeleted ? '' : ' AND deleted_at IS NULL'}`, [sourceId, slug]);
   return page ?? null;
 }
 

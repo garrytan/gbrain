@@ -838,8 +838,9 @@ each of them with `engine_capability_missing` naming the member until the store 
 - `listLinkIdsOnPage(ids, pageId)`: which of the link ids start at the page.
 
 `facts/unfenced-facts.ts`
-- `readPageFileOrigin(sourceId, slug)` (`databaseOnlyPlacement`, and `heldUnmovable` in `facts-home.ts`): `source_path` and
-  `source_uri` of the live page, or none. Needs the page's file origin columns.
+- `readPageFileOrigin(sourceId, slug, { includeDeleted })` (`databaseOnlyPlacement`, `heldUnmovable` in `facts-home.ts`, and
+  `resolvePageWriteTarget` in `write-through.ts`): `source_path` and `source_uri` of the page, or none. A soft-deleted page
+  answers only with `includeDeleted`. Served from the page record (`facts/cycle.rs` `read_page_file_origin`).
 - `listFenceRowClaims(sourceId, slug)` (`planFence`): `row_num`, `fact` and `source` of the coordinate's fenced facts, no set order.
 - `adoptFactIntoFence(sourceId, id, rowNum, slug, fact)` (`fenceFilePage`): sets `row_num`, `source_markdown_slug` and `fact` of one
   fact that still has no `row_num`; any other fact is left alone. The id arrives as text.

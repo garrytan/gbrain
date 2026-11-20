@@ -16,7 +16,8 @@
  *  - Seam: none. Real engines, typed methods only. Ids are compared by relation, never by value.
  */
 import { describe, expect } from 'bun:test';
-import type { BrainEngine, PageInput } from '../../src/core/engine.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import type { PageInput } from '../../src/core/types.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -31,8 +32,8 @@ async function stamp(engine: BrainEngine, id: number) {
   const r = await engine.readPairFactRow(id);
   return {
     entity_slug: r?.entity_slug ?? null,
-    expired_at: r?.expired_at ? new Date(r.expired_at).toISOString() : null,
-    valid_until: r?.valid_until ? new Date(r.valid_until).toISOString() : null,
+    expired_at: r?.expired_at ? new Date(r.expired_at as string | Date).toISOString() : null,
+    valid_until: r?.valid_until ? new Date(r.valid_until as string | Date).toISOString() : null,
   };
 }
 

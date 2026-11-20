@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::cycle::{
     BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
-    PageCoordinate, WorldFactCount,
+    PageCoordinate, PageFileOriginQuery, WorldFactCount,
 };
 
 #[napi]
@@ -120,6 +120,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageCoordinate = required(args, "maxFenceRowNum args")?;
             s.max_fence_row_num(&a)
+        })
+    }
+
+    /// `readPageFileOrigin({ sourceId, slug, includeDeleted })`: resolves `{ source_path, source_uri }`, or null.
+    #[napi]
+    pub fn read_page_file_origin<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageFileOriginQuery = required(args, "readPageFileOrigin args")?;
+            s.read_page_file_origin(&a)
         })
     }
 
