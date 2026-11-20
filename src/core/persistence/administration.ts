@@ -6,6 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { UNSUPPORTED_MANAGED_BULK_WRITERS } from './maintenance.ts';
 import { opError, OperationError } from '../ops/contract.ts';
+import { assertClaimReleasable } from './claim-release-gate.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
@@ -144,6 +145,8 @@ async function writerClaim(engine: BrainEngine, params: Record<string, unknown>)
     return { dry_run: true, action: 'writer_claim', source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine)), ...notice };
   }
   const expectedState = await requireWriterAdminIntent(engine, 'writer_claim', params);
+  // Refused on an engine that could not release or activate the claim (claim-release-gate.ts).
+  assertClaimReleasable(engine);
   try { return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice }; }
   catch (error) {
     if (!(error instanceof OperationError) || error.detail !== 'physical_root_moved' || !worktree) throw error;

@@ -198,6 +198,7 @@ test/engine-parity/field-usage.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/git-durability-credential.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
