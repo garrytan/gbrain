@@ -14,10 +14,10 @@
  *    countPurgedPageFacts over its `page_purges` ledger; the other two refuse (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: recordPagePurge and recordFenceRetirement (harness.ts) write a page_purges row and a facts-fence generation
- *    with SQL, as the page purge sweep and the fence writer do; the Rust arm stops there on the typed raw_sql refusal,
- *    because no member writes either ledger on Rust. Every fact, page, loop and withdrawal is seeded through the typed
- *    members. The table behind the refused member (persistence_requests, the write journal) has no typed writer on the
+ *  - Seam: recordPagePurge (harness.ts) writes a page_purges row with SQL, as the page purge sweep does; the Rust arm
+ *    stops there on the typed raw_sql refusal, because no member writes that ledger on Rust. recordFenceRetirement
+ *    seeds a facts-fence generation through the typed generation writer (activateGenerationRows), so the Rust arm
+ *    answers those cases. Every fact, page, loop and withdrawal is seeded through the typed members. The table behind the refused member (persistence_requests, the write journal) has no typed writer on the
  *    engine, so its case seeds the facts the statement joins from and asserts the answer an empty table gives; the Rust
  *    arm counts it as a typed refusal. Generated values (ids) are compared by relation, never by value.
  */
@@ -459,12 +459,12 @@ describe('engine parity: group 5 facts repair statements', () => {
     await engine.putPage('notes/gone', note('Gone', 'a page'));
     await engine.softDeletePage('notes/gone');
     const retire = async (slug: string, text: string, opts: { visibility?: string; extra?: Record<string, unknown>; expire?: boolean; sourceId?: string;
-      state?: 'live' | 'held' | 'superseded'; preimage?: Record<string, unknown> } = {}) => {
+      state?: 'live' | 'held'; preimage?: Record<string, unknown> } = {}) => {
       const visibility = opts.visibility ?? 'world';
       const sourceId = opts.sourceId ?? 'default';
       const id = await fact(engine, text, { visibility, source_markdown_slug: slug, ...opts.extra }, sourceId);
       if (opts.expire !== false) expect(await engine.expireFact(id)).toBe(true);
-      await recordFenceRetirement(engine, backend, sourceId, slug, id, { fact: text, visibility, state: opts.state, preimage: opts.preimage });
+      await recordFenceRetirement(engine, sourceId, slug, id, { fact: text, visibility, state: opts.state, preimage: opts.preimage });
       return id;
     };
     await retire('notes/bb', 'retired on bb');
@@ -483,7 +483,7 @@ describe('engine parity: group 5 facts repair statements', () => {
     const twin = await retire('notes/bb', 'has an active twin');
     await fenced(engine, 'has an active twin', { source_markdown_slug: 'notes/bb' });
     const newer = await retire('notes/b-c', 'retired twice');
-    await recordFenceRetirement(engine, backend, 'default', 'notes/b-c', newer, { fact: 'retired twice', visibility: 'world', generation: 7, state: 'live' });
+    await recordFenceRetirement(engine, 'default', 'notes/b-c', newer, { fact: 'retired twice', visibility: 'world', generation: 7, state: 'live' });
     const view = (rows: Awaited<ReturnType<BrainEngine['listUnwithdrawnFacts']>>) => rows.map(r => ({
       source: r.source_id, slug: r.slug, fact: r.fact, visibility: r.visibility, superseded: r.superseded, generation: Number(r.generation),
       same_id: Number(r.preimage.id) === Number(r.id), withdrawn: r.withdrawn, active_duplicate: r.active_duplicate, history_gap: r.history_gap,
