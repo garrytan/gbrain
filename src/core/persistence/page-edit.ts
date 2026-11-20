@@ -66,6 +66,12 @@ function editError(code: string, message: string, suggestion: string, detail?: s
   return error;
 }
 
+/** GST-3170: an old_text holding U+0000 matches no stored page text; refused as written, before anything is journaled. */
+export function nulSelectorError(index: number): OperationError {
+  return editError('edit_no_match', `Edit ${index}'s old_text was not found in the page: it holds U+0000, which stored page text never contains.`,
+    'Read get_page with include_content:true and copy old_text exactly, without U+0000 characters.', `edit_index=${index} match_count=0`);
+}
+
 /** Validates the wire shape: 1-50 `{ old_text, new_text }` objects, `old_text` non-empty. */
 export function parsePageEdits(value: unknown): PageEdit[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > EDIT_PAGE_MAX_EDITS) {

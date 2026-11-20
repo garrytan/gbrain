@@ -35,7 +35,7 @@
 import type { BrainEngine, FactRow, FactKind } from '../core/engine.ts';
 import type { Notice } from '../core/agent-output.ts';
 import type { DegradedStamp } from '../core/degraded-stamp.ts';
-import { clampSearchLimit } from '../core/engine.ts';
+import { clampSearchLimit, MAX_SEARCH_LIMIT } from '../core/engine.ts';
 import { effectiveConfidence } from '../core/facts/decay.ts';
 import { resolveEntitySlug } from '../core/entities/resolve.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
@@ -770,7 +770,8 @@ async function runRecallOnce(
     }
   } else {
     rows = pageable
-      ? await fetchCursorPage(engine, flags, sourceId, cursor!)
+      // A page marks ended slot values without dropping them, so the keyset cursor still advances past every row read.
+      ? await withSlotEnds(engine, flags, sourceId, await fetchCursorPage(engine, flags, sourceId, cursor!), false)
       : await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && !pageable) rows = await entitySplitLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return wallClockCursor(tStart);
@@ -917,7 +918,21 @@ function mergeNewestFirst(lists: FactRow[][], limit: number, keyOf: (r: FactRow)
   return lists.flat().sort((a, b) => time(b) - time(a)).slice(0, limit);
 }
 
-async function fetchRowsLocal(
+/** GST-3170: the recall op's read-time slot ends (search/slot-ends.ts) on a local read, the entity's fact keys grouped as one entity. */
+async function withSlotEnds(engine: BrainEngine, flags: ParsedFlags, sourceId: string, rows: FactRow[], activeOnly: boolean): Promise<FactRow[]> {
+  const { applySlotEnds } = await import('../core/search/slot-ends.ts');
+  const slugs = flags.entity ? await entityFactSlugs(engine, sourceId, (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity) : null;
+  return applySlotEnds(engine, { sourceId, worldOnly: false, excludePrivate: false }, rows, { activeOnly, entities: slugs ? [{ source_id: sourceId, slugs }] : undefined });
+}
+
+/** The local read with slot ends; an active-only read takes the op's MAX_SEARCH_LIMIT window so ended rows never shorten --limit. Supersessions keep their stored rows. */
+async function fetchRowsLocal(engine: BrainEngine, flags: ParsedFlags, sourceId: string, resolvedSince: Date | null): Promise<FactRow[]> {
+  if (flags.supersessions) return listRowsLocal(engine, flags, sourceId, resolvedSince);
+  const read = flags.includeExpired ? flags : { ...flags, limit: Math.max(flags.limit, MAX_SEARCH_LIMIT) };
+  return (await withSlotEnds(engine, flags, sourceId, await listRowsLocal(engine, read, sourceId, resolvedSince), !flags.includeExpired)).slice(0, flags.limit);
+}
+
+async function listRowsLocal(
   engine: BrainEngine,
   flags: ParsedFlags,
   sourceId: string,

@@ -168,7 +168,11 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
        ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`,
       [sources, [...AUDIT_ROW_SOURCES], terms, pats, CORRECTION_CUE, supersede],
     );
-    const found = rows.map(({ at, matched, need, cue, trust_rank, pool_rank: _p, ...fact }) => ({ fact: { ...fact, id: Number(fact.id) } as SavedFactMatch & CollapseColumns,
+    // GST-3170: a slot value a later one ended at read time is no longer current, like a lapsed valid_until (slot-ends.ts).
+    const { applySlotEnds } = await import('./slot-ends.ts');
+    const current = await applySlotEnds(ctx.engine, { sourceIds: sources, worldOnly: worldOnlyFacts(ctx.remote), excludePrivate, minTrust: scope.minTrust },
+      rows.map(r => ({ ...r, id: Number(r.id) })), { activeOnly: true });
+    const found = current.map(({ at, matched, need, cue, trust_rank, pool_rank: _p, ...fact }) => ({ fact: fact as SavedFactMatch & CollapseColumns,
       at: new Date(at as string).getTime(), words: new Set(matched.map(Number)), need: Number(need), cue, trust: Number(trust_rank), figures: figures(fact.fact) }));
     const admitted = found.filter(r => r.words.size >= r.need);
     const correcting = new Set<number>();

@@ -36,7 +36,7 @@ import { pageBatchChildRequestId } from '../../persistence/page-batch-id.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext, SubagentHandlerData, SubagentResult, ToolDef, ContentBlock, OneshotFallbackReason } from '../types.ts';
-import { chat as gatewayChat, type ChatResult } from '../../ai/gateway.ts';
+import { chat as gatewayChat, type ChatMessage, type ChatResult } from '../../ai/gateway.ts';
 import { parseLlmJson } from '../../llm-json.ts';
 import { PAGE_SLUG_SEG } from '../../cjk.ts';
 import { matchesSlugAllowList } from '../../ops/context.ts';
@@ -116,6 +116,9 @@ If nothing in the transcript meets the bar (Task D), respond with:
 {"pages": [], "skipped": true, "skip_reason": "<one line>"}
 
 Hard rules: at most ${MAX_PAGES_PER_RESPONSE} pages; slugs are lowercase, hyphen-separated, slash-delimited, no underscores, no file extensions; never invent wikilink targets that are not in LINK CANDIDATES or this response. Every field, especially body, must be a valid JSON string: escape quotes, backslashes, and line breaks; never place unescaped quotes or literal newlines inside a string.`;
+
+/** #9648: the one follow-up turn sent when the first answer is prose with no JSON at all. */
+export const ONESHOT_REASK = 'Your reply was not the JSON object the system message requires. Reply again with only that JSON object and nothing else. If nothing in the transcript meets the bar, reply {"pages": [], "skipped": true, "skip_reason": "<one line>"}.';
 
 export interface OneshotPage {
   slug: string;
@@ -412,86 +415,96 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
     return { kind: 'fallback', reason: 'no_put_page_tool' };
   }
 
-  // ── Single provider call under a rate lease + sub-budget (OV-9) ─────────
+  // ── One provider call, and at most one re-ask, under a rate lease + sub-budget (OV-9) ─────────
   const budgetMs = args._budgetMs ?? (ctx.deadlineAtMs
     ? Math.min(args.turnTimeoutMs ?? ONESHOT_CALL_BUDGET_MS, Math.max(30_000, Math.floor((ctx.deadlineAtMs - Date.now()) / 4)))
     : ONESHOT_CALL_BUDGET_MS);
-  // Lease TTL must OUTLIVE the call it guards: the sub-budget hard-bounds
-  // the call (AbortSignal.timeout below), so ttl = budget + slack. With the
-  // bare 120s default TTL a 300s call's lease would be pruned mid-flight and
-  // the next acquirer would over-admit past maxConcurrent.
-  const lease = await acquireLease(engine, args.leaseKey, ctx.id, args.maxConcurrent, {
-    ttlMs: Math.max(args.leaseTtlMs, budgetMs + 30_000),
-  });
-  if (!lease.acquired) {
-    // A full bucket is a scheduling condition, not a model failure — throw
-    // RateLeaseUnavailableError so the worker / inline drain requeue the job
-    // WITHOUT burning an attempt (never fall back: the fallback would hit
-    // the same full bucket sixteen times over).
-    throw new RateLeaseUnavailableError(args.leaseKey, lease.activeCount, lease.maxConcurrent);
-  }
   const budgetAbort = AbortSignal.timeout(budgetMs);
   const callSignal = ctx.signal ? AbortSignal.any([ctx.signal, budgetAbort]) : budgetAbort;
-
-  let chatResult: ChatResult;
+  const messages: ChatMessage[] = [{ role: 'user', content: data.prompt }];
+  const tokens = { in: 0, out: 0, cache_read: 0, cache_create: 0 };
   const t0 = Date.now();
-  logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: 0, mode: 'oneshot' });
-  try {
-    chatResult = await chat({
-      model,
-      system: ONESHOT_SYSTEM,
-      messages: [{ role: 'user', content: data.prompt }],
-      maxTokens: args.maxOutputTokens,
-      abortSignal: callSignal,
-      timeoutMs: budgetMs,
-      // cacheSystem marks the system block as a cache breakpoint. Note:
-      // ONESHOT_SYSTEM alone is under Anthropic's ~1024-token cache minimum,
-      // so cross-job prefix hits only materialize on providers/models with a
-      // lower floor — harmless no-op otherwise.
-      cacheSystem: true,
+  let chatResult!: ChatResult;
+  for (let turn = 0; ; turn++) {
+    // Lease TTL must OUTLIVE the call it guards: the sub-budget hard-bounds
+    // the call (AbortSignal.timeout below), so ttl = budget + slack. With the
+    // bare 120s default TTL a 300s call's lease would be pruned mid-flight and
+    // the next acquirer would over-admit past maxConcurrent.
+    const lease = await acquireLease(engine, args.leaseKey, ctx.id, args.maxConcurrent, {
+      ttlMs: Math.max(args.leaseTtlMs, budgetMs + 30_000),
     });
-  } catch (err) {
-    if (budgetAbort.aborted && !(ctx.signal?.aborted) && isAbortShaped(err)) {
-      // The oneshot sub-budget expired — the agentic fallback still has the
-      // rest of the job budget (OV-9). Never charge a slow single call
-      // against the whole job.
-      logSubagentHeartbeat({ job_id: ctx.id, event: 'oneshot_timeout', turn_idx: 0, ms_elapsed: Date.now() - t0 });
-      return { kind: 'fallback', reason: 'oneshot_timeout' };
+    if (!lease.acquired) {
+      // The re-ask keeps the first answer rather than requeue a job that already paid for a call.
+      if (turn > 0) break;
+      // A full bucket is a scheduling condition, not a model failure — throw
+      // RateLeaseUnavailableError so the worker / inline drain requeue the job
+      // WITHOUT burning an attempt (never fall back: the fallback would hit
+      // the same full bucket sixteen times over).
+      throw new RateLeaseUnavailableError(args.leaseKey, lease.activeCount, lease.maxConcurrent);
     }
-    // Same terminal classification as the gateway-loop path's
-    // runLoopConvertingLeaseLoss (subagent.ts): `chat()` here is the SAME
-    // gateway.chat() entrypoint, so a 400 "prompt is too long" arrives
-    // normalizeAIError()-wrapped the same way — isPromptTooLongError() walks
-    // the `.cause` chain to still match the SDK's inner shape. Without this,
-    // a prompt-too-long condition on the oneshot dispatch path retries like
-    // any other transient failure up to max_stalled, recreating the same
-    // dream-cycle queue-clog class the legacy and gateway-loop paths already
-    // fast-fail on.
-    // Single walk: extractPromptTooLongDetail is non-null exactly when
-    // isPromptTooLongError matches (both wrap the same matcher).
-    const detail = extractPromptTooLongDetail(err);
-    if (detail !== null) {
-      throw new UnrecoverableError(`prompt_too_long: ${detail}`);
+    logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: turn, mode: 'oneshot' });
+    try {
+      chatResult = await chat({
+        model,
+        system: ONESHOT_SYSTEM,
+        messages,
+        maxTokens: args.maxOutputTokens,
+        abortSignal: callSignal,
+        timeoutMs: budgetMs,
+        // cacheSystem marks the system block as a cache breakpoint. Note:
+        // ONESHOT_SYSTEM alone is under Anthropic's ~1024-token cache minimum,
+        // so cross-job prefix hits only materialize on providers/models with a
+        // lower floor — harmless no-op otherwise.
+        cacheSystem: true,
+      });
+    } catch (err) {
+      if (budgetAbort.aborted && !(ctx.signal?.aborted) && isAbortShaped(err)) {
+        // The oneshot sub-budget expired — the agentic fallback still has the
+        // rest of the job budget (OV-9). Never charge a slow single call
+        // against the whole job.
+        logSubagentHeartbeat({ job_id: ctx.id, event: 'oneshot_timeout', turn_idx: 0, ms_elapsed: Date.now() - t0 });
+        return { kind: 'fallback', reason: 'oneshot_timeout' };
+      }
+      // A failed re-ask (prompt_too_long from the longer context, or a transport error) keeps the first answer.
+      if (turn > 0 && !ctx.signal?.aborted) break;
+      // Same terminal classification as the gateway-loop path's
+      // runLoopConvertingLeaseLoss (subagent.ts): `chat()` here is the SAME
+      // gateway.chat() entrypoint, so a 400 "prompt is too long" arrives
+      // normalizeAIError()-wrapped the same way — isPromptTooLongError() walks
+      // the `.cause` chain to still match the SDK's inner shape. Without this,
+      // a prompt-too-long condition on the oneshot dispatch path retries like
+      // any other transient failure up to max_stalled, recreating the same
+      // dream-cycle queue-clog class the legacy and gateway-loop paths already
+      // fast-fail on.
+      // Single walk: extractPromptTooLongDetail is non-null exactly when
+      // isPromptTooLongError matches (both wrap the same matcher).
+      const detail = extractPromptTooLongDetail(err);
+      if (detail !== null) {
+        throw new UnrecoverableError(`prompt_too_long: ${detail}`);
+      }
+      // Job-level abort or transport error: the job machinery owns these — a
+      // provider outage would break the fallback identically (don't double-pay).
+      throw err;
+    } finally {
+      await releaseLease(engine, lease.leaseId!).catch(() => { /* best-effort */ });
     }
-    // Job-level abort or transport error: the job machinery owns these — a
-    // provider outage would break the fallback identically (don't double-pay).
-    throw err;
-  } finally {
-    await releaseLease(engine, lease.leaseId!).catch(() => { /* best-effort */ });
-  }
 
-  await ctx.updateTokens({
-    input: chatResult.usage.input_tokens,
-    output: chatResult.usage.output_tokens,
-    cache_read: chatResult.usage.cache_read_tokens,
-  });
-  const tokens = {
-    in: chatResult.usage.input_tokens,
-    out: chatResult.usage.output_tokens,
-    cache_read: chatResult.usage.cache_read_tokens,
-    cache_create: chatResult.usage.cache_creation_tokens,
-  };
-  logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_completed', turn_idx: 0, tokens: { in: tokens.in, out: tokens.out, cache_read: tokens.cache_read, cache_create: tokens.cache_create } });
+    await ctx.updateTokens({
+      input: chatResult.usage.input_tokens,
+      output: chatResult.usage.output_tokens,
+      cache_read: chatResult.usage.cache_read_tokens,
+    });
+    tokens.in += chatResult.usage.input_tokens;
+    tokens.out += chatResult.usage.output_tokens;
+    tokens.cache_read += chatResult.usage.cache_read_tokens;
+    tokens.cache_create += chatResult.usage.cache_creation_tokens;
+    logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_completed', turn_idx: turn, tokens: { in: chatResult.usage.input_tokens, out: chatResult.usage.output_tokens, cache_read: chatResult.usage.cache_read_tokens, cache_create: chatResult.usage.cache_creation_tokens } });
+
+    // #9648: an answer in prose with no JSON at all is asked once for the JSON, so a skip is banked, not dead-lettered.
+    const stop = chatResult.stopReason, text = chatResult.text ?? '';
+    if (turn > 0 || stop === 'length' || stop === 'refusal' || stop === 'content_filter' || text.trim() === '' || text.includes('{')) break;
+    messages.push({ role: 'assistant', content: text }, { role: 'user', content: ONESHOT_REASK });
+  }
 
   // Post-call fallbacks carry the attempt's usage for the result rollup.
   const fb = (reason: OneshotFallbackReason): OneshotOutcome => ({ kind: 'fallback', reason, tokens });
