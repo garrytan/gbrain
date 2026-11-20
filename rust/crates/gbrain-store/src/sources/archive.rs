@@ -3,7 +3,7 @@
 //! `src/core/engine-sql/source-archive.ts`, callers in `src/core/destructive-guard.ts`).
 //!
 //! Members: `archiveSource`, `restoreArchivedSource`, `listArchivedSourceRows`,
-//! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds`, `readSourceImpactCounts` and
+//! `listExpiredArchivedSources`, `listUnverifiedArchivedSourceIds`, `readSourceDeleteImpact` and
 //! `deleteSourceRecord`.
 //!
 //! `deleteSourceRecord` removes the source in one write transaction: each page with
@@ -64,10 +64,10 @@ pub struct ExpiredArchivedSource {
     pub local_path: Option<String>,
 }
 
-/// What `readSourceImpactCounts` returns: `SourceImpactCounts`. The store has no `files` table,
-/// so `files` is 0.
+/// What `readSourceDeleteImpact` returns: `SourceDeleteImpact` (`src/core/engine-sql/sources.ts`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct SourceImpactCounts {
+pub struct SourceDeleteImpact {
+    pub id: String,
     pub name: Option<String>,
     pub pages: u64,
     pub chunks: u64,
@@ -220,10 +220,10 @@ impl Store {
             .collect())
     }
 
-    /// `readSourceImpactCounts(id)`: what deleting the source would remove (pages with
+    /// `readSourceDeleteImpact(id)`: the source's id and name with what deleting it would remove (pages with
     /// soft-deleted ones, their chunks, the chunks that have a vector, the source's files and its
     /// fact rows), or `None` when the source does not exist.
-    pub fn read_source_impact_counts(&self, id: &str) -> Result<Option<SourceImpactCounts>> {
+    pub fn read_source_delete_impact(&self, id: &str) -> Result<Option<SourceDeleteImpact>> {
         let read = self.read()?;
         let Some(record) = read_source(&*read, id)? else {
             return Ok(None);
@@ -238,7 +238,8 @@ impl Store {
                 }
             }
         }
-        Ok(Some(SourceImpactCounts {
+        Ok(Some(SourceDeleteImpact {
+            id: record.id,
             name: record.name,
             pages: pages.len() as u64,
             chunks,
@@ -261,7 +262,7 @@ impl Store {
             if expired_only && !expired(&record, now) {
                 return Ok(false);
             }
-            crate::jobs::refuse_source_delete(&*tx, id)?;
+            crate::jobs::remove_oauth_source_rows(tx, id)?;
             for page in source_pages(&*tx, id)? {
                 crate::pages::remove_page(tx, &page)?;
             }

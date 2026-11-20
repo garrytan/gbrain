@@ -12,8 +12,9 @@
 //! (`oauth_clients_complete_agent_grant`, src/core/grants/schema.ts), the five value lists and the `sources` foreign
 //! key. A refusal is `constraint_violation` with the Postgres message (`new row for relation "oauth_clients" violates
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
-//! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
-//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here).
+//! Not kept: the `trust_generation_update` trigger and the secondary indexes (a read scans the table). A source
+//! delete runs [`remove_source_rows`]: the `ON DELETE RESTRICT` of `source_id` and the `ON DELETE SET NULL` of
+//! `bound_source_id`.
 
 use super::spend::numeric_fixed;
 use super::*;
@@ -286,10 +287,12 @@ pub(super) fn put_client(tx: &mut dyn KvWrite, record: &ClientRecord) -> Result<
     put_json(tx, &client_key(&record.client_id), record)
 }
 
-/// The `ON DELETE RESTRICT` of `oauth_clients.source_id`: a source that a client names, revoked
-/// clients included (the key is physical), cannot be deleted. The error is the one Postgres raises.
-pub(crate) fn refuse_source_delete(read: &dyn KvRead, source_id: &str) -> Result<()> {
-    if all_clients(read)?
+/// The `sources` delete side of the client's foreign keys: refuses, as `ON DELETE RESTRICT` does, when a client's
+/// `source_id` names `source_id`, revoked clients included (the key is physical), with the error Postgres raises;
+/// else clears every `bound_source_id` that names it (`ON DELETE SET NULL`).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let clients = all_clients(&*tx)?;
+    if clients
         .iter()
         .any(|c| c.source_id.as_deref() == Some(source_id))
     {
@@ -299,6 +302,12 @@ pub(crate) fn refuse_source_delete(read: &dyn KvRead, source_id: &str) -> Result
                 "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"{TABLE}\""
             ),
         ));
+    }
+    for mut client in clients {
+        if client.bound_source_id.as_deref() == Some(source_id) {
+            client.bound_source_id = None;
+            put_json(tx, &client_key(&client.client_id), &client)?;
+        }
     }
     Ok(())
 }
