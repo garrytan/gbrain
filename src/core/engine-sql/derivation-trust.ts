@@ -1,7 +1,9 @@
 /**
  * The trust writes of a derivation as typed engine members: the statements trust/taint.ts,
  * persistence/derived-retirement-hold.ts and the atom generation adapter sent through `executeRaw`, byte for byte, with
- * the same parameters.
+ * the same parameters. `lowerTrustTier` is the exception: it binds its values through `sqlFragment`, so its placeholders
+ * are renumbered in text order and the tier it compares against binds as a rank (`TRUST_TIER_RANK`, 0 for an unknown
+ * tier, as the CASE expression gave).
  *
  * - `lowerTrustTier`: lowers rows of one taint table to a derivation's tier and origin, never raising.
  * - `countDerivedRowTaint`: how many take, timeline or page rows carry `taint_inputs`, and how many of those are
@@ -17,9 +19,9 @@ import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { TRUST_TIER_RANK, trustRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
 
 const TAINT_TABLES: readonly TaintTable[] = ['facts', 'takes', 'pages', 'timeline_entries'];
+/** The table text of each taint table, so a statement splices a constant (check:engine-sql-dynamic). */
+const TAINT_TABLE_SQL = { facts: 'facts', takes: 'takes', pages: 'pages', timeline_entries: 'timeline_entries' } as const;
 const TAINT_SHARE_TABLES = ['takes', 'timeline_entries', 'pages'] as const;
-/** The constant table-name text lowerTrustTier splices, one entry per TAINT_TABLES member. */
-const TAINT_TABLE_SQL = { facts: 'facts', takes: 'takes', pages: 'pages', timeline_entries: 'timeline_entries' } as const satisfies Record<TaintTable, string>;
 
 /** A table `countDerivedRowTaint` counts. */
 export type DerivedTaintTable = typeof TAINT_SHARE_TABLES[number];
@@ -41,8 +43,7 @@ export async function lowerTrustTier(raw: EngineRawRead, table: TaintTable, ids:
   origin: WriteOrigin | null): Promise<number[]> {
   const name = taintTable('lowerTrustTier', table);
   if (!ids.length) return [];
-  // The table name is constant text from TAINT_TABLE_SQL; every value is a bound parameter.
-  const { text, params } = renderFragment(sqlFragment`UPDATE ${trustedSql(TAINT_TABLE_SQL[name])} SET trust_tier=${tier}::text,write_origin=${origin ? JSON.stringify(origin) : null}::text::jsonb
+  const { text, params } = renderFragment(sqlFragment`UPDATE ${trustedSql(TAINT_TABLE_SQL[name])} SET trust_tier=${tier},write_origin=${origin ? JSON.stringify(origin) : null}::text::jsonb
       WHERE id=ANY(${[...ids]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))}>${TRUST_TIER_RANK[tier] ?? 0}::int RETURNING id`);
   const rows = await raw<{ id: number | string }>(text, params);
   return rows.map(row => Number(row.id));
