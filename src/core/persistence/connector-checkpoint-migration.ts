@@ -20,10 +20,11 @@
  * older binary may still be using an old key during a mixed-version window.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { OrphanCheckpointRow } from '../engine-sql/doctor-brain.ts';
 import { CONNECTOR_KINDS_SQL, connectorCheckpointKeys, connectorIdentity, type ConnectorKind } from './connector-identity.ts';
 import { CONNECTOR_STATE_OP, connectorStateKey, emptyConnectorState, type ConnectorState } from './connector-state.ts';
 
-type Sql = Pick<BrainEngine, 'executeRaw' | 'readDoctorSources' | 'transaction' | 'kind'>;
+type Sql = Pick<BrainEngine, 'executeRaw' | 'readDoctorSources' | 'listOrphanConnectorCheckpoints' | 'transaction' | 'kind'>;
 /** The database time migration 176 first ran; classifies retired-format connector intents. */
 export const CONNECTOR_MIGRATION_OP = 'managed-connector-migration';
 export async function readConnectorV2Cutoff(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string | null> {
@@ -53,10 +54,10 @@ export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'readDocto
   return keys;
 }
 
-export interface OrphanCheckpointRow { op: 'managed-connector' | 'managed-connector-retry'; fingerprint: string; updated_at: string }
+export type { OrphanCheckpointRow };
 
 /** The orphan test for op_checkpoints row `c`; binds loadable keys, before, min age days and the state op from parameter `$first` on. */
-const orphanPredicate = (first: number) => {
+export const orphanPredicate = (first: number) => {
   const [k, b, d, o] = [first, first + 1, first + 2, first + 3].map(n => `$${n}`);
   return `(
       ((c.op='managed-connector' AND NOT (c.fingerprint = ANY(${k}::text[])))
@@ -79,11 +80,9 @@ const orphanPredicate = (first: number) => {
  * Checkpoint and retry rows no source can load. `before` bounds `updated_at`
  * (the migration start); `minAgeDays` adds the doctor/repair age floor.
  */
-export async function orphanConnectorCheckpoints(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>, opts: { before?: string; minAgeDays?: number; limit?: number } = {}): Promise<OrphanCheckpointRow[]> {
+export async function orphanConnectorCheckpoints(engine: Pick<BrainEngine, 'listOrphanConnectorCheckpoints' | 'readDoctorSources'>, opts: { before?: string; minAgeDays?: number; limit?: number } = {}): Promise<OrphanCheckpointRow[]> {
   const loadable = [...(await loadableConnectorKeys(engine)).keys()];
-  return engine.executeRaw<OrphanCheckpointRow>(`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
-    WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(2)}
-    ORDER BY c.op, c.fingerprint LIMIT $1`, [opts.limit ?? 100_000, loadable, opts.before ?? null, opts.minAgeDays ?? null, CONNECTOR_STATE_OP]);
+  return engine.listOrphanConnectorCheckpoints({ loadable, before: opts.before ?? null, minAgeDays: opts.minAgeDays ?? null, limit: opts.limit ?? 100_000, stateOp: CONNECTOR_STATE_OP });
 }
 
 /** Checkpoint and retry rows kept only because their key is a source's #6561 alias key (the repair preview lists them). */

@@ -221,6 +221,7 @@ import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
+import * as doctorBrainImpl from './engine-sql/doctor-brain.ts';
 import * as doctorSyncImpl from './engine-sql/doctor-sync.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
@@ -1404,6 +1405,13 @@ export class PostgresEngine implements BrainEngine {
   readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.executeRaw.bind(this), key, op, fingerprint); }
   readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.executeRaw.bind(this)); }
   listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.executeRaw.bind(this)); }
+  listInterimStoredObjectCounts(type: string, shelfSourceId: string, prefix: string, adoptedTag: string) { return doctorBrainImpl.listInterimStoredObjectCounts(this.executeRaw.bind(this), type, shelfSourceId, prefix, adoptedTag); }
+  readOldestSourceCreatedAt() { return doctorBrainImpl.readOldestSourceCreatedAt(this.executeRaw.bind(this)); }
+  listVisibilityCandidatePages(sourceIds: readonly string[] | null) { return doctorBrainImpl.listVisibilityCandidatePages(this.executeRaw.bind(this), sourceIds); }
+  countVisibilityNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null) { return doctorBrainImpl.countVisibilityNoncanonicalHolds(this.executeRaw.bind(this), holdOp, sourceIds); }
+  listContentBlockedReceipts() { return doctorBrainImpl.listContentBlockedReceipts(this.executeRaw.bind(this)); }
+  listPassAdmittedReceipts(sourceId: string, passId: string) { return doctorBrainImpl.listPassAdmittedReceipts(this.executeRaw.bind(this), sourceId, passId); }
+  listOrphanConnectorCheckpoints(query: doctorBrainImpl.OrphanConnectorCheckpointQuery) { return doctorBrainImpl.listOrphanConnectorCheckpoints(this.executeRaw.bind(this), query); }
   listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null) { return doctorSyncImpl.listManagedSyncCursorFailureRows(this.executeRaw.bind(this), sourceIds); }
   listManagedSyncOrphanRowsets(sourceIds: readonly string[] | null, movedMessage: string) { return doctorSyncImpl.listManagedSyncOrphanRowsets(this.executeRaw.bind(this), sourceIds, movedMessage); }
   listDurableManagedSyncFailureKeys(keys: readonly string[]) { return doctorSyncImpl.listDurableManagedSyncFailureKeys(this.executeRaw.bind(this), keys); }

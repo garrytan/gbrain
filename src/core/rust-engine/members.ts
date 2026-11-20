@@ -575,6 +575,14 @@ export const RUST_ENGINE_MEMBERS = {
   readSyncAdmissionSettingRow: 'config',
   readLatestConnectorReceipt: 'ingest_log',
   listFactsAbsorbFailureGroups: 'ingest_log',
+  // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw
+  listInterimStoredObjectCounts: 'health',
+  readOldestSourceCreatedAt: 'sources',
+  listVisibilityCandidatePages: 'health',
+  countVisibilityNoncanonicalHolds: 'persistence_journal',
+  listContentBlockedReceipts: 'persistence_journal',
+  listPassAdmittedReceipts: 'persistence_journal',
+  listOrphanConnectorCheckpoints: 'persistence_journal',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
   listManagedSyncCursorFailureRows: 'persistence_journal',
   listManagedSyncOrphanRowsets: 'persistence_journal',

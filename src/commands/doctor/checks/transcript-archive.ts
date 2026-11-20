@@ -82,8 +82,8 @@ export async function checkTranscriptArchiveFreshness(
     else if (record?.status === 'skipped' && record.code) problems.push('the last maintenance pass skipped the archive (' + record.code + '): ' + (record.message ?? ''));
     let staleSince: number | null = record ? Date.parse(record.at) : null;
     if (staleSince === null) {
-      const [oldest] = await engine.executeRaw<{ created_at: string | Date | null }>('SELECT min(created_at) AS created_at FROM sources');
-      staleSince = oldest?.created_at ? new Date(oldest.created_at).getTime() : null;
+      const oldest = await engine.readOldestSourceCreatedAt();
+      staleSince = oldest ? new Date(oldest).getTime() : null;
     }
     const passStale = staleSince !== null && nowMs - staleSince > staleDays * DAY_MS;
     if (passStale) {

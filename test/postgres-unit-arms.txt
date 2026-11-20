@@ -147,6 +147,7 @@ test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/delegated-grant.test.ts
 test/engine-parity/doctor-acc.test.ts
+test/engine-parity/doctor-brain.test.ts
 test/engine-parity/doctor-checkpoints.test.ts
 test/engine-parity/doctor-derived.test.ts
 test/engine-parity/doctor-pages.test.ts
