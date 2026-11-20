@@ -63,8 +63,9 @@ export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string |
 export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'isSourceClaimed', sourceId }, () => brain.isSourceClaimed(sourceId));
 
-/** The store keeps no chronicle extraction state, so no page has events. */
-export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
+/** An extracted chronicle row of the page carries event hashes (rust/docs/store/chronicle-ledger.md). */
+export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = (brain, sourceId, pageId) =>
+  storeCall({ member: 'hasExtractedEvents', sourceId }, () => brain.hasExtractedEvents(sourceId, pageId));
 
 /**
  * The store keeps no access tokens: minting, revoking and the bearer check are raw SQL on `access_tokens`, which this

@@ -460,6 +460,17 @@
         ],
         "flagOnScopes": []
       },
+      "countRecentChronicleReservations#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countRepoBoundSources#default": {
         "flagOffLanes": [
           "pool"
@@ -2167,6 +2178,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasPendingAutoChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "hasRearmableTargets#default": {
         "flagOffLanes": [
           "pool"
@@ -2212,6 +2234,17 @@
         "flagOnScopes": []
       },
       "insertAccessPolicyRevision#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "insertConfigIfAbsent#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4202,6 +4235,17 @@
         ],
         "flagOnScopes": []
       },
+      "readChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readCurrentWriteTrust#default": {
         "flagOffLanes": [
           "tx"
@@ -4843,6 +4887,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "readPageTruthLead#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "readPersistenceBrainId#default": {
         "flagOffLanes": [
@@ -6346,6 +6401,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertChunks#default": {
         "flagOffLanes": [
           "tx"
@@ -6642,6 +6708,7 @@
         "countPendingWakeForgets": "none",
         "countPeopleFolderPages": "none",
         "countPurgedPageFacts": "none",
+        "countRecentChronicleReservations": "none",
         "countRecentCompletedJobs": "none",
         "countRedactedFacts": "none",
         "countRelinkCandidates": "none",
@@ -6827,6 +6894,7 @@
         "hasLiveFileBackedPage": "none",
         "hasNotifierCoverage": "none",
         "hasOverdueWatchdogSuspect": "none",
+        "hasPendingAutoChronicleRow": "none",
         "hasPersistenceTable": "none",
         "hasRearmableTargets": "none",
         "hasSegmentStorage": "none",
@@ -6847,6 +6915,7 @@
         "insertAccessToken": "none",
         "insertCalibrationProfile": "none",
         "insertCanonicalTimelineRows": "none",
+        "insertConfigIfAbsent": "none",
         "insertDecideCalibration": "none",
         "insertDecideProposal": "none",
         "insertDecideReceipts": "none",
@@ -7212,6 +7281,7 @@
         "readCapacityForecastInputs": "none",
         "readChatUsage": "none",
         "readChildCompletions": "none",
+        "readChronicleRow": "none",
         "readChunkVectorColumn": "none",
         "readClientBudgetUsd": "none",
         "readClientOpUsage": "none",
@@ -7334,6 +7404,7 @@
         "readPageTierRows": "none",
         "readPageTitle": "none",
         "readPageTrustRows": "none",
+        "readPageTruthLead": "none",
         "readPageVersionEdition": "none",
         "readPendingProposalSummary": "none",
         "readPersistenceBrainId": "none",
@@ -7576,6 +7647,7 @@
         "updateTake": "none",
         "updateTakeEmbeddings": "none",
         "updateTimelineDetails": "none",
+        "upsertChronicleRow": "none",
         "upsertChunks": "via:_upsertChunksOnce",
         "upsertDecideState": "none",
         "upsertEventProjection": "none",

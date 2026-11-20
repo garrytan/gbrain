@@ -14,7 +14,8 @@
  *    owner_unavailable (unbound_source); (2) the Rust createVersion member refuses the `preimage` option
  *    (import-file.ts), and coordinator.ts finishUnpublishedFailure releases a publication-stage capability refusal
  *    back to queued with no attempt limit, so the write and every write behind it stay write_pending; (3) the
- *    chronicle activation is a raw config INSERT (chronicle/ledger.ts), refused on Rust the same way.
+ *    chronicle decision ran raw SQL (chronicle/ledger.ts), refused on Rust the same way; it now runs through typed
+ *    engine members, so case 3 commits on every arm (test/engine-parity/chronicle-decision.test.ts).
  *  - Why existing coverage misses it: test/persistence-*.test.ts run on PGLite and Postgres only, and the Rust arm of
  *    the other parity cases never writes to an unclaimed rooted source, updates a page through put_page, or writes a
  *    chronicle-shaped page.
@@ -108,11 +109,10 @@ describe('the bench save failures', () => {
     } finally { await disposePersistenceConsumer(engine); }
   });
 
-  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['putPage'] }, async (engine, backend) => {
+  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['putPage'] }, async (engine) => {
     try {
       const big = '---\ntitle: Conv\ntype: conversation\n---\n' + 'User: hello there, this is a long line of conversation text.\n'.repeat(90);
       const part = await run(engine, 'put_page', { slug: 'conversations/conv-example/part-1', content: big });
-      if (typedOnRust(backend, part)) throw thrown.get(part);
       expect(part).toEqual(COMMITTED);
       return part;
     } finally { await disposePersistenceConsumer(engine); }

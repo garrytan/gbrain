@@ -173,6 +173,7 @@ import * as sourcesImpl from './engine-sql/sources.ts';
 import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
+import * as chronicleLedger from './engine-sql/chronicle-ledger.ts';
 import * as worktreeClaimImpl from './engine-sql/worktree-claim.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import * as writerAdminImpl from './engine-sql/writer-admin.ts';
@@ -2029,6 +2030,12 @@ export class PGLiteEngine implements BrainEngine {
   publicationJournalStore() { return publicationJournalImpl.publicationJournalStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
+  async upsertChronicleRow(w: chronicleLedger.ChronicleRowUpsert) { return chronicleLedger.upsertChronicleRow(this, w); }
+  async readChronicleRow(key: chronicleLedger.ChronicleRowKey) { return chronicleLedger.readChronicleRow(this, key); }
+  async hasPendingAutoChronicleRow(sourceId: string, pageId: number, extractorVersion: number) { return chronicleLedger.hasPendingAutoChronicleRow(this, sourceId, pageId, extractorVersion); }
+  async countRecentChronicleReservations() { return chronicleLedger.countRecentChronicleReservations(this); }
+  async insertConfigIfAbsent(key: string, value: string) { return chronicleLedger.insertConfigIfAbsent(this, key, value); }
+  async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
   listAccessTokens() { return writeMiscImpl.listAccessTokens(this.writeMiscReads); }

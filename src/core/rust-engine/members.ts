@@ -144,6 +144,12 @@ export const RUST_ENGINE_MEMBERS = {
   filterPagesAtRevision: 'pages',
   readDatabaseClock: 'pages',
   hasExtractedEvents: 'pages',
+  upsertChronicleRow: 'telemetry',
+  readChronicleRow: 'telemetry',
+  hasPendingAutoChronicleRow: 'telemetry',
+  countRecentChronicleReservations: 'telemetry',
+  insertConfigIfAbsent: 'config',
+  readPageTruthLead: 'pages',
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',

@@ -833,6 +833,13 @@ export const DOMAIN_OF: Record<string, string> = {
   'listBlockingEffectRows': OOS.writerStatus,
   'listActiveWorktreeRefreshRows': OOS.writerStatus,
   'hasExtractedEvents': OOS.writeMisc,
+  'upsertChronicleRow': OOS.callerRawSql,
+  // the write-time chronicle decision's other statements (engine-sql/chronicle-ledger.ts)
+  'readChronicleRow': OOS.callerRawSql,
+  'hasPendingAutoChronicleRow': OOS.callerRawSql,
+  'countRecentChronicleReservations': OOS.callerRawSql,
+  'insertConfigIfAbsent': OOS.callerRawSql,
+  'readPageTruthLead': OOS.callerRawSql,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,
   'listAccessTokens': OOS.writeMisc,
@@ -1882,4 +1889,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readNoopEmbeddingCandidates', [['default', (e) => e.transaction((tx: any) => tx.readNoopEmbeddingCandidates({ hostId: 'f0000000-0000-4000-8000-0000000000e2', signature: 'sig', expectedModel: 'model-a', column: 'embedding', window: ['1'], pageIds: [1] }))]]),
   ...variants('settleNoopEmbeddingRows', [['default', (e) => e.transaction((tx: any) => tx.settleNoopEmbeddingRows(['1']))]]),
   ...variants('readSegmentedEmbedPage', [['id', (e) => e.readSegmentedEmbedPage({ id: 1 })], ['slug', (e) => e.readSegmentedEmbedPage({ sourceId: 'default', slug: 'notes/a' })]]),
+  ...variants('upsertChronicleRow', [['default', (e) => e.upsertChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', state: 'skipped', reason: 'too_short', trigger: 'auto', principalKind: null, principalId: null, requestId: null, noExtract: false, nextAttemptAt: null })]]),
+  // the write-time chronicle decision's other statements (engine-sql/chronicle-ledger.ts)
+  ...variants('readChronicleRow', [['default', (e) => e.readChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2 })]]),
+  ...variants('hasPendingAutoChronicleRow', [['default', (e) => e.hasPendingAutoChronicleRow('default', 1, 2)]]),
+  ...variants('countRecentChronicleReservations', [['default', (e) => e.countRecentChronicleReservations()]]),
+  ...variants('insertConfigIfAbsent', [['default', (e) => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z')]]),
+  ...variants('readPageTruthLead', [['default', (e) => e.readPageTruthLead(1)]]),
 ];

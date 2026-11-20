@@ -86,6 +86,8 @@ import type {
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
+import type { ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
+import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
@@ -1628,6 +1630,18 @@ export interface BrainEngine {
    */
   publicationJournalStore(): Promise<PublicationJournalStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
+  /** Records one chronicle ledger decision; false when its guards leave the existing row as it was. */
+  upsertChronicleRow(w: ChronicleRowUpsert): Promise<boolean>;
+  /** The chronicle ledger row at its primary key, every column, or null. */
+  readChronicleRow(key: ChronicleRowKey): Promise<ChronicleLedgerRow | null>;
+  /** Whether an automatic, extractable decision of the page at the extractor version is still pending. */
+  hasPendingAutoChronicleRow(sourceId: string, pageId: number, extractorVersion: number): Promise<boolean>;
+  /** The automatic chronicle judge reservations taken in the last 24 hours. */
+  countRecentChronicleReservations(): Promise<number>;
+  /** Sets a config key only when it has none (`ON CONFLICT (key) DO NOTHING`). */
+  insertConfigIfAbsent(key: string, value: string): Promise<void>;
+  /** The stored `truth_lead` of a page by id (a segmented page's body prefix), or null. */
+  readPageTruthLead(pageId: number): Promise<string | null>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;
