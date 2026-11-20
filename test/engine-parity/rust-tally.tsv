@@ -30,11 +30,11 @@ test/engine-parity/facts-conversation-sites.test.ts	0	22
 test/engine-parity/facts-cycle-sites.test.ts	2	14
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	8	21
+test/engine-parity/facts-purge-sites.test.ts	9	20
 test/engine-parity/facts-purge.test.ts	23	2
-test/engine-parity/facts-repair-sites.test.ts	7	11
+test/engine-parity/facts-repair-sites.test.ts	10	9
 test/engine-parity/facts-repair.test.ts	14	2
-test/engine-parity/facts-rest-sites.test.ts	11	8
+test/engine-parity/facts-rest-sites.test.ts	14	7
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	10	0
 test/engine-parity/facts-unique-violation.test.ts	2	1

@@ -944,6 +944,33 @@ The parity cases seed facts, pages, versions, chunks, timeline entries, write re
 typed writers. `belief_events`, `page_segment_derivations` and `takes` have no typed fixture, so their members
 are compared on empty data only.
 
+### Claim conflicts, contested proposals, live entity page and gone-page expiry (`facts/rest_sites.rs`, family `facts_rest`)
+
+Served on Rust: `listClaimConflictPairs`, `countClaimConflictPairs`, `listUnarchivedSourceIds` (the same store read as
+`listActiveSourceIds`), `readLiveFactEntityPage`, `listContestedProposalPairs`, `lockAgentWritebackSetting` and
+`expireFactsOfGonePages`.
+
+- The claim pairs follow the SQL: active typed claims of the source (`source` not in the audit list), joined on entity,
+  visibility, metric, unit, period (null-safe) and as-of bucket with a different value, the older claim by `valid_from`
+  then id. A pair on an owned memory page needs both claims on the same page. A decide proposal in any status covers its
+  pair, and so does a pending `supersede_fact` proposal between two facts; a rejected one does not. The bucket is the
+  UTC day, or the ISO week, month, quarter or year the period names (`weekly`, `monthly`, `quarterly`, `annual`,
+  `annually`, `yearly`, trimmed of spaces and lower-cased). `cap` is a non-negative whole number; the count ignores it.
+- `listContestedProposalPairs` lists each pending decide proposal that names a listed fact, once per listed fact that
+  names it, by proposal id then by the order of `ids`, when both facts are active, in the source of the proposal and
+  readable (world only for a remote caller, the fact privacy policy, the page and quarantine rules, and the trust
+  floor).
+- `readLiveFactEntityPage` is none for a soft-deleted page or one the remote read floor hides. The privacy policies are
+  judged by the TypeScript members and a caller whose member pages, grants or lineage widen them is refused.
+- `expireFactsOfGonePages` expires, in one write, the facts filed on a gone page (an ontology observation is not
+  filed there), the conversation slots filed on it (the row gives up its dimension, value and slot), the facts extracted
+  from it and filed on none, and the facts about it that no other page row holds. The first rule that matches a row
+  decides it, and a pair with no partner (the lists differ in length) matches nothing. Callers reach it inside a
+  `transaction`, which the Rust engine does not serve yet, so a purge or a page delete still stops at `transaction`; the
+  parity case calls the member directly.
+- `lockAgentWritebackSetting` takes no lock: the store has one writer. It is reached only inside a `transaction` too.
+- A NUL byte in a text argument is `invalid_argument`. A text comparison is a byte comparison.
+
 ## Fact purge plan, transaction and segment-storage statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
 
 The statements `facts/purge.ts` ran through `executeRaw` are 35 typed members, so the Rust arm answers each with the

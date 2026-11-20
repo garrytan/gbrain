@@ -107,7 +107,7 @@ async function queueEffects(engine: BrainEngine, journalId: string, effects: Arr
 
 describe('engine parity: purge, purge receipt and held-fact move statements of the facts store', () => {
   parityTest('expireFactsOfGonePages expires the facts filed on, extracted from and about the gone pages, and only theirs', {
-    methods: ['putPage', 'insertFact', 'insertFacts', 'listFactsSince', 'transaction', 'expireFactsOfGonePages'],
+    methods: ['putPage', 'insertFact', 'insertFacts', 'listFactsSince', 'expireFactsOfGonePages'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('notes/kept', note('Kept', 'a live page'));
@@ -128,10 +128,10 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     await fenced(engine, 'about gone, held by kept', { entity_slug: 'notes/gone', source_markdown_slug: 'notes/kept', visibility: 'private' });
     await fact(engine, 'about kept', { entity_slug: 'notes/kept' });
     const before = await liveness(engine);
-    await engine.transaction(tx => tx.expireFactsOfGonePages([SRC, SRC], ['notes/gone', 'notes/missing']));
+    await engine.expireFactsOfGonePages([SRC, SRC], ['notes/gone', 'notes/missing']);
     const after = await liveness(engine);
     const untouched = await liveness(engine, 'other');
-    await engine.transaction(tx => tx.expireFactsOfGonePages([SRC], ['notes/kept']));
+    await engine.expireFactsOfGonePages([SRC], ['notes/kept']);
     const second = await liveness(engine);
     expect(Object.values(before).every(Boolean)).toBe(true);
     expect(after).toEqual({

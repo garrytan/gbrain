@@ -58,6 +58,7 @@ mod facts_purge;
 mod facts_recall;
 mod facts_remember;
 mod facts_repair;
+mod facts_rest;
 mod facts_trust;
 mod facts_trust_owner;
 mod facts_trust_reads;

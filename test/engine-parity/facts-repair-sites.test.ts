@@ -478,4 +478,67 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     expect(otherSource).toEqual([]);
     return { pairs, capped, counted: Number(counted?.n), withAudit, otherSource };
   });
+  parityTest('listClaimConflictPairs buckets claims by cadence, keeps owned pages apart from other pages and leaves out the pairs a proposal covers', {
+    methods: ['insertFact', 'insertFacts', 'insertDecideProposal', 'insertTrustProposal', 'transitionTrustProposal', 'listClaimConflictPairs', 'countClaimConflictPairs'],
+  }, async (engine) => {
+    const claim = (text: string, entity: string, value: number, from: string, extra: Record<string, unknown> = {}) =>
+      fact(engine, text, { entity_slug: entity, visibility: 'world', source: 'mcp:remember', claim_metric: 'arr', claim_value: value, claim_unit: 'usd', valid_from: new Date(from), ...extra });
+    const filed = (text: string, entity: string, value: number, slug: string) =>
+      fenced(engine, text, { entity_slug: entity, claim_metric: 'arr', claim_value: value, claim_unit: 'usd', claim_period: 'annual', source_markdown_slug: slug, valid_from: new Date('2026-03-01T00:00:00Z') });
+    // Days: the UTC day decides, not the clock time.
+    const dayA = await claim('day a', 'companies/day', 1, '2026-03-01T00:30:00Z');
+    const dayB = await claim('day b', 'companies/day', 2, '2026-03-01T23:30:00Z');
+    const dayC = await claim('day c', 'companies/day', 3, '2026-03-02T00:30:00Z');
+    // Weeks: Monday and Thursday of one ISO week pair up; the next Monday does not; a week that crosses the year pairs up too.
+    const weekA = await claim('week a', 'companies/week', 1, '2026-03-02T09:00:00Z', { claim_period: 'weekly' });
+    const weekB = await claim('week b', 'companies/week', 2, '2026-03-05T09:00:00Z', { claim_period: 'weekly' });
+    const weekC = await claim('week c', 'companies/week', 3, '2026-03-09T09:00:00Z', { claim_period: 'weekly' });
+    const yearA = await claim('year a', 'companies/year', 1, '2024-12-30T09:00:00Z', { claim_period: 'weekly' });
+    const yearB = await claim('year b', 'companies/year', 2, '2025-01-02T09:00:00Z', { claim_period: 'weekly' });
+    // Months and quarters.
+    const monthA = await claim('month a', 'companies/month', 1, '2026-03-01T09:00:00Z', { claim_period: 'monthly' });
+    const monthB = await claim('month b', 'companies/month', 2, '2026-03-31T09:00:00Z', { claim_period: 'monthly' });
+    const monthC = await claim('month c', 'companies/month', 3, '2026-04-01T09:00:00Z', { claim_period: 'monthly' });
+    const quarterA = await claim('quarter a', 'companies/quarter', 1, '2026-01-05T09:00:00Z', { claim_period: 'quarterly' });
+    const quarterB = await claim('quarter b', 'companies/quarter', 2, '2026-03-25T09:00:00Z', { claim_period: 'quarterly' });
+    const quarterC = await claim('quarter c', 'companies/quarter', 3, '2026-04-02T09:00:00Z', { claim_period: 'quarterly' });
+    // An owned memory page keeps its claims apart from any other page's, and pairs the claims of the same page.
+    const aliceA = await filed('alice a', 'companies/owned', 1, 'memory/members/alice');
+    const aliceB = await filed('alice b', 'companies/owned', 2, 'memory/members/alice');
+    const bobA = await filed('bob a', 'companies/owned', 3, 'memory/members/bob');
+    const plainA = await filed('plain a', 'companies/plain', 1, 'notes/one');
+    const plainB = await filed('plain b', 'companies/plain', 2, 'notes/two');
+    // A decide proposal covers a pair in any status; a pending supersede proposal covers its pair; a rejected one does not.
+    const decided = [await claim('decided a', 'companies/decided', 1, '2026-03-01T01:00:00Z'), await claim('decided b', 'companies/decided', 2, '2026-03-01T02:00:00Z')];
+    const pending = [await claim('pending a', 'companies/pending', 1, '2026-03-01T01:00:00Z'), await claim('pending b', 'companies/pending', 2, '2026-03-01T02:00:00Z')];
+    const rejected = [await claim('rejected a', 'companies/rejected', 1, '2026-03-01T01:00:00Z'), await claim('rejected b', 'companies/rejected', 2, '2026-03-01T02:00:00Z')];
+    expect(await engine.insertDecideProposal({
+      source_id: 'default', sweep_id: 'claim_conflicts:parity', pair_index: 0, new_fact_id: decided[1]!, old_fact_id: decided[0]!,
+      direction: 'new_supersedes_old', p_supersede: 0.9, threshold: 0.8, proposal_floor: 0.5, model_resolved: 'model-a',
+    })).not.toBeNull();
+    const supersede = (older: number, newer: number) => ({ action: 'supersede_fact' as const, sourceId: 'default', target: { table: 'facts' as const, id: older },
+      related: { table: 'facts' as const, id: newer }, before: { trust_tier: 'operator_curated' }, proposer: 'parity' });
+    await engine.insertTrustProposal(supersede(pending[0]!, pending[1]!));
+    const rejectedProposal = await engine.insertTrustProposal(supersede(rejected[0]!, rejected[1]!));
+    expect(await engine.transitionTrustProposal(rejectedProposal.id, 'pending', 'rejected', { decidedBy: { kind: 'operator', id: 'cli' } })).toBeTruthy();
+    const name = namer({ dayA, dayB, dayC, weekA, weekB, weekC, yearA, yearB, monthA, monthB, monthC, quarterA, quarterB, quarterC, aliceA, aliceB, bobA, plainA, plainB,
+      decidedA: decided[0]!, decidedB: decided[1]!, pendingA: pending[0]!, pendingB: pending[1]!, rejectedA: rejected[0]!, rejectedB: rejected[1]! });
+    const list = await engine.listClaimConflictPairs('default', [...AUDIT_ROW_SOURCES], 100);
+    const pairs = list.map(r => ({ pair: `${name(Number(r.new_fact_id))}>${name(Number(r.old_fact_id))}`, bucket: r.bucket, new: Number(r.new_value), old: Number(r.old_value), entity: r.entity_slug }));
+    const counted = Number((await engine.countClaimConflictPairs('default', [...AUDIT_ROW_SOURCES]))?.n);
+    expect(counted).toBe(pairs.length);
+    const byPair = new Map(pairs.map(p => [p.pair, p.bucket]));
+    expect(byPair.get('dayB>dayA')).toBe('2026-03-01');
+    expect(byPair.get('weekB>weekA')).toBe('2026-W10');
+    expect(byPair.get('yearB>yearA')).toBe('2025-W01');
+    expect(byPair.get('monthB>monthA')).toBe('2026-03');
+    expect(byPair.get('quarterB>quarterA')).toBe('2026-Q1');
+    for (const absent of ['dayC>dayB', 'weekC>weekB', 'monthC>monthB', 'quarterC>quarterB', 'bobA>aliceA', 'aliceB>bobA', 'decidedB>decidedA', 'pendingB>pendingA']) {
+      expect(byPair.has(absent), absent).toBe(false);
+    }
+    expect(byPair.has('aliceB>aliceA')).toBe(true);
+    expect(byPair.has('plainB>plainA')).toBe(true);
+    expect(byPair.has('rejectedB>rejectedA')).toBe(true);
+    return { pairs, counted };
+  });
 });

@@ -66,6 +66,7 @@ pub mod relink;
 pub mod relink_writes;
 pub mod remember_reads;
 pub mod repair;
+pub mod rest_sites;
 pub mod saved_match;
 pub mod trust;
 pub mod trust_owner;
