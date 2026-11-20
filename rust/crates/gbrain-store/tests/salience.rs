@@ -401,3 +401,70 @@ fn salience_scores_under_exclude_private_skip_the_pages_the_policy_hides() {
         "without the alias keys only `visibility` hides a page"
     );
 }
+
+#[test]
+fn recent_salience_under_exclude_private_drops_the_pages_the_page_policy_hides() {
+    let dir = TempDir::new("salience-recent-private");
+    let (store, clock) = open(&dir);
+    page(&store, "default", "sal/open", json!({}));
+    page(
+        &store,
+        "default",
+        "sal/secret",
+        json!({"visibility": "private"}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/readers",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/alias",
+        json!({"access": "restricted"}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/alias-world",
+        json!({"access": "restricted", "visibility": "world"}),
+    );
+    weights(
+        &store,
+        json!([{"slug": "sal/secret", "source_id": "default", "weight": 1.0}]),
+    );
+    let sorted = |extra: Value| {
+        let mut v = ids(&recent(&store, &clock, extra));
+        v.sort();
+        v
+    };
+    assert_eq!(
+        ids(&recent(&store, &clock, json!({})))[0],
+        "default:sal/secret",
+        "no policy reads every page"
+    );
+    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"exclude_private": {"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "lineage"}});
+    assert_eq!(
+        sorted(policy(true, true)),
+        ["default:sal/alias-world", "default:sal/open"]
+    );
+    assert_eq!(
+        sorted(policy(false, true)),
+        [
+            "default:sal/alias",
+            "default:sal/alias-world",
+            "default:sal/open"
+        ]
+    );
+    assert_eq!(
+        sorted(policy(true, false)),
+        [
+            "default:sal/alias",
+            "default:sal/alias-world",
+            "default:sal/open",
+            "default:sal/secret"
+        ]
+    );
+}

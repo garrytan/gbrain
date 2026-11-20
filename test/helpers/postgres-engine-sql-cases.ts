@@ -45,8 +45,12 @@ const OOS = {
   importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
+  largePage: 'out-of-scope:large-page (born in engine-sql/large-page.ts; pinned by test/engine-parity/large-page.test.ts and test/large-page-sql-pin.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
+  withdrawalFence: 'out-of-scope:withdrawal-fence (born in engine-sql/withdrawal-fence.ts; pinned by test/withdrawal-fence-sql-pin.test.ts)',
+  withdrawalPages: 'out-of-scope:withdrawal-pages (born in engine-sql/withdrawal-pages.ts; pinned by test/withdrawal-pages-sql-pin.test.ts)',
+  fieldUsage: 'out-of-scope:field-usage (born in engine-sql/field-usage.ts; pinned by test/engine-parity/field-usage.test.ts and test/schema-field-usage-typed-members.test.ts)',
   identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
   ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
   wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
@@ -54,8 +58,12 @@ const OOS = {
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'hasWithdrawnFenceClaim': OOS.withdrawalFence,
+  'invalidateWithdrawnPages': OOS.withdrawalPages,
+  'listSegmentedPages': OOS.withdrawalPages,
   'searchRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
+  'readFieldUsageSamples': OOS.fieldUsage,
   'cosinesByChunkIds': OOS.searchReads,
   'hasSupersedeEdges': OOS.searchReads,
   'supersedingPageSlugs': OOS.searchReads,
@@ -75,6 +83,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'getPageSealState': OOS.importWrites,
   'replaceDerivedAliases': OOS.importWrites,
   'refreshPageOrigin': OOS.importWrites,
+  'readPageBodySizes': OOS.largePage,
+  'readStoredBodyBytes': OOS.largePage,
   'constructor': OOS.lifecycle,
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,
@@ -157,7 +167,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources', 'getSource': 'sources',
   // files
-  'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
+  'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
   'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',
@@ -591,6 +601,7 @@ export const SQL_CASES: SqlCase[] = [
   ]),
   ...variants('getFile', [['default', (e) => e.getFile(SRC, 'attachments/a.png')]]),
   ...variants('listFilesForPage', [['default', (e) => e.listFilesForPage(1)]]),
+  ...variants('listFiles', [['default', (e) => e.listFiles({ limit: 100 })], ['page_slug', (e) => e.listFiles({ pageSlug: 'people/alice-example', limit: 100 })]]),
 
   // ── chunks ──
   ...variants('upsertChunks', [
