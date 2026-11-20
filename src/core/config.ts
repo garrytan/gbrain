@@ -1451,6 +1451,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.evidence_tail_trim', // GBRA-156: protected top-3 tail trim of auto conversation blocks (default off; search/evidence-tail-trim.ts)
   'search.entity_anchoring', // entity-anchored retrieval for entity-scoped current-state query/search (default off; search/entity-anchor.ts)
   'search.query_facts_arm', // query adds matching active facts as rows in spare capacity (default on; search/facts-arm.ts)
+  'search.facts_arm_displace', 'search.search_facts_arm', // #7743: a fact that holds every query term may take the place of the lowest page rows, default on; `search` also runs the facts arm, default on (search/facts-arm.ts, search/query-arms.ts)
+  'search.exact_widen', // a degraded or thin search/query result also runs the search_exact literal scan for the query's terms as a phrase and merges the pages it finds (default on; search/exact-widen.ts)
   'search.saved_facts_supersede', // search saved_facts: a newer fact with a correction cue goes ahead of the fact it corrects, labelled corrected_by (default on; search/saved-facts-match.ts)
   'search.temporal_fact_reserve', // temporal-cue queries reserve up to 15% of the token budget for question-ranked dated facts (default off; search/facts-arm.ts)
   'search.query_facts_block', 'search.fact_source_pages', // GBRA-205: a dated facts block (up to 22% of a query budget) ahead of the pages, default on; matched facts' source conversations join the hits, default off (search/facts-arm.ts)

@@ -368,9 +368,11 @@ search.evidence_cosine_floor
 search.evidence_date_header
 search.evidence_tail_trim
 search.evidence_titles
+search.exact_widen
 search.expansion
 search.expansion_variant_budget
 search.fact_source_pages
+search.facts_arm_displace
 search.floor_ratio
 search.graph_signals
 search.hnsw_iterative_scan
@@ -421,6 +423,7 @@ search.return_budget_max_remote
 search.return_unit
 search.return_window
 search.saved_facts_supersede
+search.search_facts_arm
 search.searchLimit
 search.source_boosts
 search.temporal_fact_reserve

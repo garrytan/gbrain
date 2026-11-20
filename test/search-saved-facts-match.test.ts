@@ -52,6 +52,8 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // These tests pin the saved_facts block's own matching; with the search facts arm on, a fact it returns as a row is not repeated there.
+  await engine.setConfig('search.search_facts_arm', 'false');
   for (const [slug, title, body] of [
     ['accounts/orbix', 'Orbix Home Goods account', 'Account notes for Orbix Home Goods. Renewal cycle is annual. Seat counts are on the signed form.'],
     ['notes/renewals', 'Renewal tracker', 'Track every renewal: seats, price, signed form.'],

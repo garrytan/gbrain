@@ -8,13 +8,13 @@
  * (`search.query_facts_block`, default on; the no-budget evidence plan's
  * implicit budget does not count, #8411) or, with a temporal cue, the
  * temporal fact reserve (`search.temporal_fact_reserve`, default off). With
- * all off the rows pass through unchanged; the facts block is checked first, so
+ * all off the rows pass through unchanged (`search` has its own entry, applySearchFactsArm, below); the facts block is checked first, so
  * turning it off restores the temporal reserve or the facts arm.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { anchorOpResults } from './entity-anchor.ts';
-import { applyFactsArm, applyFactsBlock, applyFactSourcePages, applyTemporalFactReserve, factSourcePagesEnabled, hasTemporalCue, queryFactsArmEnabled, queryFactsBlockEnabled, temporalFactReserveEnabled } from './facts-arm.ts';
+import { applyFactsArm, applyFactsBlock, applyFactSourcePages, applyTemporalFactReserve, factSourcePagesEnabled, factsArmDisplaceEnabled, hasTemporalCue, queryFactsArmEnabled, queryFactsBlockEnabled, searchFactsArmEnabled, temporalFactReserveEnabled } from './facts-arm.ts';
 import { type StageTimer, UNTIMED } from './stage-timings.ts';
 
 export async function applyQueryArms(engine: BrainEngine, p: Record<string, unknown>, query: string, results: SearchResult[],
@@ -35,5 +35,18 @@ async function applyFactsStage(engine: BrainEngine, p: Record<string, unknown>, 
   if (budget && callerBudget && await queryFactsBlockEnabled(engine)) return applyFactsBlock(engine, query, pages, { ...opts, budget });
   if (budget && hasTemporalCue(query) && await temporalFactReserveEnabled(engine)) return applyTemporalFactReserve(engine, query, pages, { ...opts, budget });
   if (!await queryFactsArmEnabled(engine)) return pages;
-  return applyFactsArm(engine, query, pages, opts);
+  return applyFactsArm(engine, query, pages, { ...opts, displace: await factsArmDisplaceEnabled(engine) });
+}
+
+/**
+ * The facts arm for the `search` op (`search.search_facts_arm`, default on): the same arm, read policy and
+ * displacement `query` has, skipped under the same conditions (paging, filters, since/until, language and symbol
+ * constraints). Called with the rows after the op's own stages; no token budget, so only the row count bounds it.
+ */
+export async function applySearchFactsArm(engine: BrainEngine, p: Record<string, unknown>, query: string, results: SearchResult[],
+  scope: PageReadScope & { filtered: boolean; remote: boolean; queryEmbedding: Float32Array | null; rowCap: () => Promise<number> }): Promise<SearchResult[]> {
+  if (p.offset || scope.filtered || p.since || p.until || p.lang || p.symbol_kind || p.near_symbol) return results;
+  if (!await searchFactsArmEnabled(engine)) return results;
+  return applyFactsArm(engine, query, results, { sourceId: scope.sourceId, sourceIds: scope.sourceIds, remote: scope.remote, minTrust: scope.minTrust, suppressFlagged: scope.suppressFlagged,
+    queryEmbedding: scope.queryEmbedding, rowCap: scope.rowCap, readScope: scope, displace: await factsArmDisplaceEnabled(engine) });
 }

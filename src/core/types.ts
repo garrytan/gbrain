@@ -915,6 +915,8 @@ export interface SearchResult {
    * strict-match rows.
    */
   keyword_relaxed?: boolean;
+  /** Set on a page row the exact widening added (`search.exact_widen`, search/exact-widen.ts): it holds the query's content terms as a literal phrase and ranked retrieval had not returned it. */
+  widened?: 'exact';
   /** GST-2762: a keyword_relaxed row the keyless any-word fill added (SearchOpts.orFill); it only adds pages, after the rest. */
   keyword_fill?: true;
   /** Set on rows search's alias fan-out spliced in: the entity's other name that found this page (search/alias-fanout.ts). */

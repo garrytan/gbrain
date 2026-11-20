@@ -45,6 +45,8 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // These tests pin the saved_facts block's own matching; with the search facts arm on, a fact it returns as a row is not repeated there.
+  await engine.setConfig('search.search_facts_arm', 'false');
   sourceId = await newSource(engine);
   await putPage(engine, sourceId, 'notes/harbor-public', page('note', 'Harbor public', 'Public notes on the harbor ferry timetable.'));
   await putPage(engine, sourceId, 'notes/harbor-private', page('note', 'Harbor private', 'Private notes on the harbor ferry.', 'visibility: private\n'));
