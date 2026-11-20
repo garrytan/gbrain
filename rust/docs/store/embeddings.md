@@ -91,6 +91,5 @@ stale counts, `listStaleChunks` and the content-drift sweep, as in PGLite. The r
 - PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
   (`visible_at`).
 - A segmented page counts as having no chunkless content.
-- Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.

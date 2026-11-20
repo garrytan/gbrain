@@ -122,8 +122,8 @@ carries an image vector (`engine_capability_missing`: image vectors are not stor
 default model label from `opts.embeddingColumn` as PGLite does. A chunk that carries a text vector
 (a vector a re-chunk reuses) is stored with it: the store checks its dimensions against the brain's,
 labels it with the chunk's model (a vector with no model refuses), and stamps it embedded now with
-its recorded input. A chunk without one reads as pending, but with no pending time; Postgres stamps
-`embedding_pending_since` there. The option is served for the store's one vector
+its recorded input. A chunk without one is pending from the write, with a pending stamp of
+now, as Postgres stamps `embedding_pending_since` there. The option is served for the store's one vector
 column only, as on `upsertChunks` (embeddings.md, "Chunk writes"). Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 

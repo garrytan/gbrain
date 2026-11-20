@@ -66,6 +66,7 @@ test/engine-parity/search-privacy.test.ts	24	1
 test/engine-parity/search-private-fence.test.ts	5	0
 test/engine-parity/search-reads.test.ts	16	0
 test/engine-parity/search.test.ts	22	0
+test/engine-parity/segment-pending-stamp.test.ts	1	1
 test/engine-parity/segmented-body.test.ts	17	0
 test/engine-parity/segmented-callers.test.ts	3	0
 test/engine-parity/segmented-embedding.test.ts	3	0

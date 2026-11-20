@@ -77,11 +77,11 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	85	no	yes	yes	serves
+transaction	lifecycle	yes	87	no	yes	yes	serves
 transactionDirect	lifecycle	yes	5	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	100	yes	yes	yes	serves
+getPage	pages	yes	102	yes	yes	yes	serves
 readPageSnapshot	pages	yes	22	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
@@ -196,8 +196,8 @@ invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
 listStaleChunks	chunks	yes	3	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	5	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
-readEmbeddingStateCounts	chunks	yes	1	no	yes	yes	serves
-listEmbeddingStateRows	chunks	yes	1	no	yes	yes	serves
+readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
+listEmbeddingStateRows	chunks	yes	2	no	yes	yes	serves
 deleteChunks	chunks	yes	4	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
 setChunkerVersion	chunks	yes	10	no	yes	yes	serves
@@ -319,7 +319,7 @@ stageSegmentTexts	segmented_body	yes	12	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	13	no	yes	yes	serves
 readManifest	segmented_body	yes	15	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	11	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	13	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	20	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	21	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
@@ -395,7 +395,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	10	no	yes	yes	serves
-setConfig	config	yes	32	no	yes	yes	serves
+setConfig	config	yes	34	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -705,7 +705,7 @@ hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	1	no	yes	yes	serves
 readRemoteForgetTier	memory_mutation_reads	yes	1	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	8	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
