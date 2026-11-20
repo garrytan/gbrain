@@ -42,6 +42,7 @@ const OOS = {
   dream: 'out-of-scope:dream-verdicts',
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
+  linksPreparation: 'out-of-scope:links-preparation (born in engine-sql/links-preparation.ts; the Postgres text is pinned by test/links-preparation-sql-pin.test.ts, the behaviour by test/engine-sql-links-preparation.test.ts and test/engine-parity/links-preparation-fingerprint.test.ts)',
   entityReads: 'out-of-scope:entity-reads (born in engine-sql/entity-reads.ts; pinned by test/engine-parity/entity-reads.test.ts)',
   importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
@@ -765,6 +766,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
+  'readLiveSlugAliases': OOS.linksPreparation, 'probeSourceSlugFingerprint': OOS.linksPreparation, 'readSourceSlugFingerprint': OOS.linksPreparation,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
