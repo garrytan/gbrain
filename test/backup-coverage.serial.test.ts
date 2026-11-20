@@ -964,3 +964,129 @@ describe('degraded verdict never clobbers a probed cache', () => {
     }
   });
 });
+
+// ── Failed reads are degraded or unknown, never a confident answer ───────────
+
+/** An engine whose maturity read (the only statement that touches `facts`) fails. */
+function maturityFailsEngine(sources: unknown[] = []): BrainEngine {
+  return {
+    kind: 'pglite',
+    executeRaw: async (sql: string) => {
+      if (sql.includes('FROM facts')) throw new Error('facts table unreadable');
+      if (sql.includes('FROM pages')) return [{ n: 3 }];
+      if (sql.includes('FROM sources')) return sources;
+      return [];
+    },
+  } as unknown as BrainEngine;
+}
+
+describe('computeBackupCoverage — unreadable maturity', () => {
+  test('a failed maturity read degrades the verdict instead of reading as a young brain', async () => {
+    const ws = join(tmp, 'ws-maturity');
+    mkdirSync(ws, { recursive: true });
+    writeReceipt(ws); // no repo_url → a blocking no_remote asset, so maturity is read
+
+    const s = await computeBackupCoverage(maturityFailsEngine(), { localGitProbes: true });
+
+    expect(s.overall).toBe('warn');
+    expect(s.degraded).toBe(true);
+    expect(s.maturity).toBeUndefined();
+  });
+
+  test('a degraded maturity verdict never overwrites a probed cache', async () => {
+    const ws = join(tmp, 'ws-maturity-cache');
+    mkdirSync(ws, { recursive: true });
+    writeReceipt(ws);
+    const probed = mkStatus('warn', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+    saveBackupStatus(probed);
+
+    const out = await getBackupStatus(maturityFailsEngine(), { localGitProbes: true, forceRefresh: true });
+
+    expect(out.degraded).toBe(true);
+    expect(loadBackupStatus()).toEqual(probed);
+  });
+
+  test('a cached young-brain verdict whose recount fails is degraded and drops the stale young count', async () => {
+    const young: BackupStatus = {
+      ...mkStatus('warn', new Date(Date.now() - 60_000).toISOString()),
+      maturity: { items: 1, since: new Date().toISOString() },
+    };
+    saveBackupStatus(young);
+
+    const out = await getBackupStatus(maturityFailsEngine(), { localGitProbes: true });
+
+    expect(out.degraded).toBe(true);
+    expect(out.maturity).toBeUndefined(); // coaching is due again: an unreadable count must not stay "young"
+    expect(loadBackupStatus()).toEqual(young); // the cache file is untouched
+  });
+});
+
+describe('computeBackupCoverage — receipt read', () => {
+  test('a missing receipt is legitimately empty: no bootstrap asset, verdict ok', async () => {
+    const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+    expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toBeUndefined();
+    expect(s.overall).toBe('ok');
+    expect(s.degraded).toBeUndefined();
+  });
+
+  test.each([
+    { label: 'invalid JSON', body: '{ not json' },
+    { label: 'written by a newer gbrain', body: JSON.stringify({ receipt_version: 2 }) },
+  ])('an unreadable receipt ($label) is an unknown bootstrap asset that keeps the verdict in warn', async ({ body }) => {
+    const dir = join(home(), 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), body);
+
+    const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toMatchObject({ state: 'unknown', detail: 'receipt_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+
+  test('an unreadable receipt does not hide pages that live only in the local DB', async () => {
+    const dir = join(home(), 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), '{ not json');
+
+    const s = await computeBackupCoverage(stubEngine({ pages: 7 }), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'db_content')).toMatchObject({ state: 'no_remote' });
+    expect(s.totals.pages_at_risk).toBe(7);
+  });
+
+  test('an unresolvable gbrain home is an unknown bootstrap asset, not an empty receipt', async () => {
+    process.env.GBRAIN_HOME = 'relative/home'; // configDir() refuses a non-absolute override
+
+    const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toMatchObject({ state: 'unknown', detail: 'receipt_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+});
+
+describe('computeBackupCoverage — storage config read', () => {
+  test('an unreadable gbrain.yml is an unknown db_only row, not "no db_only tiering"', async () => {
+    const repo = join(tmp, 'repo-bad-yml');
+    initRepo(repo);
+    commitFile(repo, 'a.md', 'x', 'init');
+    mkdirSync(join(repo, 'gbrain.yml')); // exists but cannot be read as a file
+
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('bad-yml-src', repo)] }), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({
+      id: 'bad-yml-src',
+      state: 'unknown',
+      detail: 'storage_config_unreadable',
+    });
+  });
+
+  test('a repo with no gbrain.yml has no db_only row at all', async () => {
+    const repo = join(tmp, 'repo-no-yml');
+    initRepo(repo);
+    commitFile(repo, 'a.md', 'x', 'init');
+
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('no-yml-src', repo)] }), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toBeUndefined();
+  });
+});
