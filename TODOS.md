@@ -10257,3 +10257,7 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   ChatGPT/Claude harness. Injected platform tests and SDK/HTTP tests do not prove
   those native integrations. Live provider checks require separate consent and
   configured credentials.
+
+## Rust engine lane 14 follow-ups (filed 2026-11-19)
+
+- **Relower candidates query on a Rust brain** (`src/core/trust/backfill.ts`). The candidate query is classifier SQL and still goes through `executeRaw`, which a Rust brain refuses. It is gated by `countClaimLiftedRows(table) === 0`, and no Rust writer produces a `write_origin.channel = 'trust_claim'` row, so the doctor and a dry run never reach it today. The loop is shared with the apply path. If a Rust claim writer lands, give the candidate read a typed member, then drop the gate. Check: `gbrain trust backfill --relower --dry-run` on a Rust brain with a claim-lifted row.

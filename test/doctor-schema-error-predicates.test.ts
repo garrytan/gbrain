@@ -51,6 +51,7 @@ const TYPED_SQL_READS = new Set<PropertyKey>([
   'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listPrivilegedDcrClients', 'listVolunteerChannels', // doctor-acc reads
   'listFactsAbsorbFailureGroups', // facts_extraction_health (src/core/engine-sql/doctor-checkpoints.ts)
   'readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'listOwnedContentRows', 'countDefaultSourceFiles', // lane 14 sources reads
+  'countRowTrustTiers', 'countDerivedFactTaint', 'countLegacyUnknownBySource', 'listTrustColumns', 'listTrustClaimTargets', 'countClaimLiftedRows', // trust_tiers and trust_sources_unclaimed (src/core/engine-sql/doctor-facts-trust.ts)
 ]);
 
 /** The real engine, except every SQL read (executeRaw, the raw PGLite handle, the typed reads above) throws `error`. */

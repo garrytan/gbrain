@@ -27,6 +27,7 @@
  */
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { ConfigReader } from '../config-values.ts';
 import { opError } from '../ops/contract.ts';
 import { normalizeSourceConfig, parseSourceConfig } from '../sources-load.ts';
 import { runTrustBackfill, type TierCounts } from './backfill.ts';
@@ -182,7 +183,7 @@ export interface UnclaimedLegacySources {
  * would help. A brain before the trust migration throws (callers report it
  * as pre-trust); a fresh or empty brain has none.
  */
-export async function readUnclaimedLegacySources(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>): Promise<UnclaimedLegacySources> {
+export async function readUnclaimedLegacySources(engine: ConfigReader & Pick<BrainEngine, 'countLegacyUnknownBySource' | 'readDoctorSources'>): Promise<UnclaimedLegacySources> {
   const { candidates, pending } = await claimCandidates(engine);
   const legacy = candidates.length ? await legacyUnknownBySource(engine, candidates) : new Map<string, number>();
   return {
@@ -217,16 +218,8 @@ async function claimCandidates(engine: Pick<BrainEngine, 'readDoctorSources'>): 
 }
 
 /** Legacy rows (claim-state.ts) still at `unknown`, per source, across pages, facts, takes and timeline entries; only `sourceIds` when given. */
-async function legacyUnknownBySource(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<Map<string, number>> {
-  const ceilings = await readLegacyCeilings(engine);
-  const only = (column: string) => sourceIds ? ` AND ${column} = ANY($1::text[])` : '';
-  const rows = await engine.executeRaw<{ source_id: string; n: number | string }>(
-    `SELECT source_id, sum(n)::bigint AS n FROM (
-       SELECT p.source_id, count(*) AS n FROM pages p WHERE p.trust_tier = 'unknown' AND p.deleted_at IS NULL AND ${legacyRowSql('pages', 'p', ceilings)}${only('p.source_id')} GROUP BY 1
-       UNION ALL SELECT f.source_id, count(*) FROM facts f WHERE f.trust_tier = 'unknown' AND ${legacyRowSql('facts', 'f', ceilings)}${only('f.source_id')} GROUP BY 1
-       UNION ALL SELECT p.source_id, count(*) FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.trust_tier = 'unknown' AND ${legacyRowSql('takes', 't', ceilings)}${only('p.source_id')} GROUP BY 1
-       UNION ALL SELECT p.source_id, count(*) FROM timeline_entries te JOIN pages p ON p.id = te.page_id WHERE te.trust_tier = 'unknown' AND ${legacyRowSql('timeline_entries', 'te', ceilings)}${only('p.source_id')} GROUP BY 1
-     ) u GROUP BY source_id`, sourceIds ? [sourceIds] : undefined);
+async function legacyUnknownBySource(engine: ConfigReader & Pick<BrainEngine, 'countLegacyUnknownBySource'>, sourceIds?: string[]): Promise<Map<string, number>> {
+  const rows = await engine.countLegacyUnknownBySource(await readLegacyCeilings(engine), sourceIds);
   return new Map(rows.map(r => [r.source_id, Number(r.n)]));
 }
 

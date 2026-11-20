@@ -12,7 +12,7 @@
  *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
  *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
- *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
+ *    the page, fact, version and valid-time reads, refuses the belief reads, scans the takes and timeline entries too, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
  *    members; an engine that drops an option shows a page the reader may not see or a row the scan should skip.
@@ -232,16 +232,46 @@ describe('engine parity: typed trust tier reads', () => {
 
   parityTest(
     'listTrustScanRows and countUnscannedTrustRows read the takes and timeline entries at a listed stored tier',
-    { methods: ['putPage', 'listTrustScanRows', 'countUnscannedTrustRows'] },
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'addTakesBatch', 'addTimelineEntry', 'listTrustScanRows', 'countUnscannedTrustRows'] },
     async (engine) => {
-      await engine.putPage('scan/holder', { type: 'note', title: 'Holder', compiled_truth: 'h', timeline: '' });
-      const tiers = ['agent_written', 'unknown'];
-      const takes = await engine.listTrustScanRows({ table: 'takes', afterId: 0, limit: 10, tiers });
-      const timeline = await engine.listTrustScanRows({ table: 'timeline_entries', afterId: 0, limit: 10, tiers });
-      const counts = [await engine.countUnscannedTrustRows({ table: 'takes', afterId: 0, until: null, tiers }),
-        await engine.countUnscannedTrustRows({ table: 'timeline_entries', afterId: 0, until: 5, tiers })];
-      expect({ takes, timeline, counts }).toEqual({ takes: [], timeline: [], counts: [0, 0] });
-      return { takes, timeline, counts };
+      const holder = await declared(engine, 'operator_curated', tx => tx.putPage('scan/holder', { type: 'note', title: 'Holder', compiled_truth: 'h', timeline: '' }));
+      const TIERS = [['one', 'agent_written'], ['two', 'operator_curated'], ['three', 'external_untrusted'], ['four', null], ['five', 'agent_written']] as const;
+      const takeIds = new Map<number, string>();
+      const timelineIds = new Map<number, string>();
+      for (const [i, [name, tier]] of TIERS.entries()) {
+        await declared(engine, tier, tx => tx.addTakesBatch([{ page_id: holder.id, row_num: i + 1, claim: `take ${name}`, kind: 'take', holder: 'h', weight: 0.5 }]));
+        await declared(engine, tier, tx => tx.addTimelineEntry('scan/holder', { date: `2026-07-0${i + 1}`, summary: `entry ${name}`, detail: `detail ${name}`, source: 'cli' }));
+      }
+      for (const t of [...await engine.listTakes({ page_id: holder.id })]) takeIds.set(Number(t.id), t.claim);
+      for (const e of await engine.getTimeline('scan/holder')) timelineIds.set(Number(e.id), e.summary);
+      const tiers = ['agent_written', 'external_untrusted', 'unknown'];
+      const label = (table: 'takes' | 'timeline_entries', id: number) => (table === 'takes' ? takeIds : timelineIds).get(id) ?? `?${id}`;
+      const scan = async (table: 'takes' | 'timeline_entries', afterId: number, limit: number) => (await engine.listTrustScanRows({ table, afterId, limit, tiers }))
+        .map(({ id, ...rest }) => ({ row: label(table, id), ...rest }));
+      const idOf = (m: Map<number, string>, name: string) => [...m].find(([, v]) => v === name)![0];
+      const takes = await scan('takes', 0, 50);
+      const takesAfter = await scan('takes', idOf(takeIds, 'take one'), 1);
+      const timeline = await scan('timeline_entries', 0, 50);
+      const timelineAfter = await scan('timeline_entries', idOf(timelineIds, 'entry one'), 50);
+      const none = await engine.listTrustScanRows({ table: 'takes', afterId: 0, limit: 50, tiers: [] });
+      const count = (table: 'takes' | 'timeline_entries', afterId: number, until: number | null) => engine.countUnscannedTrustRows({ table, afterId, until, tiers });
+      const counts = {
+        takes: await count('takes', 0, null),
+        takesUntil: await count('takes', 0, idOf(takeIds, 'take three')),
+        timeline: await count('timeline_entries', 0, null),
+        timelineAfter: await count('timeline_entries', idOf(timelineIds, 'entry four'), null),
+      };
+      expect(takes.map(r => r.row)).toEqual(['take one', 'take three', 'take four', 'take five']);
+      expect(takes[0] as unknown).toEqual({ row: 'take one', source_id: 'default', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' }, claim: 'take one', source: null });
+      expect(takes[2]).toMatchObject({ row: 'take four', trust_tier: 'unknown', write_origin: null });
+      expect(takesAfter.map(r => r.row)).toEqual(['take three']);
+      expect(timeline.map(r => r.row)).toEqual(['entry one', 'entry three', 'entry four', 'entry five']);
+      expect(timeline[0] as unknown).toEqual({ row: 'entry one', source_id: 'default', trust_tier: 'agent_written', write_origin: { channel: 'agent_written' },
+        summary: 'entry one', detail: 'detail one', source: 'cli' });
+      expect(timelineAfter.map(r => r.row)).toEqual(['entry three', 'entry four', 'entry five']);
+      expect(none).toEqual([]);
+      expect(counts).toEqual({ takes: 4, takesUntil: 2, timeline: 4, timelineAfter: 1 });
+      return { takes, takesAfter, timeline, timelineAfter, none, counts };
     },
   );
 

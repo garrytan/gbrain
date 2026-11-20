@@ -2,10 +2,17 @@
 
 mod memory_env;
 
-use gbrain_store::cli_reads::doctor_facts_trust::ConversationPipelineSpec;
+use gbrain_store::cli_reads::doctor_facts_trust::{
+    ConversationPipelineSpec, LegacyUnknownSpec, TrustTableSpec,
+};
+use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec};
 use gbrain_store::pages::{PageInput, PutPageOptions};
+use gbrain_store::sources::SourceInput;
 use gbrain_store::stats::IngestInput;
+use gbrain_store::takes::TakeInput;
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
+use gbrain_store::trust::derivation::TaintCountQuery;
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 
@@ -118,5 +125,243 @@ fn writer_contention_lists_sources_with_uncovered_deferrals_that_persist() {
         s.list_persistent_writer_contention(reason)
             .unwrap()
             .is_empty()
+    );
+}
+
+/// Runs `f` in a transaction that declares `tier` and the write `origin` (no declaration for `None`).
+fn stamped(s: &Brain, stamp: Option<(&str, Value)>, f: impl FnOnce(&gbrain_store::Store)) {
+    let tx = s.begin_transaction(false).unwrap();
+    if let Some((tier, origin)) = stamp {
+        let names = [
+            "gbrain.write_trust_tier",
+            "gbrain.write_trust_promotion",
+            "gbrain.write_origin",
+        ]
+        .map(String::from);
+        tx.apply_write_trust(&names, &[tier.into(), tier.into(), origin.to_string()])
+            .unwrap();
+    }
+    f(&tx);
+    tx.commit_transaction().unwrap();
+}
+
+fn table(name: &str) -> TrustTableSpec {
+    args(json!({ "table": name }))
+}
+
+/// One page with a fact, a take and a timeline entry per row of `ROWS`, each written under that row's stamp.
+fn seed_trust(s: &Brain) {
+    let rows: [(Option<&str>, Value); 5] = [
+        (
+            Some("agent_written"),
+            json!({ "channel": "agent", "taint_inputs": [{ "table": "pages", "id": 1 }] }),
+        ),
+        (
+            Some("external_untrusted"),
+            json!({ "channel": "agent", "taint_inputs": [{ "table": "pages", "id": 2 }] }),
+        ),
+        (Some("external_untrusted"), json!({ "channel": "web" })),
+        (
+            Some("operator_curated"),
+            json!({ "channel": "trust_claim" }),
+        ),
+        (None, Value::Null),
+    ];
+    let mut holder = 0;
+    stamped(
+        s,
+        Some(("operator_curated", json!({ "channel": "import" }))),
+        |tx| {
+            let input: PageInput = args(
+                json!({ "type": "note", "title": "H", "compiled_truth": "h", "timeline": "" }),
+            );
+            holder = tx
+                .put_page("trust/holder", &input, &PutPageOptions::default())
+                .unwrap()["id"]
+                .as_i64()
+                .unwrap();
+        },
+    );
+    for (i, (tier, origin)) in rows.into_iter().enumerate() {
+        stamped(s, tier.map(|t| (t, origin)), |tx| {
+            let input: PageInput = args(
+                json!({ "type": "note", "title": format!("P{i}"), "compiled_truth": "p", "timeline": "" }),
+            );
+            tx.put_page(
+                &format!("trust/page-{i}"),
+                &input,
+                &PutPageOptions::default(),
+            )
+            .unwrap();
+            tx.insert_facts(&args::<gbrain_store::facts::InsertFactsArgs>(json!({
+                "rows": [{ "fact": format!("fact {i}"), "entity_slug": "people/a-example", "source_markdown_slug": "trust/holder",
+                    "row_num": i + 1, "kind": "fact", "visibility": "world", "source": "cli", "context": "ctx" }],
+                "sourceId": "default" }))).unwrap();
+            let take: TakeInput = args(
+                json!({ "page_id": holder, "row_num": i + 1, "claim": format!("take {i}"),
+                "kind": "take", "holder": "h", "weight": 0.5, "active": true }),
+            );
+            tx.add_takes_batch(&[take]).unwrap();
+            let entry: TimelineInput = args(
+                json!({ "date": format!("2026-07-0{}", i + 1), "summary": format!("entry {i}") }),
+            );
+            tx.add_timeline_entry("trust/holder", &entry, &AddTimelineOptions::default())
+                .unwrap();
+        });
+    }
+}
+
+#[test]
+fn row_trust_tiers_count_each_stored_tier_of_facts_takes_and_timeline_entries() {
+    let s = brain("trust-tiers");
+    for name in ["facts", "takes", "timeline_entries"] {
+        assert_eq!(
+            s.count_row_trust_tiers(&table(name)).unwrap(),
+            Vec::<Value>::new(),
+            "{name}"
+        );
+    }
+    seed_trust(&s);
+    let want = vec![
+        json!({ "tier": "agent_written", "n": 1 }),
+        json!({ "tier": "external_untrusted", "n": 2 }),
+        json!({ "tier": "operator_curated", "n": 1 }),
+        json!({ "tier": "unknown", "n": 1 }),
+    ];
+    for name in ["facts", "takes", "timeline_entries"] {
+        assert_eq!(
+            s.count_row_trust_tiers(&table(name)).unwrap(),
+            want,
+            "{name}"
+        );
+    }
+    for read in [
+        s.count_row_trust_tiers(&table("links")),
+        s.count_row_trust_tiers(&table("pages;")),
+    ] {
+        assert_eq!(read.unwrap_err().code, INVALID_ARGUMENT);
+    }
+}
+
+#[test]
+fn derived_taint_rows_count_taint_inputs_and_those_stamped_external() {
+    let s = brain("trust-taint");
+    assert_eq!(
+        s.count_derived_fact_taint().unwrap(),
+        json!({ "derived": 0, "external": 0 })
+    );
+    seed_trust(&s);
+    for name in ["facts", "takes", "timeline_entries", "pages"] {
+        assert_eq!(
+            if name == "facts" {
+                s.count_derived_fact_taint()
+            } else {
+                s.count_derived_row_taint(&TaintCountQuery { table: name.into() })
+            }
+            .unwrap(),
+            json!({ "derived": 2, "external": 1 }),
+            "{name}"
+        );
+        assert_eq!(
+            s.count_claim_lifted_rows(&table(name)).unwrap(),
+            json!(1),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        s.count_claim_lifted_rows(&table("links")).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn legacy_unknown_rows_count_per_source_within_the_ceilings_and_scope() {
+    let s = brain("trust-legacy");
+    s.upsert_source(&SourceInput {
+        id: "other".into(),
+        name: Some("other".into()),
+        ..SourceInput::default()
+    })
+    .unwrap();
+    let spec = |v: Value| -> LegacyUnknownSpec { args(v) };
+    let mut ceilings = json!(null);
+    for (round, (slug, source)) in [
+        ("legacy/a", "default"),
+        ("legacy/b", "other"),
+        ("legacy/c", "other"),
+        ("legacy/d", "default"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let tx = s.begin_transaction(false).unwrap();
+        let input: PageInput =
+            args(json!({ "type": "note", "title": slug, "compiled_truth": "b", "timeline": "" }));
+        let page = tx
+            .put_page(slug, &input, &args(json!({ "sourceId": source })))
+            .unwrap();
+        let page_id = page["id"].as_i64().unwrap();
+        let fact = tx.insert_facts(&args::<gbrain_store::facts::InsertFactsArgs>(json!({
+            "rows": [{ "fact": slug, "entity_slug": "people/a-example", "source_markdown_slug": slug,
+                "row_num": round + 1, "kind": "fact", "visibility": "world", "source": "cli", "context": "ctx" }],
+            "sourceId": source }))).unwrap();
+        let take: TakeInput = args(
+            json!({ "page_id": page_id, "row_num": 1, "claim": slug, "kind": "take", "holder": "h", "weight": 0.5, "active": true }),
+        );
+        tx.add_takes_batch(&[take]).unwrap();
+        let entry: TimelineInput = args(json!({ "date": "2026-07-01", "summary": slug }));
+        tx.add_timeline_entry(
+            slug,
+            &entry,
+            &AddTimelineOptions {
+                source_id: Some(source.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let take_id = tx
+            .list_trust_scan_rows(&args(
+                json!({ "table": "takes", "afterId": 0, "limit": 50, "tiers": ["unknown"] }),
+            ))
+            .unwrap()
+            .last()
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let entry_id = tx.list_trust_scan_rows(&args(json!({ "table": "timeline_entries", "afterId": 0, "limit": 50, "tiers": ["unknown"] }))).unwrap()
+            .last().unwrap()["id"].as_i64().unwrap();
+        tx.commit_transaction().unwrap();
+        if round == 2 {
+            ceilings = json!({ "pages": page_id, "facts": fact["ids"][0], "takes": take_id, "timeline_entries": entry_id });
+        }
+    }
+    s.soft_delete_page("legacy/c", Some("other")).unwrap();
+    let rows = |v: Value| s.count_legacy_unknown_by_source(&spec(v)).unwrap();
+    // The deleted page leaves the page count only: its fact, take and entry still count.
+    assert_eq!(
+        rows(json!({ "ceilings": null })),
+        [
+            json!({ "source_id": "default", "n": 8 }),
+            json!({ "source_id": "other", "n": 7 })
+        ]
+    );
+    assert_eq!(
+        rows(json!({ "ceilings": ceilings })),
+        [
+            json!({ "source_id": "default", "n": 4 }),
+            json!({ "source_id": "other", "n": 7 })
+        ]
+    );
+    assert_eq!(
+        rows(json!({ "ceilings": null, "sourceIds": ["other"] })),
+        [json!({ "source_id": "other", "n": 7 })]
+    );
+    assert_eq!(
+        rows(json!({ "ceilings": null, "sourceIds": [] })),
+        Vec::<Value>::new()
+    );
+    assert_eq!(
+        rows(json!({ "ceilings": { "pages": 0, "facts": 0, "takes": 0, "timeline_entries": 0 } })),
+        Vec::<Value>::new()
     );
 }
