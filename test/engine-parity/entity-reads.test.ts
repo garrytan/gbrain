@@ -242,18 +242,22 @@ describe('engine parity: entity and mention reads', () => {
       return result;
     });
 
-  // The read floor drops the folder pending-coverage clause for a remote caller, so its text is neither the no-caller
-  // page policy nor the caller's canonical one; the store refuses the hop typed rather than guess (retirementHopPolicy).
-  parityTest('readRetirementHop under the read floor for a remote caller hides a private page on the SQL engines and refuses typed on Rust',
+  // The read floor is the no-caller page policy: it never reads the caller's readers, so a page that names the caller
+  // hides as a private page does. The Rust store serves it as the no-readers policy (retirementHopPolicy).
+  parityTest('readRetirementHop under the read floor for a remote caller hides a private page and a page that names the caller',
     { methods: ['readRetirementHop'] }, async (engine, backend) => {
       await seed(engine, backend);
       await engine.putPage('people/hop-private', ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.',
         frontmatter: { visibility: 'private' } }) as Parameters<BrainEngine['putPage']>[1], { sourceId: 'default' });
+      await engine.putPage('people/hop-named', ({ type: 'person', title: 'Named', compiled_truth: 'Named body.',
+        frontmatter: { readable_by: ['member:bob-example'] } }) as Parameters<BrainEngine['putPage']>[1], { sourceId: 'default' });
       const floor = await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, async () => ({
         hidden: (await engine.readRetirementHop('default', 'people/hop-private', 'floor'))?.slug ?? null,
+        named: (await engine.readRetirementHop('default', 'people/hop-named', 'floor'))?.slug ?? null,
+        namedForCaller: (await engine.readRetirementHop('default', 'people/hop-named', 'caller'))?.slug ?? null,
         live: (await engine.readRetirementHop('default', 'people/alice-example', 'floor'))?.slug ?? null,
       }));
-      expect(floor).toEqual({ hidden: null, live: 'people/alice-example' });
+      expect(floor).toEqual({ hidden: null, named: null, namedForCaller: 'people/hop-named', live: 'people/alice-example' });
       return floor;
     });
 

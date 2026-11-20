@@ -42,7 +42,8 @@ function retirementHopPolicy(privacy: RetirementPrivacy): StorePrivacyPolicy | u
   const member = 'readRetirementHop';
   if (privacy === 'none') return undefined;
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
-  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
+  // The floor never reads the caller's readers: served as the no-readers policy, as trust-tier-reads.ts serves it.
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
   const text = callerAccessAllowedSql('p');
   const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
   if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
