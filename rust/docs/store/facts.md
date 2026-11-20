@@ -301,15 +301,14 @@ the page before the settle commits. Outside a transaction it reads the last comm
 Ten members (`src/core/engine-sql/facts-repair.ts`). Nine are served: four read only `facts` and `pages`, the two loop
 reads come from `facts/loops.rs`, `countLabelFacts` reads facts, pages, loops and withdrawals, `countPurgedPageFacts`
 also reads the `page_purges` ledger (`facts/page_purges.rs`, key `F 0x0C source \0 content_hash`) and
-`listUnwithdrawnFacts` reads the derived generation ledger (`facts/generations.rs`, key `F 0x0E generation_id`). One
+`listUnwithdrawnFacts` reads the derived generation ledger (`facts/generations.rs`, through `generations.rs`, keys
+`h 0x01 id` and `h 0x03 id item_key`). One
 reads a table the store does not hold and refuses with `engine_capability_missing` (it is absent from
 `store-members/facts-repair.ts`, so the capability named in `members.ts` is `facts`).
 
-No member writes the derived generation ledger on Rust. The fence writer (`publishFenceGeneration` in
-`generations/fence.ts`, through `activateGeneration` and `recordHeld` in `generations/publish.ts`) writes it with raw SQL
-in the page write's transaction, and a managed source journals the activation (`generations/managed.ts`, the write
-journal), so both stop on the typed `raw_sql` refusal and `listUnwithdrawnFacts` lists nothing on Rust. A writer that
-binds the ledger must also delete a source's generations with the source. The store also keeps no
+The derived generation ledger is the one `generations.rs` keeps and its typed members write (`activateGenerationRows`,
+`recordHeldGenerationRow`, which the fence publish's `activateGeneration` and `recordHeld` in `generations/publish.ts`
+call), so `listUnwithdrawnFacts` lists the facts a fence generation retired on every arm. The store also keeps no
 `version_history_gap_at` (`page-state/versions.ts` sets it with raw SQL), so `history_gap` is always false.
 
 No member writes `page_purges` on Rust. Its two writers, the page purge sweep (`persistence/page-purge.ts`) and the
