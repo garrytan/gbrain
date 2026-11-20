@@ -44,8 +44,11 @@ two engines share that code instead of copying it:
   and `resolveEntityTypes` then reports `pack_unavailable`, as it does for a failed read on PGLite.
 - `findAnomalies` computes the window bounds from `since` and `lookback_days` (an invalid `since`
   throws the same `RangeError`), zero-fills the store's day counts over the same days as
-  `generate_series`, and runs `computeAnomaliesFromBuckets`. `excludePrivate` is refused: the store
-  does not evaluate the private-page filter yet.
+  `generate_series`, and runs `computeAnomaliesFromBuckets`. `excludePrivate` (any truthy value) applies
+  PGLite's `pageReadFilter('p', { excludePrivate }, [], true)` (`src/core/engine-sql/salience.ts:271`) to the
+  baseline cohort keys, the baseline day counts and today's counts alike: the store skips each page that
+  `page_hidden` (`facts/privacy.rs`) hides, as described in [salience.md](salience.md#private-pages-excludeprivate).
+  A caller record that changes `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
 - `listEnrichCandidates` clamps `limit` and `thinThreshold` and turns `reenrichAfterMs` into the
   `enrichedAfter` text. An unknown `order` reads as `inbound-links`, as PGLite's lookup does.
 

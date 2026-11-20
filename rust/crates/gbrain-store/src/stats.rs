@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::chunks::read_chunks;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::{in_links, no_nul, out_links};
 use crate::pages::{PageRecord, all_pages, next_id};
@@ -148,6 +149,9 @@ pub struct AnomalyInput {
     pub baseline_start_us: f64,
     pub since_us: f64,
     pub since_end_us: f64,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`), applied to the
+    /// baseline keys, the baseline counts and today's counts alike; null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 fn in_scope(scope: &Option<HashSet<String>>, page: &PageRecord) -> bool {
@@ -603,6 +607,7 @@ impl Store {
         let mut baseline: [BTreeMap<String, Days>; 2] = [BTreeMap::new(), BTreeMap::new()];
         type Today = BTreeMap<String, (BTreeSet<u64>, BTreeSet<String>)>;
         let mut today: [Today; 2] = [BTreeMap::new(), BTreeMap::new()];
+        let mut owner_only = OwnerOnlyCache::default();
         for page in all_pages(&*read)? {
             if !live(&page)
                 || quarantined(&page)
@@ -612,6 +617,14 @@ impl Store {
                 continue;
             }
             let at = page.updated_at_us;
+            if !(baseline_start..since_end).contains(&at) {
+                continue;
+            }
+            if let Some(policy) = &input.exclude_private
+                && owner_only.page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             let cohorts = [page.tags.clone(), vec![page.page_type.clone()]];
             if at >= baseline_start && at < since {
                 let day = at.div_euclid(DAY_US);
