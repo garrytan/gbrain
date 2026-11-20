@@ -138,4 +138,67 @@ impl Brain {
             s.delete_page(&slug, scope.source_id.as_deref())
         })
     }
+
+    /// `listSafeChunksPending(sourceIds, producer)`: resolves `[{ id, source_id, slug, page_kind,
+    /// rebuildable, chars }]`, the pages `gbrain repair safe-chunks` re-seals or reports, by id.
+    #[napi]
+    pub fn list_safe_chunks_pending<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        producer: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_safe_chunks_pending(&source_ids, &producer)
+        })
+    }
+
+    /// `listOriginTwinGroups(sourceId, limit)`: resolves `[{ source_path, ids, paths }]`.
+    #[napi]
+    pub fn list_origin_twin_groups<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_origin_twin_groups(&source_id, u64::from(limit))
+        })
+    }
+
+    /// `listLegacyOriginPairs(sourceId, prefix, limit)`: resolves `[{ legacy_id, legacy_path,
+    /// legacy_slug, origin }]`.
+    #[napi]
+    pub fn list_legacy_origin_pairs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        prefix: String,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_legacy_origin_pairs(&source_id, &prefix, u64::from(limit))
+        })
+    }
+
+    /// `listLiveOriginPages(sourceId, paths)`: resolves `[{ id, source_path }]` by id.
+    #[napi]
+    pub fn list_live_origin_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        paths: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_live_origin_pages(&source_id, &paths))
+    }
+
+    /// `countLiveFileBackedPages(sourceId)`: resolves the number of live pages recording an origin.
+    #[napi]
+    pub fn count_live_file_backed_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_live_file_backed_pages(&source_id))
+    }
 }

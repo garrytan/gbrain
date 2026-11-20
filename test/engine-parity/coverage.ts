@@ -258,7 +258,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'retireManagedSyncPassSlugMode', 'retireManagedSyncCursor', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
     'listOwnedContentRows', 'readContentReceiptBinding', 'readConfigForUpdate',
     'countPageChildOrphans', 'clearPageChildOrphans', 'probeTornPages', 'listAccessReaderDrift', 'countAccessReaderDrift', 'deriveAccessReaders', 'readOriginIndexState', 'listOriginTwinCounts',
-    'listAliasTargets', 'deleteOrphanedAliases'],
+    'listAliasTargets', 'deleteOrphanedAliases',
+    'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'countLiveFileBackedPages'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],

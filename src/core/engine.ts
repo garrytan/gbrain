@@ -78,6 +78,7 @@ import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTar
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
+import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, SafeChunksPendingRow } from './engine-sql/repair-page-scans.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1571,6 +1572,16 @@ export interface BrainEngine {
   listAliasTargets(sourceIds: readonly string[] | null): Promise<AliasTarget[]>;
   /** Deletes both alias tables' rows that resolve to `(sourceId, slug)` when it has no page row; how many rows went. */
   deleteOrphanedAliases(sourceId: string, slug: string): Promise<number>;
+  /** Live pages of `sourceIds` `gbrain repair safe-chunks` re-seals or reports, by id (engine-sql/repair-page-scans.ts). */
+  listSafeChunksPending(sourceIds: readonly string[]): Promise<SafeChunksPendingRow[]>;
+  /** Origins two or more live pages of the source record, at most `limit`, in byte order. */
+  listOriginTwinGroups(sourceId: string, limit: number): Promise<OriginTwinGroupRow[]>;
+  /** Live pages recording `prefix` plus another live page's origin, by legacy id then the other's, at most `limit`. */
+  listLegacyOriginPairs(sourceId: string, prefix: string, limit: number): Promise<LegacyOriginPair[]>;
+  /** Live pages of the source recording any of `paths`, by id. */
+  listLiveOriginPages(sourceId: string, paths: readonly string[]): Promise<LiveOriginPage[]>;
+  /** How many live pages of the source record an origin. */
+  countLiveFileBackedPages(sourceId: string): Promise<number>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

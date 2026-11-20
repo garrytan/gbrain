@@ -23,27 +23,18 @@
 import type { BrainEngine } from '../engine.ts';
 import { resealSafeChunks } from '../page-state/projections.ts';
 import { PageRevisionConflictError } from '../page-state/types.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { embedStalePages } from '../embed-stale.ts';
-import { CREDENTIAL_RESEAL_HELD } from '../page-state/credential-reseal.ts';
 import { afterCursor, type RepairCursor, type RepairHandler, type RepairItem, type RepairScope } from './core.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
-
-interface PendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number }
 
 export const safeChunksRepair: RepairHandler = {
   kind: 'safe-chunks',
   publication: 'projection',
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null) {
-    const rows = await engine.executeRaw<PendingRow>(`SELECT p.id,p.source_id,p.slug,p.page_kind,
-        (p.page_kind='markdown' OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file',p.source_path) IS NOT NULL)) AS rebuildable,
-        length(p.compiled_truth)+length(COALESCE(p.timeline,'')) AS chars
-      FROM pages p WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL
-        AND (p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} OR (${CREDENTIAL_RESEAL_HELD} AND p.body_storage IS DISTINCT FROM 'segmented'))
-      ORDER BY p.id`, [scope.source_ids]);
+    const rows = await engine.listSafeChunksPending(scope.source_ids);
     const items: RepairItem[] = rows.filter(row => row.rebuildable)
-      .map(row => ({ cursor: { phase: 0, id: Number(row.id) }, source_id: row.source_id, slug: row.slug, chars: Number(row.chars),
+      .map(row => ({ cursor: { phase: 0, id: row.id }, source_id: row.source_id, slug: row.slug, chars: row.chars,
         action: `re-seal ${row.page_kind} chunks` }))
       .filter(item => afterCursor(item.cursor, after));
     const kept = rows.filter(row => !row.rebuildable);

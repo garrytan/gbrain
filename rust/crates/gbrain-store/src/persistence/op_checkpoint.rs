@@ -187,6 +187,18 @@ fn json_has_nul(value: &Value) -> bool {
     }
 }
 
+/// The parent's `completed_keys` of `(op, fingerprint)`, or `None` when there is no parent row.
+pub(crate) fn op_checkpoint_completed_keys(
+    read: &dyn KvRead,
+    op: &str,
+    fingerprint: &str,
+) -> Result<Option<Value>> {
+    Ok(
+        get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)?
+            .map(|row| row.completed_keys),
+    )
+}
+
 /// `readOpCheckpointRecord(op, fingerprint, { freshWithinDays })`: the parent as
 /// `{ completed_keys, updated_at, fresh }`, or null. `updated_at` is ISO 8601 with milliseconds,
 /// truncated as `to_char(.., 'MS')` truncates; `fresh` compares the stamp with the store clock

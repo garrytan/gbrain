@@ -103,6 +103,7 @@ import * as repairBookkeeping from './repair-bookkeeping.ts';
 import * as managedSyncOrphans from './managed-sync-orphans.ts';
 import * as repairPageReads from './repair-page-reads.ts';
 import * as aliasOrphans from './alias-orphans.ts';
+import * as repairPageScans from './repair-page-scans.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -161,6 +162,7 @@ export const STORE_MEMBERS = {
   ...managedSyncOrphans,
   ...repairPageReads,
   ...aliasOrphans,
+  ...repairPageScans,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

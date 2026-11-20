@@ -153,6 +153,27 @@ comment of `aliases.rs`), so both members run store code (`aliases/orphans.rs`),
 Pinned by `test/engine-parity/repair-aliases.test.ts` and the store test
 `alias_targets_name_missing_and_soft_deleted_pages_and_the_delete_takes_only_missing_ones`.
 
+## Repair page scans
+
+The plans of `gbrain repair safe-chunks` and `gbrain repair origin-twins` read live pages
+(`src/core/engine-sql/repair-page-scans.ts`). The store scans every page record and filters it as
+the SQL's `WHERE` does (`repair_scans.rs`); it does not use the origin index, which leaves out an
+empty `source_path` that SQL's `IS NOT NULL` keeps.
+
+| Member | Store answer |
+| --- | --- |
+| `listSafeChunksPending(sourceIds)` | live pages whose `chunker_version` is below the safe fence version (a missing version is not), or that are not segmented and carry a credential re-chunk hold (`op_checkpoints` `credential-reseal-hold`, keyed by page id, naming the page's revision and the caller's producer while the text projection lags); `rebuildable` for markdown, or code naming `frontmatter.file` or a `source_path`; by id |
+| `listOriginTwinGroups(sourceId, limit)` | live paths two or more pages record, in byte order, as the SQL's `COLLATE "C"` |
+| `listLegacyOriginPairs(sourceId, prefix, limit)` | each live page whose path is `prefix` plus another live page's path, by the legacy id then the other's (the SQL now orders under its `LIMIT`) |
+| `listLiveOriginPages(sourceId, paths)` | live pages recording any of `paths`, by id |
+| `countLiveFileBackedPages(sourceId)` | live pages recording a `source_path` |
+
+On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
+served yet, and its apply finds `pages_live_origin_key` present. So the kind previews and applies.
+The safe-chunks apply re-seals chunks, a B6 writer. Pinned by
+`test/engine-parity/repair-page-scans.test.ts` and the store test
+`scans_answer_what_the_sql_filters`.
+
 ## Repair kinds by batch
 
 The plan of record for moving the 67 `gbrain repair` kinds onto the engine contract. Flags are the
