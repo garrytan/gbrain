@@ -690,6 +690,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'switchAccessMigration': OOS.callerRawSql,
   'listAccessPolicySources': OOS.callerRawSql,
   'countPeopleFolderPages': OOS.callerRawSql,
+  'countOpenPages': OOS.callerRawSql,
   'readAccessMembers': OOS.callerRawSql,
   'readAccessCredentials': OOS.callerRawSql,
   'revokeAccessTokensNamed': OOS.callerRawSql,
@@ -1590,6 +1591,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('switchAccessMigration', [['default', (e) => e.switchAccessMigration('mig_1', { approved: 'abc' })]]),
   ...variants('listAccessPolicySources', [['default', (e) => e.listAccessPolicySources()]]),
   ...variants('countPeopleFolderPages', [['default', (e) => e.countPeopleFolderPages()]]),
+  ...variants('countOpenPages', [['default', (e) => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }])]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

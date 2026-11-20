@@ -6,6 +6,8 @@
  * (test/engine-sql-caller-raw-sql-pins.test.ts). Every member runs on the executor it is given, so a member of a
  * transaction-bound engine runs on that transaction.
  */
+import { accessAllowedSql, privacyPartSql } from '../search/private-visibility.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The engine's own executeRaw (a transaction-bound engine inside a transaction). */
 export interface AccessSetupExec {
@@ -27,6 +29,12 @@ export interface MemberKeyReadingRow { name: string; member_id: string; federate
 
 /** An unfinished policy-store migration of a source; `receipts` is the journaled JSON object. */
 export interface AccessMigrationRow { id: string; phase: string; direction: string; receipts: Record<string, unknown> }
+
+/** The open pages of one (source, top-level folder, type, privacy part) group (access/open-pages.ts). */
+export interface OpenPageCount { source: string; folder: string; type: string | null; visible: boolean; pages: number }
+
+/** A prefix of a source the open-page count leaves out. */
+export interface OpenPageExclusion { source: string; prefix: string }
 
 /** The live pages of top-level people/<folder>/ folders, per source. */
 export interface PeopleFolderCount { source_id: string; folder: string; pages: number }
@@ -120,4 +128,29 @@ export async function listAccessPolicySources(exec: AccessSetupExec): Promise<st
 export async function countPeopleFolderPages(exec: AccessSetupExec): Promise<PeopleFolderCount[]> {
   return (await exec.executeRaw<{ source_id: string; folder: string; pages: number | string }>(PEOPLE_FOLDER_PAGES_SQL))
     .map(r => ({ source_id: r.source_id, folder: r.folder, pages: Number(r.pages) }));
+}
+
+/** The open-page predicate over pages alias `p`: live, and the read path's floor with an empty identity admits it. */
+export const openPageSql = (p: string) => `${p}.deleted_at IS NULL AND ${accessAllowedSql(p, [], [])}`;
+
+/**
+ * The statement access/open-pages.ts openPages ran through `executeRaw`, rendered in the current access context (the
+ * caller runs it outside any caller record): the open pages of `sources`, less each excluded prefix, grouped by source,
+ * top-level folder ('(root)' for a slug with no '/'), type and whether privacyPartSql admits the page.
+ */
+export function openPagesStatement(sources: readonly string[], exclude: readonly OpenPageExclusion[]): { text: string; params: unknown[] } {
+  const excluded = exclude.map(x => sqlFragment` AND NOT (p.source_id = ${x.source} AND starts_with(p.slug, ${x.prefix}))`);
+  return renderFragment(sqlFragment`SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,
+              p.type AS type, (${trustedSql(privacyPartSql('p'))}) AS visible, count(*)::int AS pages
+         FROM pages p
+        WHERE ${trustedSql(openPageSql('p'))} AND p.source_id = ANY(${[...sources]}::text[])${joinFragments(excluded, '')}
+        GROUP BY 1, 2, 3, 4`);
+}
+
+/** The open pages of `sources` (openPagesStatement), one row per group in no set order; an empty list reads nothing. */
+export async function countOpenPages(exec: AccessSetupExec, sources: readonly string[], exclude: readonly OpenPageExclusion[]): Promise<OpenPageCount[]> {
+  if (!sources.length) return [];
+  const { text, params } = openPagesStatement(sources, exclude);
+  return (await exec.executeRaw<{ source: string; folder: string; type: string | null; visible: unknown; pages: number | string }>(text, params))
+    .map(r => ({ source: r.source, folder: r.folder, type: r.type, visible: r.visible === true, pages: Number(r.pages) }));
 }

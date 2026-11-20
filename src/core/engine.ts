@@ -15,7 +15,7 @@ import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia, JobPrincipalKind } from './engine-sql/access-control.ts';
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
-import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from './engine-sql/access-setup.ts';
+import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from './engine-sql/access-setup.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
@@ -4013,6 +4013,12 @@ export interface BrainEngine {
   switchAccessMigration(id: string, receipts: Record<string, unknown>): Promise<void>;
   listAccessPolicySources(): Promise<string[]>;
   countPeopleFolderPages(): Promise<PeopleFolderCount[]>;
+  /**
+   * The open pages of `sources` less each excluded prefix (access/open-pages.ts): live pages the empty-identity
+   * member-access floor admits, grouped by source, top-level folder, type and whether the privacy part admits them.
+   * The policy is rendered in the current access context; the caller reads it outside any caller record.
+   */
+  countOpenPages(sources: readonly string[], exclude: readonly OpenPageExclusion[]): Promise<OpenPageCount[]>;
 
   /** Access member rows with their groups: one by exact id or by declared email (any status), or all by id, removed ones only when asked. */
   readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;
