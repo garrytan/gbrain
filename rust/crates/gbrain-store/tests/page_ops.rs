@@ -335,7 +335,11 @@ fn purge_deleted_pages_respects_the_cutoff_and_excluded_ids() {
         .purge_deleted_pages(0.0, &de(json!({ "excludeIds": [id_of(&b)] })))
         .unwrap();
     assert_eq!(strs(&real["slugs"]), vec!["notes/a"]);
-    assert!(real.get("pages").is_none());
+    // Like PGLite, a real run returns the deleted pages too.
+    assert_eq!(real["pages"].as_array().unwrap().len(), 1);
+    assert_eq!(real["pages"][0]["slug"], "notes/a");
+    assert_eq!(real["pages"][0]["source_id"], "default");
+    assert!(real["pages"][0]["deleted_at"].is_string());
     assert_eq!(
         store.get_all_slugs(&de(json!({}))).unwrap(),
         vec!["notes/b", "notes/c"]
