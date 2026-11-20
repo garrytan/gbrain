@@ -64,6 +64,7 @@ mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod receipt_list;
+mod sync_orphan_reads;
 mod topology;
 mod writer_versions;
 pub use connector_orphans::OrphanBounds;

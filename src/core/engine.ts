@@ -72,6 +72,8 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceIncarnationListRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow } from './engine-sql/repair-bookkeeping.ts';
+import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget } from './engine-sql/managed-sync-orphans.ts';
+import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1521,6 +1523,28 @@ export interface BrainEngine {
   countConnectorCheckpointsKeyed(keys: readonly string[]): Promise<number>;
   /** Deletes one planned orphan checkpoint when the whole orphan test still holds for its stamp; false when it was kept. */
   deleteOrphanConnectorCheckpoint(row: OrphanCheckpointRow, loadable: readonly string[], bounds: OrphanCheckpointBounds): Promise<boolean>;
+  /** The five reads of the managed-sync orphan classification for `sourceIds` (null: every active source; engine-sql/managed-sync-orphans.ts). */
+  listManagedSyncOrphanRows(sourceIds: readonly string[] | null): Promise<ManagedSyncOrphanRows>;
+  /** The ids of the archived sources. */
+  listArchivedSourceIds(): Promise<string[]>;
+  /** Which of `keys` have a durable `managed-sync-failure` row. */
+  listManagedSyncFailureKeys(keys: readonly string[]): Promise<string[]>;
+  /** The orphan retirement transaction's settings: a synchronous commit and a two-second lock wait. */
+  applyManagedSyncRetireLimits(): Promise<void>;
+  /** Removes a refused pass row's `slug_mode` obligation while no pass holds the lease `lockId`; false when nothing changed. */
+  retireManagedSyncPassSlugMode(target: ManagedSyncRetireTarget, lockId: string): Promise<boolean>;
+  /** Deletes an orphaned unfinished cursor when `mode`'s re-check still holds; its pending intent, or null when kept. */
+  retireManagedSyncCursor(target: ManagedSyncRetireTarget, mode: ManagedSyncRetireMode): Promise<{ intent: unknown } | null>;
+  /** Deletes the `managed-sync-failure` row under `key` when no cursor still needs it; false when kept. */
+  deleteManagedSyncFailureRow(key: string, retired: boolean): Promise<boolean>;
+  /** Deletes the run's `managed-sync-manifest` row when no cursor names the run; false when kept. */
+  deleteManagedSyncManifest(runId: string): Promise<boolean>;
+  /** Active owned content sources with their receipt and owner binding (engine-sql/owned-content.ts). */
+  listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean): Promise<OwnedContentRow[]>;
+  /** The source's content receipt and owner binding, or null. */
+  readContentReceiptBinding(sourceId: string): Promise<ContentReceiptBinding | null>;
+  /** The config value under `key`, its row locked in the caller's transaction; null when no row. */
+  readConfigForUpdate(key: string): Promise<string | null>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

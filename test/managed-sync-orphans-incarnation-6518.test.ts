@@ -210,13 +210,10 @@ test('doctor --fast (no engine) warns on mirror rows it cannot verify and keeps 
 
 test('a failing durable read is not "no failures" and never deletes a mirror; archived sources are excluded and refused at apply; a recreated source retires its old rows', async () => each(async engine => {
   const f = await fixture(engine);
-  const executeRaw = engine.executeRaw;
-  const failReads = () => { engine.executeRaw = (async (sql: string, params?: unknown[]) => {
-    // The classifier's mirror read (the durable rows under the ledger's keys) fails; the current-incarnation read still answers.
-    if (/managed-sync-failure/.test(sql) && (/fingerprint=ANY/.test(sql) || sql.startsWith("SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure'"))) throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' });
-    return executeRaw.call(engine, sql, params);
-  }) as BrainEngine['executeRaw']; };
-  const restore = () => { engine.executeRaw = executeRaw; };
+  const durableKeys = engine.listManagedSyncFailureKeys;
+  // The classifier's mirror read (the durable rows under the ledger's keys) fails; the current-incarnation read still answers.
+  const failReads = () => { engine.listManagedSyncFailureKeys = (async () => { throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }); }) as BrainEngine['listManagedSyncFailureKeys']; };
+  const restore = () => { engine.listManagedSyncFailureKeys = durableKeys; };
   // Preview with a healthy read, then the apply's own re-check fails: the mirror and the rows stay.
   const scope = { brain_id: 'host', source_ids: [f.id] };
   mirrorManagedSyncFailure({ source_id: f.id, path: 'notes/m.md', code: 'storage_error', message: 'm', target: null, cursor_key: `${f.prefix}mirror`, request_id: null, run_id: 'rm', observation_id: 'rm:0', first_seen: new Date().toISOString(), attempts: 1 });

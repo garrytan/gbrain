@@ -90,6 +90,17 @@ impl Brain {
         })
     }
 
+    /// `listOpCheckpointRecords(op)`: every parent of `op` as `{ fingerprint, completed_keys,
+    /// updated_at, updated_at_us }`, in fingerprint byte order.
+    #[napi]
+    pub fn list_op_checkpoint_records<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_op_checkpoint_records(&op))
+    }
+
     /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the records replaced; null
     /// deletes the parent and its paths.
     #[napi]

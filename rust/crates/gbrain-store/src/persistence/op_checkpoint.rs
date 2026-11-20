@@ -211,6 +211,41 @@ pub(crate) fn read_op_checkpoint_record_in(
     Ok(json!({ "completed_keys": row.completed_keys, "updated_at": updated_at, "fresh": fresh }))
 }
 
+/// `listOpCheckpointRecords(op)`: every parent of `op` as `{ fingerprint, completed_keys,
+/// updated_at, updated_at_us }`, in fingerprint byte order. `updated_at` is formatted as
+/// `read_op_checkpoint_record_in` formats it; `updated_at_us` keeps the full stamp, so a caller can
+/// compare two stamps as Postgres compares `updated_at` (the managed-sync orphan classification).
+pub(crate) fn list_op_checkpoint_records_in(read: &dyn KvRead, op: &str) -> Result<Value> {
+    let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
+    prefix.extend_from_slice(text(op, "op")?.as_bytes());
+    prefix.push(0);
+    let mut out = Vec::new();
+    let mut bad = false;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let fingerprint = std::str::from_utf8(&k[prefix.len()..]).map(str::to_owned);
+        match (fingerprint, serde_json::from_slice::<HousekeepingRow>(v)) {
+            (Ok(fingerprint), Ok(row)) => {
+                let full = crate::env::iso(row.updated_at_us);
+                out.push(json!({
+                    "fingerprint": fingerprint,
+                    "completed_keys": row.completed_keys,
+                    "updated_at": format!("{}Z", &full[..full.len() - 4]),
+                    "updated_at_us": row.updated_at_us,
+                }));
+            }
+            _ => bad = true,
+        }
+        !bad
+    })?;
+    if bad {
+        return Err(StoreError::new(
+            crate::error::STORE_CORRUPT,
+            "an op checkpoint row is not readable",
+        ));
+    }
+    Ok(Value::Array(out))
+}
+
 /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the parent's records replaced and
 /// stamped now; `None` deletes the parent and its paths. The records must be a JSON array, as the
 /// Postgres CHECK `op_checkpoints_completed_keys_array` requires.
@@ -253,6 +288,11 @@ impl Store {
         fresh_days: Option<f64>,
     ) -> Result<Value> {
         read_op_checkpoint_record_in(&*self.read()?, &*self.env, op, fingerprint, fresh_days)
+    }
+
+    /// `listOpCheckpointRecords(op)`.
+    pub fn list_op_checkpoint_records(&self, op: &str) -> Result<Value> {
+        list_op_checkpoint_records_in(&*self.read()?, op)
     }
 
     /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`.

@@ -688,7 +688,6 @@ src/core/persistence/links-preparation.ts	execute_raw	3
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
-src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
 src/core/persistence/memory-prepare.ts	execute_raw	2
 src/core/persistence/memory-proposals.ts	execute_raw	9
@@ -838,7 +837,6 @@ src/core/repair/captured-facts.ts	execute_raw	6
 src/core/repair/connector-fences.ts	execute_raw	2
 src/core/repair/consolidate-ties.ts	execute_raw	3
 src/core/repair/contact-rows.ts	execute_raw	4
-src/core/repair/content-receipt-root.ts	execute_raw	4
 src/core/repair/conversation-labels.ts	execute_raw	13
 src/core/repair/duplicate-facts.ts	execute_raw	6
 src/core/repair/extractor-facts.ts	execute_raw	8
@@ -951,7 +949,6 @@ src/core/session-lane.ts	execute_raw	3
 src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
-src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/membership-authority.ts	execute_raw	4
 src/core/shared-skills/membership.ts	execute_raw	17

@@ -247,7 +247,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readHealthMemoClock', 'listSynopsisSourceIds'],
   // repair_bookkeeping: source incarnations, writer bindings, loop facts, connector checkpoints (engine-sql/repair-bookkeeping.ts)
   repair_bookkeeping: ['listSourceIncarnations', 'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow',
-    'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint'],
+    'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint',
+    'listManagedSyncOrphanRows', 'listArchivedSourceIds', 'listManagedSyncFailureKeys', 'applyManagedSyncRetireLimits',
+    'retireManagedSyncPassSlugMode', 'retireManagedSyncCursor', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
+    'listOwnedContentRows', 'readContentReceiptBinding', 'readConfigForUpdate'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],

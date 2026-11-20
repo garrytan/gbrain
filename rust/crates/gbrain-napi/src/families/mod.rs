@@ -73,6 +73,7 @@ mod raw_files;
 mod relations;
 mod salience;
 mod stats;
+mod sync_orphan_reads;
 mod takes;
 mod telemetry;
 mod timeline_queries;

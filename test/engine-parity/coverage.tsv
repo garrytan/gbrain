@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 919/919
+# covered: 930/930
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -65,7 +65,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
-# repair_bookkeeping: 9/9
+# repair_bookkeeping: 20/20
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -391,7 +391,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	15	no	yes	yes	serves
-setConfig	config	yes	31	no	yes	yes	serves
+setConfig	config	yes	32	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -888,6 +888,17 @@ listConnectorSources	repair_bookkeeping	yes	3	no	yes	yes	serves
 listOrphanConnectorCheckpoints	repair_bookkeeping	yes	3	no	yes	yes	serves
 countConnectorCheckpointsKeyed	repair_bookkeeping	yes	2	no	yes	yes	serves
 deleteOrphanConnectorCheckpoint	repair_bookkeeping	yes	2	no	yes	yes	serves
+listManagedSyncOrphanRows	repair_bookkeeping	yes	2	no	yes	yes	serves
+listArchivedSourceIds	repair_bookkeeping	yes	1	no	yes	yes	serves
+listManagedSyncFailureKeys	repair_bookkeeping	yes	1	no	yes	yes	serves
+applyManagedSyncRetireLimits	repair_bookkeeping	yes	2	no	yes	yes	serves
+retireManagedSyncPassSlugMode	repair_bookkeeping	yes	1	no	yes	yes	serves
+retireManagedSyncCursor	repair_bookkeeping	yes	2	no	yes	yes	serves
+deleteManagedSyncFailureRow	repair_bookkeeping	yes	2	no	yes	yes	serves
+deleteManagedSyncManifest	repair_bookkeeping	yes	2	no	yes	yes	serves
+listOwnedContentRows	repair_bookkeeping	yes	2	no	yes	yes	serves
+readContentReceiptBinding	repair_bookkeeping	yes	1	no	yes	yes	serves
+readConfigForUpdate	repair_bookkeeping	yes	1	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

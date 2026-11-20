@@ -167,6 +167,8 @@ import * as sourcesImpl from './engine-sql/sources.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
+import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
+import * as ownedContentImpl from './engine-sql/owned-content.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import type { RowAttributionTarget, VersionRef, WriteAttributionNameIds } from './engine-sql/write-attribution.ts';
@@ -1548,6 +1550,17 @@ export class PostgresEngine implements BrainEngine {
   deleteOrphanConnectorCheckpoint(row: repairBookkeepingImpl.OrphanCheckpointRow, loadable: readonly string[], bounds: repairBookkeepingImpl.OrphanCheckpointBounds) {
     return repairBookkeepingImpl.deleteOrphanConnectorCheckpoint(this.autocommitSql, row, loadable, bounds);
   }
+  listManagedSyncOrphanRows(sourceIds: readonly string[] | null) { return managedSyncOrphansImpl.listManagedSyncOrphanRows(this.repairBookkeepingReads, sourceIds); }
+  listArchivedSourceIds() { return managedSyncOrphansImpl.listArchivedSourceIds(this.repairBookkeepingReads); }
+  listManagedSyncFailureKeys(keys: readonly string[]) { return managedSyncOrphansImpl.listManagedSyncFailureKeys(this.repairBookkeepingReads, keys); }
+  applyManagedSyncRetireLimits() { return managedSyncOrphansImpl.applyManagedSyncRetireLimits(this.autocommitSql); }
+  retireManagedSyncPassSlugMode(target: managedSyncOrphansImpl.ManagedSyncRetireTarget, lockId: string) { return managedSyncOrphansImpl.retireManagedSyncPassSlugMode(this.autocommitSql, target, lockId); }
+  retireManagedSyncCursor(target: managedSyncOrphansImpl.ManagedSyncRetireTarget, mode: managedSyncOrphansImpl.ManagedSyncRetireMode) { return managedSyncOrphansImpl.retireManagedSyncCursor(this.autocommitSql, target, mode); }
+  deleteManagedSyncFailureRow(key: string, retired: boolean) { return managedSyncOrphansImpl.deleteManagedSyncFailureRow(this.autocommitSql, key, retired); }
+  deleteManagedSyncManifest(runId: string) { return managedSyncOrphansImpl.deleteManagedSyncManifest(this.autocommitSql, runId); }
+  listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean) { return ownedContentImpl.listOwnedContentRows(this.repairBookkeepingReads, sourceIds, inheritsPersistence); }
+  readContentReceiptBinding(sourceId: string) { return ownedContentImpl.readContentReceiptBinding(this.repairBookkeepingReads, sourceId); }
+  readConfigForUpdate(key: string) { return ownedContentImpl.readConfigForUpdate(this.autocommitSql, key); }
   /** Write attribution reads (engine-sql/write-attribution.ts). */
   private get attributionReads() { return unscopedExecutor(this.engineSql, 'write attribution: get_write_attribution ran these unscoped through executeRaw'); }
   readWriteAttributionNames(ids: WriteAttributionNameIds) { return writeAttributionImpl.readWriteAttributionNames(this.attributionReads, ids); }

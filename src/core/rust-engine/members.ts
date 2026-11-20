@@ -186,6 +186,19 @@ export const RUST_ENGINE_MEMBERS = {
   listOrphanConnectorCheckpoints: 'persistence_journal',
   countConnectorCheckpointsKeyed: 'persistence_journal',
   deleteOrphanConnectorCheckpoint: 'persistence_journal',
+  // Managed-sync orphans and owned content (engine-sql/managed-sync-orphans.ts, engine-sql/owned-content.ts): the op
+  // checkpoints, requests and writer bindings are persistence_journal's; a config row is config's.
+  listManagedSyncOrphanRows: 'persistence_journal',
+  listArchivedSourceIds: 'persistence_journal',
+  listManagedSyncFailureKeys: 'persistence_journal',
+  applyManagedSyncRetireLimits: 'persistence_journal',
+  retireManagedSyncPassSlugMode: 'persistence_journal',
+  retireManagedSyncCursor: 'persistence_journal',
+  deleteManagedSyncFailureRow: 'persistence_journal',
+  deleteManagedSyncManifest: 'persistence_journal',
+  listOwnedContentRows: 'persistence_journal',
+  readContentReceiptBinding: 'persistence_journal',
+  readConfigForUpdate: 'config',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',

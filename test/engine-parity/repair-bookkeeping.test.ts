@@ -172,7 +172,9 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   }));
 
   parityTest('repair managed-sync-orphans retires an unadoptable cursor with its manifest, a failure row with no cursor and a retired incarnation\'s cursor', {
-    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'readPersistenceBrainId'], timeout: 60_000,
+    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'readPersistenceBrainId',
+      'listManagedSyncOrphanRows', 'applyManagedSyncRetireLimits', 'retireManagedSyncCursor', 'deleteManagedSyncFailureRow',
+      'deleteManagedSyncManifest'], timeout: 60_000,
   }, async (engine) => withHome(async () => {
     const incarnation = await incarnationOf(engine, 'default');
     // Fixed ids: the listing prints the first 8 characters of the principal and of a retired incarnation.
@@ -194,7 +196,7 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   }));
 
   parityTest('repair content-receipt-root finds no receipt to rebind for a content source whose receipt has no owner binding', {
-    methods: ['readSourceIncarnation', 'setConfig', 'readPersistenceBrainId'], timeout: 60_000,
+    methods: ['readSourceIncarnation', 'setConfig', 'readPersistenceBrainId', 'listOwnedContentRows'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await createSource(engine, backend, 'notes', {}, '/var/tmp/gbrain-parity-notes');
     const incarnation = await incarnationOf(engine, 'notes');
@@ -203,11 +205,74 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
     return { stale: await staleOwnedContent(engine, ['notes']), ...(await previewThenApply(engine, 'content-receipt-root')) };
   }));
 
+  /** The managed-sync and owned-content members called directly on fixed rows (no request rows, so no refusal holds). */
+  async function managedSyncDirect(engine: BrainEngine) {
+    const inc = await incarnationOf(engine, 'default');
+    const retiredInc = '55555555-5555-4555-8555-555555555555';
+    const principal = { authority: { writer: { principal: { kind: 'local_cli', id: '33333333-3333-4333-8333-333333333333' } } } };
+    const pending = { requestId: '44444444-4444-4444-8444-444444444444', intent: { kind: 'managed_sync_checkpoint' } };
+    // sync-adopt first: a clock that stamps both in one millisecond orders them by key, the same order.
+    await engine.writeOpCheckpointRecord('managed-sync', 'sync-adopt', [{ sourceId: 'default', incarnation: inc, runId: 'run-adopt', done: false, ...principal }]);
+    await engine.writeOpCheckpointRecord('managed-sync', 'sync-open', [{ sourceId: 'default', incarnation: inc, runId: 'run-open', done: false,
+      index: 2, total: 2, syncOptions: {}, pending, ...principal }]);
+    // The finished cursor supersedes the two above only when it is strictly newer.
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await engine.writeOpCheckpointRecord('managed-sync', 'sync-retired', [{ sourceId: 'default', incarnation: retiredInc, runId: 'run-retired', done: false }]);
+    await engine.writeOpCheckpointRecord('managed-sync', 'sync-done', [{ sourceId: 'default', incarnation: inc, runId: 'run-done', done: true }]);
+    await engine.writeOpCheckpointRecord('managed-sync-failure', 'fail-a', [{ source_id: 'default', source_incarnation: inc, run_id: 'run-x', request_id: null }]);
+    await engine.writeOpCheckpointRecord('managed-sync-failure', 'fail-r', [{ source_id: 'default', source_incarnation: retiredInc, run_id: 'run-y' }]);
+    await engine.writeOpCheckpointRecord('managed-sync-failure', 'sync-open', [{ source_id: 'default', source_incarnation: inc }]);
+    await engine.writeOpCheckpointRecord('managed-sync-manifest', 'run-open', [{ paths: [] }]);
+    await engine.writeOpCheckpointRecord('managed-sync-manifest', 'run-gone', [{ paths: [] }]);
+    await engine.writeOpCheckpointRecord('managed-sync-pass', `default:${inc}`, [{ obligations: { slug_mode: 'flat' }, telemetry: { pass_id: 'pass-1' } }]);
+    const target = (cursorKey: string, incarnation: string | null, runId: string | null, requestId: string | null = null) =>
+      ({ cursorKey, sourceId: 'default', incarnation, runId, requestId });
+    const rows = await engine.listManagedSyncOrphanRows(['default']);
+    const everySource = await engine.listManagedSyncOrphanRows(null);
+    const noSource = await engine.listManagedSyncOrphanRows([]);
+    const archived = await engine.listArchivedSourceIds();
+    const failureKeys = (await engine.listManagedSyncFailureKeys(['fail-a', 'nope', 'fail-r'])).sort();
+    const passKept = await engine.transaction(async tx => {
+      await tx.applyManagedSyncRetireLimits();
+      return tx.retireManagedSyncPassSlugMode(target(`default:${inc}`, inc, 'pass-1'), 'gbrain-sync:default');
+    });
+    const failureSharedKey = await engine.deleteManagedSyncFailureRow('sync-open', false);
+    const manifestNamed = await engine.deleteManagedSyncManifest('run-open');
+    const retire = {
+      movedKept: await engine.retireManagedSyncCursor(target('sync-open', inc, 'run-open', pending.requestId), 'checkpoint_moved'),
+      slugKept: await engine.retireManagedSyncCursor(target('sync-open', inc, 'run-open', pending.requestId), 'slug_mode_refused'),
+      sameIncarnationKept: await engine.retireManagedSyncCursor(target('sync-open', inc, 'run-open'), 'retired'),
+      doneKept: await engine.retireManagedSyncCursor(target('sync-done', inc, 'run-done'), 'adoption'),
+      orphan: await engine.retireManagedSyncCursor(target('sync-open', inc, 'run-open'), 'orphan'),
+      adopted: await engine.retireManagedSyncCursor(target('sync-adopt', inc, 'run-adopt'), 'adoption'),
+      retired: await engine.retireManagedSyncCursor(target('sync-retired', retiredInc, 'run-retired'), 'retired'),
+      again: await engine.retireManagedSyncCursor(target('sync-retired', retiredInc, 'run-retired'), 'retired'),
+    };
+    const failures = {
+      current: await engine.deleteManagedSyncFailureRow('fail-a', false),
+      retiredKeptAsCurrent: await engine.deleteManagedSyncFailureRow('fail-a', true),
+      retired: await engine.deleteManagedSyncFailureRow('fail-r', true),
+      sharedAfter: await engine.deleteManagedSyncFailureRow('sync-open', false),
+    };
+    const manifests = { open: await engine.deleteManagedSyncManifest('run-open'), gone: await engine.deleteManagedSyncManifest('run-gone'),
+      missing: await engine.deleteManagedSyncManifest('run-missing') };
+    await engine.setConfig('parity.locked-read', 'v1');
+    const lockedConfig = await engine.transaction(async tx => [await tx.readConfigForUpdate('parity.locked-read'), await tx.readConfigForUpdate('parity.none')]);
+    return {
+      rows, everySourceCursors: everySource.cursors.map(c => c.cursor_key), noSource, archived, failureKeys, passKept, failureSharedKey,
+      manifestNamed, retire, failures, manifests, owned: await engine.listOwnedContentRows(['default'], false),
+      ownedEverySource: await engine.listOwnedContentRows(null, true), binding: await engine.readContentReceiptBinding('default'), lockedConfig,
+    };
+  }
+
   // Last, and prints no ids: on the Postgres arm the fact and loop ids keep counting across cases, and the loop-facts case prints them.
   parityTest('the bookkeeping members answer the same when called directly', {
     methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'transaction', 'insertFact', 'upsertOpenLoop', 'listSourceIncarnations',
       'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint',
-      'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow'], timeout: 60_000,
+      'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow', 'setConfig',
+      'listManagedSyncOrphanRows', 'listArchivedSourceIds', 'listManagedSyncFailureKeys', 'applyManagedSyncRetireLimits',
+      'retireManagedSyncPassSlugMode', 'retireManagedSyncCursor', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
+      'listOwnedContentRows', 'readContentReceiptBinding', 'readConfigForUpdate'], timeout: 60_000,
   }, async (engine, backend) => {
     await createSource(engine, backend, 'gmail', GOOGLE, '/var/tmp/gbrain-parity-gmail');
     const [stable] = connectorCheckpointKeys('gmail', await incarnationOf(engine, 'gmail'), connectorIdentity('google', GOOGLE, '/var/tmp/gbrain-parity-gmail'));
@@ -236,7 +301,9 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
     const expired = await engine.expireSourceFactNow(factId, 'default');
     const expiredAgain = await engine.expireSourceFactNow(factId, 'default');
     const after = await engine.readLoopFactState(loopId);
+    const managed = await managedSyncDirect(engine);
     return norm({
+      managed,
       incarnations, sources, locked, found: found.map(row => ({ op: row.op, fingerprint: row.fingerprint, stamped: typeof row.updated_at === 'string' })),
       count, kept, deleted, again, bindings, binding,
       state: { loop: state.loop && { idMatches: Number(state.loop.id) === loopId, source_id: state.loop.source_id, status: state.loop.status, factMatches: Number(state.loop.fact_id) === factId },

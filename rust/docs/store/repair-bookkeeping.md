@@ -2,7 +2,10 @@
 
 The engine members the bookkeeping repair kinds call (`src/core/engine-sql/repair-bookkeeping.ts`,
 plus `listSourceIncarnations` in `engine-sql/sources.ts`): `gbrain repair orphan-bindings`,
-`loop-facts` and `connector-checkpoints`, and the doctor checks of the same names. The SQL engines run
+`loop-facts` and `connector-checkpoints`, and the doctor checks of the same names. The
+managed-sync-orphan and owned-content members (`engine-sql/managed-sync-orphans.ts`,
+`engine-sql/owned-content.ts`; Rust side `store-members/managed-sync-orphans.ts`) have their own
+sections below. The SQL engines run
 the statements those files ran through `executeRaw`; a Rust brain serves each member from what the
 store keeps (`src/core/rust-engine/store-members/repair-bookkeeping.ts`).
 
@@ -50,3 +53,49 @@ Differences from the SQL engines:
 
 What still runs through `executeRaw` and so refuses on a Rust brain: `migrateConnectorCheckpoints`
 (migration 176) and `readConnectorV2Cutoff`.
+
+## Managed-sync orphans
+
+`gbrain repair managed-sync-orphans` (`src/core/persistence/managed-sync-orphans.ts`) and the
+failure-ledger prune read and retire the managed-sync `op_checkpoints` rows: `managed-sync` cursors,
+`managed-sync-pass` rows, `managed-sync-failure` rows and `managed-sync-manifest` rows.
+
+| Member | SQL engines | Rust brain |
+| --- | --- | --- |
+| `listManagedSyncOrphanRows(sourceIds)` | the cursors, failures, retired cursors and pass rows, each with the flags the classifier reads | the same predicates evaluated over `listOpCheckpointRecords`, `listSourceRecords`, `listSourceRequestRows` and the local writers |
+| `listArchivedSourceIds()` | ids of archived sources | `listSourceRecords` with `archived` |
+| `listManagedSyncFailureKeys(keys)` | the keys that have a `managed-sync-failure` row | `readOpCheckpointRecord` per key |
+| `applyManagedSyncRetireLimits()` | `synchronous_commit` on and a 2-second `lock_timeout`, for the transaction | no-op |
+| `retireManagedSyncPassSlugMode(target, lockId)` | drops `obligations.slug_mode` from the pass row while its refusal holds and no pass holds the drain lease | the same test; the lease is `readCycleLocks({ by: 'id' })`, the write `writeOpCheckpointRecord` |
+| `retireManagedSyncCursor(target, mode)` | deletes the unfinished cursor when its pending request is not live and the mode's re-check holds | the same test, then `deleteOpCheckpoint` |
+| `deleteManagedSyncFailureRow(key, retired)` | deletes the failure row while no cursor shares its key | the same test, then `deleteOpCheckpoint` |
+| `deleteManagedSyncManifest(runId)` | deletes the manifest while no cursor names the run | the same test, then `deleteOpCheckpoint` |
+
+`listSourceRequestRows(sourceId)` (`persistence::sync_orphan_reads`) lists one source's requests by
+sequence with the columns the predicates read; `recovery` is whether the request has a recovery
+record. `listOpCheckpointRecords(op)` lists one op's parents by fingerprint with `updated_at_us`,
+the stamp in microseconds that the listing sorts on.
+
+Differences from the SQL engines:
+
+- Postgres orders the listing by `s.id`, `c.updated_at`, `c.fingerprint` in the database collation;
+  the store orders ids and fingerprints by bytes.
+- Postgres casts JSON text with `::int` and `::uuid` and raises an error on text that is not a number
+  or a UUID. The store reads such text as no match. A retire whose pending `requestId` is not a UUID
+  keeps the cursor (fail-closed), as Postgres does when its statement fails.
+- `->>` of a JSON value that is not a string is its JSON text, as on Postgres.
+- `FOR UPDATE`, `lock_timeout` and `synchronous_commit` are moot: each member's test reads the store
+  and its write is one store call.
+- A cursor's writer principal is live when the store's local writers list it.
+- `clearSyncSlice` still runs through `executeRaw`, so a retire that clears a sync slice refuses
+  `raw_sql` on a Rust brain and its transaction rolls back. A Rust brain is never managed, so it has
+  no managed-sync rows to retire.
+
+## Owned content
+
+`listOwnedContentRows` (`shared-skills/content-freshness.ts`), `readContentReceiptBinding` and
+`readConfigForUpdate` (`repair/content-receipt-root.ts`) read which sources a writer binding owns,
+the binding behind a content receipt and a config value under `FOR UPDATE`. A Rust brain keeps no
+writer bindings, so it owns no content: `listOwnedContentRows` answers `[]` and
+`readContentReceiptBinding` answers `null`. `readConfigForUpdate` is `getConfig`, as the store
+serializes writes.
