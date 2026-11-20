@@ -40,7 +40,10 @@
 //!
 //! Every request row on this engine has a null `worktree_id` (the insert refuses another value:
 //! no worktree binding exists here), so the worktree terms of the claim statements are answered
-//! as Postgres answers them for a null worktree.
+//! as Postgres answers them for a null worktree. A row admitted `deferred` names its refresh
+//! (`deferred_refresh_id`, checked against the refresh rows of `worktree_admission.rs`); the claim
+//! takes it once `RELEASED_DEFERRED`, and the state writes refuse what `gbrain_guard_deferred_request`
+//! refuses.
 
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
@@ -580,7 +583,8 @@ fn bigint_param(v: &Option<Value>, what: &str) -> Result<Value> {
 /// `insertWriteRequest`: the request row and its counter charge (`ADMIT_WRITE_SQL`). The table's
 /// constraints are checked as Postgres checks them: the principal kind, state, target kind and
 /// protocol version CHECKs, the `(principal_kind, principal_id, request_id)` unique key, the NOT
-/// NULL slug, and the worktree and refresh foreign keys, which nothing here can satisfy.
+/// NULL slug, and the worktree and refresh foreign keys. No worktree row exists here, so a worktree id
+/// is refused; a refresh id must name a refresh row (`worktree_admission.rs`).
 pub(crate) fn insert_write_request_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -619,10 +623,13 @@ pub(crate) fn insert_write_request_in(
             "no persistence worktree exists on this engine, so worktree_id cannot be set",
         ));
     }
-    if input.deferred_refresh_id.is_some() {
-        return Err(violation(
-            "no worktree refresh exists on this engine, so deferred_refresh_id cannot be set",
-        ));
+    let deferred_refresh_id = optional_uuid(&input.deferred_refresh_id, "deferredRefreshId")?;
+    if let Some(id) = deferred_refresh_id.as_str()
+        && !worktree_admission::refresh_exists(&*tx, id)?
+    {
+        return Err(violation(format!(
+            "deferred_refresh_id {id} names no persistence_worktree_refreshes row"
+        )));
     }
     let principal = Principal {
         kind: input.principal_kind.clone(),
@@ -660,6 +667,7 @@ pub(crate) fn insert_write_request_in(
     extra.insert("admitter_version".into(), json!(input.admitter_version));
     extra.insert("admitter_host_id".into(), admitter_host_id);
     extra.insert("admitter_segment_reader".into(), json!(true));
+    extra.insert("deferred_refresh_id".into(), deferred_refresh_id);
     let record = RequestRecord {
         id: env.new_uuid(),
         principal_kind: input.principal_kind.clone(),
@@ -708,6 +716,30 @@ fn lease_end(now: i64, lease_ms: f64) -> i64 {
     now + (lease_ms * 1000.0).round() as i64
 }
 
+/// `gbrain_guard_deferred_request`'s refusal of a claim of a deferred row whose holds are not released.
+const DEFERRED_CLAIM_REFUSED: &str = "writer_upgrade_required: a deferred request is claimed only by a refresh-barrier consumer after its refresh and import are released";
+
+/// `gbrain_guard_deferred_request` (v292, v294) for an update that is not a claim: a row becomes
+/// `deferred` only at admission (no update here sets `deferred_import_from`), and a deferred row
+/// leaves only to `conflict`, `failed` or `cancelled`.
+pub(crate) fn guard_deferred_transition(old: &str, new: &str) -> Result<()> {
+    if old != "deferred" && new != "deferred" {
+        return Ok(());
+    }
+    if new == "deferred" {
+        if old == "deferred" {
+            return Ok(());
+        }
+        return Err(violation(
+            "unsupported_mutation_protocol: only admission, or a refresh-barrier consumer holding its claim for an import, defers a request",
+        ));
+    }
+    if matches!(new, "conflict" | "failed" | "cancelled") {
+        return Ok(());
+    }
+    Err(violation(DEFERRED_CLAIM_REFUSED))
+}
+
 /// `CLAIM_STAMP_SQL`: running, the token, the lease and the first phase. `passed_sync` is false:
 /// it asks for an earlier queued sync row on the same worktree, and every worktree here is null.
 /// `seen_sequence` is the newest sequence for a sync row: requests are never deleted on this
@@ -722,6 +754,11 @@ pub(crate) fn stamp_write_claim_in(
     let Some(mut record) = request_by_id(&*tx, &stamp.id)? else {
         return Ok(None);
     };
+    // gbrain_guard_deferred_request: the claim runs as a refresh-barrier consumer
+    // (REFRESH_BARRIER_CLAIM_PREDICATE), so a deferred row moves to running only once released.
+    if record.state == "deferred" && !worktree_admission::released_deferred_in(&*tx, &record)? {
+        return Err(violation(DEFERRED_CLAIM_REFUSED));
+    }
     let now = env.now_micros();
     record.state = "running".into();
     record.updated_at_us = now;
@@ -802,6 +839,7 @@ pub(crate) fn complete_write_row_in(
     if !REQUEST_STATES.contains(&c.state.as_str()) {
         return Err(violation(format!("\"{}\" is not a request state", c.state)));
     }
+    guard_deferred_transition(&record.state, &c.state)?;
     let reservation = extra_i64(&record, "terminal_reservation");
     let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
     if c.result_bytes + effect_bytes > reservation {
@@ -1129,7 +1167,8 @@ fn root_key(r: &RequestRecord) -> String {
     format!("db:{}", r.source_incarnation)
 }
 
-/// `claimableWriteSql(priority, laneRoots)` for a request with a null worktree.
+/// `claimableWriteSql(priority, laneRoots)` for a request with a null worktree. `r` is a candidate
+/// (`candidates`): queued, or a released deferred row.
 fn claimable(
     r: &RequestRecord,
     pending: &[&RequestRecord],
@@ -1138,7 +1177,7 @@ fn claimable(
     lane_roots: &[String],
     now: i64,
 ) -> bool {
-    if r.state != "queued" || spec.exclude_roots.contains(&root_key(r)) {
+    if spec.exclude_roots.contains(&root_key(r)) {
         return false;
     }
     if extra_time(r, "next_attempt_at").is_some_and(|t| t > now) {
@@ -1161,6 +1200,20 @@ fn pending(all: &[RequestRecord]) -> Vec<&RequestRecord> {
         .collect()
 }
 
+/// The rows the claim may take: `r.state='queued' OR RELEASED_DEFERRED('r')`, with a null worktree.
+fn candidates<'a>(read: &dyn KvRead, all: &'a [RequestRecord]) -> Result<Vec<&'a RequestRecord>> {
+    let mut out = Vec::new();
+    for r in all {
+        if !extra_is_null(r, "worktree_id") {
+            continue;
+        }
+        if r.state == "queued" || worktree_admission::released_deferred_in(read, r)? {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
 /// `hasClaimableWrite`: whether `selectClaimableWrite` would find a row, with the plain switch
 /// and no lane roots.
 pub(crate) fn has_claimable_write_in(
@@ -1172,7 +1225,7 @@ pub(crate) fn has_claimable_write_in(
     let all = all_requests(read)?;
     let pending = pending(&all);
     let now = env.now_micros();
-    Ok(pending
+    Ok(candidates(read, &all)?
         .iter()
         .any(|r| claimable(r, &pending, priority, spec, &[], now)))
 }
@@ -1193,7 +1246,7 @@ pub(crate) fn select_claimable_write_in(
     let pending = pending(&all);
     let now = env.now_micros();
     let mut best: Option<(bool, &RequestRecord)> = None;
-    for r in pending.iter().copied() {
+    for r in candidates(read, &all)? {
         let first = priority && !spec.fifo_roots.contains(&root_key(r));
         if !spec.lane_roots.is_empty() && (sync_kind(&r.intent) || !first) {
             continue;

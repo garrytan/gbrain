@@ -203,6 +203,64 @@ fn round_half_away(v: f64) -> i64 {
     v.round() as i64
 }
 
+/// A text column of a request row kept in `extra`, or `None` when it is null.
+fn request_text(r: &crate::journal::RequestRecord, column: &str) -> Option<String> {
+    r.extra
+        .get(column)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Whether refresh `id` has a row: the `persistence_requests.deferred_refresh_id` foreign key.
+pub(crate) fn refresh_exists(read: &dyn KvRead, id: &str) -> Result<bool> {
+    Ok(read_refresh(read, id)?.is_some())
+}
+
+/// Whether refresh `id` has a row with no `released_at` (`LOCK_OVERDUE_HOLD_SQL.refresh`).
+pub(crate) fn refresh_unreleased(read: &dyn KvRead, id: &str) -> Result<bool> {
+    Ok(read_refresh(read, id)?.is_some_and(|f| f.released_at_us.is_none()))
+}
+
+/// `RELEASED_DEFERRED(r)` (worktree-refresh-schema.ts): `r` is `deferred`, holds a refresh or an import, and
+/// every hold it has is released. `refresh` is the row `r.deferred_refresh_id` names, when it has one. The
+/// import hold reads `COALESCE(last_commit,'')<>deferred_import_from`, and `last_commit` is null here.
+pub(crate) fn released_deferred(
+    read: &dyn KvRead,
+    r: &crate::journal::RequestRecord,
+    refresh: Option<&RefreshRecord>,
+) -> Result<bool> {
+    if r.state != "deferred" {
+        return Ok(false);
+    }
+    let has_refresh_id = r
+        .extra
+        .get("deferred_refresh_id")
+        .is_some_and(|v| !v.is_null());
+    let import_from = request_text(r, "deferred_import_from");
+    if !has_refresh_id && import_from.is_none() {
+        return Ok(false);
+    }
+    if has_refresh_id && !refresh.is_some_and(|f| f.released_at_us.is_some()) {
+        return Ok(false);
+    }
+    Ok(match &import_from {
+        None => true,
+        Some(from) => read_source(read, &r.source_id)?.is_some() && !from.is_empty(),
+    })
+}
+
+/// `RELEASED_DEFERRED(r)` with the refresh row read by id.
+pub(crate) fn released_deferred_in(
+    read: &dyn KvRead,
+    r: &crate::journal::RequestRecord,
+) -> Result<bool> {
+    let refresh = match request_text(r, "deferred_refresh_id") {
+        Some(id) => read_refresh(read, &id)?,
+        None => None,
+    };
+    released_deferred(read, r, refresh.as_ref())
+}
+
 /// `countHeldBehindImport`: the `deferred` requests on `source_id` (of one principal, or all) that are not released
 /// and wait on its managed sync: held for its import, or behind an unreleased refresh it is a member of.
 pub(crate) fn count_held_behind_import_in(
@@ -214,12 +272,6 @@ pub(crate) fn count_held_behind_import_in(
         .into_iter()
         .map(|r| (r.id.clone(), r))
         .collect();
-    let text = |r: &crate::journal::RequestRecord, column: &str| {
-        r.extra
-            .get(column)
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
     let (mut count, mut bytes) = (0u64, 0i64);
     for r in all_requests(read)? {
         if r.state != "deferred" {
@@ -230,25 +282,11 @@ pub(crate) fn count_held_behind_import_in(
         {
             continue;
         }
-        let import_from = text(&r, "deferred_import_from");
-        let refresh = text(&r, "deferred_refresh_id").and_then(|id| refreshes.get(&id));
-        let has_refresh_id = r
-            .extra
-            .get("deferred_refresh_id")
-            .is_some_and(|v| !v.is_null());
-        // RELEASED_DEFERRED: every hold the row has is released.
-        let refresh_released =
-            !has_refresh_id || refresh.is_some_and(|f| f.released_at_us.is_some());
-        let import_released = match &import_from {
-            None => true,
-            // COALESCE(last_commit,'')<>deferred_import_from: last_commit is null here.
-            Some(from) => read_source(read, &r.source_id)?.is_some() && !from.is_empty(),
-        };
-        let released =
-            (has_refresh_id || import_from.is_some()) && refresh_released && import_released;
-        if released {
+        let refresh = request_text(&r, "deferred_refresh_id").and_then(|id| refreshes.get(&id));
+        if released_deferred(read, &r, refresh)? {
             continue;
         }
+        let import_from = request_text(&r, "deferred_import_from");
         let held_for_import = import_from.is_some() && r.source_id == source_id;
         let behind_refresh = refresh.is_some_and(|f| {
             f.released_at_us.is_none() && f.source_ids.iter().any(|s| s == source_id)
@@ -507,5 +545,103 @@ mod tests {
                 .unwrap(),
             json!({ "count": 1, "bytes": 7 })
         );
+    }
+
+    fn deferred_insert(s: &Store, request: &str, refresh: Option<&str>) -> Result<Value> {
+        let inc = s.read_source_membership("default").unwrap().unwrap()["incarnation"].clone();
+        let input: crate::persistence::WriteRequestInsert = serde_json::from_value(json!({
+            "principalKind": "local_cli", "principalId": "p1", "requestId": request, "operation": "put_page",
+            "sourceId": "default", "sourceIncarnation": inc, "slug": "notes/a", "digest": "d", "intent": {},
+            "authority": {}, "intentBytes": 1, "terminalReservation": 4096, "targetKind": "page",
+            "protocolVersion": 1, "admitterVersion": "v", "counterKeys": [], "state": "deferred",
+            "deferredRefreshId": refresh,
+        }))
+        .unwrap();
+        s.insert_write_request(&input)
+    }
+
+    fn no_roots() -> crate::persistence::ClaimableSpec {
+        crate::persistence::ClaimableSpec {
+            exclude_roots: vec![],
+            fifo_roots: vec![],
+            lane_roots: vec![],
+            priority: Some(false),
+        }
+    }
+
+    fn claim(s: &Store, id: &str) -> Result<Option<Value>> {
+        s.stamp_write_claim(&crate::persistence::ClaimStamp {
+            id: id.into(),
+            token: "c0000000-0000-4000-8000-0000000000c1".into(),
+            lease_ms: 30_000.0,
+            phase_json: None,
+        })
+    }
+
+    #[test]
+    fn a_deferred_request_names_an_existing_refresh() {
+        let s = store();
+        let missing =
+            deferred_insert(&s, "b0000000-0000-4000-8000-000000000001", Some(F1)).unwrap_err();
+        assert!(
+            missing
+                .message
+                .contains("names no persistence_worktree_refreshes row"),
+            "{missing:?}"
+        );
+        put(&s, &refresh(F1, WT, "syncing", &["default"], 0));
+        let row = deferred_insert(&s, "b0000000-0000-4000-8000-000000000001", Some(F1)).unwrap();
+        assert_eq!(row["state"], json!("deferred"));
+        assert_eq!(row["deferred_refresh_id"], json!(F1));
+        assert!(deferred_insert(&s, "b0000000-0000-4000-8000-000000000002", Some("nope")).is_err());
+    }
+
+    #[test]
+    fn a_deferred_request_is_claimed_only_after_its_refresh_is_released() {
+        let s = store();
+        let mut f = refresh(F1, WT, "syncing", &["default"], 0);
+        put(&s, &f);
+        let row = deferred_insert(&s, "b0000000-0000-4000-8000-000000000001", Some(F1)).unwrap();
+        let id = row["id"].as_str().unwrap().to_owned();
+        assert_eq!(s.select_claimable_write(&no_roots()).unwrap(), None);
+        let refused = claim(&s, &id).unwrap_err();
+        assert!(
+            refused.message.starts_with("writer_upgrade_required"),
+            "{refused:?}"
+        );
+        assert_eq!(
+            s.count_held_behind_import("default", None).unwrap(),
+            json!({ "count": 1, "bytes": 1 })
+        );
+        assert!(s.lock_overdue_hold("refresh", Some(F1)).unwrap());
+        assert!(!s.lock_overdue_hold("import", Some(&id)).unwrap());
+        f.released_at_us = Some(1);
+        put(&s, &f);
+        assert!(!s.lock_overdue_hold("refresh", Some(F1)).unwrap());
+        assert_eq!(
+            s.select_claimable_write(&no_roots()).unwrap().unwrap()["id"],
+            json!(id)
+        );
+        assert_eq!(
+            s.count_held_behind_import("default", None).unwrap(),
+            json!({ "count": 0, "bytes": 0 })
+        );
+        assert_eq!(claim(&s, &id).unwrap().unwrap()["state"], json!("running"));
+    }
+
+    #[test]
+    fn a_deferred_request_leaves_only_as_the_trigger_allows() {
+        use crate::persistence::guard_deferred_transition as guard;
+        assert!(guard("queued", "running").is_ok());
+        assert!(guard("deferred", "deferred").is_ok());
+        for end in ["conflict", "failed", "cancelled"] {
+            assert!(guard("deferred", end).is_ok(), "{end}");
+        }
+        for next in ["queued", "running", "recovering", "committed"] {
+            assert!(guard("deferred", next).is_err(), "{next}");
+        }
+        for from in ["queued", "running", "recovering"] {
+            assert!(guard(from, "deferred").is_err(), "{from}");
+        }
     }
 }

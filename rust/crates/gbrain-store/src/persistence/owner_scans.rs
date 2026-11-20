@@ -2,14 +2,15 @@
 //! owner's housekeeping sends on each scan tick (rust/docs/store/persistence.md, "Owner scans").
 //!
 //! Each scan joins a write request (or a refresh) to a `persistence_worktrees` row the host owns.
-//! This engine keeps no worktree (a request here always has a null `worktree_id`, and an insert that names a
-//! refresh hold refuses), so every list answers no row and no hold stands. The parameters are
+//! This engine keeps no worktree (a request here always has a null `worktree_id`), so every list answers no
+//! row; only a refresh hold can stand, while its refresh row is not released. The parameters are
 //! still checked as their Postgres casts check them, so an argument Postgres refuses is refused
 //! here too.
 
 use super::effect_scans::host_uuid;
 use crate::Store;
 use crate::error::{Result, StoreError};
+use crate::kv::KvRead;
 use serde_json::Value;
 
 /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: no write here waits behind a refresh or a
@@ -20,15 +21,17 @@ pub(crate) fn list_overdue_held_writes(host_id: &str, hold: &str) -> Result<Vec<
     Ok(Vec::new())
 }
 
-/// `lockOverdueHold(hold)`: no refresh row or worktree import hold exists here, so none stands
-/// (false). The id the hold names is still checked as `$1::uuid` checks it; a refresh hold with
-/// no refresh id matches no row on Postgres either.
-pub(crate) fn lock_overdue_hold(hold: &str, id: Option<&str>) -> Result<bool> {
+/// `lockOverdueHold(hold)`: a refresh hold stands while its refresh row (`worktree_admission.rs`) is not released.
+/// No write here holds for an import (no update sets `deferred_import_from`), so an import hold never stands.
+/// The id the hold names is still checked as `$1::uuid` checks it; a refresh hold with no refresh id matches
+/// no row on Postgres either.
+pub(crate) fn lock_overdue_hold(read: &dyn KvRead, hold: &str, id: Option<&str>) -> Result<bool> {
     hold_kind(hold)?;
-    if let Some(id) = id {
-        host_uuid(id)?;
-    }
-    Ok(false)
+    let Some(id) = id else {
+        return Ok(false);
+    };
+    host_uuid(id)?;
+    Ok(hold == "refresh" && super::worktree_admission::refresh_unreleased(read, id)?)
 }
 
 /// `listOwnerRecoveryHeads(hostId, excluded)`: no write here carries a recovery record (those
@@ -65,7 +68,7 @@ impl Store {
 
     /// `lockOverdueHold(hold)`.
     pub fn lock_overdue_hold(&self, hold: &str, id: Option<&str>) -> Result<bool> {
-        lock_overdue_hold(hold, id)
+        lock_overdue_hold(&*self.read()?, hold, id)
     }
 
     /// `listOwnerRecoveryHeads(hostId, excluded)`.
@@ -96,11 +99,12 @@ mod tests {
     }
 
     #[test]
-    fn no_overdue_hold_stands_and_a_non_uuid_id_refuses() {
-        assert!(!lock_overdue_hold("refresh", Some(HOST)).unwrap());
-        assert!(!lock_overdue_hold("refresh", None).unwrap());
-        assert!(!lock_overdue_hold("import", Some(HOST)).unwrap());
-        let bad = lock_overdue_hold("import", Some("nope")).unwrap_err();
+    fn no_overdue_hold_stands_without_a_refresh_row_and_a_non_uuid_id_refuses() {
+        let s = crate::test_support::store();
+        assert!(!s.lock_overdue_hold("refresh", Some(HOST)).unwrap());
+        assert!(!s.lock_overdue_hold("refresh", None).unwrap());
+        assert!(!s.lock_overdue_hold("import", Some(HOST)).unwrap());
+        let bad = s.lock_overdue_hold("import", Some("nope")).unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 
