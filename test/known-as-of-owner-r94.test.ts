@@ -38,7 +38,7 @@ const at = async (b: BeliefBrain) => {
 };
 const priv = (prose: string) => beliefPage({ prose, frontmatter: { visibility: 'private' } });
 const PIN_SLUGS = ['companies/secret-example', 'companies/opening-example', 'companies/fenced-example', 'companies/bob-example', 'companies/handover-example',
-  'companies/moved-example', 'companies/closed-a-example', 'companies/reused-example', 'companies/reused-c-example', 'companies/purged-example'];
+  'companies/moved-example', 'companies/closed-a-example', 'companies/reused-example', 'companies/reused-c-example', 'companies/fence-reused-example', 'companies/purged-example'];
 /**
  * What the world-only ledger rule answers on each fixture page at each instant: get_page's outcome, then get_versions'
  * interval count or refusal, then any private canary the two returned. Recorded from the base before this change for
@@ -63,11 +63,13 @@ const WORLD_ONLY: Record<string, unknown[]> = {
   'companies/reused-example@t2': ['ok', 1],
   'companies/reused-c-example@t1': ['page_not_found', 'page_not_found'],
   'companies/reused-c-example@t2': ['page_not_found', 'page_not_found'],
+  'companies/fence-reused-example@t1': ['page_not_found', 'page_not_found'],
+  'companies/fence-reused-example@t2': ['ok', 2],
   'companies/purged-example@t1': ['page_not_found', 'page_not_found'],
   'companies/purged-example@t2': ['ok', 3],
 };
 /** Text only a read wider than the world-only rule returns. */
-const PRIVATE_CANARIES = ['Secret first draft.', 'Secret second draft.', 'Private at first.', 'canaryprivrow', 'Bob only notes.', 'Bob era notes.', 'Lifetime A', 'Reused C private.'];
+const PRIVATE_CANARIES = ['Secret first draft.', 'Secret second draft.', 'Private at first.', 'canaryprivrow', 'Bob only notes.', 'Bob era notes.', 'Lifetime A', 'Reused C private.', 'canaryerow'];
 
 async function mintCallers(engine: BrainEngine, sourceId: string): Promise<Record<string, string>> {
   const tokens: Record<string, string> = {};
@@ -107,6 +109,11 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       await renamePageOntoSlug(b.engine, { sourceId: b.sourceId, oldSlug: 'companies/reused-example', newSlug: 'companies/reused-c-example', to: 'companies/reused-c-example.md' });
       renameSync(join(b.root, 'companies/reused-example.md'), join(b.root, 'companies/reused-c-example.md'));
       await b.put('companies/reused-example', beliefPage({ prose: 'Reused D open.' }));
+      // Lifetime E, world with a private fence row, leaves the slug; lifetime F takes it.
+      await b.put('companies/fence-reused-example', beliefPage({ prose: 'Fence E open.', facts: ['Acme sells gears', { claim: 'Acme payroll canaryerow', visibility: 'private' }] }));
+      await renamePageOntoSlug(b.engine, { sourceId: b.sourceId, oldSlug: 'companies/fence-reused-example', newSlug: 'companies/fence-e-example', to: 'companies/fence-e-example.md' });
+      renameSync(join(b.root, 'companies/fence-reused-example.md'), join(b.root, 'companies/fence-e-example.md'));
+      await b.put('companies/fence-reused-example', beliefPage({ prose: 'Fence F open.' }));
       // A purged lifetime and the one recreated at its slug: world history the other callers list.
       await b.put('companies/purged-example', beliefPage({ prose: 'Before the purge.' }));
       const purgedRevision = (await b.engine.executeRaw<{ r: string }>('SELECT knowledge_revision::text AS r FROM pages WHERE source_id = $1 AND slug = $2', [b.sourceId, 'companies/purged-example']))[0]!.r;
@@ -192,6 +199,8 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect(await listed('owner', 'companies/moved-example', t2)).toBe(1);
       // An earlier lifetime keeps the world-only rule even while the owner reads its page: the live page's quarantine and held rows are not its own.
       expect((await now('owner', 'companies/reused-c-example')).text).toContain('Reused C private.');
+      const fenceReused = await history('owner', 'companies/fence-reused-example', t2);
+      expect({ error: fenceReused.isError, e: fenceReused.text.includes('Fence E open.'), row: fenceReused.text.includes('canaryerow') }).toEqual({ error: false, e: true, row: false });
       const reused = await history('owner', 'companies/reused-example', t2);
       expect({ error: reused.isError, d: reused.text.includes('Reused D open.'), c: reused.text.includes('Reused C') }).toEqual({ error: false, d: true, c: false });
       // The owner never lists less than the world-only rule lists every other remote caller.

@@ -78,7 +78,7 @@ async function readAsCaller(ctx: OperationContext, q: Parameters<typeof readPage
   }
 }
 
-type GatedInterval = PageInterval & { quarantined?: QuarantinedView; live?: { sourceId: string; slug: string } };
+type GatedInterval = PageInterval & { quarantined?: QuarantinedView; live?: { sourceId: string; slug: string }; ownerRead?: boolean };
 
 /**
  * Readable intervals: a remote caller sees an interval only under the ledger's visibility rule and the page's current
@@ -104,8 +104,8 @@ async function readable(ctx: OperationContext, read: PageAtTime, intervals: Page
     const view = quarantine(i.page?.frontmatter);
     const held = { sourceId: live.source_id, slug: live.slug };
     out.push(view?.body_omitted && i.page
-      ? { ...i, live: held, body: 'unavailable', page: { ...i.page, compiled_truth: null, timeline: null, body_bytes: 0 }, quarantined: view }
-      : { ...i, live: held });
+      ? { ...i, live: held, ownerRead: ownerSees, body: 'unavailable', page: { ...i.page, compiled_truth: null, timeline: null, body_bytes: 0 }, quarantined: view }
+      : { ...i, live: held, ownerRead: ownerSees });
   }
   return out;
 }
@@ -121,7 +121,7 @@ async function intervalView(ctx: OperationContext, sourceId: string, i: GatedInt
     return { ...meta, body_ref: { total_bytes: bytes } };
   }
   const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { ...(i.live ?? { sourceId, slug: i.slug }), compiled_truth: i.page.compiled_truth ?? '', timeline: i.page.timeline });
-  const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) });
+  const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: i.ownerRead ? ownerFenceView(readHolders(ctx)) : undefined });
   // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
   const quote = quotesInterval(ctx, i);
   const fence = (s: string | null) => s && quote ? fenceTranscriptText(s, i.slug) : s;
@@ -167,7 +167,7 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
   const owner = await ownerPageRule(ctx);
   const sourceId = await targetSource(ctx, p, 'get_versions', owner);
   const wantBody = p.include_body === true;
-  const read = await readAsCaller(ctx, { sourceId, slug, at, history: true, withBodies: wantBody || p.diff === true || owner !== null }, true, owner);
+  const read = await readAsCaller(ctx, { sourceId, slug, at, history: true, withBodies: wantBody || p.diff === true ? true : owner !== null ? 'frontmatter' : false }, true, owner);
   const intervals = await readable(ctx, read, read.intervals, p.min_trust, owner);
   if (!intervals.length) throw pageNotFoundError(ctx, slug, { includeDeleted: true, sourceIdParam: sourceId });
   const inlineMax = await inlineBodyBytes(ctx);
@@ -178,9 +178,9 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
     const text = (x: GatedInterval | undefined) => x?.page && x.body !== 'segmented' && !x.quarantined?.body_omitted ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
     const [a, b] = [prev ? text(prev) : '', text(i)];
     const held = (x: GatedInterval | undefined, t: string) => x ? heldRowsForCaller(ctx.engine, ctx.remote, { ...(x.live ?? { sourceId, slug: x.slug }), compiled_truth: t }) : undefined;
-    const fence = ownerFenceView(readHolders(ctx));
-    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a, { omitRows: await held(prev, a), owner: fence }),
-      ctx.remote === false ? b : sanitizeRemoteBody(b, { omitRows: await held(i, b), owner: fence }),
+    const fence = (x: GatedInterval | undefined) => x?.ownerRead ? ownerFenceView(readHolders(ctx)) : undefined;
+    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a, { omitRows: await held(prev, a), owner: fence(prev) }),
+      ctx.remote === false ? b : sanitizeRemoteBody(b, { omitRows: await held(i, b), owner: fence(i) }),
       { oldPath: prev ? `${slug}@${prev.event.recorded_at}` : '/dev/null', newPath: `${slug}@${i.event.recorded_at}` });
     const quote = diff !== null && (quotesInterval(ctx, i) || (prev !== undefined && quotesInterval(ctx, prev)));
     view.diff = quote ? fenceTranscriptText(diff, i.slug) : diff;
