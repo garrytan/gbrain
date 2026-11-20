@@ -608,6 +608,9 @@ GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; 
   `GBRAIN_RUST_ENGINE_ADDON` from a test run, so that name does nothing here).
 - A case that reaches a member or an option the Rust engine refuses must end on the typed `engine_capability_missing`
   refusal. Every other case must return what PGLite returns.
+- A case whose Rust run must stop on a refusal that is not a capability refusal, until another lane serves the
+  member behind it, declares `rustStop: { code, pin }`. The Rust run must throw an error with that code whose message
+  carries the pin (why, the owner, how to unpin), after it calls every member in `methods`. It counts as stopped.
 - A case that differs on purpose gets a row in `test/rust-expected-divergence/<family>.tsv` (parity file, case name,
   normaliser from `DIVERGENCE_NORMALIZERS` in `test/engine-parity/rust-arm.ts`, reason). Rust must still return a value, both
   answers must be equal after the normaliser, and when the case starts to match PGLite the run fails until the row is
