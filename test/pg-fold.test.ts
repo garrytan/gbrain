@@ -46,6 +46,10 @@ describe('pg-fold tables (Rust store copies)', () => {
     expect([...lower].sort((a, b) => a[0] - b[0])).toEqual([...PGLITE_LOWER_MAP].sort((a, b) => a[0] - b[0]));
     expect([...upper].sort((a, b) => a[0] - b[0])).toEqual([...PGLITE_UPPER_MAP].sort((a, b) => a[0] - b[0]));
   });
+
+  test('the lower map is idempotent: no lowered code point is lowered again', () => {
+    expect([...PGLITE_LOWER_MAP.values()].filter(v => PGLITE_LOWER_MAP.has(v))).toEqual([]);
+  });
 });
 
 for (const kind of testBackends()) {
@@ -94,5 +98,26 @@ for (const kind of testBackends()) {
         FROM unnest($1::text[]) WITH ORDINALITY AS t(s, i) ORDER BY t.i`, [MIXED]);
       expect(rows.map(r => [r.l, r.u])).toEqual(MIXED.map(m => [expectedLower(m), expectedUpper(m)]));
     });
+
+    test('the fact normalization folds case by the map and is idempotent', async () => {
+      const rows = await engine.executeRaw<{ n: string; nn: string }>(`SELECT gbrain_fact_normalize(t.s) AS n, gbrain_fact_normalize(gbrain_fact_normalize(t.s)) AS nn
+        FROM unnest($1::text[]) WITH ORDINALITY AS t(s, i) ORDER BY t.i`, [[...MIXED, 'X \u24b6 Y', 'x \u24d0 y']]);
+      expect(rows.map(r => r.nn)).toEqual(rows.map(r => r.n));
+      expect(rows.slice(-2).map(r => r.n)).toEqual(['x \u24b6 y', 'x \u24d0 y']);
+    });
+
+    // Every letter the server's lower() folds and PGLite keeps (U+24B6 on glibc): the old fingerprints of a claim holding
+    // it are the current fingerprint of its lowered spelling, so _v2 and _v1 answer NULL and the two spellings keep
+    // apart. PGLite has none such letters.
+    test('a letter only the server lowers gives its claim no legacy fingerprint and its own current one', async () => {
+      const rows = await engine.executeRaw<{ g: number; fp_apart: boolean; v2: string | null; v1: string | null }>(`SELECT x.c AS g,
+          gbrain_fact_fingerprint(x.s) <> gbrain_fact_fingerprint(pg_catalog.lower(x.s)) AS fp_apart,
+          gbrain_fact_fingerprint_v2(x.s) AS v2, gbrain_fact_fingerprint_v1(x.s) AS v1
+        FROM (SELECT g.c, 'X ' || pg_catalog.chr(g.c) || ' Y' AS s FROM ${CODE_POINTS} AND g.c < 131072
+          AND pg_catalog.lower(pg_catalog.chr(g.c)) <> ${pgliteLowerSql('pg_catalog.chr(g.c)')}
+          AND ${pgliteLowerSql('pg_catalog.chr(g.c)')} = pg_catalog.chr(g.c)) x ORDER BY x.c`);
+      if (kind === 'pglite') expect(rows).toEqual([]);
+      expect(rows.filter(r => !r.fp_apart || r.v2 !== null || r.v1 !== null).map(r => Number(r.g))).toEqual([]);
+    }, 120_000);
   });
 }
