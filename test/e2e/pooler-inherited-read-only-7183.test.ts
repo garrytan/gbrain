@@ -95,6 +95,25 @@ describeDb(`writes on read-only-default server connections (${pooled ? 'pgbounce
     expect(page).toEqual({ chunker_version: '7', source_path: `${slug}.md` });
   });
 
+  test('typed autocommit writes outside any transaction write: open loops, memory proposal upkeep and source attach', async () => {
+    const dedupKey = `thread:ro-${randomUUID().slice(0, 8)}`;
+    const opened = await engine!.upsertOpenLoop({
+      sourceId: 'default', dedupKey, loopType: 'unanswered_inbound', counterpartyEmail: 'a@example.com',
+      summary: 'ro probe', evidence: [{ message_id: 'm1', quote: 'hi' }], threadId: 't-ro', detector: 'deterministic_thread',
+    });
+    expect(opened.created).toBe(true);
+    await engine!.closeOpenLoop('default', opened.id, 'done', 'ro-probe');
+    const [loopRow] = await engine!.executeRaw<{ status: string }>('SELECT status FROM open_loops WHERE id = $1', [opened.id]);
+    expect(loopRow.status).toBe('done');
+    await engine!.expireMemoryProposals('ro probe');
+    await engine!.purgeMemoryProposals(30);
+    const id = `ro-${randomUUID().slice(0, 8)}`;
+    await engine!.executeRaw('INSERT INTO sources(id, name) VALUES ($1, $1)', [id]);
+    await engine!.attachSourcePath(id, `/srv/${id}`);
+    const [source] = await engine!.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [id]);
+    expect(source.local_path).toBe(`/srv/${id}`);
+  });
+
   test('a deliberately read-only transaction still refuses a write', async () => {
     await expect(engine!.sql.begin('read only', tx => tx.unsafe("INSERT INTO sources(id, name) VALUES ('ro-never', 'ro-never')")))
       .rejects.toMatchObject({ code: '25006' });
