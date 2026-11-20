@@ -18,6 +18,7 @@ import { isQuarantined } from '../quarantine.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import { followRetirement, isIdentityEntity } from '../entities/resolve.ts';
 import type { RetirementPrivacy } from '../engine-sql/entity-reads.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { NAME_MATCH_RANK, NAME_TITLE_TOKENS, WEAK_NAME_MATCHES, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords, stripLeadingTitles, type NameMatchKind } from '../entities/name-variants.ts';
 
 /** Candidate rows read per source; a full read means another page may have matched, so nothing resolves. */
@@ -27,8 +28,20 @@ const MAX_NAME_WORDS = 5;
 
 export interface VariantRow { slug: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null }
 
-/** The plain VariantRow projection; with no private-page predicate it reads through typed engine members. */
+/** The plain VariantRow projection; with no private-page predicate or the caller's, it reads through typed engine members. */
 export const VARIANT_ROW_COLUMNS = 'slug, title, type, frontmatter';
+
+/**
+ * How the variant reads run: 'all' and 'caller' read through typed engine members ('caller' with `excludePrivate`),
+ * anything else (another projection or predicate) through executeRaw.
+ */
+type VariantReadMode = 'all' | 'caller' | 'raw';
+function variantReadMode(opts: { selectColumns: string; privatePredicate: string }): VariantReadMode {
+  if (opts.selectColumns !== VARIANT_ROW_COLUMNS) return 'raw';
+  if (opts.privatePredicate === '') return 'all';
+  // The caller's page policy as a predicate (rank_entities for a remote caller); its text depends on the current caller, so it is built per read.
+  return opts.privatePredicate === ` AND ${privatePagesFilterForCaller('pages')}` ? 'caller' : 'raw';
+}
 
 export interface VariantMatch<R extends VariantRow> { row: R; kind: NameMatchKind }
 
@@ -77,14 +90,17 @@ export async function resolveNameVariant<R extends VariantRow>(
 ): Promise<VariantResult<R>> {
   const words = probeWords(name);
   if (!words.length || parsePersonName(name).core.length > MAX_NAME_WORDS || name.includes('/')) return { matches: [] };
-  const typed = opts.selectColumns === VARIANT_ROW_COLUMNS && opts.privatePredicate === '';
+  const mode = variantReadMode(opts);
   const types = [...opts.entityTypes, 'person', 'company', 'fund', 'organization'];
   const slugPatterns = ['people/%', 'companies/%', 'funds/%', 'orgs/%', 'organizations/%'];
   let rows: Array<R & { probe_hits: number }>;
   try {
-    // The plain projection with no private-page predicate reads through the typed member (engine-sql/entity-reads.ts).
-    rows = typed
-      ? await engine.listNameVariantCandidates(sourceId, { types, slugPatterns, probes: words.map(likeWord), limit: VARIANT_CANDIDATE_CAP + 1 }) as Array<R & { probe_hits: number }>
+    // The plain projection reads through the typed members (engine-sql/entity-reads.ts).
+    const q = { types, slugPatterns, probes: words.map(likeWord), limit: VARIANT_CANDIDATE_CAP + 1 };
+    rows = mode === 'all'
+      ? await engine.listNameVariantCandidates(sourceId, q) as Array<R & { probe_hits: number }>
+      : mode === 'caller'
+      ? await engine.listVisibleNameVariantCandidates(sourceId, q, { excludePrivate: true }) as Array<R & { probe_hits: number }>
       : await engine.executeRaw<R & { probe_hits: number }>(
         `SELECT ${opts.selectColumns},
                 (SELECT count(*)::int FROM unnest($4::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
@@ -111,8 +127,10 @@ export async function resolveNameVariant<R extends VariantRow>(
     if (!live || exclude.has(live.slug)) continue;
     let target: R | undefined = live.slug === row.slug ? row : rows.find(r => r.slug === live.slug);
     if (!target) {
-      const [fetched] = typed
+      const [fetched] = mode === 'all'
         ? await liveStubs(engine, sourceId, [live.slug]).catch(() => []) as R[]
+        : mode === 'caller'
+        ? await engine.readVisibleVariantPages(sourceId, [live.slug], { excludePrivate: true }).catch(() => []) as R[]
         : await engine.executeRaw<R>(
           `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = $2${opts.privatePredicate}`,
           [sourceId, live.slug]).catch(() => [] as R[]);
@@ -159,15 +177,20 @@ export async function readPossibleDuplicates<R extends VariantRow>(
     if (hasLeadingTitle(row.title ?? '') || hasLeadingTitle(basename)) {
       const target = await resolveRemainder(row);
       if (!target) return [];
-      const [t] = await engine.executeRaw<{ slug: string; title: string | null }>('SELECT slug, title FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, target]);
+      // The variant arm returns only a live page the caller may read, so the title read applies no page policy.
+      const [t] = await engine.readVisibleVariantPages(sourceId, [target]);
       return t ? [{ slug: t.slug, title: t.title ?? t.slug, reason: 'title_prefix' }] : [];
     }
     const core = parsePersonName(row.title || basename).core;
     if (core.length < 2) return [];
     const last = core[core.length - 1]!;
     const slugs = [...NAME_TITLE_TOKENS].flatMap(t => [`people/${t}-${last}`, `people/${t}-${core.join('-')}`]);
+    const wanted = [...new Set(slugs)].filter(slug => slug !== row.slug);
+    const mode = variantReadMode(opts);
     const stubs: VariantRow[] = opts.privatePredicate === ''
-      ? await liveStubs(engine, sourceId, [...new Set(slugs)].filter(slug => slug !== row.slug))
+      ? await liveStubs(engine, sourceId, wanted)
+      : mode === 'caller'
+      ? await engine.readVisibleVariantPages(sourceId, wanted, { excludePrivate: true })
       : await engine.executeRaw<R>(
         `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) AND slug <> $3${opts.privatePredicate}`,
         [sourceId, slugs, row.slug]);

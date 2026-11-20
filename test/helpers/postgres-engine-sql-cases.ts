@@ -770,7 +770,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads, 'readPageRetirement': OOS.entityReads,
-  'countDistinctInboundLinkers': OOS.entityReads,
+  'countDistinctInboundLinkers': OOS.entityReads, 'listVisibleNameVariantCandidates': OOS.entityReads, 'readVisibleVariantPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
@@ -1663,6 +1663,14 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })]]),
   ...variants('readPageRetirement', [['default', (e) => e.readPageRetirement(SRC, SLUG)]]),
   ...variants('countDistinctInboundLinkers', [['default', (e) => e.countDistinctInboundLinkers([SRC], [SLUG])]]),
+  ...variants('listVisibleNameVariantCandidates', [
+    ['all', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })],
+    ['caller', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 }, { excludePrivate: true })],
+  ]),
+  ...variants('readVisibleVariantPages', [
+    ['all', (e) => e.readVisibleVariantPages(SRC, [SLUG])],
+    ['caller', (e) => e.readVisibleVariantPages(SRC, [SLUG], { excludePrivate: true })],
+  ]),
   ...variants('readSourceMembership', [
     ['default', (e) => e.readSourceMembership(SRC)],
     ['lock', (e) => e.transaction((tx: any) => tx.readSourceMembership(SRC, { lock: true }))],

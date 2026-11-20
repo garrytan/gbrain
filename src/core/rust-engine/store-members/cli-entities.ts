@@ -8,7 +8,7 @@
  */
 import type {
   EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, MentionDueQuery, NameVariantCandidateQuery,
-  NameVariantCandidateRow, PageRetirementRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow,
+  NameVariantCandidateRow, PageRetirementRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, VariantPageRow,
 } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
@@ -98,6 +98,24 @@ export const listNameVariantCandidates: StoreMember<[sourceId: string, q: NameVa
   return storeCall({ member: 'listNameVariantCandidates', sourceId }, () => brain.listNameVariantCandidates(sourceId, {
     types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }));
 };
+
+/** listNameVariantCandidates under the page policy, read as readEntityCardRows reads it; a widening caller refuses typed. */
+export const listVisibleNameVariantCandidates: StoreMember<[sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }],
+  NameVariantCandidateRow[]> = (brain, sourceId, q, opts) => {
+  takeOptions('listVisibleNameVariantCandidates', q, ['types', 'slugPatterns', 'probes', 'limit']);
+  const taken = takeOptions('listVisibleNameVariantCandidates', opts, ['excludePrivate']);
+  const policy = storePagePolicy('listVisibleNameVariantCandidates', taken.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'listVisibleNameVariantCandidates', sourceId }, () => brain.listVisibleNameVariantCandidates(sourceId, {
+    types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }, policy ?? null));
+};
+
+/** The live pages at `slugs` in list order under the page policy, read as readEntityCardRows reads it. */
+export const readVisibleVariantPages: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }], VariantPageRow[]> =
+  (brain, sourceId, slugs, opts) => {
+    const taken = takeOptions('readVisibleVariantPages', opts, ['excludePrivate']);
+    const policy = storePagePolicy('readVisibleVariantPages', taken.excludePrivate, { callerReaders: true });
+    return storeCall({ member: 'readVisibleVariantPages', sourceId }, () => brain.readVisibleVariantPages(sourceId, [...slugs], policy ?? null));
+  };
 
 export const readPageRetirement: StoreMember<[sourceId: string, slug: string], PageRetirementRow | null> = (brain, sourceId, slug) =>
   storeCall({ member: 'readPageRetirement', sourceId }, () => brain.readPageRetirement(sourceId, slug));

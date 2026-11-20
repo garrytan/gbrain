@@ -181,6 +181,53 @@ impl Brain {
         })
     }
 
+    /// `listVisibleNameVariantCandidates(sourceId, query, policy)`: the candidates under the page
+    /// policy; a `null` policy reads every page.
+    #[napi]
+    pub fn list_visible_name_variant_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query = required(query, "listVisibleNameVariantCandidates query")?;
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "listVisibleNameVariantCandidates policy",
+                    )
+                })
+                .transpose()?;
+            s.list_visible_name_variant_candidates(&source_id, &query, policy.as_ref())
+        })
+    }
+
+    /// `readVisibleVariantPages(sourceId, slugs, policy)`: the live pages at `slugs` in list order;
+    /// a `null` policy reads every page.
+    #[napi]
+    pub fn read_visible_variant_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "readVisibleVariantPages policy",
+                    )
+                })
+                .transpose()?;
+            s.read_visible_variant_pages(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
     /// `readPageRetirement(sourceId, slug)`: the live page's retirement, or `null`.
     #[napi]
     pub fn read_page_retirement<'env>(

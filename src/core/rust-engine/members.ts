@@ -758,6 +758,8 @@ export const RUST_ENGINE_MEMBERS = {
   readIgnoredPrivacyLabelPages: 'pages',
   listUnretiredPagesBySlugPattern: 'pages',
   listNameVariantCandidates: 'pages',
+  listVisibleNameVariantCandidates: 'pages',
+  readVisibleVariantPages: 'pages',
   readPageRetirement: 'pages',
   countDistinctInboundLinkers: 'links',
   // minion_queue (the Rust plan ships cycle locks with the minion queue: docs/designs/RUST_ENGINE.md, "Cycle locks")

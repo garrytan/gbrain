@@ -142,6 +142,16 @@ pub struct NameVariantCandidateRow {
     pub probe_hits: u64,
 }
 
+/// One name-variant page row (`readVisibleVariantPages`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VariantPageRow {
+    pub slug: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
+}
+
 /// A live page's retirement (`readPageRetirement`): `target` is the trimmed `superseded_by`, else
 /// `merged_into`, value.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -428,6 +438,17 @@ impl Store {
         source_id: &str,
         q: &NameVariantCandidateQuery,
     ) -> Result<Vec<NameVariantCandidateRow>> {
+        self.list_visible_name_variant_candidates(source_id, q, None)
+    }
+
+    /// `listVisibleNameVariantCandidates(sourceId, q, policy)`: `listNameVariantCandidates` with the
+    /// page policy (`page_hidden`) applied before the limit; a `None` policy reads every page.
+    pub fn list_visible_name_variant_candidates(
+        &self,
+        source_id: &str,
+        q: &NameVariantCandidateQuery,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<NameVariantCandidateRow>> {
         let read = self.read()?;
         let mut rows = Vec::new();
         for p in all_pages(&*read)? {
@@ -446,6 +467,11 @@ impl Store {
             if hits == 0 {
                 continue;
             }
+            if let Some(policy) = policy
+                && page_hidden(&*read, &p, policy)?
+            {
+                continue;
+            }
             rows.push(NameVariantCandidateRow {
                 slug: p.slug,
                 title: p.title,
@@ -461,6 +487,38 @@ impl Store {
                 .then_with(|| a.slug.cmp(&b.slug))
         });
         rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
+        Ok(rows)
+    }
+
+    /// `readVisibleVariantPages(sourceId, slugs, policy)`: the live page of the source at each of
+    /// `slugs`, in `slugs` order (a repeated slug reads once per mention), skipping a slug with no
+    /// live page and, under a policy, a page `page_hidden` hides.
+    pub fn read_visible_variant_pages(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<VariantPageRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for slug in slugs {
+            let Some(p) = crate::pages::read_page(&*read, source_id, slug)?
+                .filter(|p| p.deleted_at_us.is_none())
+            else {
+                continue;
+            };
+            if let Some(policy) = policy
+                && page_hidden(&*read, &p, policy)?
+            {
+                continue;
+            }
+            rows.push(VariantPageRow {
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+            });
+        }
         Ok(rows)
     }
 

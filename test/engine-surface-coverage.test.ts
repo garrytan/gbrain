@@ -260,6 +260,11 @@ const INTERFACE_METHODS: readonly string[] = [
   'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential',
   'readFolderAccess', 'cancelWriteRow', 'readRetirementHop', 'readEntityCardRows', 'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'listWriteRequestRows',
   'listUnretiredPagesBySlugPattern', 'listNameVariantCandidates', 'readPageRetirement', 'countDistinctInboundLinkers',
+  'listVisibleNameVariantCandidates', 'readVisibleVariantPages',
+  // The MCP tool reads (schema_stats, get_status_snapshot, cache_stats: engine-sql/cli-reads-ops.ts, telemetry.ts) and the put_pages
+  // batch write (engine-sql/persistence-journal.ts, persistence-effect-scans.ts).
+  'countLivePagesBySourceType', 'countLivePagesBySlugPrefixes', 'countSourcePagesAndChunks', 'readQueryCacheStats',
+  'readWriteRequests', 'insertWriteRequestGroup', 'requeueBatchLinksEffects', 'readLinksEffectStates',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',

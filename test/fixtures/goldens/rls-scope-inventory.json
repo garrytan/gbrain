@@ -3308,6 +3308,28 @@
         ],
         "flagOnScopes": []
       },
+      "listVisibleNameVariantCandidates#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listVisibleNameVariantCandidates#caller": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listWriteRequestRows#default": {
         "flagOffLanes": [
           "pool"
@@ -4467,6 +4489,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readVisibleVariantPages#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readVisibleVariantPages#caller": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -6295,6 +6339,7 @@
         "listVersionReasonWriters": "none",
         "listVersionTrustTiers": "none",
         "listVisibleBeliefLifetimes": "none",
+        "listVisibleNameVariantCandidates": "none",
         "listWaitingByQueue": "none",
         "listWakeCrons": "none",
         "listWakeWatches": "none",
@@ -6547,6 +6592,7 @@
         "readTransactionSettings": "none",
         "readTrustGeneration": "none",
         "readVersionAttributions": "none",
+        "readVisibleVariantPages": "none",
         "readVoiceGateHealth": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",

@@ -10,9 +10,11 @@
  *    untyped) and finds the pack prefixes no live page matches, with SQL LIKE meaning for `%`, `_` and `\`.
  *    get_status_snapshot counts, per source, its live pages, their chunks and the chunks with no vector. put_pages
  *    writes a batch and reads it back by its request_id alone, page by page in index order, with its links state.
+ *    rank_entities lists title-prefixed person duplicates; a remote world-only caller is never named a private one.
  *  - Regression: a raw-SQL read on the tool path that a Rust brain refuses, or a fail-open catch that hides the refusal
  *    and answers as if the table were empty.
- *  - Why existing coverage misses it: test/quarantine-cache-ops.test.ts and the jobs op tests run on PGLite only.
+ *  - Why existing coverage misses it: test/quarantine-cache-ops.test.ts, test/rank-entities.test.ts and the jobs op
+ *    tests run on PGLite only.
  *  - Seam: dispatchToolCall, the MCP tools/call path both transports share; results are parsed from its text block.
  */
 import { describe, expect } from 'bun:test';
@@ -31,7 +33,7 @@ const LOCAL = { remote: false, transport: 'stdio' as const, sourceId: 'default' 
 interface ToolAnswer { error: string | null; body: Record<string, unknown> | null; notices: string[] }
 
 /** One tools/call: the parsed JSON body, or the error code of an isError result, and the notice codes. */
-async function call(engine: Parameters<typeof dispatchToolCall>[0], name: string, params: Record<string, unknown> = {}, scope: { sourceId?: string } = LOCAL): Promise<ToolAnswer> {
+async function call(engine: Parameters<typeof dispatchToolCall>[0], name: string, params: Record<string, unknown> = {}, scope: { sourceId?: string; remote?: boolean } = LOCAL): Promise<ToolAnswer> {
   // A fresh ledger per call: the process ledger admits a notice once per audience, so a later arm would not see it.
   const res = await dispatchToolCall(engine, name, params, { ...LOCAL, ...scope, noticeLedger: new NoticeLedger() });
   // A success renders each notice as a text block beside the body; the body is the block that is a JSON object.
@@ -171,5 +173,33 @@ describe('engine parity: MCP tools a Rust brain refused', () => {
       expect(view(read.body).pages.map(p => p.slug)).toEqual(['notes/batch-b', 'notes/batch-a', 'notes/batch-b']);
       const unknown = await call(engine, 'put_pages', { request_id: '00000000-0000-4000-8000-000000000001' });
       return { written: view(written.body), read: view(read.body), unknown: unknown.error ?? view(unknown.body) };
+    });
+
+  parityTest('rank_entities lists title-prefixed person duplicates and names no private one to a world-only caller',
+    { methods: ['listVisibleNameVariantCandidates', 'readVisibleVariantPages'] }, async (engine) => {
+      const person = (slug: string, title: string, frontmatter: Record<string, unknown> = {}) =>
+        engine.putPage(slug, { type: 'person', title, compiled_truth: 'Synthetic page.', timeline: '', frontmatter }, { sourceId: 'default' });
+      await person('people/alice-zebraexample', 'Alice Zebraexample');
+      await person('people/senator-zebraexample', 'Senator Zebraexample');
+      await person('people/mayor-zebraexample', 'Mayor Zebraexample', { visibility: 'private' });
+      for (const n of ['n1', 'n2', 'n3']) await engine.putPage(`notes/${n}`, { type: 'note', title: n, compiled_truth: 'Synthetic note.', timeline: '' }, { sourceId: 'default' });
+      for (const [from, to] of [['notes/n1', 'people/alice-zebraexample'], ['notes/n2', 'people/alice-zebraexample'], ['notes/n3', 'people/alice-zebraexample'],
+        ['notes/n1', 'people/senator-zebraexample'], ['notes/n2', 'people/senator-zebraexample'], ['notes/n1', 'people/mayor-zebraexample']]) {
+        await engine.addLink(from!, to!, '', 'references', 'manual', undefined, undefined, { fromSourceId: 'default', toSourceId: 'default' });
+      }
+      const ranked = (body: Record<string, unknown> | null) => (body?.entities as Array<{ slug: string; inbound: number; possible_duplicates?: Array<{ slug: string }> }>)
+        .map(e => ({ slug: e.slug, inbound: e.inbound, duplicates: (e.possible_duplicates ?? []).map(d => d.slug) }));
+      const local = await call(engine, 'rank_entities', { types: ['person'] });
+      expect(local.error).toBeNull();
+      expect(ranked(local.body)[0]).toEqual({ slug: 'people/alice-zebraexample', inbound: 3,
+        duplicates: ['people/mayor-zebraexample', 'people/senator-zebraexample'] });
+      const world = await call(engine, 'rank_entities', { types: ['person'] }, { remote: true });
+      expect(world.error).toBeNull();
+      expect(ranked(world.body)).toEqual([
+        { slug: 'people/alice-zebraexample', inbound: 3, duplicates: ['people/senator-zebraexample'] },
+        { slug: 'people/senator-zebraexample', inbound: 2, duplicates: ['people/alice-zebraexample'] },
+      ]);
+      expect(JSON.stringify(world.body)).not.toContain('mayor-zebraexample');
+      return { local: ranked(local.body), world: ranked(world.body) };
     });
 });

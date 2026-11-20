@@ -438,6 +438,83 @@ fn name_variant_candidates_rank_by_probe_hits_then_title_length() {
 }
 
 #[test]
+fn visible_name_variants_skip_private_pages_under_the_policy() {
+    let dir = TempDir::new("cli-name-variants-private");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/ada-private",
+        json!({"type": "person", "title": "Ada", "compiled_truth": "body", "frontmatter": {"visibility": "private"}}),
+    );
+    let world = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let candidates = |policy: Option<&PrivacyPolicy>| -> Vec<String> {
+        store
+            .list_visible_name_variant_candidates(
+                "default",
+                &NameVariantCandidateQuery {
+                    types: vec![],
+                    slug_patterns: vec!["people/%".into()],
+                    probes: vec!["%ada%".into()],
+                    limit: 10,
+                },
+                policy,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    assert!(candidates(None).contains(&"people/ada-private".to_string()));
+    assert!(!candidates(Some(&world)).contains(&"people/ada-private".to_string()));
+    assert_eq!(candidates(Some(&world)).len() + 1, candidates(None).len());
+
+    let wanted: Vec<String> = [
+        "people/ada-private",
+        "people/ada-2",
+        "people/missing",
+        "people/ada",
+        "people/ada-2",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let pages = |policy: Option<&PrivacyPolicy>| -> Vec<String> {
+        store
+            .read_visible_variant_pages("default", &wanted, policy)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    assert_eq!(
+        pages(None),
+        [
+            "people/ada-private",
+            "people/ada-2",
+            "people/ada",
+            "people/ada-2"
+        ]
+    );
+    assert_eq!(
+        pages(Some(&world)),
+        ["people/ada-2", "people/ada", "people/ada-2"]
+    );
+    let row = &store
+        .read_visible_variant_pages("default", &["people/ada".to_string()], None)
+        .unwrap()[0];
+    assert_eq!(
+        (row.title.as_str(), row.page_type.as_str()),
+        ("Ada", "person")
+    );
+    assert_eq!(row.frontmatter.get("identity"), Some(&json!("ada-1")));
+}
+
+#[test]
 fn page_retirement_reads_the_trimmed_redirect_of_a_live_page() {
     let dir = TempDir::new("cli-retirement");
     let store = seeded(&dir);
