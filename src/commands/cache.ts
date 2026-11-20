@@ -13,6 +13,7 @@
 
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import { SemanticQueryCache, loadCacheConfig, semanticResultCacheAvailable } from '../core/search/query-cache.ts';
 import { CACHE_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
@@ -53,60 +54,65 @@ export async function runCache(args: string[]): Promise<void> {
   await engine.connect(engineConfig);
 
   try {
-    const cacheCfg = await loadCacheConfig(engine);
-    const cache = new SemanticQueryCache(engine, cacheCfg);
-
-    if (sub === 'stats') {
-      const stats = await cache.stats();
-      // eslint-disable-next-line no-console
-      console.log('Semantic Query Cache stats');
-      // eslint-disable-next-line no-console
-      console.log('--------------------------');
-      // eslint-disable-next-line no-console
-      console.log(`enabled                : ${semanticResultCacheAvailable() && (cacheCfg.enabled ?? true)}`);
-      // eslint-disable-next-line no-console
-      console.log(`similarity_threshold   : ${cacheCfg.similarityThreshold ?? 0.92}`);
-      // eslint-disable-next-line no-console
-      console.log(`ttl_seconds            : ${cacheCfg.ttlSeconds ?? 3600}`);
-      // eslint-disable-next-line no-console
-      console.log('');
-      // eslint-disable-next-line no-console
-      console.log(`total rows             : ${stats.total_rows}`);
-      // eslint-disable-next-line no-console
-      console.log(`  fresh                : ${stats.fresh_rows}`);
-      // eslint-disable-next-line no-console
-      console.log(`  stale                : ${stats.stale_rows}`);
-      // eslint-disable-next-line no-console
-      console.log(`total hits             : ${stats.total_hits}`);
-      return;
-    }
-
-    if (sub === 'clear') {
-      const yes = args.includes('--yes') || args.includes('-y');
-      const sourceIdx = args.indexOf('--source');
-      const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
-      if (!yes) {
-        // eslint-disable-next-line no-console
-        console.error('gbrain cache clear: refusing to wipe without --yes flag.');
-        process.exit(1);
-      }
-      const n = await cache.clear(sourceId ? { sourceId } : {});
-      // eslint-disable-next-line no-console
-      console.log(`Cleared ${n} cache row(s)${sourceId ? ` (source=${sourceId})` : ''}.`);
-      return;
-    }
-
-    if (sub === 'prune') {
-      const n = await cache.prune();
-      // eslint-disable-next-line no-console
-      console.log(`Pruned ${n} stale cache row(s).`);
-      return;
-    }
-
-    // eslint-disable-next-line no-console
-    console.error(`gbrain cache: unknown subcommand "${sub}". See \`gbrain cache --help\`.`);
-    process.exit(1);
+    await runCacheOn(engine, sub, args);
   } finally {
     try { await engine.disconnect(); } catch { /* ignore */ }
   }
+}
+
+/** One subcommand on a connected engine. runCache owns its engine; the engine parity cases pass each arm's. */
+export async function runCacheOn(engine: BrainEngine, sub: string, args: string[]): Promise<void> {
+  const cacheCfg = await loadCacheConfig(engine);
+  const cache = new SemanticQueryCache(engine, cacheCfg);
+
+  if (sub === 'stats') {
+    const stats = await cache.stats();
+    // eslint-disable-next-line no-console
+    console.log('Semantic Query Cache stats');
+    // eslint-disable-next-line no-console
+    console.log('--------------------------');
+    // eslint-disable-next-line no-console
+    console.log(`enabled                : ${semanticResultCacheAvailable() && (cacheCfg.enabled ?? true)}`);
+    // eslint-disable-next-line no-console
+    console.log(`similarity_threshold   : ${cacheCfg.similarityThreshold ?? 0.92}`);
+    // eslint-disable-next-line no-console
+    console.log(`ttl_seconds            : ${cacheCfg.ttlSeconds ?? 3600}`);
+    // eslint-disable-next-line no-console
+    console.log('');
+    // eslint-disable-next-line no-console
+    console.log(`total rows             : ${stats.total_rows}`);
+    // eslint-disable-next-line no-console
+    console.log(`  fresh                : ${stats.fresh_rows}`);
+    // eslint-disable-next-line no-console
+    console.log(`  stale                : ${stats.stale_rows}`);
+    // eslint-disable-next-line no-console
+    console.log(`total hits             : ${stats.total_hits}`);
+    return;
+  }
+
+  if (sub === 'clear') {
+    const yes = args.includes('--yes') || args.includes('-y');
+    const sourceIdx = args.indexOf('--source');
+    const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
+    if (!yes) {
+      // eslint-disable-next-line no-console
+      console.error('gbrain cache clear: refusing to wipe without --yes flag.');
+      process.exit(1);
+    }
+    const n = await cache.clear(sourceId ? { sourceId } : {});
+    // eslint-disable-next-line no-console
+    console.log(`Cleared ${n} cache row(s)${sourceId ? ` (source=${sourceId})` : ''}.`);
+    return;
+  }
+
+  if (sub === 'prune') {
+    const n = await cache.prune();
+    // eslint-disable-next-line no-console
+    console.log(`Pruned ${n} stale cache row(s).`);
+    return;
+  }
+
+  // eslint-disable-next-line no-console
+  console.error(`gbrain cache: unknown subcommand "${sub}". See \`gbrain cache --help\`.`);
+  process.exit(1);
 }

@@ -1,6 +1,6 @@
 /**
  * Search telemetry and MCP usage statements: the search telemetry flush and window read (`search/telemetry.ts`),
- * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), the query cache summary (`search/query-cache.ts`), the MCP request log insert (the
+ * the per-client MCP usage read with its pruned-window probe (`mcp-usage.ts`), the query cache summary, clear and prune (`search/query-cache.ts`), the MCP request log insert (the
  * request, surface, access-admin, webhook, memory setting audit and legacy HTTP transport rows), the request log
  * retention prune and the lifetime usage read (`mcp-request-log-retention.ts`), which ran through
  * `engine.executeRaw`, once for both engines.
@@ -8,7 +8,7 @@
  * Every statement here ran on master from the caller named on its function. They keep master's text and run on
  * master's raw path (`exec.executeRaw`) unscoped, as before: these tables carry no source and no read policy. Each value
  * is a bound parameter. Each caller keeps its error handling: the flush still swallows every per-bucket error, and the
- * stats read still lets a capability refusal through (engine-capability-refusal.ts).
+ * cache stats, clear and prune still let a capability refusal through (engine-capability-refusal.ts).
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
@@ -135,6 +135,39 @@ export async function readQueryCacheStats(exec: LegacyUnscopedRead): Promise<Que
          FROM query_cache`,
   );
   return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
+}
+
+/**
+ * Deletes the query cache rows of one source, or every row when `sourceId` is absent or empty, and answers how many
+ * it deleted (`clearQueryCache`; SemanticQueryCache.clear, `gbrain cache clear [--source]`).
+ */
+export async function clearQueryCache(exec: SqlExecutor, opts: { sourceId?: string }): Promise<number> {
+  if (opts.sourceId) {
+    const rows = await exec.executeRaw<{ n: number }>(
+      `WITH deleted AS (DELETE FROM query_cache WHERE source_id = $1 RETURNING 1)
+           SELECT COUNT(*)::int AS n FROM deleted`,
+      [opts.sourceId],
+    );
+    return rows[0]?.n ?? 0;
+  }
+  const rows = await exec.executeRaw<{ n: number }>(
+    `WITH deleted AS (DELETE FROM query_cache RETURNING 1)
+         SELECT COUNT(*)::int AS n FROM deleted`,
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/** Deletes the query cache rows past their TTL and answers how many (`pruneQueryCache`; `gbrain cache prune`). */
+export async function pruneQueryCache(exec: SqlExecutor): Promise<number> {
+  const rows = await exec.executeRaw<{ n: number }>(
+    `WITH deleted AS (
+           DELETE FROM query_cache
+           WHERE created_at + (ttl_seconds || ' seconds')::interval <= now()
+           RETURNING 1
+         )
+         SELECT COUNT(*)::int AS n FROM deleted`,
+  );
+  return rows[0]?.n ?? 0;
 }
 
 /**

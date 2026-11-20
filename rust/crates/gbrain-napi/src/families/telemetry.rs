@@ -95,6 +95,29 @@ impl Brain {
         self.run(env, move |s| s.read_mcp_rollup_pruned_before())
     }
 
+    /// `readQueryCacheStats()`: `{ total_rows, total_hits, fresh_rows, stale_rows }`, all zero (the
+    /// store keeps no cache rows).
+    #[napi]
+    pub fn read_query_cache_stats<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_query_cache_stats())
+    }
+
+    /// `clearQueryCache(sourceId)`: the rows deleted, always 0.
+    #[napi]
+    pub fn clear_query_cache<'env>(
+        &self,
+        env: &'env Env,
+        source_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.clear_query_cache(source_id.as_deref()))
+    }
+
+    /// `pruneQueryCache()`: the rows deleted, always 0.
+    #[napi]
+    pub fn prune_query_cache<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.prune_query_cache())
+    }
+
     /// `readMcpLifetimeUsage(tokenNames)`: `{ token_name, requests, last_used_at }` rows,
     /// `last_used_at` as ISO text.
     #[napi]

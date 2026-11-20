@@ -36,6 +36,9 @@ page column, so page and source deletes never touch them.
 | `brain.pruneMcpRequestLogBatch(cutoff, keepOperations, limit)` | `{ deleted, newest }`. In one write, deletes the oldest `limit` rows created before `cutoff` whose operation is not in `keepOperations` and adds them to the tally: `requests` grows by the count, `last_used_at` and `pruned_through` take the newest deleted `created_at` (`GREATEST`, which skips a NULL). `newest` is that time as ISO text, null when nothing was deleted. A null cutoff, a null list or a list holding a null takes nothing (`<> ALL` is never true); a null limit takes every row; a negative or fractional limit is `invalid_argument` | `pruneMcpRequestLogBatch` |
 | `brain.readClientOpUsage(days)` | one `{ token_name, operation, n, last_seen }` row per token and operation over the rows created after `now - days` with a token and status `success`, `success_with_warnings` or `accepted_pending`; `n` is an integer, `last_seen` the newest `created_at` as ISO text. A null day count matches no row | `readClientOpUsage` |
 | `brain.readMcpRollupPrunedBefore()` | `{ pruned_before, now }`: the newest `pruned_through` of the tally (null when nothing was pruned) and the store clock, as ISO text | `readMcpRollupPrunedBefore` |
+| `brain.readQueryCacheStats()` | `{ total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 }`: the store keeps no `query_cache` table, so the cache is empty | `readQueryCacheStats` |
+| `brain.clearQueryCache(sourceId)` | `0`: no cache row to delete, for the whole cache (null) or one source | `clearQueryCache` |
+| `brain.pruneQueryCache()` | `0`: no stale cache row to delete | `pruneQueryCache` |
 | `brain.logChatUsage(row)` | `null`. Appends one ledger row with the next id; `created_at` is ISO text, or null for now. Checks run in Postgres order: a NUL byte is `invalid_argument`, a token count that is not a whole `int4` is `invalid_argument`, a bad `created_at` is `invalid_argument`, then a null `model` or token count is `constraint_violation` (`null value in column "<column>"`) | `logChatUsage` |
 | `brain.readChatUsage(days)` | `{ rows, logged_since }`: one `{ model, phase, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, unpriced_calls }` row per `(model, phase)` over the rows created on or after `now - days`, ordered by summed cost descending (null last), then model and phase in byte order with a null phase first. `cost_usd` is null when no call in the group is priced. `logged_since` is the first `created_at` of the whole ledger as timestamp text (null when empty) | `readChatUsage` |
 | `brain.readMcpLifetimeUsage(tokenNames)` | one `{ token_name, requests, last_used_at }` row per asked token that has log rows or a tally row, in token byte order: `requests` is the token's request log rows (every status and operation) plus its tally `requests`, `last_used_at` the newest of the newest `created_at` and the tally's `last_used_at`, as ISO text. A null list or a null name matches nothing; a NULL-token log row never matches, and the tally's `''` row matches only an asked `''`. A NUL in a name is `invalid_argument`; a sum past `int8` is `invalid_argument` (`integer out of range`) | `readMcpLifetimeUsage` |
@@ -66,6 +69,12 @@ Differences from PGLite:
 - `readMcpLifetimeUsage` always adds the tally, for the same reason; the TypeScript statement reads the log alone
   when the tally table is missing. Both return token byte order (`ORDER BY token_name COLLATE "C"`).
 
+- The store keeps no `query_cache` table. `readQueryCacheStats`, `clearQueryCache` and `pruneQueryCache` (the
+  `cache_stats` tool, `gbrain cache stats`, `prune` and `clear`) answer an empty cache, which is the true answer:
+  `semanticResultCacheAvailable()` (`src/core/search/query-cache.ts`) is false on every engine, so no engine stores a
+  cache row. Before that turns true, the store needs a cache table; `test/engine-parity/query-cache-cli.test.ts` fails
+  until then.
+
 - `readChatUsage` token sums are floats in the store; Postgres sums `int4` as `bigint`, which the TypeScript
   statement reads through `Number()`. The values agree for every sum below 2^53.
 
@@ -73,9 +82,6 @@ Differences from PGLite:
 
 - `readMcpLifetimeUsage` sorts by `token_name COLLATE "C"`; no test tells that from the database default, because
   both test databases sort in byte order (PGLite `C`, the local Postgres `C.UTF-8`).
-- The store keeps no `query_cache` table. `readQueryCacheStats` (the `cache_stats` tool, `gbrain cache stats`) refuses
-  in its TypeScript member before any store call, as `engine_capability_missing` with capability `raw_sql` and the
-  reason `query_cache_unavailable`, so a Rust brain never reports an empty cache it does not have.
 
 The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
 log row through `logMcpRequest`, and `lifetimeUsage` (`src/core/mcp-request-log-retention.ts`) reads through

@@ -1,16 +1,17 @@
 /**
  * Telemetry members (BrainEngine recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
- * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage, logChatUsage, readChatUsage). The store
+ * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage, logChatUsage, readChatUsage,
+ * readQueryCacheStats, clearQueryCache, pruneQueryCache). The store
  * keeps the `search_telemetry` rows, the MCP request log and its tally, and the chat usage ledger (rust/docs/store/telemetry.md). The store answers a timestamp as ISO text;
- * these members turn it into a Date, as PGLite's driver reads a `timestamptz`. readQueryCacheStats refuses by name: the store
- * keeps no query cache.
+ * these members turn it into a Date, as PGLite's driver reads a `timestamptz`. The store keeps no query cache: the three
+ * cache members answer an empty cache.
  */
 import type {
   McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
   QueryCacheStatsRow, SearchTelemetryRow,
 } from '../../engine-sql/telemetry.ts';
 import type { ChatUsageAggregateRow, ChatUsageLogRow, ChatUsageWindow } from '../../engine-sql/chat-usage.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 type StoreRow = Record<string, unknown>;
 
@@ -84,8 +85,18 @@ export const readChatUsage: StoreMember<[days: number], ChatUsageWindow> = async
 };
 
 /**
- * The query cache summary refuses by name, always and before any store call: the store keeps no query_cache table, and
- * zeros would read as an empty cache.
+ * The query cache summary: an empty cache. The store keeps no query_cache table, and no engine stores a cache row while
+ * semanticResultCacheAvailable() is false (search/query-cache.ts), so zeros are the answer a SQL brain gives too.
  */
-export const readQueryCacheStats: StoreMember<[], QueryCacheStatsRow> = async () =>
-  refuseMember('readQueryCacheStats', 'query_cache_unavailable: the Rust store keeps no query_cache table');
+export const readQueryCacheStats: StoreMember<[], QueryCacheStatsRow> = async (brain) => {
+  const row: StoreRow = await storeCall({ member: 'readQueryCacheStats' }, () => brain.readQueryCacheStats());
+  return { total_rows: Number(row.total_rows), total_hits: Number(row.total_hits), fresh_rows: Number(row.fresh_rows), stale_rows: Number(row.stale_rows) };
+};
+
+/** Deletes the cache rows of one source, or all of them: the store keeps none, so it answers 0. */
+export const clearQueryCache: StoreMember<[opts: { sourceId?: string }], number> = async (brain, opts) =>
+  Number(await storeCall({ member: 'clearQueryCache' }, () => brain.clearQueryCache(opts?.sourceId ?? null)));
+
+/** Deletes the cache rows past their TTL: the store keeps none, so it answers 0. */
+export const pruneQueryCache: StoreMember<[], number> = async (brain) =>
+  Number(await storeCall({ member: 'pruneQueryCache' }, () => brain.pruneQueryCache()));

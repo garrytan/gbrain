@@ -173,6 +173,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore',
   'logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage',
   'logChatUsage', 'readChatUsage',
+  // gbrain cache clear and prune (engine-sql/telemetry.ts; covered by test/engine-parity/query-cache-cli.test.ts)
+  'clearQueryCache', 'pruneQueryCache',
   // schema detect --fields page samples (engine-sql/field-usage.ts; covered by test/engine-parity/field-usage.test.ts)
   'readFieldUsageSamples',
   // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; covered by test/engine-parity/alias-fanout-reads.test.ts)

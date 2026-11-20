@@ -383,20 +383,9 @@ export class SemanticQueryCache {
   /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted. */
   async clear(opts: { sourceId?: string } = {}): Promise<number> {
     try {
-      if (opts.sourceId) {
-        const rows = await this.engine.executeRaw<{ n: number }>(
-          `WITH deleted AS (DELETE FROM query_cache WHERE source_id = $1 RETURNING 1)
-           SELECT COUNT(*)::int AS n FROM deleted`,
-          [opts.sourceId],
-        );
-        return rows[0]?.n ?? 0;
-      }
-      const rows = await this.engine.executeRaw<{ n: number }>(
-        `WITH deleted AS (DELETE FROM query_cache RETURNING 1)
-         SELECT COUNT(*)::int AS n FROM deleted`,
-      );
-      return rows[0]?.n ?? 0;
-    } catch {
+      return await this.engine.clearQueryCache(opts.sourceId ? { sourceId: opts.sourceId } : {});
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       return 0;
     }
   }
@@ -404,15 +393,7 @@ export class SemanticQueryCache {
   /** Delete only stale (past-TTL) rows. Returns rows deleted. */
   async prune(): Promise<number> {
     try {
-      const rows = await this.engine.executeRaw<{ n: number }>(
-        `WITH deleted AS (
-           DELETE FROM query_cache
-           WHERE created_at + (ttl_seconds || ' seconds')::interval <= now()
-           RETURNING 1
-         )
-         SELECT COUNT(*)::int AS n FROM deleted`,
-      );
-      return rows[0]?.n ?? 0;
+      return await this.engine.pruneQueryCache();
     } catch (err) {
       rethrowCapabilityRefusal(err);
       return 0;

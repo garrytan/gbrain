@@ -4,8 +4,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each tool answers the same on PGLite, Postgres and Rust, or the Rust arm stops on a named refusal.
- *    get_job_stats raises the `no_worker` notice with the waiting count of its queue; cache_stats refuses on Rust as
- *    `query_cache_unavailable` (the store keeps no query_cache table) and never answers zero rows there. schema_stats
+ *    get_job_stats raises the `no_worker` notice with the waiting count of its queue; cache_stats answers the brain's
+ *    cache knobs and an empty cache (no engine stores a cache row while semanticResultCacheAvailable() is false). schema_stats
  *    counts live pages per source and type (archived sources included, soft-deleted pages not, an empty type as
  *    untyped) and finds the pack prefixes no live page matches, with SQL LIKE meaning for `%`, `_` and `\`.
  *    get_status_snapshot counts, per source, its live pages, their chunks and the chunks with no vector. put_pages
@@ -75,18 +75,16 @@ describe('engine parity: MCP tools a Rust brain refused', () => {
       return { no_worker: answer.body?.no_worker, notices: answer.notices };
     });
 
-  parityTest('cache_stats counts the query cache on SQL brains and refuses by name on Rust, never as zero rows',
-    { methods: ['readQueryCacheStats'] }, async (engine, backend) => {
+  parityTest('cache_stats answers the brain cache knobs and an empty cache on every engine',
+    { methods: ['readQueryCacheStats'] }, async (engine) => {
+      await engine.setConfig('search.cache.ttl_seconds', '120');
       const answer = await call(engine, 'cache_stats');
-      if (backend === 'rust') {
-        expect(answer.body).toBeNull();
-        expect(answer.error).toContain('engine_capability_missing');
-        expect(answer.error).toContain('query_cache_unavailable');
-        // The harness wants the Rust arm to end on the typed refusal the member raised.
-        await engine.readQueryCacheStats();
-      }
       expect(answer.error).toBeNull();
-      return { total_rows: answer.body?.total_rows, total_hits: answer.body?.total_hits };
+      expect(answer.body).toEqual({
+        schema_version: 1, enabled: false, similarity_threshold: 0.92, ttl_seconds: 120,
+        total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0,
+      });
+      return answer.body;
     });
 
   parityTest('schema_stats counts live pages per source and type and names the dead pack prefixes',

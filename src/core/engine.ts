@@ -1706,6 +1706,9 @@ export interface BrainEngine {
   readMcpRollupPrunedBefore(): Promise<McpRollupPrunedBefore>;
   /** The query cache summary for `gbrain cache stats` and the `cache_stats` tool (SQL in engine-sql/telemetry.ts). */
   readQueryCacheStats(): Promise<QueryCacheStatsRow>;
+  /** Deletes the query cache rows of one source (every row without one), or the rows past their TTL; each answers the rows deleted. */
+  clearQueryCache(opts: { sourceId?: string }): Promise<number>;
+  pruneQueryCache(): Promise<number>;
   /** The MCP request log insert, its retention prune and the lifetime usage read (SQL and contracts in engine-sql/telemetry.ts). */
   logMcpRequest(row: McpRequestLogRow): Promise<void>;
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;

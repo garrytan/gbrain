@@ -6,8 +6,9 @@
 //! usage and doctor read both.
 //!
 //! Members: recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
-//! pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage
-//! (`src/core/engine-sql/telemetry.ts`).
+//! pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage,
+//! readQueryCacheStats, clearQueryCache, pruneQueryCache (`src/core/engine-sql/telemetry.ts`).
+//! The store keeps no `query_cache` table: the three cache members answer an empty cache.
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`, then the table's sub-tag):
 //! - `a 0x01 <date> 0x00 <mode> 0x00 <intent>` -> `SearchRecord` (JSON). The text parts are the
@@ -708,6 +709,24 @@ impl Store {
             .max();
         Ok(json!({ "pruned_before": newest.map(iso), "now": iso(now) }))
     }
+
+    /// `readQueryCacheStats()`: the store keeps no `query_cache` table, so the summary is an empty
+    /// cache. No engine stores a cache row while `semanticResultCacheAvailable()` is false
+    /// (`src/core/search/query-cache.ts`), so zeros are the answer a SQL brain gives too.
+    pub fn read_query_cache_stats(&self) -> Result<Value> {
+        Ok(json!({ "total_rows": 0, "total_hits": 0, "fresh_rows": 0, "stale_rows": 0 }))
+    }
+
+    /// `clearQueryCache({ sourceId })`: deletes no row (the store keeps no cache rows) and answers
+    /// 0, with or without a source.
+    pub fn clear_query_cache(&self, _source_id: Option<&str>) -> Result<Value> {
+        Ok(json!(0))
+    }
+
+    /// `pruneQueryCache()`: deletes no row (the store keeps no cache rows) and answers 0.
+    pub fn prune_query_cache(&self) -> Result<Value> {
+        Ok(json!(0))
+    }
 }
 
 #[cfg(test)]
@@ -729,6 +748,18 @@ mod tests {
             "rank1_high": 0,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn answers_an_empty_query_cache_and_deletes_no_row() {
+        let s = store();
+        assert_eq!(
+            s.read_query_cache_stats().unwrap(),
+            json!({ "total_rows": 0, "total_hits": 0, "fresh_rows": 0, "stale_rows": 0 })
+        );
+        assert_eq!(s.clear_query_cache(None).unwrap(), json!(0));
+        assert_eq!(s.clear_query_cache(Some("side")).unwrap(), json!(0));
+        assert_eq!(s.prune_query_cache().unwrap(), json!(0));
     }
 
     #[test]

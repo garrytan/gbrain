@@ -2170,6 +2170,8 @@ export class PostgresEngine implements BrainEngine {
   readClientOpUsage(days: number) { return telemetryImpl.readClientOpUsage(this.telemetryRead, days); }
   readMcpRollupPrunedBefore() { return telemetryImpl.readMcpRollupPrunedBefore(this.telemetryRead); }
   readQueryCacheStats() { return telemetryImpl.readQueryCacheStats(this.telemetryRead); }
+  clearQueryCache(opts: { sourceId?: string }) { return telemetryImpl.clearQueryCache(this.autocommitSql, opts); }
+  pruneQueryCache() { return telemetryImpl.pruneQueryCache(this.autocommitSql); }
   logMcpRequest(row: McpRequestLogRow) { return telemetryImpl.logMcpRequest(this.autocommitSql, row); }
   readMcpLogPruneCutoff(days: number) { return telemetryImpl.readMcpLogPruneCutoff(this.autocommitSql, days); }
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number) { return telemetryImpl.pruneMcpRequestLogBatch(this.autocommitSql, cutoff, keepOperations, limit); }

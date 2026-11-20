@@ -33,9 +33,6 @@ export const RUST_ENGINE_MEMBERS = {
   // triggers and no owner-only sources, and every caller reaches it through a migration run or a raw-SQL source write,
   // so it refuses with raw_sql and `schema` stays served.
   ownerOnlyMarkTriggers: 'raw_sql',
-  // The query cache summary (cache_stats). The store keeps no query_cache table, so its member refuses by name
-  // (query_cache_unavailable) rather than answer zeros, and raw_sql stays refused.
-  readQueryCacheStats: 'raw_sql',
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
@@ -557,6 +554,11 @@ export const RUST_ENGINE_MEMBERS = {
   pruneMcpRequestLogBatch: 'telemetry',
   logChatUsage: 'telemetry',
   readChatUsage: 'telemetry',
+  // The query cache summary, clear and prune: the store keeps no cache rows and answers an empty cache, the answer every
+  // engine gives while semanticResultCacheAvailable() is false.
+  readQueryCacheStats: 'telemetry',
+  clearQueryCache: 'telemetry',
+  pruneQueryCache: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',
   getIngestLog: 'ingest_log',

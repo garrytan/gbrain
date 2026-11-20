@@ -2,7 +2,7 @@
  * Telemetry and budget reads must not invent values on an engine that cannot serve them.
  *
  * The Rust engine refuses raw SQL with `engine_capability_missing`. Before this test, the search-stats read, the
- * get_usage op, the semantic-cache stats and prune, the fence and content repair plans and the doctor fence check
+ * get_usage op, the semantic-cache stats, prune and clear, the fence and content repair plans and the doctor fence check
  * turned that refusal into zeros, `table_present: false` or "no ledger", so a Rust brain answered with numbers PGLite
  * would never give. Each read now lets the refusal through and keeps its fail-open answer for any other error (a
  * brain that predates the table still shows zeros).
@@ -43,12 +43,12 @@ type Failure = 'refusal' | 'missing-table';
  * Typed engine members that read a table under test, with the capability the Rust engine gates them on
  * (src/core/rust-engine/members.ts). readSearchStats left executeRaw for the typed member (engine-sql/telemetry.ts);
  * get_usage left it for readChatUsage (engine-sql/chat-usage.ts); the semantic cache stats left it for
- * readQueryCacheStats (engine-sql/telemetry.ts).
+ * readQueryCacheStats, and its clear and prune for clearQueryCache and pruneQueryCache (engine-sql/telemetry.ts).
  */
 const TYPED_READERS: Record<string, Record<string, Capability>> = {
   search_telemetry: { readSearchStats: 'telemetry' },
   chat_usage_log: { readChatUsage: 'telemetry' },
-  query_cache: { readQueryCacheStats: 'raw_sql' },
+  query_cache: { readQueryCacheStats: 'telemetry', clearQueryCache: 'telemetry', pruneQueryCache: 'telemetry' },
 };
 
 /**
@@ -103,13 +103,16 @@ describe('a refused telemetry read refuses instead of reporting invented values'
     expect(missing.coverage.table_present).toBe(false);
   });
 
-  test('semantic cache stats and prune', async () => {
+  test('semantic cache stats, prune and clear', async () => {
     const refusing = new SemanticQueryCache(failing('query_cache', 'refusal'));
     await expect(refusing.stats()).rejects.toMatchObject(refused);
     await expect(refusing.prune()).rejects.toMatchObject(refused);
+    await expect(refusing.clear()).rejects.toMatchObject(refused);
+    await expect(refusing.clear({ sourceId: 'default' })).rejects.toMatchObject(refused);
     const missing = new SemanticQueryCache(failing('query_cache', 'missing-table'));
     expect(await missing.stats()).toEqual({ total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 });
     expect(await missing.prune()).toBe(0);
+    expect(await missing.clear()).toBe(0);
   });
 
   test('the fence repair plan reads the daily ledger', async () => {
