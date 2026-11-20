@@ -110,7 +110,11 @@ export const readPurgeSourceLocalPath: Member<'readPurgeSourceLocalPath'> = (bra
 
 /**
  * `lockPurgeSource`: the source's incarnation and archived flag from the source record. FOR UPDATE changes nothing
- * here: the purge transaction is the store's single writer, so no other write reaches the source before it ends.
+ * here. The purge runs in `engine.transaction`, and the store opens every explicit transaction with the writer held
+ * until it ends (`Store::begin_transaction` in rust/crates/gbrain-store/src/transactions.rs: `Kv::begin_write` on
+ * redb; `Kv::begin_write_exclusive` when concurrent writes are on, where the commit pipeline lands nothing else until
+ * the transaction ends and a concurrent writer that read the source record reruns). So no other write reaches the
+ * source record before the purge commits or rolls back.
  */
 export const lockPurgeSource: Member<'lockPurgeSource'> = async (brain, sourceId) => {
   const row: { incarnation: string; archived: boolean } | null = await storeCall({ member: 'lockPurgeSource' }, () => brain.readSourceWriteRow(sourceId));
