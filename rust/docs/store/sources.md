@@ -23,7 +23,7 @@ to the global mode; `getSource` returns it.
 | `brain.listArchivedSourceRows()` | every archived source with `page_count` (soft-deleted pages included), newest `archived_at` first; a source with no archive time comes first, equal times by id descending | `listArchivedSourceRows` (`sources archived`) |
 | `brain.listExpiredArchivedSources()` | `{ id, incarnation, config, local_path }[]` by id: both archive times after `1970-01-02` UTC and the expiry passed | `listExpiredArchivedSources` (the purge sweep) |
 | `brain.listUnverifiedArchivedSourceIds()` | the archived source ids, by id, with either time missing or at or before `1970-01-02` UTC | `listUnverifiedArchivedSourceIds` (the purge sweep's report) |
-| `brain.readSourceImpactCounts(id)` | `{ name, pages, chunks, embeddings, files, facts } \| null`; pages include soft-deleted ones, `embeddings` counts chunks with a vector, `files` is 0 | `readSourceImpactCounts` (the delete preview) |
+| `brain.readSourceImpactCounts(id)` | `{ name, pages, chunks, embeddings, files, facts } \| null`; pages include soft-deleted ones, `embeddings` counts chunks with a vector, `files` counts the source's files | `readSourceImpactCounts` (the delete preview) |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
 
@@ -59,9 +59,8 @@ The source members below behave differently on the Rust engine. Each difference 
 - `listExpiredArchivedSources` and `listUnverifiedArchivedSourceIds` sort ids by bytes. The SQL
   engines sort with the database collation; source ids are `a-z0-9-` only, but under `en_US` a
   hyphen can sort differently.
-- `listArchivedSourceRows` breaks equal archive times by id, greatest first. The SQL order of
-  equal times is not specified.
-- `readSourceImpactCounts` reports `files: 0`: the store keeps no `files` table, as PGLite.
+- `listArchivedSourceRows` breaks equal archive times by id, greatest first, in byte order, as the
+  SQL engines now do (`s.id COLLATE "C" DESC`).
 - Purging an expired archive refuses `engine_capability_missing`: the source delete
   (`deleteSourceRow`) is still raw SQL. The sweep re-raises the refusal; it does not report the
   source as blocked.

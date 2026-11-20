@@ -6,6 +6,7 @@ mod memory_env;
 
 use gbrain_store::jobs::ClientInsert;
 use gbrain_store::pages::{PageInput, PutPageOptions};
+use gbrain_store::raw_files::FileSpec;
 use memory_env::{Brain, T0, brain};
 use serde_json::{Map, Value, json};
 
@@ -126,10 +127,22 @@ fn impact_counts_cover_pages_with_deleted_ones_and_a_missing_source_is_none() {
     page(&b, "wiki", "notes/one");
     page(&b, "wiki", "notes/two");
     b.soft_delete_page("notes/two", Some("wiki")).unwrap();
+    for (source, path) in [
+        ("wiki", "a/one.png"),
+        ("wiki", "a/two.png"),
+        ("default", "a/three.png"),
+    ] {
+        let spec: FileSpec = serde_json::from_value(json!({
+            "source_id": source, "filename": path, "storage_path": path, "content_hash": path, "metadata": "{}",
+        }))
+        .unwrap();
+        b.upsert_file(&spec).unwrap();
+    }
     let counts = b.read_source_impact_counts("wiki").unwrap().unwrap();
     assert_eq!(counts.name.as_deref(), Some("Wiki"));
     assert_eq!(counts.pages, 2);
-    assert_eq!((counts.embeddings, counts.files, counts.facts), (0, 0, 0));
+    // Only the source's own files count.
+    assert_eq!((counts.embeddings, counts.files, counts.facts), (0, 2, 0));
     assert_eq!(b.read_source_impact_counts("nope").unwrap(), None);
 }
 

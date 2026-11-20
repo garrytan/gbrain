@@ -60,7 +60,7 @@ describe('engine parity: source archive', () => {
     'archiving keeps both times 72 hours apart and turns federation off; restore clears them and sets federation',
     { methods: [
       'archiveSource', 'restoreArchivedSource', 'listArchivedSourceRows', 'readSourceImpactCounts', 'listSourceOAuthClients',
-      'countSourcePages', 'putPage', 'softDeletePage', 'upsertChunks', 'insertOauthClient', 'getSource',
+      'countSourcePages', 'putPage', 'softDeletePage', 'upsertChunks', 'insertOauthClient', 'getSource', 'upsertFile',
     ] },
     async (engine, backend) => {
       await createSource(engine, backend, 'wiki', { federated: true });
@@ -73,6 +73,12 @@ describe('engine parity: source archive', () => {
       await engine.insertOauthClient({ client_id: 'zed-app', client_name: 'Zed', source_id: 'wiki' });
       await engine.insertOauthClient({ client_id: 'amy-app', client_name: 'Amy', source_id: 'wiki', deleted_at: new Date('2026-01-01T00:00:00Z') });
       await engine.insertOauthClient({ client_id: 'bob-app', client_name: 'Bob', source_id: 'other' });
+      // An upper-case id sorts before the lower-case ones in byte order, and between them in a language collation.
+      await engine.insertOauthClient({ client_id: 'Max-app', client_name: 'Max', source_id: 'wiki' });
+      // The delete preview counts the files of the source, and only those.
+      for (const [sourceId, path] of [['wiki', 'assets/one.png'], ['wiki', 'assets/two.png'], ['other', 'assets/three.png']]) {
+        await engine.upsertFile({ source_id: sourceId, filename: path.slice(7), storage_path: path, content_hash: `hash-${path}` });
+      }
       const impact = await assessDestructiveImpact(engine, 'wiki');
       const clients = await engine.listSourceOAuthClients('wiki');
       const missing = [await assessDestructiveImpact(engine, 'nope'), await engine.listSourceOAuthClients('nope')];
@@ -91,6 +97,19 @@ describe('engine parity: source archive', () => {
       return {
         impact, clients, missing, counts, archived, again, absent, listed,
         offWhileArchived, restored, notArchived, afterRestore, noFederate, pages,
+      };
+    },
+  );
+
+  parityTest(
+    'archives with the same archive time list by id, last id first',
+    { methods: ['listArchivedSourceRows'] },
+    async (engine, backend) => {
+      for (const id of ['alpha', 'beta', 'gamma']) await createSource(engine, backend, id, {});
+      for (const id of ['alpha', 'gamma', 'beta']) await archiveWithoutTimes(engine, backend, id);
+      return {
+        rows: (await engine.listArchivedSourceRows()).map(r => r.id),
+        listed: (await listArchivedSources(engine)).map(s => s.id),
       };
     },
   );

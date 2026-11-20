@@ -63,7 +63,7 @@ export async function restoreArchivedSource(exec: SqlExecutor, sourceId: string,
   return rows.length > 0;
 }
 
-/** Every archived source with its page count, newest archive first. */
+/** Every archived source with its page count, newest archive first (no time first); equal times by id, last first, in byte order. */
 export async function listArchivedSourceRows(exec: LegacyUnscopedRead): Promise<ArchivedSourceListRow[]> {
   return exec.executeRaw<ArchivedSourceListRow>(
     `SELECT
@@ -71,7 +71,7 @@ export async function listArchivedSourceRows(exec: LegacyUnscopedRead): Promise<
         COALESCE((SELECT COUNT(*)::int FROM pages p WHERE p.source_id = s.id), 0) AS page_count
      FROM sources s
      WHERE s.archived = true
-     ORDER BY s.archived_at DESC`,
+     ORDER BY s.archived_at DESC, s.id COLLATE "C" DESC`,
   );
 }
 
@@ -123,7 +123,7 @@ export async function readSourceImpactCounts(exec: LegacyUnscopedRead, sourceId:
 }
 
 /**
- * The OAuth clients that name the source, revoked ones included, by client id. A brain without the table or the
+ * The OAuth clients that name the source, revoked ones included, by client id in byte order. A brain without the table or the
  * `source_id` column has none (no column, no foreign key); a brain without `deleted_at` reads every client as live.
  */
 export async function listSourceOAuthClients(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceOAuthClientRow[]> {
@@ -132,7 +132,7 @@ export async function listSourceOAuthClients(exec: LegacyUnscopedRead, sourceId:
       `SELECT client_id, client_name, (deleted_at IS NOT NULL) AS deleted
        FROM oauth_clients
        WHERE source_id = $1
-       ORDER BY client_id`,
+       ORDER BY client_id COLLATE "C"`,
       [sourceId],
     );
     return rows.map(r => ({ client_id: r.client_id, client_name: r.client_name, deleted: r.deleted === true }));

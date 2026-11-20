@@ -209,8 +209,8 @@ impl Store {
     }
 
     /// `readSourceImpactCounts(id)`: what deleting the source would remove (pages with
-    /// soft-deleted ones, their chunks, the chunks that have a vector, and the source's fact
-    /// rows), or `None` when the source does not exist.
+    /// soft-deleted ones, their chunks, the chunks that have a vector, the source's files and its
+    /// fact rows), or `None` when the source does not exist.
     pub fn read_source_impact_counts(&self, id: &str) -> Result<Option<SourceImpactCounts>> {
         let read = self.read()?;
         let Some(record) = read_source(&*read, id)? else {
@@ -231,7 +231,7 @@ impl Store {
             pages: pages.len() as u64,
             chunks,
             embeddings,
-            files: 0,
+            files: crate::raw_files::source_file_count(&*read, id)?,
             facts: crate::facts::source_rows(&*read, id)?.len() as u64,
         }))
     }

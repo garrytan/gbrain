@@ -201,4 +201,17 @@ describe('engine parity: loop mutes', () => {
       return { closed, requeued, recheck, counts, loops: await loops(engine, ids) };
     },
   );
+  parityTest(
+    'adding a mute that already exists still takes the next mute id, as a database sequence does',
+    { methods: ['addLoopSuppression', 'readMigrationRows'] },
+    async (engine, backend) => {
+      await source(engine, backend);
+      await engine.addLoopSuppression('g1', 'sender', SENDER);
+      await engine.addLoopSuppression('g1', 'sender', SENDER);
+      await engine.addLoopSuppression('g1', 'thread', '18c2f4a9b3d21e0e');
+      const { rows } = (await engine.readMigrationRows('loop_suppressions'))!;
+      const first = Math.min(...rows.map(r => Number(r.id)));
+      return rows.map(r => ({ id: Number(r.id) - first, kind: r.kind, value: r.value }));
+    },
+  );
 });
