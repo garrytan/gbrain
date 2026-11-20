@@ -15,6 +15,9 @@
  *    [model, dims, literal, ...pool params, model, dims, literal, limit], and dims bind only once when the column has declared
  *    dimensions (the pool then skips its vector_dims filter). This is the same shape listFactsForRelevance
  *    has used since lane 4's first batch.
+ *    Three later changes are pinned on purpose: the owner-only read predicates also check the owner_only_held catalog
+ *    mark, listCallOffCueFacts orders a future-dated fact by its created_at, and listFactProvenance is the facts-cycle
+ *    member (it orders by id). Those pins hold the merged text, not the text at 2eb69f4613.
  *  - Regression: a member that reorders a clause, renumbers a placeholder, binds a value differently, drops a cast or
  *    sends the iterative-scan settings in another order changes what Postgres answers while the parity cases may still
  *    pass on a small fixture.

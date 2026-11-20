@@ -425,22 +425,22 @@ doctor and write-path callers stop on that refusal instead of the `raw_sql` refu
 
 ## Group 5: the rest of the facts write and recall sites (not yet in Rust)
 
-Thirty-six members that were raw `executeRaw` statements in seventeen callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,
+Thirty-five members that were raw `executeRaw` statements in seventeen callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,
 `embedding-identity.ts`, `slot-tagging.ts`, `subject-infer.ts`, `writeback-settings.ts`, `retire.ts`, `contested-claims.ts`,
 `derivation-inputs.ts`, `single-prepare.ts`, `proposal-supersede.ts`, `forget.ts`, `proposal-review.ts`, `fts-index.ts`,
 `question-recall.ts`, `src/core/ops/facts.ts` and `src/core/search/fact-relevance.ts`). Seven are in
 `src/core/engine-sql/facts-recall.ts` (`readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`,
-`listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
+`listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-eight are in `facts-trust.ts`. Each runs the
 statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
 (dimensions once when the column type is declared), so its `$n` numbers differ from the old text. None is implemented on Rust
 yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
-serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
+serves it. `listFactProvenance` is not in this group: the facts-cycle member above serves it on Rust. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
 
 | Group | Members | What the store would need |
 | --- | --- | --- |
 | Write gate | `readPendingWriteReceipt`, `lockSourceShared`, `lockAgentWritebackSetting`, `readMemberPageWithdrawal`, `readFactVisibility`, `readReplacementTarget`, `readPairFactRow`, `readFactActivity`, `readReviewAcceptedMark` | The write-gate receipt, the shared source lock and advisory lock for the writeback setting, member-page withdrawal, fact visibility and the replacement and pair rows. |
 | Expiry and supersession | `expireSupersededFact`, `restoreSupersededFact`, `expireFactSuperseded`, `expireFactAtDate`, `expireDerivedFacts`, `deactivateDerivedTakes`, `softDeleteDerivedPages`, `markNeedsRederive` | `expired_at`, `superseded_by` and the derived-row columns; each update runs in the caller's transaction. |
-| Provenance and listing | `listOversizedStaleFacts`, `listLivePersonTitles`, `readLiveFactEntityPage`, `listFactsToRetireFromPage`, `listContestedProposalPairs`, `listFactProvenance`, `recordDerivationEdges`, `listDerivedRows`, `readFactForForget`, `readWithdrawalAnchor` | Live-page lookups, the oversized-fact scan cap, derivation edges and the proposal tables. |
+| Provenance and listing | `listOversizedStaleFacts`, `listLivePersonTitles`, `readLiveFactEntityPage`, `listFactsToRetireFromPage`, `listContestedProposalPairs`, `recordDerivationEdges`, `listDerivedRows`, `readFactForForget`, `readWithdrawalAnchor` | Live-page lookups, the oversized-fact scan cap, derivation edges and the proposal tables. |
 | FTS index | `readFactsFtsIndexState`, `swapFactsFtsIndex` | The `facts` full-text index language and its swap. |
 | Recall pool | the seven `facts-recall.ts` members | The embedding column, nearest-vector scan, slot rows, unbacked keys, call-off cues, entity pairs and rows by id. |
 
