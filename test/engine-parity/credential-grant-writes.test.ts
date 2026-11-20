@@ -4,12 +4,14 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: an MCP put_page over http owned by a live OAuth client commits (on Rust it stops on raw_sql at admission
- *    until the mention-links worker is typed); a deleted client's write refuses permission_denied. A legacy token minted with a grant to a named source is inserted and reads that source's
- *    page over http; a grant that names a marked scope source (`config.qm_scope`) refuses invalid_grant and inserts no
- *    token.
+ *    until the mention-links worker is typed); a deleted client's write refuses permission_denied. A legacy token
+ *    minted with a grant to a named source is inserted and reads that source's page over http; a grant that names a
+ *    marked scope source (`config.qm_scope`) refuses invalid_grant and inserts no token. An OAuth
+ *    client's slug fence reads its stored bound prefixes, null for a client that is gone.
  *  - Regression: on the Rust engine readOAuthClientWriteGrant answered null for every client, so a live client's write
  *    refused "The owning OAuth client is revoked"; assertScopeSourceGrant read the sources through raw SQL
- *    (`... FOR SHARE`), so a source-granted mint refused raw_sql.
+ *    (`... FOR SHARE`), so a source-granted mint refused raw_sql. readWriterSlugFence refused every OAuth client on Rust,
+ *    so the links effect of an http write never settled.
  *  - Why existing coverage misses it: persistence-declaration.test.ts pins only a client and token with no live grant
  *    row; access-tokens.test.ts mints only default-grant tokens. Over MCP a refusal comes back inside the tool result,
  *    so the remote cases go through dispatchToolCall.
@@ -72,6 +74,15 @@ describe('credential grant reads of a remote write', () => {
     await createSource(engine, backend, SOURCE);
     const put = await http(engine, 'put_page', { slug: SLUG, content: CONTENT }, await oauthClient(engine, 'client-gone', true));
     return { put, page: await pageWritten(engine) };
+  });
+
+  parityTest('an OAuth client slug fence reads its bound prefixes, and null when the client is gone', { methods: ['readWriterSlugFence', 'insertOauthClient'] }, async (engine, backend) => {
+    await createSource(engine, backend, SOURCE);
+    await engine.insertOauthClient({ client_id: 'client-fenced', client_name: 'client-fenced', scope: 'read write', source_id: SOURCE,
+      bound_slug_prefixes: ['notes/'], delegated_slug_prefixes: ['notes/shared/'] } as never);
+    const principal = (id: string) => ({ kind: 'oauth_client', id });
+    return { bound: await engine.readWriterSlugFence(principal('client-fenced')),
+      gone: await engine.readWriterSlugFence(principal('client-missing')) };
   });
 
   parityTest('a legacy token minted with a grant to a named source reads that source over http', { methods: ['lockRegisteredSourceIds', 'insertAccessToken'] }, async (engine, backend) => {
