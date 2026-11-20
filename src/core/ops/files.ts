@@ -34,7 +34,7 @@ const file_list: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs files (or admin) scope.',
+  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs files scope (admin implies it).',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
@@ -221,7 +221,7 @@ const file_url: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs files (or admin) scope. On storage_error: list the files again with file_list.',
+  description: 'Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs files scope (admin implies it). On storage_error: list the files again with file_list.',
   params: {
     storage_path: { type: 'string', required: true, description: 'Stored path of the file, as file_list lists it' },
   },

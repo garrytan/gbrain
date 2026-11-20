@@ -1,6 +1,6 @@
 # Remote file transfer: upload, import and download over MCP
 
-Status: implemented (fork branch `feat/remote-file-storage`).
+Status: implemented.
 
 ## Problem
 
