@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 796/802
+# covered: 805/811
 # lifecycle: 9/9
 # pages: 51/51
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 10/10
-# persistence_journal: 79/79
+# persistence_journal: 88/88
 # entity_reads: 15/15
 # cycle_locks: 7/7
 # minion_jobs: 8/8
@@ -366,7 +366,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	13	no	yes	yes	serves
-setConfig	config	yes	26	no	yes	yes	serves
+setConfig	config	yes	27	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -420,7 +420,16 @@ readGitImageHoldCountRows	persistence_journal	yes	1	no	yes	yes	serves
 readSyncConversionRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
-writeSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
+writeSyncPassRow	persistence_journal	yes	2	no	yes	yes	serves
+readSyncStatusSourceRow	persistence_journal	yes	2	no	yes	yes	serves
+readSyncStatusCommittedRow	persistence_journal	yes	1	no	yes	yes	serves
+readManagedSyncCursorHeader	persistence_journal	yes	2	no	yes	yes	serves
+readRetiredManagedSyncCursor	persistence_journal	yes	2	no	yes	yes	serves
+readManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
+readOrphanedManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
+readSyncHeadRequestRow	persistence_journal	yes	1	no	yes	yes	serves
+readSyncRecoveryProbeRow	persistence_journal	yes	1	no	yes	yes	serves
+readIdentityDowngradeRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
@@ -475,7 +484,7 @@ readRetirementHop	entity_reads	yes	3	no	yes	yes	serves
 readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-acquireCycleLock	cycle_locks	yes	11	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 readCycleLocks	cycle_locks	yes	8	no	yes	yes	serves

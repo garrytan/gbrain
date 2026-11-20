@@ -199,6 +199,7 @@ test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/sync-route.test.ts
+test/engine-parity/sync-status-reads.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts

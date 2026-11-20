@@ -173,6 +173,8 @@ import type { DurablePersistenceSettings } from './engine-sql/persistence-declar
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
 import * as syncHoldReadsImpl from './engine-sql/sync-hold-reads.ts';
 import * as syncHoldStoreImpl from './engine-sql/sync-hold-store.ts';
+import * as syncStatusReadsImpl from './engine-sql/sync-status-reads.ts';
+import type { SyncStatusProbeOptions } from './engine-sql/sync-status-reads.ts';
 import type { GitHoldSummaryWeights, SyncPassRowWrite } from './engine-sql/sync-hold-store.ts';
 import * as appliedWatermarkReadsImpl from './engine-sql/applied-watermark-reads.ts';
 import * as syncDispatchImpl from './engine-sql/sync-dispatch.ts';
@@ -1272,6 +1274,15 @@ export class PostgresEngine implements BrainEngine {
   readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string) { return syncHoldStoreImpl.readSyncPassRow<V>(this, sourceId, incarnation); }
   readLiveSyncPassRows<V = Record<string, unknown>>(sourceIds: readonly string[] | null) { return syncHoldStoreImpl.readLiveSyncPassRows<V>(this, sourceIds); }
   writeSyncPassRow(sourceId: string, incarnation: string, value: { lease_token?: unknown }, opts?: SyncPassRowWrite) { return syncHoldStoreImpl.writeSyncPassRow(this, sourceId, incarnation, value, opts); }
+  readSyncStatusSourceRow<P = Record<string, unknown>, W = Record<string, unknown>, F = Record<string, unknown>>(sourceId: string) { return syncStatusReadsImpl.readSyncStatusSourceRow<P, W, F>(this, sourceId); }
+  readSyncStatusCommittedRow(sourceId: string) { return syncStatusReadsImpl.readSyncStatusCommittedRow(this, sourceId); }
+  readManagedSyncCursorHeader<H = Record<string, unknown>>(sourceId: string, incarnation: string, failedKey: string) { return syncStatusReadsImpl.readManagedSyncCursorHeader<H>(this, sourceId, incarnation, failedKey); }
+  readRetiredManagedSyncCursor(sourceId: string, incarnation: string) { return syncStatusReadsImpl.readRetiredManagedSyncCursor(this, sourceId, incarnation); }
+  readManagedSyncFailureRows<V = Record<string, unknown>, R = Record<string, unknown>, F = Record<string, unknown>>(sourceIds: readonly string[] | null) { return syncStatusReadsImpl.readManagedSyncFailureRows<V, R, F>(this, sourceIds); }
+  readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(sourceIds: readonly string[] | null) { return syncStatusReadsImpl.readOrphanedManagedSyncFailureRows<F>(this, sourceIds); }
+  readSyncHeadRequestRow(sourceId: string, opts?: SyncStatusProbeOptions) { return syncStatusReadsImpl.readSyncHeadRequestRow(this, sourceId, opts); }
+  readSyncRecoveryProbeRow(sourceId: string, opts?: SyncStatusProbeOptions) { return syncStatusReadsImpl.readSyncRecoveryProbeRow(this, sourceId, opts); }
+  readIdentityDowngradeRows<D = Record<string, unknown>>(sourceIds: readonly string[] | null) { return syncStatusReadsImpl.readIdentityDowngradeRows<D>(this, sourceIds); }
   readWriteWatermarkRow(sourceId: string) { return appliedWatermarkReadsImpl.readWriteWatermarkRow(this, sourceId); }
   readSourceCheckoutRoot(sourceId: string, hostId: string | null) { return appliedWatermarkReadsImpl.readSourceCheckoutRoot(this, sourceId, hostId); }
   readUnembeddedPageSummary(sourceId: string, column: string) { return appliedWatermarkReadsImpl.readUnembeddedPageSummary(this, sourceId, column); }

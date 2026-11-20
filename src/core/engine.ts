@@ -23,6 +23,7 @@ import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from './engine-sql/sync-hold-reads.ts';
 import type { GitHoldListingRow, GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from './engine-sql/sync-hold-store.ts';
+import type { ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from './engine-sql/sync-status-reads.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from './engine-sql/applied-watermark-reads.ts';
 import type { SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -3590,6 +3591,24 @@ export interface BrainEngine {
   readLiveSyncPassRows<V = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<SyncPassRowRead<V> & { source_id: string }>>;
   /** Writes the managed sync pass row under its lease fence; false when it did not land (persistence/sync-pass-row.ts writePassRow). */
   writeSyncPassRow(sourceId: string, incarnation: string, value: { lease_token?: unknown }, opts?: SyncPassRowWrite): Promise<boolean>;
+  /** `sync status`'s source read of one live source: the row, its pass row and withheld record, the admission setting and probes (SQL in engine-sql/sync-status-reads.ts). */
+  readSyncStatusSourceRow<P = Record<string, unknown>, W = Record<string, unknown>, F = Record<string, unknown>>(sourceId: string): Promise<SyncStatusSourceRow<P, W, F> | null>;
+  /** `sync status`'s committed read: managed-sync pages committed in the last ten minutes, the push and fence hold probes and the newest managed-sync commit. */
+  readSyncStatusCommittedRow(sourceId: string): Promise<SyncStatusCommittedRow>;
+  /** The newest managed-sync cursor of a source incarnation, the one keyed `failedKey` first; null when none. */
+  readManagedSyncCursorHeader<H = Record<string, unknown>>(sourceId: string, incarnation: string, failedKey: string): Promise<{ header: H; key: string } | null>;
+  /** The oldest unfinished managed-sync cursor of the source under another incarnation; null when none. */
+  readRetiredManagedSyncCursor(sourceId: string, incarnation: string): Promise<{ first_seen: string } | null>;
+  /** The unfinished managed-sync cursors of the listed sources (null: every source) with their receipts, failures and paths. */
+  readManagedSyncFailureRows<V = Record<string, unknown>, R = Record<string, unknown>, F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<ManagedSyncFailureRow<V, R, F>>>;
+  /** The recorded managed-sync failures of the listed sources (null: every source) whose cursor row is gone. */
+  readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ failure: F }>>;
+  /** The drain's head probe: the source binding's head unfinished request, or null. */
+  readSyncHeadRequestRow(sourceId: string, opts?: SyncStatusProbeOptions): Promise<SyncHeadRequestRow | null>;
+  /** How many of the source's requests hold a publication recovery record, and the first. */
+  readSyncRecoveryProbeRow(sourceId: string, opts?: SyncStatusProbeOptions): Promise<SyncRecoveryProbeRow>;
+  /** The open identity-downgrade records of the listed sources (null: every source), oldest first, with the live slugs at each new path. */
+  readIdentityDowngradeRows<D = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */

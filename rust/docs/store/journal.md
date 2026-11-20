@@ -69,6 +69,19 @@ engine serves both members, so its connect is unchanged. An engine or test fake 
 does not serve these members now stops at connect. Refusing is the safer answer: a guessed "no row" could admit a
 connect during a graduation.
 
+`src/core/rust-engine/store-members/sync-status-reads.ts` answers the reads of `gbrain sync status` (SQL for PGLite
+and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps no write request, effect, source binding,
+worktree refresh or derived generation, so each part of a read that joins those tables gives its empty answer:
+
+| Member | Answer | Why |
+| --- | --- | --- |
+| `readSyncStatusSourceRow(sourceId)` | the source's incarnation, last commit and sync time, whether the drain lock row exists, the pass and withheld-delete rows, and the admission setting; `null` for an archived or missing source | While the stored admission reads as normal the two probes are `null`. Otherwise `admission_pinned` is whether the pass row is `open`, carries the live drain lease's token and started before the dated `set_at`, and `admission_destructive` is `false`. `writeback_failed` and `refresh` are `null`. |
+| `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed write committed, and no effect or fence generation is held. |
+| `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
+| `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No write request exists to give a receipt. |
+| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No source binding or write request exists. |
+| `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
+
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
 (`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
