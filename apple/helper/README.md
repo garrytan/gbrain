@@ -1,6 +1,6 @@
 # GBrain Helper (macOS)
 
-A small macOS program that reads the Messages database on your own Mac and answers gbrain over `127.0.0.1`. It never writes to the database and never shows a macOS dialog while it answers a request. When the owner turns sending on, it also sends one-to-one iMessages for the owner's own agent over Tailscale (see [Sending](#sending)); it never sends on its own.
+A small macOS program that reads the Messages database on your own Mac and answers gbrain over `127.0.0.1`. It never writes to the database and never shows a macOS dialog while it answers a request. When the owner turns sending on, it also sends one-to-one iMessages for the owner's own agent over Tailscale (see [Sending](#sending)); it never sends on its own. Once the owner turns it on, it can also read the owner's Apple Contacts, read-only (see [Contacts](#contacts)).
 
 This folder is Swift source only. On Linux and Windows nothing in gbrain's install, upgrade, doctor or test suite builds or loads it. On a Mac, `scripts/install.sh` builds, signs and starts it (see [Install on a Mac](#install-on-a-mac)); a later `gbrain apple-setup` will run the same steps for you. `.github/workflows/apple-helper.yml` builds, tests and installs it on a macOS runner.
 
@@ -34,12 +34,12 @@ Any program already running as you can read the signing keychain's password, or 
 
 ## Layout
 
-- `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`).
+- `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`) and the Contacts reader (`Contacts.swift`, `SystemContactsStore.swift`).
 - `Sources/gbrain-apple-helper/`: the command-line program.
 - `Bundle/`: `Info.plist`, the background agent's property list and the entitlements for `GBrain Helper.app`.
 - `scripts/install.sh`: builds, signs, installs and registers the app (above).
 - `scripts/signing-probe.sh`: CI probe that asks whether a self-signed certificate made on the machine signs the app with no dialog, or first needs a one-time Always Trust step. Its answer goes to the job summary.
-- `Tests/HelperCoreTests/`: tests against a synthetic Messages database.
+- `Tests/HelperCoreTests/`: tests against a synthetic Messages database and an in-memory Contacts store.
 
 ## Routes
 
@@ -51,6 +51,8 @@ Any program already running as you can read the signing keychain's password, or 
 | `GET /v1/imessage/thread` | `read:imessage` | one thread's messages; one of `thread_id`, `chat_rowid` or `chat_guid`, plus `limit` (1 to 500, default 50), `since_rowid`, `since_iso`, `include_reactions` (default false) |
 | `POST /v1/imessage/send` | a send key (`GBrain-Sign`), never a token | sends one iMessage; tailnet listener only, see [Sending](#sending) |
 | `POST /v1/admin/send` | none; this Mac only | the `send-setup`, `send-key` and `send-limits` commands use it; widening asks for Touch ID |
+| `GET /v1/contacts/changes` | `read:contacts` | contacts that changed since `cursor`, or every contact without one; `limit` (1 to 500, default 200); loopback and tailnet listeners, see [Contacts](#contacts) |
+| `POST /v1/admin/contacts` | none; this Mac only | the `contacts-setup` command uses it to ask macOS for Contacts access |
 
 Without a cursor a thread page holds the newest messages, oldest first. With `since_rowid` it holds the messages after that row, in row order; `meta.next_since_rowid` is the cursor for the next page.
 
@@ -61,8 +63,8 @@ Without a cursor a thread page holds the newest messages, oldest first. With `si
 - The config stores a SHA-256 verifier and the scopes for each token, never the token itself. A presented token is checked against every verifier in constant time.
 - Requests are limited to 8 KB (a send's body to 32 KB), 4 at a time, with a 10-second read timeout.
 - The log, `~/Library/Logs/gbrain-apple-helper.log`, records route, status, duration, row count and request id only.
-- A source module checks its permission without prompting. A missing grant returns a problem response, never a dialog. iMessage needs Full Disk Access, which macOS never asks for with a dialog.
-- The tailnet listener (`listen.tailnet` in the config) answers only the send route, only to the peers it lists (Tailscale IPv4 addresses, never loopback or the Mac's own addresses). It binds the Mac's Tailscale IPv4 address on a `utun` interface, retries the bind while Tailscale comes up after a reboot, and runs apart from the loopback listener, so one never takes the other down. IPv4 only.
+- A source module checks its permission without prompting. A missing grant returns a problem response, never a dialog. iMessage needs Full Disk Access, which macOS never asks for with a dialog. Contacts asks once, only when the owner runs `contacts-setup`.
+- The tailnet listener (`listen.tailnet` in the config) answers only the send route and `GET /v1/contacts/changes` (with a `read:contacts` token, while the contacts source is on), only to the peers it lists (Tailscale IPv4 addresses, never loopback or the Mac's own addresses). It binds the Mac's Tailscale IPv4 address on a `utun` interface, retries the bind while Tailscale comes up after a reboot, and runs apart from the loopback listener, so one never takes the other down. IPv4 only.
 
 ## Config
 
@@ -76,7 +78,7 @@ Without a cursor a thread page holds the newest messages, oldest first. With `si
 }
 ```
 
-`db_path` overrides the Messages database path (default `~/Library/Messages/chat.db`). Sources are off unless turned on.
+`db_path` overrides the Messages database path (default `~/Library/Messages/chat.db`). The sources are `imessage` and `contacts`, and each is off unless turned on.
 
 Two optional blocks turn on sending:
 
@@ -99,6 +101,7 @@ gbrain-apple-helper validate-config
 gbrain-apple-helper check [--db <path>]
 gbrain-apple-helper serve
 gbrain-apple-helper send-setup [--off]
+gbrain-apple-helper contacts-setup [--off]
 gbrain-apple-helper send-key add --name <name> --public-key-file <path or ->
 gbrain-apple-helper send-key remove --name <name>
 gbrain-apple-helper send-limits set <limit>=<n>...
@@ -107,7 +110,33 @@ gbrain-apple-helper unregister
 gbrain-apple-helper --version
 ```
 
-Every command takes `--config <path>`. `token add` takes the token's SHA-256, never the token. A running `serve` picks up `token add` and `token remove` on its next request, and refuses every token while the config can't be read. `check` prints counts only.
+Every command takes `--config <path>`. `token add` takes the token's SHA-256, never the token. A running `serve` picks up `token add`, `token remove` and a source switched on or off in the config on its next request, and refuses every token while the config can't be read. `check` prints counts only.
+
+## Contacts
+
+The `contacts` source lets the owner's gbrain read Apple Contacts on this Mac. It reads each contact's given name, family name, nickname, organization, job title, emails, phones and the names of the groups it is in, and nothing else: no notes, birthdays, addresses, photos, relationships or social profiles. It never changes a contact; the code never builds a Contacts save request, and a test fails the build if one appears.
+
+### Turning it on, once, at the Mac
+
+1. `gbrain-apple-helper contacts-setup`. The running helper asks macOS for Contacts access from its own process, so macOS records the grant for GBrain Helper. macOS shows "“GBrain Helper” would like to access your contacts": click OK. The command then turns `sources.contacts` on in the config.
+2. Give the reading token the `read:contacts` scope (`token add --name <name> --verifier <sha256> --scope read:contacts`). A token with only `read:imessage` can't read contacts, and a send key can't read anything.
+
+GBrain Helper then appears under System Settings > Privacy & Security > Contacts. No new background item is added.
+
+### Turning it off
+
+- `gbrain-apple-helper contacts-setup --off` turns the source off in the config; the next request gets `source_disabled`. It can't take back the macOS grant.
+- To take back the grant, switch GBrain Helper off in System Settings > Privacy & Security > Contacts, or run `tccutil reset AddressBook io.gbrain.apple-helper`.
+
+### Reading changes
+
+`GET /v1/contacts/changes?cursor=<opaque>&limit=<1..500>` answers `{"data": [...], "meta": {"next_cursor", "more", "full"}}`. Each item is `{"op": "upsert", "id", "contact": {given_name, family_name, nickname, organization, job_title, emails: [{label, value}], phones: [{label, value}], groups: [names]}}` or `{"op": "delete", "id"}`. Values are as stored in Contacts; a label is macOS's localized name for it, or an empty string.
+
+- Without a cursor it returns every contact, in identifier order, paged. The last page has `more: false` and `full: true`, and its `next_cursor` is the change cursor. A read without a cursor is the whole set: after its `full: true` page, drop every id you hold that it didn't return. Contacts deleted while your cursor had expired are only removed this way.
+- With a cursor it returns the contacts added, edited or deleted since then, a change of group membership included (as an upsert). `full` is false.
+- Keep reading while `more` is true, and save a cursor only after applying its page. Sending the next cursor is what tells the helper the page was applied; sending an older cursor again gets the same changes again. Upserts are idempotent.
+
+macOS's change history isn't available to Swift, so the helper finds changes itself. It keeps `contacts-index.json` (mode 0600) beside its config, holding a SHA-256 of each contact's fields as last applied, and never contact data. A request without a cursor starts a new index, and a cursor from an older index answers `cursor_expired`. The index serves one reader, the owner's gbrain: a second reader would make the first one's cursors expire with each full read, and the changes one reader applied would count as sent to the other.
 
 ## Sending
 
@@ -189,7 +218,15 @@ The token is valid but lacks the route's scope, such as `read:imessage`.
 
 ### source_disabled
 
-The source is off in the helper's config. Set `sources.<source>.enabled` to `true` in the config, then restart `serve` (`launchctl kickstart -k gui/<uid>/io.gbrain.apple-helper`).
+The source is off in the helper's config. Set `sources.<source>.enabled` to `true` in the config (for contacts, run `contacts-setup`); the running helper sees it on the next request.
+
+### contacts_not_allowed
+
+macOS hasn't given GBrain Helper access to Contacts. At the Mac, run `gbrain-apple-helper contacts-setup` and click OK, or turn on GBrain Helper in System Settings > Privacy & Security > Contacts if Don't Allow was clicked before.
+
+### cursor_expired
+
+The helper no longer holds the snapshot this cursor belongs to (another full read started, or its index file was removed). Read again without a cursor.
 
 ### forbidden_source
 

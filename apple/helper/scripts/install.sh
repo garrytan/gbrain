@@ -225,5 +225,5 @@ General > Login Items & Extensions, and in the Privacy lists you allow it in. To
   4. security delete-generic-password -s $bundle_id -a send-keys
      security delete-keychain "$keychain"
   5. rm -rf "$support" ~/Library/Logs/$program.log
-  6. tccutil reset All $bundle_id
+  6. tccutil reset All $bundle_id   (clears its Full Disk Access, Automation and Contacts grants)
 EOF
