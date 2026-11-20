@@ -378,7 +378,7 @@ export async function volunteerUsageStats(
         WHERE e.source_id = ANY($1::text[])
           AND e.volunteered_at > now() - ($2 || ' days')::interval
         GROUP BY e.match_arm, e.channel
-        ORDER BY e.match_arm, e.channel`,
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`,
       [sourceIds, String(safeDays)],
     );
   } catch {

@@ -42,7 +42,7 @@ export async function readChronicleLedgerStats(engine: BrainEngine): Promise<Chr
     const reasons = await engine.executeRaw<{ state: string; reason: string; n: number }>(
       `SELECT state, reason, count(*)::int AS n FROM chronicle_page_state
        WHERE trigger = 'auto' AND state IN ('skipped','failed') AND reason IS NOT NULL AND updated_at > now() - interval '7 days'
-       GROUP BY state, reason ORDER BY n DESC, reason`,
+       GROUP BY state, reason ORDER BY n DESC, reason COLLATE "C"`,
     );
     const tally = (rows: typeof reasons) => rows.reduce<Record<string, number>>((acc, r) => {
       acc[r.reason] = (acc[r.reason] ?? 0) + Number(r.n);
@@ -53,7 +53,7 @@ export async function readChronicleLedgerStats(engine: BrainEngine): Promise<Chr
       `SELECT count(*)::int AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'`,
     );
     const principals = await engine.executeRaw<{ principal: string; calls: number }>(
-      `SELECT coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '') AS principal, count(*)::int AS calls
+      `SELECT (coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '')) COLLATE "C" AS principal, count(*)::int AS calls
        FROM chronicle_judge_reservations r
        LEFT JOIN chronicle_page_state l ON l.source_id = r.source_id AND l.page_id = r.page_id
          AND l.content_hash = r.content_hash AND l.trigger = 'auto'

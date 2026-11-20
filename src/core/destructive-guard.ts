@@ -105,7 +105,7 @@ export async function clientsReferencingSource(
       `SELECT client_id, client_name, (deleted_at IS NOT NULL) AS deleted
        FROM oauth_clients
        WHERE source_id = $1
-       ORDER BY client_id`,
+       ORDER BY client_id COLLATE "C"`,
       [sourceId],
     );
     return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: r.deleted === true }));
@@ -119,7 +119,7 @@ export async function clientsReferencingSource(
       const rows = await engine.executeRaw<{ client_id: string; client_name: string }>(
         `SELECT client_id, client_name FROM oauth_clients
          WHERE source_id = $1
-         ORDER BY client_id`,
+         ORDER BY client_id COLLATE "C"`,
         [sourceId],
       );
       return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: false }));

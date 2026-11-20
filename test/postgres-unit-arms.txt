@@ -150,6 +150,7 @@ test/engine-parity/collate-referrer-ties.test.ts
 test/engine-parity/collate-repair-scans.test.ts
 test/engine-parity/collate-schema-pack-samples.test.ts
 test/engine-parity/collate-slug-sources.test.ts
+test/engine-parity/collate-store-listings.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts

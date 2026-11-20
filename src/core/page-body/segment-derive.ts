@@ -358,7 +358,7 @@ export interface DerivationNeedles { needles: string[]; patterns: string[] }
  */
 export async function derivationNeedles(engine: Pick<BrainEngine, 'executeRaw'>, claims: readonly string[]): Promise<DerivationNeedles> {
   const list = [...new Set(claims.filter(Boolean))];
-  const rows = list.length ? await engine.executeRaw<{ f: string }>(`SELECT DISTINCT f FROM (SELECT ${foldSql('gbrain_fact_normalize(c)')} AS f
+  const rows = list.length ? await engine.executeRaw<{ f: string }>(`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT ${foldSql('gbrain_fact_normalize(c)')} AS f
     FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`, [list]) : [];
   // A word holding a control character is spelled \uXXXX in a row's JSON text, so it cannot prefilter.
   const pattern = (text: string) => ['', ...text.split(' ').filter(t => t && !/[\u0000-\u001f]/.test(t)).map(t => t.replace(/[\\%_]/g, '\\$&')), ''].join('%');
@@ -393,7 +393,11 @@ export function derivationBatchRows(): number { return sweepLimits.batchRows; }
 /** A derivation row's primary key, the cursor a batched walk resumes after. */
 export type DerivationKey = [pageId: number, pipeline: string, occurrenceId: string];
 
-/** SQL predicate: row `d` comes after the cursor in the int, text and bigint parameters `at` (all null: the first batch). */
+/**
+ * SQL predicate: row `d` comes after the cursor in the int, text and bigint parameters `at` (all null: the first batch).
+ * The walks that use it order by (page_id, pipeline, occurrence_id) with the same database collation as this test, so
+ * no row is skipped on any locale; the walk order is not output, so pipeline needs no COLLATE "C".
+ */
 export function derivationAfterSql(d: string, at: [string, string, string]): string {
   return `(${at[0]}::int IS NULL OR (${d}.page_id, ${d}.pipeline, ${d}.occurrence_id) > (${at[0]}::int, ${at[1]}::text, ${at[2]}::bigint))`;
 }
@@ -512,6 +516,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
   };
   /** Read-only: whether at most the record's batch size of rows after `at` (on `onPages`; every page when null) are all there are, and how many the sweep covers hold the claim. */
   const unswept = async (tx: BrainEngine, purge: SweepRecord, at: [number | null, string | null, string | null], onPages: number[] | null) => {
+    // Keyset walk, not output: the ORDER BY and derivationAfterSql share one collation (see derivationAfterSql).
     const [row] = await tx.executeRaw<{ scanned: number; hits: number }>(`WITH batch AS MATERIALIZED (
         SELECT d.page_id, d.pipeline, d.occurrence_id, ${derivationSweepScopeSql('d', 'p', '$2')} AS swept FROM page_segment_derivations d
         JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ${derivationAfterSql('d', ['$5', '$6', '$7'])} AND ($9::int[] IS NULL OR d.page_id = ANY($9::int[]))
@@ -597,6 +602,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
         picked = purge;
         await faultPoint('purge:derivation_batch', { sourceId, requestId: purge.request_id, round: Number(purge.batch_rows),
           read: purge.cursor_page === null ? '' : `${purge.cursor_page}/${purge.cursor_pipeline}/${purge.cursor_occurrence}` });
+        // Keyset walk, not output: the ORDER BY, the `last` row and derivationAfterSql share one collation (see derivationAfterSql).
         const batch = await tx.executeRaw<Row>(`WITH batch AS MATERIALIZED (
             SELECT d.page_id, d.pipeline, d.occurrence_id, ${derivationSweepScopeSql('d', 'p', '$2')} AS swept FROM page_segment_derivations d
             JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ${derivationAfterSql('d', ['$5', '$6', '$7'])}
@@ -639,6 +645,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
         rows = await engine.transaction(async tx => {
           await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${statementMs}ms`]);
           await faultPoint('purge:derivation_unread', { sourceId, requestId: purge.request_id });
+          // Keyset probe, not output: the ORDER BY and derivationAfterSql share one collation (see derivationAfterSql).
           const [next] = await tx.executeRaw<{ page_id: number; pipeline: string; occurrence_id: string; swept: boolean }>(`SELECT d.page_id, d.pipeline,
               d.occurrence_id::text AS occurrence_id, ${derivationSweepScopeSql('d', 'p', '$2')} AS swept FROM page_segment_derivations d
             JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ${derivationAfterSql('d', ['$3', '$4', '$5'])} AND ($6::int[] IS NULL OR d.page_id = ANY($6::int[]))

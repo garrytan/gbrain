@@ -359,7 +359,7 @@ export async function listCalibrations(engine: BrainEngine, filter: { slot?: Dec
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT * FROM decide_calibrations
       WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
+      ORDER BY slot COLLATE "C", created_at DESC, id DESC`,
     [filter.slot ?? null, filter.includeRetired ?? false],
   );
   return rows.map(normalizeCalibration);
@@ -400,7 +400,7 @@ export async function receiptStats(engine: BrainEngine, opts: { slot?: DecideSlo
             COALESCE(SUM(input_tokens), 0)::int AS input_tokens
        FROM decision_receipts
       WHERE created_at >= now() - ($1::int * interval '1 hour') AND ($2::text IS NULL OR slot = $2)
-      GROUP BY slot, mode, outcome, error_reason ORDER BY slot, mode, outcome, error_reason`,
+      GROUP BY slot, mode, outcome, error_reason ORDER BY slot COLLATE "C", mode COLLATE "C", outcome COLLATE "C", error_reason COLLATE "C"`,
     [opts.sinceHours, opts.slot ?? null],
   );
   return rows.map((r) => ({
@@ -420,7 +420,7 @@ export async function slotUsage(engine: BrainEngine, sinceHours = 24): Promise<S
             SUM(CASE WHEN outcome = 'skipped' THEN 1 ELSE 0 END)::int AS skipped,
             SUM(CASE WHEN error_reason LIKE 'egress%' OR error_reason IN ('denied_source','missing_provenance') THEN 1 ELSE 0 END)::int AS egress
        FROM decision_receipts WHERE created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot ORDER BY slot`,
+      GROUP BY slot ORDER BY slot COLLATE "C"`,
     [sinceHours],
   );
   return rows.map((r) => ({ slot: String(r.slot), decisions: Number(r.decisions), rows: Number(r.rows), input_tokens: Number(r.input_tokens), errors: Number(r.errors), skipped: Number(r.skipped), egress: Number(r.egress) }));

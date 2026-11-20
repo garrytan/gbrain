@@ -113,7 +113,7 @@ export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]
   if (opts.states) { params.push(opts.states); where.push(`state = ANY($${params.length}::text[])`); }
   else if (!opts.includeArchived) where.push(`state <> 'archived'`);
   const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${COLUMNS} FROM pinned_questions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY source_id, created_at, id`, params);
+    `SELECT ${COLUMNS} FROM pinned_questions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY source_id COLLATE "C", created_at, id`, params);
   return rows.map(toPinRow);
 }
 
