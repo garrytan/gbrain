@@ -92,8 +92,9 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
       `Source ${input.sourceId} has no active ingestion receipt, so gbrain will not resume from a different revision. Check its status; starting over means previewing removal with gbrain sources remove ${input.sourceId} --brain ${input.brainId} --dry-run and reconnecting, a destructive step the user approves.`,
       { fix: sourceStatusFix(input.brainId, `Shows source ${input.sourceId}'s receipt state (missing, discarded, or incomplete).`) });
   }
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-  assertCompanyBrainPolicy(profile, receipt, brain?.brain_id, source.local_path);
+  // A brain without an identity matches no profile, so the policy check refuses it.
+  const brainId = await engine.readPersistenceBrainId() as string;
+  assertCompanyBrainPolicy(profile, receipt, brainId, source.local_path);
   assertCompanyBrainExtractor(receipt.extractorVersion, input);
   const policyFingerprint = companyBrainPolicyFingerprint(profile, input.sourceId);
   let plan = receipt.outcome === 'complete'
@@ -142,7 +143,7 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
           `Another connect or sync changed source ${input.sourceId}'s approval while this sync ran, and this step rolled back. Check the receipt, then run ${resumeCommand(input)} again.`,
           { fix: sourceStatusFix(input.brainId, `Shows which receipt now owns source ${input.sourceId}.`) });
       }
-      assertCompanyBrainPolicy(companyBrainProfile(current.config)!, receipt!, brain.brain_id, current.local_path);
+      assertCompanyBrainPolicy(companyBrainProfile(current.config)!, receipt!, brainId, current.local_path);
       assertCompanyBrainExtractor(receipt!.extractorVersion, input);
       const nextId = randomUUID();
       const next = await beginSourceIngestionReceipt(tx, { id: nextId, sourceId: input.sourceId, sourceIncarnation: source.incarnation,

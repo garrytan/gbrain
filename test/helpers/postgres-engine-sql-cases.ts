@@ -709,7 +709,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   'takePageEmbeddingLease': OOS.cycleLocks, 'renewPageEmbeddingLease': OOS.cycleLocks, 'releasePageEmbeddingLease': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'listSourceImportRoots': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
@@ -755,7 +755,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getContentFlagsByPageIds': OOS.enrichment, 'getUnverifiedExtractionPageIds': OOS.enrichment,
   'getEffectiveDates': OOS.enrichment, 'getSalienceScores': OOS.enrichment, 'resolveAliases': OOS.enrichment,
   'getStats': OOS.stats, 'getHealth': OOS.stats,
-  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
+  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config, 'readConfigTable': OOS.config,
   // import guards (typed reads and writes the default import path runs)
   // persistence declaration (the typed protocol-2 declaration every managed write transaction runs first)
   'declarePersistence': OOS.persistenceDeclaration,
@@ -1299,6 +1299,7 @@ export const SQL_CASES: SqlCase[] = [
   // ── sources ──
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
+  ...variants('listSourceImportRoots', [['default', (e) => e.listSourceImportRoots('00000000-0000-4000-8000-00000000000a')]]),
   ...variants('countRepoBoundSources', [['default', (e) => e.countRepoBoundSources()]]),
   ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
@@ -1629,6 +1630,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('getIngestLog', [['default', (e) => e.getIngestLog()]]),
   ...variants('getConfig', [['default', (e) => e.getConfig('embedding_model')]]),
   ...variants('getConfigValues', [['default', (e) => e.getConfigValues(['embedding_model', 'auto_link'])]]),
+  ...variants('readConfigTable', [['default', (e) => e.readConfigTable()]]),
   ...variants('readManagedModeRows', [['default', (e) => e.readManagedModeRows()]]),
   ...variants('getSourceStrictness', [['default', (e) => e.getSourceStrictness(SRC)]]),
   ...variants('readPersistenceBrainId', [['default', (e) => e.readPersistenceBrainId()]]),

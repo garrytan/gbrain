@@ -1,4 +1,4 @@
-/** Config members: key and value strings in the store's `config` table (BrainEngine getConfig .. getAllConfig, getConfigValues). */
+/** Config members: key and value strings in the store's `config` table (BrainEngine getConfig .. getAllConfig, readConfigTable, getConfigValues). */
 import { storeCall, type StoreMember } from './common.ts';
 
 export const getConfig: StoreMember<[key: string], string | null> = (brain, key) =>
@@ -16,6 +16,11 @@ export const listConfigKeys: StoreMember<[prefix: string], string[]> = (brain, p
 
 export const getAllConfig: StoreMember<[], Record<string, string>> = (brain) =>
   storeCall({ member: 'getAllConfig' }, () => brain.getAllConfig());
+
+/** Every stored config row as `{ key, value }`: the store has no request snapshot, so `getAllConfig` is the table. */
+export const readConfigTable: StoreMember<[], Array<{ key: string; value: string }>> = async (brain) =>
+  Object.entries(await storeCall({ member: 'readConfigTable' }, () => brain.getAllConfig()) as Record<string, string>)
+    .map(([key, value]) => ({ key, value }));
 
 export const getConfigValues: StoreMember<[keys: readonly string[]], Array<{ key: string; value: string }>> = (brain, keys) =>
   storeCall({ member: 'getConfigValues' }, () => brain.getConfigValues([...keys]));

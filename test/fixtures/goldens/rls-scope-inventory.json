@@ -3350,6 +3350,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceImportRoots#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLastCommits#default": {
         "flagOffLanes": [
           "pool"
@@ -4236,6 +4247,17 @@
         "flagOnScopes": []
       },
       "readChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readConfigTable#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7128,6 +7150,7 @@
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
         "listSlugAliases": "none",
+        "listSourceImportRoots": "none",
         "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
         "listSourcePathPages": "none",
@@ -7307,6 +7330,7 @@
         "readChunkVectorColumn": "none",
         "readClientBudgetUsd": "none",
         "readClientOpUsage": "none",
+        "readConfigTable": "none",
         "readCounterRows": "none",
         "readCurrentWriteTrust": "none",
         "readCursorEdition": "none",

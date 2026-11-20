@@ -283,12 +283,12 @@ src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
 src/core/code-graph-readiness.ts	execute_raw	1
 src/core/code-intel/recursive-walk.ts	execute_raw	2
-src/core/company-brain/admission.ts	execute_raw	12
+src/core/company-brain/admission.ts	execute_raw	10
 src/core/company-brain/demo.ts	execute_raw	2
 src/core/company-brain/evidence.ts	execute_raw	3
 src/core/company-brain/profile.ts	execute_raw	2
 src/core/company-brain/receipts.ts	execute_raw	9
-src/core/company-brain/runtime.ts	execute_raw	14
+src/core/company-brain/runtime.ts	execute_raw	13
 src/core/company-brain/verification.ts	execute_raw	3
 src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/core/connection-manager.ts	sql_template	3
@@ -599,7 +599,7 @@ src/core/persistence/change-reason.ts	execute_raw	2
 src/core/persistence/checkpoint-validation.ts	execute_raw	5
 src/core/persistence/compaction-pass.ts	execute_raw	1
 src/core/persistence/concept-rebuild.ts	execute_raw	11	#9653: the held-concept rebuild's hold, member and stated-row checks run in its purge transaction, next to the engine purge it calls
-src/core/persistence/config-snapshot.ts	execute_raw	2
+src/core/persistence/config-snapshot.ts	execute_raw	1
 src/core/persistence/connector-account-mismatch.ts	execute_raw	2
 src/core/persistence/connector-checkpoint-migration.ts	execute_raw	13
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
@@ -658,7 +658,6 @@ src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/identity.ts	execute_raw	4
 src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
-src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
 src/core/persistence/journal.ts	execute_raw	34
@@ -945,7 +944,7 @@ src/core/shared-skills/retention.ts	execute_raw	12
 src/core/shared-skills/setup.ts	execute_raw	6
 src/core/shared-skills/source-opt-out.ts	execute_raw	2
 src/core/similar-pages.ts	execute_raw	1
-src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
+src/core/skillpack/shared-brain-bridge.ts	execute_raw	3
 src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	1
 src/core/source-delete.ts	execute_raw	2

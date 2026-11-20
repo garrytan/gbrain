@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1029/1035
+# covered: 1031/1037
 # lifecycle: 9/9
-# pages: 59/59
+# pages: 60/60
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
@@ -30,7 +30,7 @@
 # versions: 7/7
 # stats_ingest: 9/9
 # sync_aliases: 10/10
-# config: 6/6
+# config: 7/7
 # import_guards: 13/13
 # persistence_journal: 136/136
 # entity_reads: 17/17
@@ -118,6 +118,7 @@ listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	8	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
+listSourceImportRoots	pages	yes	2	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
@@ -405,11 +406,12 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	19	no	yes	yes	serves
-setConfig	config	yes	32	no	yes	yes	serves
+setConfig	config	yes	34	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
-getAllConfig	config	yes	1	no	yes	yes	serves
+getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
+readConfigTable	config	yes	2	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	7	no	yes	yes	serves
@@ -907,7 +909,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	5	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves

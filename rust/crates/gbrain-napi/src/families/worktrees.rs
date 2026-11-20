@@ -220,6 +220,16 @@ impl Brain {
         self.run(env, move |s| s.stamp_worktree_heartbeats(&host_id))
     }
 
+    /// `listSourceImportRoots(hostId)`: every unarchived source's `{ id, local_path, worktree_path, relative_path }`.
+    #[napi]
+    pub fn list_source_import_roots<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_import_roots(&host_id))
+    }
+
     /// The host-binding rows of `listManagedRootBindings(hostId)`.
     #[napi]
     pub fn list_host_root_bindings<'env>(

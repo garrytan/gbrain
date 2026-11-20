@@ -153,6 +153,21 @@ export async function listSourceLocalPaths(exec: LegacyUnscopedRead): Promise<st
   return rows.map(r => r.local_path);
 }
 
+/** One live source's roots on a host: a managed import refuses a path inside another source's (import-prepare.ts). */
+export interface SourceImportRoot { id: string; local_path: string | null; worktree_path: string | null; relative_path: string | null }
+/** The statement `assertImportPaths` ran through `executeRaw`, byte for byte (batchSharedReads keys its memo on it). */
+export const SOURCE_IMPORT_ROOTS_SQL = `SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s
+      LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived`;
+
+/**
+ * Every live source with its own local path and, when its binding is at its current incarnation, the binding's
+ * relative path and host `hostId`'s worktree path (null when absent). Unscoped: the import checks every source. No order.
+ */
+export async function listSourceImportRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SourceImportRoot[]> {
+  return exec.executeRaw<SourceImportRoot>(SOURCE_IMPORT_ROOTS_SQL, [hostId]);
+}
+
 /**
  * How many live (not archived) sources are bound to a local repository, unscoped (the readiness sync probe read it
  * through `executeRaw`). An empty path counts as unbound, as NULL does.

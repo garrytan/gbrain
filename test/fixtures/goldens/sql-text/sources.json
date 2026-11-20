@@ -168,6 +168,18 @@
           }
         ]
       },
+      "listSourceImportRoots": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived",
+            "textSha256": "e377d861db79f506bc4f672a09f2f2ba7c972705e5f3bebf3e0a211ce64885e3"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {

@@ -1,0 +1,1 @@
+- On the Rust engine a managed sync's preparation now reads its config, and a managed file import checks the other sources' roots, instead of stopping on raw SQL. Connecting or resuming a company brain and installing the shared skill router read the brain's identity through the same typed read on every engine. PGLite and Postgres run the same statements as before.

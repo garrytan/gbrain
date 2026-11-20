@@ -8,7 +8,7 @@ import { findBridgeEntry, loadBridgeState } from './bridge-state.ts';
 import { ownedBridgeSlugs, SHARED_DEP_LEDGER_KEY } from './harness-bridge.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { createSharedSkillsAdapter, type SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
-import { verifyLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../persistence/identity.ts';
+import { readBrainIdentity, verifyLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../persistence/identity.ts';
 import { renderAgentLauncher } from '../agent-install/launcher.ts';
 import { resolveSourceWithTier, ALL_SOURCES } from '../source-resolver.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
@@ -168,9 +168,9 @@ export async function installSharedBrainBridge(options: {
   const dest = checkedRoot(options.dest);
   try { assertLegacySkillFilesystemWrite(dest); }
   catch { return pending('canonical_destination_refused', 'Native router installation cannot write into a managed canonical source. Choose the harness’s separate native skills directory; publish canonical skill changes through the catalog.'); }
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await readBrainIdentity(engine);
   const adapterId = harnessAdapter(options.harness).id;
-  const key = sha256(JSON.stringify([brain.brain_id, source.source_id, adapterId, dest])).slice(0, 32);
+  const key = sha256(JSON.stringify([brainId, source.source_id, adapterId, dest])).slice(0, 32);
   const root = join(configDir(), 'skillpack-shared', key);
   const receiptPath = confinedPath(root, 'installation.json');
   const priorText = existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : null;
@@ -194,7 +194,7 @@ export async function installSharedBrainBridge(options: {
   const actual = existsSync(launcher) ? sha256(readFileSync(launcher)) : null;
   if (actual !== null && ![prior.launcher_hash, prior.pending_hash].includes(actual)) return pending('local_conflict', 'The installation-bound launcher was edited or is unowned. Preserve it before retrying.');
   let registration: LocalRegistration;
-  try { registration = await bindBridgeTarget(engine, brain.brain_id, adapterId, root, policy === 'follow'); }
+  try { registration = await bindBridgeTarget(engine, brainId, adapterId, root, policy === 'follow'); }
   catch (error) {
     if (error instanceof OperationError && ['independent_principal_required', 'bridge_ownership_conflict'].includes(error.code)) {
       if (policy !== 'memory-only') return pending(error.code, error.message);
@@ -204,12 +204,12 @@ export async function installSharedBrainBridge(options: {
           if ((existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : null) !== priorText) throw new Error('changed ownership receipt');
           const state = confinedPath(root, 'shared-skills');
           const cached = JSON.parse(readPrivateText(join(state, 'receipt.json'), 4 * 1024 * 1024));
-          if (cached.brain_id !== brain.brain_id || cached.adapter !== adapterId || typeof cached.installation_id !== 'string') throw new Error('unbound local receipt');
+          if (cached.brain_id !== brainId || cached.adapter !== adapterId || typeof cached.installation_id !== 'string') throw new Error('unbound local receipt');
           const nativePath = confinedPath(state, 'native-router.json');
           if (existsSync(nativePath)) {
             const native = JSON.parse(readPrivateText(nativePath, 65536));
-            const name = `gbrain-shared-${sha256(JSON.stringify([brain.brain_id, cached.installation_id, adapterId, `bridge-${key}`])).slice(0, 24)}`;
-            if (native.version !== 1 || native.name !== name || native.skills_dir !== dest || native.brain_id !== brain.brain_id ||
+            const name = `gbrain-shared-${sha256(JSON.stringify([brainId, cached.installation_id, adapterId, `bridge-${key}`])).slice(0, 24)}`;
+            if (native.version !== 1 || native.name !== name || native.skills_dir !== dest || native.brain_id !== brainId ||
               native.installation_id !== cached.installation_id || native.adapter !== adapterId) throw new Error('foreign native router ownership');
           } else if (cached.native_router_path) throw new Error('missing native router ownership');
           const local = createSharedSkillsAdapter({ root: state, adapter: adapterId, call: async () => { throw error; } });

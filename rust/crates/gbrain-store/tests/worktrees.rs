@@ -567,3 +567,53 @@ fn a_transfer_accept_moves_the_owner_binding_and_content_receipt_to_the_successo
     store.accept_worktree_owner(STALE, HOST_B).unwrap();
     assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
 }
+
+#[test]
+fn the_import_roots_list_every_live_source_with_its_current_binding_and_this_hosts_path() {
+    let dir = TempDir::new("worktrees-import-roots");
+    let store = open(&dir);
+    let input: SourceInput = serde_json::from_value(
+        json!({ "id": "rooted", "name": "rooted", "local_path": "/srv/rooted", "config": {} }),
+    )
+    .unwrap();
+    store.upsert_source(&input).unwrap();
+    let incarnation = source(&store, "work", json!({}));
+    source(&store, "stale", json!({}));
+    source(&store, "gone", json!({}));
+    seed(&store, "work", &incarnation);
+    store
+        .insert_source_binding(&binding("stale", STALE, WORKTREE))
+        .unwrap();
+    assert!(store.set_source_archived("gone", true).unwrap());
+    let ids = |rows: &[Value]| rows.iter().map(|r| r["id"].clone()).collect::<Vec<_>>();
+    let rows = store.list_source_import_roots(HOST_A).unwrap();
+    assert_eq!(
+        ids(&rows),
+        vec![
+            json!("default"),
+            json!("rooted"),
+            json!("stale"),
+            json!("work")
+        ]
+    );
+    let row = |rows: &[Value], id: &str| rows.iter().find(|r| r["id"] == id).cloned().unwrap();
+    assert_eq!(
+        row(&rows, "work"),
+        json!({ "id": "work", "local_path": null, "worktree_path": "/var/tmp/work-root", "relative_path": "notes" })
+    );
+    assert_eq!(
+        row(&rows, "stale"),
+        json!({ "id": "stale", "local_path": null, "worktree_path": null, "relative_path": null })
+    );
+    assert_eq!(
+        row(&rows, "rooted"),
+        json!({ "id": "rooted", "local_path": "/srv/rooted", "worktree_path": null, "relative_path": null })
+    );
+    // Another host keeps the binding's relative path and has no worktree path; a host id that is not a UUID is refused.
+    let other = store.list_source_import_roots(HOST_B).unwrap();
+    assert_eq!(
+        row(&other, "work"),
+        json!({ "id": "work", "local_path": null, "worktree_path": null, "relative_path": "notes" })
+    );
+    assert!(store.list_source_import_roots("not-a-uuid").is_err());
+}

@@ -98,13 +98,13 @@ export function isSharedReadFailure(error: unknown): boolean {
  * `engineReads`. The label stands in for the statement text on the claim stamp's `last_sql`.
  */
 export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
-  'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
+  'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'listSourceImportRoots', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
   'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readFolderAccess',
   'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
-  'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
+  'getConfig', 'getAllConfig', 'readConfigTable', 'listConfigKeys', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
   'readSegmentTexts', 'readManifest']);
 

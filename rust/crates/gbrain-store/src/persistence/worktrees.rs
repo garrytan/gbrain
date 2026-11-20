@@ -770,6 +770,33 @@ pub(crate) fn content_receipt_rows_in(
     Ok(out)
 }
 
+/// `listSourceImportRoots(hostId)` (`SOURCE_IMPORT_ROOTS_SQL`): every unarchived source as `{ id,
+/// local_path, worktree_path, relative_path }`. The binding counts only at the source's current
+/// incarnation; `worktree_path` is its host binding on `host_id`. Absent parts are null. Source ids
+/// in byte order (the statement has no order; its caller does not depend on one).
+pub(crate) fn source_import_roots_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let mut out = Vec::new();
+    for s in all_sources(read)? {
+        if s.archived {
+            continue;
+        }
+        let binding = get_json::<SourceBindingRecord>(read, &source_binding_key(&s.id))?
+            .filter(|b| b.source_incarnation.eq_ignore_ascii_case(&s.incarnation));
+        let host_row = match &binding {
+            Some(b) => read_host_record(read, &b.worktree_id, &host)?,
+            None => None,
+        };
+        out.push(json!({
+            "id": s.id,
+            "local_path": s.local_path,
+            "worktree_path": host_row.map(|h| h.local_path),
+            "relative_path": binding.map(|b| b.relative_path),
+        }));
+    }
+    Ok(out)
+}
+
 /// `swapConfigValue(key, value, expected)`: sets config `key` to `value` only while it holds
 /// `expected`; whether it was set.
 pub(crate) fn swap_config_value_in(
@@ -899,6 +926,11 @@ impl Store {
     /// `stampWorktreeHeartbeats(hostId)`: how many worktrees were stamped.
     pub fn stamp_worktree_heartbeats(&self, host_id: &str) -> Result<u64> {
         self.write(|tx| stamp_worktree_heartbeats_in(tx, &*self.env, host_id))
+    }
+
+    /// `listSourceImportRoots(hostId)`.
+    pub fn list_source_import_roots(&self, host_id: &str) -> Result<Vec<Value>> {
+        source_import_roots_in(&*self.read()?, host_id)
     }
 
     /// The host-binding rows of `listManagedRootBindings(hostId)`.

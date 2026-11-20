@@ -113,6 +113,8 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
+    // A managed import's source-root check (import-prepare.ts assertImportPaths), once per host.
+    if (key === 'listSourceImportRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSourceImportRoots(hostId));
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.

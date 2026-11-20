@@ -155,6 +155,7 @@ export const RUST_ENGINE_MEMBERS = {
   // sources
   getSource: 'sources',
   listSourceLocalPaths: 'sources',
+  listSourceImportRoots: 'sources',
   countRepoBoundSources: 'sources',
   // The commit notifier's host source list (engine-sql/notifier.ts).
   listNotifierHostSourceRows: 'sources',
@@ -234,6 +235,7 @@ export const RUST_ENGINE_MEMBERS = {
   unsetConfig: 'config',
   listConfigKeys: 'config',
   getAllConfig: 'config',
+  readConfigTable: 'config',
   // page_versions
   createVersion: 'page_versions',
   getVersions: 'page_versions',

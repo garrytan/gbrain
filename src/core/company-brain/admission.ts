@@ -158,15 +158,16 @@ async function approvedReplay(engine: BrainEngine, input: CompanyBrainConnectInp
   const principal = await topologyPrincipal(engine);
   const [record] = await engine.executeRaw<{ operation: string }>('SELECT operation FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid', [principal, input.requestId]);
   if (!record || !['add', 'company-brain-connect'].includes(record.operation)) throw collision();
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-  const { profile, config } = admissionConfig(input, input.requestId, brain.brain_id);
+  const brainId = await engine.readPersistenceBrainId();
+  if (brainId === null) throw brainUninitialized('Initialize the explicitly selected brain first.', input.brainId);
+  const { profile, config } = admissionConfig(input, input.requestId, brainId);
   const intent = record.operation === 'add' ? { ...lifecycleInput(input, input.requestId, config), requestId: undefined, dryRun: undefined } : legacyIntent(input);
   const prior = await priorTopologyChange(engine, principal, input.requestId, intent);
   if (!prior || prior.state !== 'committed' || prior.source_id !== input.sourceId || prior.source_incarnation !== source.incarnation) throw collision();
   const receipt = await getSourceIngestionReceipt(engine, { sourceId: input.sourceId, sourceIncarnation: source.incarnation, receiptId: input.requestId });
   const current = companyBrainProfile(source.config);
   if (!receipt || receipt.outcome === 'discarded' || !receipt.lifecycleRequestIds.includes(input.requestId) || !current || current.receiptId !== receipt.id) throw collision();
-  assertCompanyBrainPolicy(profile, receipt, brain.brain_id, source.local_path);
+  assertCompanyBrainPolicy(profile, receipt, brainId, source.local_path);
   if (companyBrainPolicyFingerprint(current, input.sourceId) !== receipt.policyFingerprint) throw collision();
   assertCompanyBrainExtractor(receipt.extractorVersion, input);
   await ingestionFence(engine, input.sourceId);
@@ -241,9 +242,9 @@ export async function admitCompanyBrain(engine: BrainEngine, input: CompanyBrain
   }
   if (!input.plan.revision || !input.plan.schema) throw planNotReady('source_not_ready', 'A committed source and approved schema are required.', input.path);
   const plan = input.plan;
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-  if (!brain) throw brainUninitialized('Initialize the explicitly selected brain first.', input.brainId);
-  const { profile, config } = admissionConfig(input, requestId, brain.brain_id);
+  const brainId = await engine.readPersistenceBrainId();
+  if (brainId === null) throw brainUninitialized('Initialize the explicitly selected brain first.', input.brainId);
+  const { profile, config } = admissionConfig(input, requestId, brainId);
   assertCompanyBrainExtractor(profile.extractorVersion, input);
   await registerLocalWriter(engine, 'cli');
   const before = async (tx: BrainEngine) => {

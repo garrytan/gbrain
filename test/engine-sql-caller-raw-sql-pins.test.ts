@@ -1288,6 +1288,19 @@ const PINS: Pin[] = [
     case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
     texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
   },
+  // The shared pre-admission reads outside page-mutations.ts (engine-sql/sources.ts, engine-sql/config.ts), at ace4b8a225.
+  {
+    from: 'src/core/persistence/import-prepare.ts:170 assertImportPaths (the other sources\' roots), at ace4b8a225',
+    case: { method: 'listSourceImportRoots', variant: 'default', run: e => e.listSourceImportRoots('00000000-0000-4000-8000-00000000000a') },
+    texts: [`SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s
+      LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived`],
+  },
+  {
+    from: 'src/core/persistence/config-snapshot.ts:17 preparationConfigView, at ace4b8a225',
+    case: { method: 'readConfigTable', variant: 'default', run: e => e.readConfigTable() },
+    texts: ['SELECT key,value FROM config'],
+  },
 ];
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */

@@ -294,6 +294,9 @@
     "listQuarantinedSlugs#default": {
       "raw": 1
     },
+    "listSourceImportRoots#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
     "listSourcePathPages#default": {
       "raw": 1
