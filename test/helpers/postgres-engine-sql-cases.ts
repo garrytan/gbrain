@@ -463,6 +463,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readInlinePageRegions': OOS.writeGuards,
   'readStoredPageTier': OOS.writeGuards,
   'readPageHiddenFromCaller': OOS.pageVisibility,
+  'readPageWorldVisible': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
   'readWriteVisibilityProbe': OOS.pageVisibility,
   'readWriterSlugFence': OOS.pageVisibility,

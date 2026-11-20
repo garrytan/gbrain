@@ -4,7 +4,7 @@
  * a stored writer carries.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe and readWriterSlugFence return the same observable result
+ *  - Contract: readPageHiddenFromCaller, readPageWorldVisible, readCallerPageAccess, readWriteVisibilityProbe and readWriterSlugFence return the same observable result
  *    on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts),
  *    under the no-caller rendering and under a caller with a reader identity and a private-readable grant.
  *  - Regression: an engine that answers one of these differently lets a remote write touch a page its caller may not
@@ -127,6 +127,62 @@ describe('engine parity: page visibility guards', () => {
       access: { 'notes/vis-open': false, 'notes/vis-private': false, 'notes/vis-gone': false, 'notes/vis-missing': false },
       readRows: ['notes/vis-gone:false', 'notes/vis-open:true', 'notes/vis-private:false'],
       accessRows: ['notes/vis-gone:false', 'notes/vis-open:true', 'notes/vis-private:true'],
+    });
+    return answers;
+  });
+
+  parityTest('readPageWorldVisible judges the page row by the anonymous read policy, whatever reader identity or grant the caller holds', {
+    methods: ['putPage', 'softDeletePage', 'readPageWorldVisible'],
+  }, async (engine) => {
+    await seed(engine);
+    const world = async () => {
+      const out: Record<string, boolean> = {};
+      for (const slug of [...SLUGS, 'notes/vis-missing']) out[slug] = await engine.readPageWorldVisible('default', slug);
+      return out;
+    };
+    const answers = {
+      none: await world(),
+      member: await withCallerAccess(MEMBER, world),
+      granted: await withCallerAccess(GRANTED, world),
+      unrestricted: await withCallerAccess(UNRESTRICTED, world),
+      otherSource: await engine.readPageWorldVisible('parity-missing', 'notes/vis-open'),
+    };
+    // Only the open page is world-visible: a private page, a page with named readers, a soft-deleted page and a missing
+    // page are not, and no caller identity or private-readable grant widens the answer.
+    const row = { 'notes/vis-open': true, 'notes/vis-private': false, 'notes/vis-alice': false, 'notes/vis-gone': false, 'notes/vis-missing': false };
+    expect(answers).toEqual({ none: row, member: row, granted: row, unrestricted: row, otherSource: false });
+    return answers;
+  });
+
+  parityTest('readPageWorldVisible keeps the caller record\'s folder coverage and owner flag, as the SQL fragment does', {
+    methods: ['putPage', 'readPageWorldVisible'],
+  }, async (engine, backend) => {
+    await engine.putPage('notes/vis-open', NOTE);
+    await engine.putPage('wiki/vis-open', NOTE);
+    await createSource(engine, backend, 'vis-flagged', { owner_only: true });
+    await engine.putPage('notes/vis-open', NOTE, { sourceId: 'vis-flagged' });
+    const world = async () => ({
+      notes: await engine.readPageWorldVisible('default', 'notes/vis-open'),
+      wiki: await engine.readPageWorldVisible('default', 'wiki/vis-open'),
+      flagged: await engine.readPageWorldVisible('vis-flagged', 'notes/vis-open'),
+    });
+    // A schema version gives the owner-only test its per-page form, so only the owner-only source's page is owner-only.
+    noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+    const answers = await withEngineScope(engine, async () => {
+      return {
+        none: await world(),
+        prefix: await withCallerAccess({ ...MEMBER, folderCoverage: [{ source_id: 'default', prefix: 'notes/' }] }, world),
+        wholeSource: await withCallerAccess({ identity: [], hidePrivate: true, folderCoverage: [{ source_id: 'default', prefix: '' }] }, world),
+        owner: await withCallerAccess({ identity: [], hidePrivate: true, owner: true }, world),
+      };
+    });
+    expect(answers).toEqual({
+      none: { notes: true, wiki: true, flagged: false },
+      // A page under a covered prefix reads as nobody, so it is not world-visible; the empty identity does not lift it.
+      prefix: { notes: false, wiki: true, flagged: false },
+      wholeSource: { notes: false, wiki: false, flagged: false },
+      // An owner read renders no owner-only test, so the owner-only source's open page counts as world-visible.
+      owner: { notes: true, wiki: true, flagged: true },
     });
     return answers;
   });

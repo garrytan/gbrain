@@ -185,7 +185,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'readPageIndexingState', 'hasSegmentStorage',
   'readInlinePageRegions', 'readStoredPageTier',
   // Page visibility guards of a remote page write (engine-sql/page-visibility.ts).
-  'readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence',
+  'readPageHiddenFromCaller', 'readPageWorldVisible', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence',
   // The large-page write guard's stored body size read (engine-sql/large-page.ts).
   'readStoredBodyBytes',
   'readPageBodySizes',

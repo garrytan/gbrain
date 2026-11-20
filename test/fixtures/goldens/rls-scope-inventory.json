@@ -7335,6 +7335,7 @@
         "readPageTitle": "none",
         "readPageTrustRows": "none",
         "readPageVersionEdition": "none",
+        "readPageWorldVisible": "none",
         "readPendingProposalSummary": "none",
         "readPersistenceBrainId": "none",
         "readPlainSyncSource": "none",

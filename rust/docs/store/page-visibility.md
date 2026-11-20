@@ -20,7 +20,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 ## TypeScript members
 
-`src/core/rust-engine/store-members/page-visibility.ts` answers the three BrainEngine members on a Rust brain.
+`src/core/rust-engine/store-members/page-visibility.ts` answers the BrainEngine members on a Rust brain.
 
 - `readPageHiddenFromCaller` and `readCallerPageAccess` take `{ policy: 'read' | 'access' }`. The `read` part
   renders `privatePagesFilterForCaller('p')` and maps it through `storePageTextPolicy`, as the other page reads do.
@@ -37,6 +37,13 @@ member-access part alone (the page's readers, and the origin of a derived page):
   cleared) guarantees whenever the config says unrestricted. A reader identity reaches the policy only through a
   page's readers, so the same holds for a member caller
   (`test/engine-parity/unrestricted-member-page-reads.test.ts`).
+- `readPageWorldVisible(sourceId, slug)` is the reason path's read (`persistence/change-reason.ts`): a commit keeps
+  its change reason only while the page is world-visible. It renders `privatePagesFilterFragment('p')` (the anonymous
+  read policy) under an anonymous restricted record with the caller's identity and grant emptied, maps it through
+  `storePageTextPolicy` and asks `brain.readCallerPageAccess` for the one pair: `true` when the page is live and
+  passes. As in the SQL fragment, the caller's folder coverage still hides a page under a covered prefix (the store
+  applies coverage for the empty identity too), and an owner caller's policy is sent with the owner-only test off. It
+  adds no store method. The capability is `pages`.
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
   (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. Another kind, other than an OAuth client,
   carries no fence and reads nothing. The capability is `persistence_journal`.
