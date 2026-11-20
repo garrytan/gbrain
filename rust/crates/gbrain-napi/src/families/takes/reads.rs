@@ -1,5 +1,5 @@
-//! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
-//! repair sites (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
+//! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard, supersession
+//! repair and calibration admin sites (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
 
 use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput};
 use napi::Env;
@@ -69,5 +69,21 @@ impl Brain {
         self.run(env, move |s| {
             s.list_take_supersession_candidates(&source_ids)
         })
+    }
+
+    /// `listTopResolvedTakesForHolder(holder)`: the holder's 25 heaviest active resolved takes.
+    #[napi]
+    pub fn list_top_resolved_takes_for_holder<'env>(
+        &self,
+        env: &'env Env,
+        holder: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_top_resolved_takes_for_holder(&holder))
+    }
+
+    /// `listAbandonedTakes()`: the five oldest abandoned high-conviction takes.
+    #[napi]
+    pub fn list_abandoned_takes<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_abandoned_takes())
     }
 }

@@ -2338,6 +2338,7 @@ export class PGLiteEngine implements BrainEngine {
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number) { return telemetryImpl.pruneMcpRequestLogBatch(this.engineSql, cutoff, keepOperations, limit); }
   readMcpLifetimeUsage(tokenNames: readonly string[]) { return telemetryImpl.readMcpLifetimeUsage(this.telemetryRead, tokenNames); }
   countMcpRequestsLastDay(kind: McpRequestCountKind) { return telemetryImpl.countMcpRequestsLastDay(this.telemetryRead, kind); }
+  readMcpRequestLogPage(spec: telemetryImpl.McpRequestLogPageSpec) { return telemetryImpl.readMcpRequestLogPage(this.telemetryRead, spec); }
   readPendingWriteHealth() { return telemetryImpl.readPendingWriteHealth(this.telemetryRead); }
   countMcpRequestsLastDayByToken(tokenNames: readonly string[]) { return telemetryImpl.countMcpRequestsLastDayByToken(this.telemetryRead, tokenNames); }
   logChatUsage(row: chatUsageImpl.ChatUsageLogRow) { return chatUsageImpl.logChatUsage(this.engineSql, row); }
@@ -3811,6 +3812,8 @@ export class PGLiteEngine implements BrainEngine {
   async listTakeRowsForPage(pageId: number) { return takesReads.listTakeRowsForPage(this, pageId); }
   async listHeldFenceTakeRows(spec: takesReads.HeldFenceTakeSpec) { return takesReads.listHeldFenceTakeRows(this, spec); }
   async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
+  async listTopResolvedTakesForHolder(holder: string) { return takesReads.listTopResolvedTakesForHolder(this, holder); }
+  async listAbandonedTakes() { return takesReads.listAbandonedTakes(this); }
   async listTakeSupersessionCandidates(sourceIds: readonly string[]) { return takesReads.listTakeSupersessionCandidates(this, sourceIds); }
   async countZeroWeightWithTakes() { return takesReads.countZeroWeightWithTakes(this); }
   async hasCodeEdgesSymbol(sourceId: string) { return takesReads.hasCodeEdgesSymbol(this, sourceId); }
