@@ -27,6 +27,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { HEALTH_CACHE_TTL_KEY } from '../src/core/health-memo.ts';
 import { MUTE_RECHECK, MUTED, type OpenLoopUpsert } from '../src/core/loops/loops-store.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
@@ -383,6 +384,60 @@ for (const kind of testBackends()) {
           ['explicit', 'legacy', ...(keep.includes('keep') ? ['keep'] : [])].sort());
       });
     }
+
+    // ------------------------------------------------------------ the reads that moved with the writes
+
+    test('getSource answers the rows the preflight, connector and write-through statements read: local_path and config, by id, and nothing for an unknown id', async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config, local_path) VALUES ('pathed', 'pathed', '{"kind":"repo","federated":true}'::jsonb, '/work/p'), ('bare', 'bare', '{}'::jsonb, NULL)`);
+      for (const id of ['default', 'pathed', 'bare', 'nowhere']) {
+        const [old] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [id]);
+        const [oldPath] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [id]);
+        const now = await engine.getSource(id);
+        expect(now?.local_path ?? null, id).toBe(old?.local_path ?? null);
+        expect(now?.local_path ?? null, id).toBe(oldPath?.local_path ?? null);
+        expect(Boolean(now), id).toBe(Boolean(old));
+        const cfg = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
+        expect(now ? cfg(now.config) : null, id).toEqual(old ? cfg(old.config) : null);
+      }
+      expect((await engine.getSource('pathed'))?.local_path).toBe('/work/p');
+    });
+
+    test('listAccessTokens answers the rows `gbrain auth list` selected: every token, revoked ones too, newest first, every column', async () => {
+      await engine.executeRaw(`INSERT INTO access_tokens (name, token_hash, scopes, created_at, revoked_at) VALUES
+        ('old', 'h1', ARRAY['read'], '2026-01-01T00:00:00Z', NULL), ('mid', 'h2', ARRAY['read','write'], '2026-02-01T00:00:00Z', '2026-02-02T00:00:00Z'), ('new', 'h3', NULL, '2026-03-01T00:00:00Z', NULL)`);
+      const old = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens ORDER BY created_at DESC');
+      const now = await engine.listAccessTokens();
+      const shape = (rows: ReadonlyArray<Record<string, unknown>>) => rows.map(r => ({ ...r, id: String(r.id) }));
+      expect(shape(now as never)).toEqual(shape(old));
+      expect(now.map(r => r.name)).toEqual(['new', 'mid', 'old']);
+    });
+
+    test('the health memo\'s clock and config reads answer what its one UNION statement answered, before and after a page write', async () => {
+      const keys = ['embedding_columns', 'schema_pack', HEALTH_CACHE_TTL_KEY];
+      await engine.executeRaw(`INSERT INTO config (key, value) VALUES ('embedding_columns', 'a,b'), ('schema_pack', 'p'), ('health.cache_ttl_ms', '5') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+      const before = async () => {
+        const rows = await engine.executeRaw<{ k: string; v: string | null }>(
+          `SELECT key AS k, value AS v FROM config
+        WHERE key IN (${keys.map(k => `'${k}'`).join(', ')})
+       UNION ALL
+       SELECT '__page_clock__' AS k, COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS v
+       UNION ALL
+       SELECT '__brain_id__' AS k, (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS v`);
+        const byKey = new Map(rows.map(r => [r.k, r.v]));
+        return { clock: `${byKey.get('__brain_id__') ?? ''}:${byKey.get('__page_clock__') ?? ''}`, config: keys.map(k => [k, byKey.get(k) ?? null]) };
+      };
+      const after = async () => ({
+        clock: await engine.readHealthMemoClock(),
+        config: await engine.getConfigValues(keys).then(rows => { const m = new Map(rows.map(r => [r.key, r.value])); return keys.map(k => [k, m.get(k) ?? null]); }),
+      });
+      const first = await before();
+      expect(await after()).toEqual(first);
+      expect(first.config).toEqual([['embedding_columns', 'a,b'], ['schema_pack', 'p'], [HEALTH_CACHE_TTL_KEY, '5']]);
+      await engine.putPage('notes/clock', { type: 'note', title: 'c', compiled_truth: 'c', timeline: '' });
+      const second = await before();
+      expect(second.clock).not.toBe(first.clock);
+      expect(await after()).toEqual(second);
+    });
 
     // ------------------------------------------------------------ transaction scope
 
