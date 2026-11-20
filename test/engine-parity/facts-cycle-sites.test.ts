@@ -314,6 +314,37 @@ describe('engine parity: facts cycle, phantom redirect and fence-guard statement
     return { unfenced, held, orphaned };
   });
 
+  parityTest('the facts home scan reports how long a held row has waited, the dimension of an unfenced row and a soft-deleted fence page', {
+    methods: ['scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'insertFacts', 'putPage', 'softDeletePage'],
+  }, async (engine) => {
+    await engine.putPage('memory/unattributed', note('Held'));
+    await engine.putPage('members/ann/memory/unattributed', note('Nested'));
+    await engine.putPage('people/live', note('L'));
+    await engine.putPage('people/closed', note('C'));
+    const ids = await fenced(engine, [
+      { fact: 'about live', row_num: 1, source_markdown_slug: 'memory/unattributed', entity_slug: 'people/live' },
+      { fact: 'about a nested one', row_num: 1, source_markdown_slug: 'members/ann/memory/unattributed', entity_slug: 'people/aaa' },
+      { fact: 'about a holding page', row_num: 2, source_markdown_slug: 'memory/unattributed', entity_slug: 'members/ann/memory/unattributed' },
+      { fact: 'a slot', row_num: 3, source_markdown_slug: 'memory/unattributed', entity_slug: 'people/live', dimension: 'city', value: 'Paris' },
+      { fact: 'expired', row_num: 4, source_markdown_slug: 'memory/unattributed', entity_slug: 'people/live', expired_at: LONG_AGO },
+      { fact: 'on a closed page', row_num: 1, source_markdown_slug: 'people/closed', entity_slug: 'people/closed' },
+      { fact: 'on no page at all', row_num: 1, source_markdown_slug: 'people/never', entity_slug: 'people/never' },
+    ]);
+    expect(ids).toHaveLength(7);
+    await engine.insertFacts([{ fact: 'unfenced slot', kind: 'fact', visibility: 'world', source: 'fence', embedding: null, entity_slug: 'people/live', dimension: 'role', value: 'CEO' }] as never, { source_id: SRC });
+    await engine.softDeletePage('people/closed');
+    const young = await engine.listHeldFactRows(SRC, '30');
+    const aged = await engine.listHeldFactRows(SRC, '-1');
+    const shape = (rows: typeof young) => rows.map(r => `${r.entity_slug}|${r.from_slug}|${r.old}|${/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.held_since)}|${r.valid_from instanceof Date}`);
+    const unfenced = (await engine.scanUnfencedFactRows(SRC)).map(r => `${r.entity_slug}|${r.fact}|${r.dimension}|${r.page_exists}|${r.page_deleted}`);
+    const missing = (await engine.listFencedFactsOfMissingPages(SRC)).map(r => r.slug);
+    expect(shape(young)).toEqual(['people/aaa|members/ann/memory/unattributed|false|true|true', 'people/live|memory/unattributed|false|true|true']);
+    expect(shape(aged)).toEqual(['people/aaa|members/ann/memory/unattributed|true|true|true', 'people/live|memory/unattributed|true|true|true']);
+    expect(unfenced).toEqual(['people/live|unfenced slot|role|true|false']);
+    expect(missing).toEqual(['people/closed', 'people/never']);
+    return { young: shape(young), aged: shape(aged), unfenced, missing };
+  });
+
   parityTest('readSourceCheckoutPath reads a source\'s checkout path, null for a source without one or none', { methods: ['readSourceCheckoutPath'] }, async (engine, backend) => {
     await createSource(engine, backend, 'repo', {}, '/srv/repo');
     await createSource(engine, backend, 'bare');

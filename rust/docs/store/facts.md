@@ -774,6 +774,11 @@ each of them with `engine_capability_missing` naming the member until the store 
   another entity, with `from_slug`, `held_since` (`created_at` as UTC `YYYY-MM-DDTHH:MM:SSZ`) and `old` (older than `days`).
 - `listFencedFactsOfMissingPages(sourceId)`: unexpired fenced facts whose live page is missing, by id.
 
+The three members above run on Rust (`facts/held_moves.rs`, the family `facts_held`). `days` must be a plain signed
+decimal (at most 6 digits whole and 6 fractional, a day being 24 hours); any other text (`'1 hour'`, `'1e2'`) is
+refused with `engine_capability_missing`, where PGLite and Postgres accept any interval. Rows come back in byte order
+of the keys, not the collation order a Postgres brain uses.
+
 `facts/fence-write.ts`
 - `readFenceRowNumHint(sourceId, slug)` (`writeFactsToFence`): the largest `row_num` of the coordinate, 0 for none. The caller keeps
   its `try`/`catch` around it.
@@ -790,10 +795,11 @@ each of them with `engine_capability_missing` naming the member until the store 
 ## Purge, held-move and purge receipt statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
 
 The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
-`facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each with
-the typed `raw_sql` refusal until the store holds what it reads. None has a Rust implementation yet; the
-parity file `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for every case, and the
-Postgres text of each statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
+`facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each
+with the typed `raw_sql` refusal until the store holds what it reads. The ten held-move members are served by
+`facts/held_moves.rs` (see "Held moves" below); the other 24 have no Rust implementation yet, and
+`test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
+statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
 | Member | What it does |
 |---|---|
@@ -846,6 +852,26 @@ What the store would need to hold to answer them, by family:
   `page_segment_derivations`, `belief_events`, fact contexts and embeddings, `takes`, chunk text, timeline entries,
   the `query_cache` table, and `gbrain_fact_fingerprint` for the residue probe. `vacuumPurgedTables` has no data
   to read: a store with nothing to vacuum answers it as a no-op.
+
+### Held moves (`facts/held_moves.rs`, family `facts_held`)
+
+Served on Rust: `heldEntityPageDeleted`, `heldTargetPageLive`, `readHeldAccessState`, `listHeldMoveRows`,
+`listStruckHeldRows`, `readHeldRowVisibility`, `heldMoveDue`, `readHeldConfigValue`, `readHeldPageLocation` and
+`readHeldVersionsEdited`. A holding page is `memory/unattributed` at any depth, and a held row is an unexpired fenced
+fact on one that names another entity.
+
+- The store keeps no access rules, so `readHeldAccessState` answers the state of a brain with none (readable, no page
+  rule, not restricted) and `heldMoveDue` is always false. A brain that has rules is a PGLite or Postgres brain; the
+  parity cases that insert a rule stop on the `raw_sql` refusal of the rule writer.
+- `readHeldRowVisibility` is `page_hidden` over the live page of the source (private, `readable_by` or an access alias
+  hides it); no live page is none.
+- `listStruckHeldRows` is the newest expired id per holding page and row number that no active row reuses. The store
+  never reuses a struck row number, so the PGLite `DISTINCT ON` over several struck rows of one number has no Rust case.
+- `readHeldPageLocation` ignores `timeoutMs`: the read has no server statement to end.
+- `readHeldVersionsEdited` scans the journal for the request id (compared in lower case; a non-UUID is
+  `invalid_argument`) and reads `held_versions_edited.segmented_versions_not_edited` from the first admitted request
+  when several principals share the id; none recorded is 0.
+- A NUL byte in a text argument is `invalid_argument`.
 
 The parity cases seed facts, pages, versions, chunks, timeline entries, write requests and effects through the
 typed writers. `belief_events`, `page_segment_derivations` and `takes` have no typed fixture, so their members

@@ -328,6 +328,60 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     return answers;
   });
 
+  parityTest('the held rows of a nested holding page and a soft-deleted holding page are listed, keyed by page then entity then id', {
+    methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'listHeldMoveRows', 'listStruckHeldRows'],
+  }, async (engine) => {
+    const NESTED = 'members/ann/memory/unattributed';
+    const GONE = 'archive/memory/unattributed';
+    for (const slug of [HOLDING, NESTED, GONE]) await engine.putPage(slug, note('Held', slug));
+    const held = (text: string, page: string, entity: string, extra: Record<string, unknown> = {}) =>
+      fenced(engine, text, { source_markdown_slug: page, entity_slug: entity, visibility: 'private', ...extra });
+    await held('top for z', HOLDING, 'people/z');
+    await held('nested for a', NESTED, 'people/a');
+    await held('top for a, first', HOLDING, 'people/a');
+    await held('top for a, second', HOLDING, 'people/a');
+    await held('gone for m', GONE, 'people/m');
+    const deadTop = await held('struck on nested', NESTED, 'people/a');
+    await engine.expireFact(deadTop);
+    // A page that is no holding page, and an entity that is itself a holding page: not held rows.
+    await held('on an ordinary page', 'people/a', 'people/a');
+    await held('about a nested holding page', HOLDING, NESTED);
+    // Deleting a holding page leaves its row in `pages`, which is all the SQL tests for.
+    await engine.softDeletePage(GONE);
+    const live = (await engine.listHeldMoveRows(SRC)).map(r => `${r.from_slug}|${r.entity_slug}|${r.fact}|${r.page_exists}`);
+    const struck = (await engine.listStruckHeldRows(SRC)).map(r => `${r.from_slug}|${r.entity_slug}|${r.fact}`);
+    expect(live).toEqual([
+      'archive/memory/unattributed|people/m|gone for m|true',
+      'members/ann/memory/unattributed|people/a|nested for a|true',
+      'memory/unattributed|people/a|top for a, first|true',
+      'memory/unattributed|people/a|top for a, second|true',
+      'memory/unattributed|people/z|top for z|true',
+    ]);
+    expect(struck).toEqual(['members/ann/memory/unattributed|people/a|struck on nested']);
+    return { live, struck };
+  });
+
+  parityTest('readHeldRowVisibility hides a page that names readers or carries an access alias, and shows a page of another source only as none', {
+    methods: ['putPage', 'readHeldRowVisibility'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('people/open', note('Open', 'a'));
+    await engine.putPage('people/readers', note('Readers', 'b', { readable_by: ['member:ann'] }));
+    await engine.putPage('people/alias', note('Alias', 'c', { access: 'confidential' }));
+    await engine.putPage('people/atom', note('Atom', 'd', {}, 'atom'));
+    await engine.putPage('people/open', note('Open elsewhere', 'e', { visibility: 'private' }), { sourceId: 'other' } as never);
+    const answers = {
+      open: await engine.readHeldRowVisibility(SRC, 'people/open'), readers: await engine.readHeldRowVisibility(SRC, 'people/readers'),
+      alias: await engine.readHeldRowVisibility(SRC, 'people/alias'), atom: await engine.readHeldRowVisibility(SRC, 'people/atom'),
+      other: await engine.readHeldRowVisibility('other', 'people/open'), nowhere: await engine.readHeldRowVisibility('other', 'people/readers'),
+    };
+    expect(answers.open).toEqual({ visible: true });
+    expect(answers.readers).toEqual({ visible: false });
+    expect(answers.other).toEqual({ visible: false });
+    expect(answers.nowhere).toBeNull();
+    return answers;
+  });
+
   parityTest('readHeldVersionsEdited reads the segmented versions a held-fact move did not edit, 0 when none was recorded', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction', 'readHeldVersionsEdited'],
   }, async (engine) => {
