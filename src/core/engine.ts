@@ -49,7 +49,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
   NotifierSourceRow, NotifierStatusRow, PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
@@ -1552,6 +1552,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   advanceSyncCheckpoint(input: SyncCheckpointAdvance): Promise<{ advanced: boolean; pinnedSlugMode: string | null }>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
+  /** An unscoped remote read's `sources_not_readable` test: nothing visible in `readable`, pages elsewhere (engine-sql/sources.ts). */
+  readSourcesNotReadable(readable: readonly string[], opts: SourcesNotReadableOpts): Promise<boolean>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
   insertSource(row: SourceInsert): Promise<void>;
   /**

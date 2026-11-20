@@ -150,6 +150,7 @@ export const PAGES_MEMBERS = {
   readFirstSourceId: 'sources',
   lockAllSourceRows: 'sources',
   readSourceRow: 'sources',
+  readSourcesNotReadable: 'sources',
   lockSourceRow: 'sources',
   countSourcePages: 'sources',
   readPageIdentity: 'sources',

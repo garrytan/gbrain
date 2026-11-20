@@ -1040,15 +1040,11 @@ export async function assertExplicitSourceLive(
   sourceIdParam: string | undefined,
 ): Promise<void> {
   if (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) return;
-  // Point lookup, not listAllSources (wave review): this runs on every
-  // search/query/get_page/list_pages call that names a source, and the full
-  // enumeration hauled every row's config JSONB across the wire each time.
-  // Same liveness predicate as listAllSources' default filter.
-  const live = await ctx.engine.executeRaw<{ ok: number }>(
-    `SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
-    [sourceIdParam],
-  );
-  if (live.length > 0) return;
+  // One source's row, not listAllSources (wave review): this runs on every
+  // search/query/get_page/list_pages call that names a source. Same liveness
+  // predicate as listAllSources' default filter (`archived IS NOT TRUE`).
+  const row = await ctx.engine.readSourceRow(sourceIdParam);
+  if (row && row.archived !== true) return;
   throw archivedSourceError(ctx, sourceIdParam);
 }
 
