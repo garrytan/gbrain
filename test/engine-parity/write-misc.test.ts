@@ -19,11 +19,16 @@
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. Folder rules,
  *    pending prefixes and policy revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes
  *    themselves are compared in access-policy.test.ts). The Rust store keeps no skillpacks, chronicle state, access members, access tokens, source
- *    synopsis modes, writer bindings or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
- *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). It keeps op checkpoints
+ *    synopsis modes or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
+ *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). Writer bindings are seeded through the claim's store
+ *    (claimWorktreeBinding), which every arm serves (rust/docs/store/persistence.md, "Worktree bindings"). The store keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
  *    since the store lists them in path order and the SQL engines in no stated order.
  */
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, restrictFolder, seedAccessPolicy, sorted } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
@@ -36,6 +41,7 @@ import {
   appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, purgeStaleCheckpoints, recordCompleted, resumeFilter,
 } from '../../src/core/op-checkpoint.ts';
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 import { readSharedSkillsSourceView } from '../../src/core/shared-skills/source-opt-out.ts';
@@ -72,18 +78,19 @@ async function note(engine: BrainEngine, slug: string, sourceId = 'default', typ
 const HOST_A = '00000000-0000-4000-8000-00000000000a';
 const HOST_B = '00000000-0000-4000-8000-00000000000b';
 
-/** A claimed writer binding for `sourceId`: its worktree owned by HOST_A at epoch 7, with HOST_A's paths. */
-async function bindWorktree(engine: BrainEngine, sourceId: string): Promise<void> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id = $1', [sourceId]);
-  const [worktree] = await engine.executeRaw<{ id: string }>(
-    `INSERT INTO persistence_worktrees (owner_host_id, owner_epoch, topology_generation, state, manifest)
-     VALUES ($1::uuid, 7, 3, 'draining', '{"prepared_at":"2026-01-02T03:04:05Z"}'::jsonb) RETURNING id`, [HOST_A]);
-  await engine.executeRaw(
-    'INSERT INTO persistence_source_bindings (source_id, source_incarnation, worktree_id, relative_path, topology_generation) VALUES ($1, $2::uuid, $3::uuid, $4, 3)',
-    [sourceId, source!.incarnation, worktree!.id, 'notes']);
-  await engine.executeRaw(
-    "INSERT INTO persistence_host_bindings (worktree_id, host_id, local_path, coordination_path, git_durability) VALUES ($1::uuid, $2::uuid, $3, $4, 'enabled')",
-    [worktree!.id, HOST_A, '/var/tmp/work-root', '/var/tmp/work-coord']);
+/**
+ * A claimed writer binding for `sourceId`: its worktree owned by HOST_A at epoch 7, with HOST_A's paths, written
+ * through the claim's store (claimWorktreeBinding) so every arm seeds it the same way. `incarnation` binds the source at
+ * another incarnation than its current one (a claim the source has since moved past).
+ */
+async function bindWorktree(engine: BrainEngine, sourceId: string, incarnation?: string): Promise<void> {
+  await engine.claimWorktreeBinding(async store => {
+    const source = await store.lockSource(sourceId);
+    const id = randomUUID();
+    await store.insertWorktree({ id, ownerHostId: HOST_A, ownerEpoch: 7, topologyGeneration: 3, state: 'draining', manifest: { prepared_at: '2026-01-02T03:04:05Z' } });
+    await store.insertSourceBinding({ sourceId, incarnation: incarnation ?? source!.incarnation, worktreeId: id, relativePath: 'notes', topologyGeneration: 3 });
+    await store.insertHostBinding({ worktreeId: id, hostId: HOST_A, localPath: '/var/tmp/work-root', coordinationPath: '/var/tmp/work-coord', gitDurability: 'enabled' });
+  });
 }
 
 /** A binding with its generated ids replaced by their shape (the harness never restarts generators between cases). */
@@ -705,18 +712,10 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // getWorktreeBinding is constant null on Rust only because no Rust brain can hold a binding: the claim's rows (raw SQL
-  // here, claimWorktree's statements in production) must stop on the typed raw_sql refusal there and leave it unbound.
-  parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
+  parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding', 'claimWorktreeBinding'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
     await createSource(engine, backend, 'loose');
-    const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.getWorktreeBinding('work', HOST_A)).toBeNull();
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
+    await bindWorktree(engine, 'work');
     const answers = {
       owner: bindingView(await engine.getWorktreeBinding('work', HOST_A)),
       otherHost: bindingView(await engine.getWorktreeBinding('work', HOST_B)),
@@ -744,23 +743,52 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // As getWorktreeBinding: false is constant on Rust only because no Rust brain can hold a binding, so the claim's rows
-  // must stop on the typed raw_sql refusal there and leave the source unclaimed.
-  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false once the incarnation moves', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
+  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false for one claimed at another', { methods: ['isSourceClaimed', 'claimWorktreeBinding'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
+    await createSource(engine, backend, 'stale', { canonical: 'git' });
     await createSource(engine, backend, 'loose');
-    const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.isSourceClaimed('work')).toBe(false);
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
+    await bindWorktree(engine, 'work');
+    await bindWorktree(engine, 'stale', randomUUID());
     const claimed = { work: await engine.isSourceClaimed('work'), loose: await engine.isSourceClaimed('loose') };
-    await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id = $1', ['work']);
-    const answers = { ...claimed, afterIncarnation: await engine.isSourceClaimed('work') };
-    expect(answers).toEqual({ work: true, loose: false, afterIncarnation: false });
+    const answers = { ...claimed, stale: await engine.isSourceClaimed('stale') };
+    expect(answers).toEqual({ work: true, loose: false, stale: false });
     return answers;
+  });
+
+  // The unmanaged claim itself (persistence/ownership.ts claimWorktree) runs through claimWorktreeBinding on every arm:
+  // the first claim records the worktree, its host binding and the source binding; a repeat claim returns it; a source
+  // inside the root joins the same worktree. Each arm claims its own scratch root, compared by shape.
+  parityTest('claimWorktree binds a source, keeps the binding on a repeat claim, and joins a nested source to it', {
+    methods: ['claimWorktreeBinding', 'getWorktreeBinding', 'isSourceClaimed'],
+  }, async (engine, backend) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-claim-parity-')));
+    try {
+      mkdirSync(join(root, 'inner'));
+      await createSource(engine, backend, 'work', {}, root);
+      await createSource(engine, backend, 'inner', {}, join(root, 'inner'));
+      const first = await claimWorktree(engine, 'work', root, HOST_A);
+      const again = await claimWorktree(engine, 'work', root, HOST_A);
+      const inner = await claimWorktree(engine, 'inner', join(root, 'inner'), HOST_A);
+      const view = (row: WorktreeBinding) => ({
+        ...bindingView(row), local_path: row.local_path === root ? 'root' : row.local_path,
+        coordination_path: typeof row.coordination_path === 'string' && row.coordination_path !== '' ? 'path' : row.coordination_path,
+      });
+      const answers = {
+        first: view(first), sameWorktree: again.worktree_id === first.worktree_id && inner.worktree_id === first.worktree_id,
+        inner: view(inner), claimed: [await engine.isSourceClaimed('work'), await engine.isSourceClaimed('inner')],
+      };
+      const bound = {
+        source_incarnation: 'uuid', worktree_id: 'uuid', topology_generation: '1', owner_host_id: HOST_A, owner_epoch: '1',
+        state: 'active' as const, prepared_at: null, canonical_git: false, local_path: 'root', coordination_path: 'path', git_durability: null,
+      };
+      expect(answers).toEqual({
+        first: { ...bound, source_id: 'work', relative_path: '' }, sameWorktree: true,
+        inner: { ...bound, source_id: 'inner', relative_path: 'inner' }, claimed: [true, true],
+      });
+      return answers;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   parityTest('attachSourcePath sets the path, applies a passed name and federated flag, and keeps everything else', { methods: ['attachSourcePath', 'readSourceState', 'getSource'] }, async (engine, backend) => {

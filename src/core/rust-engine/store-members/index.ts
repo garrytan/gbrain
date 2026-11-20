@@ -64,6 +64,7 @@ import * as notifier from './notifier.ts';
 import * as effectScans from './effect-scans.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as worktreeClaim from './worktree-claim.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as accessPolicy from './access-policy.ts';
@@ -123,6 +124,8 @@ export const STORE_MEMBERS = {
   // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
   ...notifier,
   ...writeMisc,
+  // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").
+  ...worktreeClaim,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,

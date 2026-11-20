@@ -18,6 +18,9 @@
 //! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
 //! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
 //! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
+//! | `d 0x09 0x01 <worktree_id>` | one `persistence_worktrees` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x02 <worktree_id> 0x00 <host_id>` | one `persistence_host_bindings` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x03 <source_id>` | one `persistence_source_bindings` row (`worktrees.rs`), JSON |
 //!
 //! `d 0x05` and `d 0x06` are taken by the `persistence_effects` rows and their claim-order index
 //! (`effects.rs`) on the branches that hold them; no other family here uses them.
@@ -39,8 +42,9 @@
 //! `*_in` function over one `KvWrite`, so a store write transaction can run several of them.
 //!
 //! Every request row on this engine has a null `worktree_id` (the insert refuses another value:
-//! no worktree binding exists here), so the worktree terms of the claim statements are answered
-//! as Postgres answers them for a null worktree.
+//! a worktree binding is claimed here only on an unmanaged brain, `worktrees.rs`, and only the
+//! managed write path names a worktree on a request), so the worktree terms of the claim
+//! statements are answered as Postgres answers them for a null worktree.
 
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
@@ -61,6 +65,7 @@ mod notifier;
 mod op_checkpoint;
 mod projection_queue;
 mod topology;
+mod worktrees;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
@@ -71,6 +76,7 @@ pub use projection_queue::{
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use topology::TopologyChangeInsert;
+pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;
@@ -86,6 +92,8 @@ const CHECKPOINT_PATH: u8 = 0x07;
 /// The byte after `keys::PERSISTENCE` of a commit notifier row (persistence/notifier.rs). 0x05 to
 /// 0x07 are reserved for effect rows and operation checkpoint paths.
 const NOTIFIER: u8 = 0x08;
+/// The byte after `keys::PERSISTENCE` of a worktree binding row (persistence/worktrees.rs).
+const WORKTREES: u8 = 0x09;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -624,7 +632,7 @@ pub(crate) fn insert_write_request_in(
     };
     if input.worktree_id.is_some() {
         return Err(violation(
-            "no persistence worktree exists on this engine, so worktree_id cannot be set",
+            "only the managed write path names a worktree, and it does not run on this engine, so worktree_id cannot be set",
         ));
     }
     if input.deferred_refresh_id.is_some() {

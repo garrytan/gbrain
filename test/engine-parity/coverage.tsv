@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 805/811
+# covered: 806/812
 # lifecycle: 9/9
 # pages: 51/51
 # search: 7/7
@@ -58,7 +58,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 53/59
+# write_misc: 54/60
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -740,7 +740,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
@@ -756,12 +756,13 @@ listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
-isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
+isSourceClaimed	write_misc	yes	3	no	yes	yes	serves
 readSourceState	write_misc	yes	3	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	3	no	yes	yes	serves
+claimWorktreeBinding	write_misc	yes	4	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	2	no	yes	yes	serves
@@ -861,7 +862,7 @@ updatePendingTrustProposalAfter	trust_proposals	yes	1	no	yes	yes	serves
 transitionTrustProposal	trust_proposals	yes	1	no	yes	yes	serves
 listPendingContradictions	trust_proposals	yes	2	no	yes	yes	serves
 hasPersistenceTable	connect_gate	yes	3	no	yes	yes	serves
-listManagedRootBindings	connect_gate	yes	1	no	yes	yes	serves
+listManagedRootBindings	connect_gate	yes	2	no	yes	yes	serves
 readGraduationGateRow	connect_gate	yes	2	no	yes	yes	serves
 listRetiredDeactivations	connect_gate	yes	2	no	yes	yes	serves
 openWakeWatch	jobs_wake	yes	11	no	yes	yes	serves

@@ -55,7 +55,7 @@ Each returns what PGLite returns for a brain with the same contents.
 | Member | Answer | Why |
 | --- | --- | --- |
 | `hasPersistenceTable(table)` | `true` | The store keeps the persistence state of one unmanaged brain, so every table a gate probes is there and empty. |
-| `listManagedRootBindings(hostId, opts?)` | each source with a local path (archived ones too), with null `worktree_id` and `topology_generation` | No host binds a managed worktree; the source rows are the second half of PGLite's UNION. |
+| `listManagedRootBindings(hostId, opts?)` | the roots of the worktrees this host binds (`listHostRootBindings`), then each source with a local path (archived ones too) with null `worktree_id` and `topology_generation`, without repeats | The two halves of PGLite's UNION; see "Worktree bindings" in [persistence.md](persistence.md). |
 | `readGraduationGateRow(opts?)` | `null` | No graduation targets or leaves this engine, so there is no custody row and no run setting to compare. |
 | `listRetiredDeactivations()` | `[]` | A brain here is never managed, so no writer deactivation committed. |
 
@@ -70,7 +70,7 @@ does not serve these members now stops at connect. Refusing is the safer answer:
 connect during a graduation.
 
 `src/core/rust-engine/store-members/sync-status-reads.ts` answers the reads of `gbrain sync status` (SQL for PGLite
-and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps no write request, effect, source binding,
+and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps no managed write request, effect,
 worktree refresh or derived generation, so each part of a read that joins those tables gives its empty answer:
 
 | Member | Answer | Why |
@@ -79,7 +79,7 @@ worktree refresh or derived generation, so each part of a read that joins those 
 | `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed write committed, and no effect or fence generation is held. |
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
 | `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No write request exists to give a receipt. |
-| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No source binding or write request exists. |
+| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No managed write request exists. |
 | `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
@@ -87,5 +87,6 @@ The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteReque
 (`renewWriteClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
 rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row
-members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`,
-`stampWorktreeHeartbeats`) keep no stored state; see "TypeScript members with no stored state" there.
+members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`) keep no
+stored state; see "TypeScript members with no stored state" there. `stampWorktreeHeartbeats` stamps the
+worktree rows of "Worktree bindings" there.

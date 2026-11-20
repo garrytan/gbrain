@@ -3,7 +3,8 @@
 //! "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
-//! worktree. This engine keeps no worktree and records no effect, so every scan answers no row.
+//! worktree. This engine records no effect (it keeps the worktrees an unmanaged claim records,
+//! `worktrees.rs`, but no effect row joins them), so every scan answers no row.
 //! The parameters are still checked as their Postgres casts check them, so an argument Postgres
 //! refuses is refused here too.
 

@@ -2,7 +2,7 @@
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
- * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
+ * gbrain-store `write_misc`, the binding reads by gbrain-store `persistence::worktrees`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
@@ -49,17 +49,19 @@ export const attachSourcePath: StoreMember<[sourceId: string, localPath: string,
  */
 export const sharedSkillPackTablePresent: StoreMember<[], boolean> = async () => true;
 
-/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots. */
+/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots, bound worktree or not. */
 export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async () => [];
 
 /**
- * The store keeps no writer bindings: a brain on this engine is never managed (readManagedModeRows), and the binding
- * writers (claimWorktree's raw SQL) refuse on it, so no source is bound on any host.
+ * The source's binding as host `hostId` sees it, from the binding records an unmanaged claim keeps
+ * (claimWorktreeBinding, gbrain-store `persistence::worktrees`), with the columns and text forms WORKTREE_BINDING_SQL reads.
  */
-export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = async () => null;
+export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = (brain, sourceId, hostId) =>
+  storeCall({ member: 'getWorktreeBinding', sourceId }, () => brain.getWorktreeBinding(sourceId, hostId));
 
-/** No binding claims a source on this engine (see getWorktreeBinding), so classic sync never meets a claim. */
-export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async () => false;
+/** A binding names the source at its current incarnation (SOURCE_CLAIMED_SQL). */
+export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
+  storeCall({ member: 'isSourceClaimed', sourceId }, () => brain.isSourceClaimed(sourceId));
 
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;

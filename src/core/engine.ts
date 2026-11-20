@@ -69,6 +69,7 @@ import type {
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
+import type { WorktreeClaimBody } from './engine-sql/worktree-claim.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1518,6 +1519,11 @@ export interface BrainEngine {
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
+  /**
+   * The unmanaged writer claim's store work in one transaction (engine-sql/worktree-claim.ts): `body` gets the claim
+   * store and the transaction-bound engine. A Rust brain refuses a reviewed `--expected-state` check.
+   */
+  claimWorktreeBinding<T>(body: WorktreeClaimBody<T>): Promise<T>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Every legacy access token (`auth list`), revoked ones too, newest first. */
