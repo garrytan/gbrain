@@ -64,18 +64,22 @@ export type PersonFactsWrite = 'written' | 'unchanged' | 'skipped';
 export async function syncPersonFacts(engine: BrainEngine, contactsSourceId: string, person: { source_id: string; slug: string }, claims: string[],
   log: (line: string) => void): Promise<PersonFactsWrite> {
   const tag = personFactSource(contactsSourceId);
-  const active = await engine.executeRaw<{ id: number; fact: string; source: string | null }>(
-    'SELECT id,fact,source FROM facts WHERE source_id=$1 AND (source_markdown_slug=$2 OR entity_slug=$2 OR (entity_slug IS NULL AND fact = ANY($3::text[]))) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id',
-    [person.source_id, person.slug, claims]);
-  const ours = active.filter(r => r.source === tag).map(r => ({ id: Number(r.id), fact: r.fact.trim() }));
-  // An owner's copy of a claim saved with no entity counts as known: writing it linked would supersede that copy.
-  const known = new Set(active.filter(r => r.source !== tag).map(r => r.fact.trim()));
+  const claimFps = claims.length ? await engine.executeRaw<{ fp: string }>(
+    'SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n', [claims]) : [];
+  const fpOf = new Map(claims.map((c, i) => [c, claimFps[i]!.fp]));
+  const active = await engine.executeRaw<{ id: number; fact: string; source: string | null; fp: string }>(
+    'SELECT id,fact,source,gbrain_fact_fingerprint(fact) AS fp FROM facts WHERE source_id=$1 AND (source_markdown_slug=$2 OR entity_slug=$2 OR (entity_slug IS NULL AND gbrain_fact_fingerprint(fact) = ANY($3::text[]))) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id',
+    [person.source_id, person.slug, [...fpOf.values()]]);
+  const ours = active.filter(r => r.source === tag).map(r => ({ id: Number(r.id), fact: r.fact.trim(), fp: r.fp }));
+  // An owner's copy of a claim (any case or spacing, the way remember matches) counts as known: writing it linked would supersede that copy.
+  const known = new Set(active.filter(r => r.source !== tag).map(r => r.fp));
+  const wanted = new Set(fpOf.values());
   const kept = new Set<string>();
   const retire: Array<{ id: number; fact: string }> = [];
   for (const row of ours) {
-    if (claims.includes(row.fact) && !kept.has(row.fact)) kept.add(row.fact); else retire.push(row);
+    if (wanted.has(row.fp) && !kept.has(row.fp)) kept.add(row.fp); else retire.push(row);
   }
-  const add = claims.filter(c => !kept.has(c) && !known.has(c));
+  const add = claims.filter(c => !kept.has(fpOf.get(c)!) && !known.has(fpOf.get(c)!));
   if (!add.length && !retire.length) return 'unchanged';
   if (add.length) {
     const snapshot = await engine.readPageSnapshot(person.slug, { sourceId: person.source_id });

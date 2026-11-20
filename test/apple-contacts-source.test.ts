@@ -598,6 +598,29 @@ describe('identity and person-page facts (repo-less brain)', () => {
     await engine.executeRaw("DELETE FROM facts WHERE source_id='default' AND source='owner-note' AND entity_slug IS NULL");
   });
 
+  test('an owner copy that differs only in case and spacing also counts as known and stays active', async () => {
+    await deletePeople();
+    await personPage('people/alice-example', { email: 'alice@example.invalid' });
+    const { operationsByName } = await import('../src/core/operations.ts');
+    await operationsByName.remember!.handler(ownerCtx('default'), { fact: 'job title:  engineer', source_id: 'default',
+      provenance: 'owner-note', content_origin: 'user_said', infer_entity: false });
+    const ownerActive = async () => (await engine.executeRaw<{ n: number }>(
+      "SELECT count(*)::int AS n FROM facts WHERE source_id='default' AND source='owner-note' AND fact='job title:  engineer' AND expired_at IS NULL"))[0]!.n;
+    expect(await ownerActive()).toBe(1);
+    const s = freshStub();
+    s.upsert('c-alice', ALICE);
+    for (let i = 1; i <= 4; i++) s.upsert('c' + i, contact(i));
+    const { id, cfg } = await contactsSource(s);
+    await run(id, cfg);
+    expect(await ourFacts(id)).toEqual(['Company: Acme Example', 'Contacts group: Harbor Club']);
+    expect(await ownerActive()).toBe(1);
+    s.remove('c-alice');
+    await run(id, cfg);
+    expect(await ourFacts(id)).toEqual([]);
+    expect(await ownerActive()).toBe(1);
+    await engine.executeRaw("DELETE FROM facts WHERE source_id='default' AND source='owner-note' AND entity_slug IS NULL");
+  });
+
   test('a phone match links too; losing the match retires the rows and the curated text stays byte-identical', async () => {
     await deletePeople();
     const curated = 'Alice runs the harbor project.\n\n## Notes\n- Prefers mornings.';
