@@ -1,15 +1,18 @@
 /**
  * BrainEngine parity — a read cut by a limit picks the same row among tied sort keys on every engine arm: the purge
  * receipt's paraphrase probe and request lookup, `file_list`, the page-to-link sample, and the fact pool's nearest arm.
+ * The two vector reads keep `ORDER BY <distance> LIMIT k` alone in an inner query (so the HNSW index serves it) and
+ * break ties by fact id in an outer sort: the cases put every tie inside the k rows, because which rows tie at the cut
+ * of an ANN read is approximate by design.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
  *    a tie on the sort key falls to the table's primary key, lowest first. verifyFactPurge's vector probe lists the
- *    five nearest same-model facts, equal distances by fact id; verifyPagePurge reads the newest delete_page request of
+ *    five nearest same-model facts, equal distances by fact id (five tied facts and three far ones); verifyPagePurge reads the newest delete_page request of
  *    the (source, request id), equal created_at by request id; `file_list` returns the first 100 files by page slug and
  *    filename, equal names by file id; runPageToLinkCore reads the first pages of a type by slug, one slug in two
- *    sources by page id; collectFactCandidates' nearest arm keeps the `depth.cosine` closest facts, equal distances by
- *    fact id.
+ *    sources by page id; collectFactCandidates' nearest arm lists the `depth.cosine` closest facts, equal distances by
+ *    fact id (three tied facts and five far ones).
  *  - Regression: each statement ordered only by the key that tied (embedding distance; created_at; page slug and
  *    filename; slug), so rows with one value came back in whatever order the sort met them, and the limit could cut a
  *    different row or set on one database than on another, or between two runs of the same one.
@@ -34,33 +37,39 @@ const { parityTest } = parityArms(testBackends());
 
 const SRC = 'default';
 const DIMS = 1536;
-/** One vector for every fact: every distance ties. */
+/** The vector of every tied fact: their distances to it tie at 0. */
 const SAME = Float32Array.from({ length: DIMS }, (_, i) => (i === 0 ? 1 : 0));
+/** An orthogonal vector: a far fact sits at cosine distance 1 from SAME. */
+const FAR = Float32Array.from({ length: DIMS }, (_, i) => (i === 1 ? 1 : 0));
 
 function ctxFor(engine: BrainEngine): OperationContext {
   return { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
     logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
 }
 
-/** Eight world facts of one source with the same vector and model; returns their ids in id order. */
-async function seedTiedFacts(engine: BrainEngine, model: string): Promise<number[]> {
+/**
+ * Eight world facts of one source and model; the positions in `tied` get SAME, the rest FAR. Returns the ids in id
+ * order. The rows at odd positions are then rewritten, so heap order is not id order: ordered by distance alone, the
+ * tied rows come back out of id order on PGLite and Postgres (seen: positions 7, 2, 4, 6, 1 and 6, 4, 1).
+ */
+async function seedTiedFacts(engine: BrainEngine, model: string, tied: number[]): Promise<number[]> {
   const rows = Array.from({ length: 8 }, (_, i) => ({ fact: `Ana keeps tied bee colony ${i}`, entity_slug: null, kind: 'fact', visibility: 'world',
-    source: 'test', embedding: SAME, embedding_model: model }));
+    source: 'test', embedding: tied.includes(i) ? SAME : FAR, embedding_model: model }));
   await engine.insertFacts(rows as never, { source_id: SRC });
-  // Rewrite every other row so heap order is not id order.
-  await engine.executeRaw(`UPDATE facts SET source = 'test' WHERE id % 2 = 0`);
-  return (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 ORDER BY id`, [SRC])).map(r => Number(r.id));
+  const ids = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 ORDER BY id`, [SRC])).map(r => Number(r.id));
+  await engine.executeRaw(`UPDATE facts SET source = 'test' WHERE id = ANY($1::bigint[])`, [ids.filter((_, i) => i % 2 === 1)]);
+  return ids;
 }
 
 describe('a limit over tied sort keys cuts the same rows on every engine arm', () => {
-  parityTest('the purge receipt probe lists tied nearest facts by the lowest fact id', { methods: ['insertFacts', 'loadPurgeTarget', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const ids = await seedTiedFacts(engine, 'test:model');
+  parityTest('the purge receipt probe lists tied nearest facts by fact id', { methods: ['insertFacts', 'loadPurgeTarget', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+    const ids = await seedTiedFacts(engine, 'test:model', [1, 2, 4, 6, 7]);
     const target = (await engine.loadPurgeTarget(ids[7]!, SRC))!;
     const plan = await planFactPurge(engine, target, false);
     const receipt = await verifyFactPurge(engine, { target, plan, dryRun: true }) as unknown as { vector_probe: { status: string; candidates: Array<{ fact_id: number }> } };
     expect(receipt.vector_probe.status).toBe('checked');
     const ranks = receipt.vector_probe.candidates.map(c => ids.indexOf(c.fact_id));
-    expect(ranks).toEqual([0, 1, 2, 3, 4]);
+    expect(ranks).toEqual([1, 2, 4, 6, 7]);
     return ranks;
   });
 
@@ -111,16 +120,16 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return { would_convert: rule.would_convert, converted: rule.converted, unresolved: rule.unresolved };
   });
 
-  parityTest('the fact pool nearest arm keeps the lowest fact ids when distances tie', { methods: ['insertFacts', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const ids = await seedTiedFacts(engine, getEmbeddingModel());
+  parityTest('the fact pool nearest arm lists tied nearest facts by fact id', { methods: ['insertFacts', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+    const ids = await seedTiedFacts(engine, getEmbeddingModel(), [1, 4, 6]);
     const pool = await collectFactCandidates(engine, 'zzqx', { sourceIds: [SRC], worldOnly: true, excludePrivate: false }, SAME,
       { depth: { keyword: 5, cosine: 3, entity: 5 } });
     const ranks = pool.candidates.map(c => ids.indexOf(c.id));
     expect(pool.cosine).toBe(true);
-    expect(ranks).toEqual([0, 1, 2]);
+    expect(ranks).toEqual([1, 4, 6]);
     const inTransaction = await collectFactCandidates(engine, 'zzqx', { sourceIds: [SRC], worldOnly: true, excludePrivate: false }, SAME,
       { depth: { keyword: 5, cosine: 3, entity: 5 }, hnswIterativeScan: 'off' });
-    expect(inTransaction.candidates.map(c => ids.indexOf(c.id))).toEqual([0, 1, 2]);
+    expect(inTransaction.candidates.map(c => ids.indexOf(c.id))).toEqual([1, 4, 6]);
     return ranks;
   });
 });

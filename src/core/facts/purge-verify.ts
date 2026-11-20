@@ -473,10 +473,14 @@ function onDiskReports(files: string[], claim: string, dryRun: boolean): StoreRe
 async function vectorProbe(engine: BrainEngine, target: PurgeTarget): Promise<Record<string, unknown>> {
   if (!target.embedding || !target.embedding_model) return { status: 'skipped', reason: 'no_embedding', gate: false };
   try {
-    const rows = await engine.executeRaw<{ id: number; similarity: number; contains_claim: boolean }>(`SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,
-        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
-      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
-      ORDER BY embedding <=> $1::halfvec, id LIMIT 5`, [target.embedding, target.source_id, target.embedding_model, target.fact]);
+    // The inner query orders by distance alone so the HNSW index serves it; the outer sort breaks ties inside the five
+    // rows by fact id. Which rows tie at the fifth place stays approximate, as any ANN read is.
+    const rows = await engine.executeRaw<{ id: number; similarity: number; contains_claim: boolean }>(`SELECT id, similarity, contains_claim FROM (
+        SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity, embedding <=> $1::halfvec AS distance,
+          strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
+        FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
+        ORDER BY embedding <=> $1::halfvec LIMIT 5) nearest
+      ORDER BY distance, id`, [target.embedding, target.source_id, target.embedding_model, target.fact]);
     return { status: 'checked', gate: false, model: target.embedding_model,
       candidates: rows.map(r => ({ fact_id: Number(r.id), similarity: Math.round(Number(r.similarity) * 1000) / 1000, contains_claim: r.contains_claim === true })),
       note: 'Nearest same-model facts are possible rewordings for the user to review; a neighbour always exists, so this is not a residual count.' };

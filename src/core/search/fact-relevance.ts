@@ -222,8 +222,13 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   const nearest = async (): Promise<Row[]> => {
     if (!vec) return [];
     const p = armParams(simParams);
-    const sql = `SELECT ${COLS}, ${simSql} FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
-       ORDER BY f.embedding <=> $${n + 1}${vec.cast}, f.id LIMIT $${p.length + 1}`;
+    // The inner query orders by distance alone so the HNSW index (and its iterative scan) serves it; the outer sort
+    // breaks ties inside the depth.cosine rows by fact id. Which rows tie at the cut stays approximate, as any ANN read is.
+    const sql = `SELECT ${COLS}, f.similarity FROM (
+         SELECT ${COLS}, ${simSql}, f.embedding <=> $${n + 1}${vec.cast} AS distance
+           FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
+          ORDER BY f.embedding <=> $${n + 1}${vec.cast} LIMIT $${p.length + 1}) f
+       ORDER BY f.distance, f.id`;
     const bound = [...p, opts.depth.cosine];
     if (!opts.hnswIterativeScan) return engine.executeRaw<Row>(sql, bound);
     return engine.transaction(async tx => {
