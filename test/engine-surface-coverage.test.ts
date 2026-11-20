@@ -343,7 +343,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'setProjectionChunkerVersion', 'hasDrainableProjectionJob', 'readChunkRowsFingerprint', 'deleteUnkeptChunks',
   'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead', 'isDeferredReplacementHeld',
   'renewDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob', 'stampDeferredProjectionJob',
-  'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks',
+  'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks', 'probeProjectionWindowCandidates',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).

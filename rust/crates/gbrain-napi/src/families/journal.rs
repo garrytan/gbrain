@@ -965,6 +965,24 @@ impl Brain {
         self.run(env, move |s| s.count_pending_text_chunks(page_id))
     }
 
+    /// `probeProjectionWindowCandidates(candidates)`: `{ i, source_id, archived, page_kind,
+    /// body_storage }` per candidate, in candidate order.
+    #[napi]
+    pub fn probe_projection_window_candidates<'env>(
+        &self,
+        env: &'env Env,
+        candidates: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.probe_projection_window_candidates(&required::<
+                Vec<gbrain_store::persistence::ProjectionWindowCandidate>,
+            >(
+                candidates,
+                "probeProjectionWindowCandidates candidates",
+            )?)
+        })
+    }
+
     /// `readProjectionHead(sourceId, slug)`: `{ id, revision, sealed }` or null.
     #[napi]
     pub fn read_projection_head<'env>(

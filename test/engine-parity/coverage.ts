@@ -253,7 +253,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob',
     'readChunkRowsFingerprint', 'deleteUnkeptChunks', 'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead',
     'isDeferredReplacementHeld', 'renewDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob',
-    'stampDeferredProjectionJob', 'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks'],
+    'stampDeferredProjectionJob', 'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks',
+    'probeProjectionWindowCandidates'],
 
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1262/1269
+# covered: 1263/1270
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -49,7 +49,7 @@
 # facts_cycle_sites: 34/34
 # facts_purge: 87/87
 # purge_plan: 4/4
-# projection_rebuild: 18/19
+# projection_rebuild: 19/20
 # facts_repair: 25/25
 # facts_trust: 49/49
 # facts_recall: 7/7
@@ -101,10 +101,10 @@ getPage	pages	yes	139	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	8	no	yes	yes	serves
-putPage	pages	yes	628	yes	yes	yes	serves
+putPage	pages	yes	630	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	24	yes	yes	yes	serves
+deletePage	pages	yes	25	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	179	yes	yes	yes	serves
@@ -444,7 +444,7 @@ stageManifestRows	segmented_body	yes	19	no	yes	yes	serves
 readManifest	segmented_body	yes	10	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	30	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	31	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	29	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	7	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	21	no	yes	yes	serves
@@ -554,11 +554,11 @@ listTrueUpRequests	persistence_journal	yes	2	no	yes	yes	serves
 trueUpReservations	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
 listPendingSegmentedProjections	persistence_journal	yes	3	no	yes	yes	serves
-selectProjectionWindowJobs	persistence_journal	yes	5	no	yes	yes	serves
+selectProjectionWindowJobs	persistence_journal	yes	6	no	yes	yes	serves
 claimSegmentedProjection	persistence_journal	yes	2	no	yes	yes	serves
 renewSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseSegmentedProjectionClaim	persistence_journal	yes	2	no	yes	yes	serves
-deleteProjectionJob	persistence_journal	yes	5	no	yes	yes	serves
+deleteProjectionJob	persistence_journal	yes	6	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	2	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
@@ -927,8 +927,8 @@ listRequestsCarryingClaim	purge_plan	yes	1	no	yes	yes	serves
 listRequestsHoldingStagings	purge_plan	yes	1	no	yes	yes	serves
 countPurgeProbe	purge_plan	yes	5	no	yes	yes	serves
 listPurgeProbeItems	purge_plan	yes	2	no	yes	yes	serves
-listQueuedPageProjections	projection_rebuild	yes	7	no	yes	yes	serves
-readProjectionJobReason	projection_rebuild	yes	6	no	yes	yes	serves
+listQueuedPageProjections	projection_rebuild	yes	9	no	yes	yes	serves
+readProjectionJobReason	projection_rebuild	yes	7	no	yes	yes	serves
 readChunkKeepState	projection_rebuild	yes	2	no	yes	yes	serves
 clearUnkeptChunkVectors	projection_rebuild	yes	2	no	yes	yes	serves
 setProjectionChunkerVersion	projection_rebuild	yes	1	no	yes	yes	serves
@@ -938,6 +938,7 @@ deleteUnkeptChunks	projection_rebuild	yes	1	no	yes	yes	serves
 listStaleChunkVectors	projection_rebuild	yes	1	no	yes	yes	serves
 clearChunkVectors	projection_rebuild	yes	1	no	yes	yes	serves
 countPendingTextChunks	projection_rebuild	yes	2	no	yes	yes	serves
+probeProjectionWindowCandidates	projection_rebuild	yes	2	no	yes	yes	serves
 readProjectionHead	projection_rebuild	yes	5	no	yes	yes	serves
 isDeferredReplacementHeld	projection_rebuild	yes	4	no	yes	yes	serves
 renewDeferredReplacementClaim	projection_rebuild	yes	4	no	yes	yes	serves

@@ -1378,6 +1378,7 @@ export class PostgresEngine implements BrainEngine {
   listStaleChunkVectors(pageId: number, provenanceModel: string | null, column: projectionRebuildImpl.KeepColumn, currentIds: readonly number[]) { return projectionRebuildImpl.listStaleChunkVectors(this.executeRaw.bind(this), pageId, provenanceModel, column, currentIds); }
   clearChunkVectors(pageId: number, column: projectionRebuildImpl.KeepColumn, ids: readonly number[]) { return projectionRebuildImpl.clearChunkVectors(this.executeRaw.bind(this), pageId, column, ids); }
   countPendingTextChunks(pageId: number, column: projectionRebuildImpl.KeepColumn) { return projectionRebuildImpl.countPendingTextChunks(this.executeRaw.bind(this), pageId, column); }
+  probeProjectionWindowCandidates(candidates: readonly projectionRebuildImpl.ProjectionWindowCandidate[]) { return projectionRebuildImpl.probeProjectionWindowCandidates(this.executeRaw.bind(this), candidates); }
   readProjectionHead(sourceId: string, slug: string) { return projectionRebuildImpl.readProjectionHead(this.executeRaw.bind(this), sourceId, slug); }
   isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string) { return projectionRebuildImpl.isDeferredReplacementHeld(this.executeRaw.bind(this), sourceId, slug, revision, claim); }
   renewDeferredReplacementClaim(job: projectionRebuildImpl.ProjectionJobKey, claim: string) { return projectionRebuildImpl.renewDeferredReplacementClaim(this.executeRaw.bind(this), job, claim); }

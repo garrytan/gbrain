@@ -2,15 +2,16 @@
  * The statements a projection rebuild sends (page-state/projections.ts rebuildPendingPageProjections,
  * installPageProjection, planProjectionKeep and the statistics' drained probe). Each function runs the statement its
  * caller ran through `executeRaw` on the engine's own `executeRaw`. The queue listing, the keep plan and the vector
- * clear are composed with sqlFragment, so their placeholders are numbered in text order; every other text is unchanged.
+ * clears, the stale-vector list, the pending count and the two composed queue stamps are built with sqlFragment, so their
+ * placeholders are numbered in text order; every other text is unchanged.
  * `test/projection-rebuild-sql-pin.test.ts` pins each statement and its binds against the ones recorded before the
  * move. The deferred chunk replacement's statements (continueDeferredProjectionStep), the rebuild loop's queue
- * stamps and the re-seal's pending count (resealSafeChunks) are members too; the continuation's claim release, the queue insert and the backlog, preview and drained
+ * stamps, the re-seal's pending count (resealSafeChunks) and the resident's window probe (selectWindowJobs) are members too; the continuation's claim release, the queue insert and the backlog, preview and drained
  * reads stay raw in projections.ts.
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
-import { projectionRetryReadyFragment, SEGMENTED_PROJECTION_CLAIMED_TEXT } from './persistence-housekeeping.ts';
+import { projectionRetryReadyFragment, segmentedProjectionClaimedFragment } from './persistence-housekeeping.ts';
 import { sealableImageSql } from '../page-state/projection-class.ts';
 import { ACTIVATION_SERVED_REVISION, movableChunkSql } from '../search/safe-chunks.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
@@ -174,27 +175,52 @@ export async function deleteUnkeptChunks(raw: EngineRawRead, pageId: number, kep
  */
 export async function listStaleChunkVectors(raw: EngineRawRead, pageId: number, provenanceModel: string | null, column: KeepColumn,
   currentIds: readonly number[]): Promise<number[]> {
-  if (!Number.isInteger(column.dimensions)) throw new Error(`embedding column width must be an integer, got ${column.dimensions}`);
-  // chunk-visibility-ok: the kept rows of a deferred replacement whose vector the current page no longer accepts
-  const rows = await raw<{ id: number }>(`SELECT id FROM content_chunks WHERE page_id=$1 AND ${quoteIdentifier(column.name)} IS NOT NULL
-    AND (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${quoteIdentifier(column.name)}) = ${column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[]))) ORDER BY chunk_index`,
-  [pageId, provenanceModel, [...currentIds]]);
+  const col = quoteIdentifier(column.name);
+  const { text, params } = renderFragment(
+    // chunk-visibility-ok: the kept rows of a deferred replacement whose vector the current page no longer accepts
+    sqlFragment`SELECT id FROM content_chunks WHERE page_id=${pageId} AND ${trustedSql(col)} IS NOT NULL
+    AND (NOT ${keptModelFragment(col, column.dimensions, provenanceModel)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY(${[...currentIds]}::int[]))) ORDER BY chunk_index`);
+  const rows = await raw<{ id: number }>(text, params);
   return rows.map(row => Number(row.id));
 }
 
 /** Clears the vector in `column` and its embedding record on the page's chunks `ids`, and marks them pending. */
 export async function clearChunkVectors(raw: EngineRawRead, pageId: number, column: KeepColumn, ids: readonly number[]): Promise<void> {
-  await raw(`UPDATE content_chunks SET ${quoteIdentifier(column.name)}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])`, [pageId, [...ids]]);
+  const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks SET ${trustedSql(quoteIdentifier(column.name))}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
+        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=${pageId} AND id=ANY(${[...ids]}::int[])`);
+  await raw(text, params);
 }
 
 /** How many of the page's text chunks have no vector in `column`, and their characters: a re-seal's embedding work. */
 export async function countPendingTextChunks(raw: EngineRawRead, pageId: number, column: KeepColumn): Promise<{ chunks: number; chars: number }> {
   // chunk-visibility-ok: a count of the page's unembedded text chunks after its own re-seal, never returned to a reader
-  const [pending] = await raw<{ chunks: number; chars: number }>(`SELECT COUNT(*)::int AS chunks,
+  const { text, params } = renderFragment(sqlFragment`SELECT COUNT(*)::int AS chunks,
     COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks
-    WHERE page_id=$1 AND ${quoteIdentifier(column.name)} IS NULL AND modality='text'`, [pageId]);
+    WHERE page_id=${pageId} AND ${trustedSql(quoteIdentifier(column.name))} IS NULL AND modality='text'`);
+  const [pending] = await raw<{ chunks: number; chars: number }>(text, params);
   return { chunks: Number(pending?.chunks ?? 0), chars: Number(pending?.chars ?? 0) };
+}
+
+/** One queue row the resident's window selection probes. */
+export interface ProjectionWindowCandidate { source_incarnation: string; slug: string }
+
+/** A candidate's source (`source_id`, `archived`) and live page (`page_kind`, `body_storage`); each part null when missing. */
+export interface ProjectionWindowProbe {
+  i: number; source_id: string | null; archived: boolean | null; page_kind: string | null; body_storage: string | null;
+}
+
+/**
+ * The resident's window probe (projections.ts selectWindowJobs): for each candidate, at its index `i`, the source of
+ * its incarnation and that source's live page at its slug, each looked up by key. Rows come in no set order.
+ */
+export async function probeProjectionWindowCandidates(raw: EngineRawRead, candidates: readonly ProjectionWindowCandidate[]): Promise<ProjectionWindowProbe[]> {
+  return raw<ProjectionWindowProbe>(
+    `SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage
+      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)
+      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true
+      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q
+        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true`,
+    [JSON.stringify(candidates.map((row, i) => ({ i, source_incarnation: row.source_incarnation, slug: row.slug })))]);
 }
 
 /** A live page's id, knowledge revision and whether its text projection is sealed at that revision. */
@@ -240,14 +266,16 @@ export async function rekeyProjectionJob(raw: EngineRawRead, job: ProjectionJobK
  * `canonical_change` too, so the ordinary rebuild takes it.
  */
 export async function stampDeferredProjectionJob(raw: EngineRawRead, job: ProjectionJobKey, requeue: boolean): Promise<void> {
-  await raw(`UPDATE page_projection_jobs SET updated_at=now()${requeue ? ",reason='canonical_change'" : ''}
-            WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [job.sourceIncarnation, job.slug, job.revision]);
+  const { text, params } = renderFragment(sqlFragment`UPDATE page_projection_jobs SET updated_at=now()${trustedSql(requeue ? ",reason='canonical_change'" : '')}
+            WHERE source_incarnation=${job.sourceIncarnation}::uuid AND slug=${job.slug} AND revision=${job.revision}::uuid`);
+  await raw(text, params);
 }
 
 /** Moves the time of the job still queued at `job.revision` to now unless a live segmented claim holds it. */
 export async function touchUnclaimedProjectionJob(raw: EngineRawRead, job: ProjectionJobKey): Promise<void> {
-  await raw(`UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid
-            AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`, [job.sourceIncarnation, job.slug, job.revision]);
+  const { text, params } = renderFragment(sqlFragment`UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=${job.sourceIncarnation}::uuid AND j.slug=${job.slug} AND j.revision=${job.revision}::uuid
+            AND NOT ${segmentedProjectionClaimedFragment()}`);
+  await raw(text, params);
 }
 
 /** Moves the time of the job still queued at `job.revision` to now; false when no such job is queued. */

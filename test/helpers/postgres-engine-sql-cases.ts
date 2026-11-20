@@ -282,6 +282,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'touchUnclaimedProjectionJob': OOS.projectionRebuild,
   'deferProjectionJob': OOS.projectionRebuild,
   'countPendingTextChunks': OOS.projectionRebuild,
+  'probeProjectionWindowCandidates': OOS.projectionRebuild,
   'expireFactsOfGonePages': OOS.factsPurgeSites,
   'readPurgeSourceLocalPath': OOS.factsPurgeSites,
   'insertReasonPurgeTombstones': OOS.factsPurgeSites,

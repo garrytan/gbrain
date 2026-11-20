@@ -3997,6 +3997,8 @@ export interface BrainEngine {
   clearChunkVectors(pageId: number, column: ProjectionRebuildSql.KeepColumn, ids: readonly number[]): Promise<void>;
   /** How many of the page's text chunks have no vector in `column`, and their characters (a re-seal's embedding work). */
   countPendingTextChunks(pageId: number, column: ProjectionRebuildSql.KeepColumn): Promise<{ chunks: number; chars: number }>;
+  /** The resident's window probe: each candidate's source and live page, at its index `i`, looked up by key. */
+  probeProjectionWindowCandidates(candidates: readonly ProjectionRebuildSql.ProjectionWindowCandidate[]): Promise<ProjectionRebuildSql.ProjectionWindowProbe[]>;
   /** The live page's id, knowledge revision and whether its text projection is sealed at it; null when the page is gone. */
   readProjectionHead(sourceId: string, slug: string): Promise<ProjectionRebuildSql.ProjectionHead | null>;
   /** Whether another continuation's live claim (not `claim`) holds the page's deferred chunk replacement at `revision`. */

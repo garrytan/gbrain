@@ -1703,6 +1703,7 @@ export class PGLiteEngine implements BrainEngine {
   listStaleChunkVectors(pageId: number, provenanceModel: string | null, column: projectionRebuildImpl.KeepColumn, currentIds: readonly number[]) { return projectionRebuildImpl.listStaleChunkVectors(this.rawRead, pageId, provenanceModel, column, currentIds); }
   clearChunkVectors(pageId: number, column: projectionRebuildImpl.KeepColumn, ids: readonly number[]) { return projectionRebuildImpl.clearChunkVectors(this.rawRead, pageId, column, ids); }
   countPendingTextChunks(pageId: number, column: projectionRebuildImpl.KeepColumn) { return projectionRebuildImpl.countPendingTextChunks(this.rawRead, pageId, column); }
+  probeProjectionWindowCandidates(candidates: readonly projectionRebuildImpl.ProjectionWindowCandidate[]) { return projectionRebuildImpl.probeProjectionWindowCandidates(this.rawRead, candidates); }
   readProjectionHead(sourceId: string, slug: string) { return projectionRebuildImpl.readProjectionHead(this.rawRead, sourceId, slug); }
   isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string) { return projectionRebuildImpl.isDeferredReplacementHeld(this.rawRead, sourceId, slug, revision, claim); }
   renewDeferredReplacementClaim(job: projectionRebuildImpl.ProjectionJobKey, claim: string) { return projectionRebuildImpl.renewDeferredReplacementClaim(this.rawRead, job, claim); }

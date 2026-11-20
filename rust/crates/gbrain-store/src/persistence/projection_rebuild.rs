@@ -72,6 +72,13 @@ pub struct QueuedProjectionFilter {
     pub served: Option<String>,
 }
 
+/// One row the resident's window selection probes (`ProjectionWindowCandidate`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectionWindowCandidate {
+    pub source_incarnation: String,
+    pub slug: String,
+}
+
 /// A job's exact key (`ProjectionJobKey`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -378,6 +385,37 @@ impl Store {
         Ok(json!({ "chunks": pending.len(), "chars": chars }))
     }
 
+    /// `probeProjectionWindowCandidates(candidates)`: for each candidate, at its index `i`, the
+    /// source of its incarnation (`source_id`, `archived`, archived or not) and that source's live
+    /// page at its slug (`page_kind`, `body_storage`); each part is null when it is missing.
+    pub fn probe_projection_window_candidates(
+        &self,
+        candidates: &[ProjectionWindowCandidate],
+    ) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let read = &*read;
+        let sources = sources_by_incarnation(read)?;
+        let mut rows = Vec::with_capacity(candidates.len());
+        for (i, candidate) in candidates.iter().enumerate() {
+            let incarnation = uuid_param(&candidate.source_incarnation, "source_incarnation")?;
+            let source = sources.get(&incarnation);
+            let page = match source {
+                Some(s) => {
+                    read_page(read, &s.id, &candidate.slug)?.filter(|p| p.deleted_at_us.is_none())
+                }
+                None => None,
+            };
+            rows.push(json!({
+                "i": i,
+                "source_id": source.map(|s| s.id.clone()),
+                "archived": source.map(|s| s.archived),
+                "page_kind": page.as_ref().map(|p| p.page_kind.clone()),
+                "body_storage": page.as_ref().map(|p| if segmented(p) { "segmented" } else { "inline" }),
+            }));
+        }
+        Ok(rows)
+    }
+
     /// `readProjectionHead(sourceId, slug)`: `{ id, revision, sealed }` of the live page, or null.
     pub fn read_projection_head(&self, source_id: &str, slug: &str) -> Result<Value> {
         let page =
@@ -497,6 +535,51 @@ mod tests {
             .unwrap();
         assert_eq!(waiting.len(), 3);
         assert!(store.has_drainable_projection_job().unwrap());
+    }
+
+    #[test]
+    fn the_window_probe_finds_each_candidates_source_and_live_page() {
+        let store = crate::test_support::store();
+        put(&store, "a");
+        put(&store, "gone");
+        let incarnation = store
+            .list_queued_page_projections(&filter(json!({ "limit": 1 })))
+            .unwrap()
+            .remove(0)["source_incarnation"]
+            .as_str()
+            .unwrap()
+            .to_uppercase();
+        store.soft_delete_page("gone", Some("default")).unwrap();
+        let candidate = |source_incarnation: &str, slug: &str| ProjectionWindowCandidate {
+            source_incarnation: source_incarnation.into(),
+            slug: slug.into(),
+        };
+        let rows = store
+            .probe_projection_window_candidates(&[
+                candidate(&incarnation, "a"),
+                candidate(&incarnation, "gone"),
+                candidate("00000000-0000-0000-0000-000000000001", "a"),
+            ])
+            .unwrap();
+        assert_eq!(
+            rows,
+            [
+                json!({ "i": 0, "source_id": "default", "archived": false, "page_kind": "markdown", "body_storage": "inline" }),
+                json!({ "i": 1, "source_id": "default", "archived": false, "page_kind": null, "body_storage": null }),
+                json!({ "i": 2, "source_id": null, "archived": null, "page_kind": null, "body_storage": null }),
+            ]
+        );
+        assert!(
+            store
+                .probe_projection_window_candidates(&[candidate("nope", "a")])
+                .is_err()
+        );
+        assert!(
+            store
+                .probe_projection_window_candidates(&[])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -156,6 +156,7 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.touchUnclaimedProjectionJob(job)` | the job at its revision stamped now unless a live `segmented_projecting` claim holds it | `touchUnclaimedProjectionJob` |
 | `brain.deferProjectionJob(job)` | `true` and the job stamped now when it is queued at its revision; `false` otherwise | `deferProjectionJob` |
 | `brain.countPendingTextChunks(pageId)` | `{ chunks, chars }`: how many of the page's text chunks have no vector, and their length in characters (as Postgres `length` counts) | `countPendingTextChunks` |
+| `brain.probeProjectionWindowCandidates(candidates)` | one `{ i, source_id, archived, page_kind, body_storage }` row per `{ source_incarnation, slug }` candidate, at its index `i`: the source of that incarnation (archived or not) and its live page at the slug (`body_storage` `segmented` or `inline`); each part is `null` when missing; a non-uuid incarnation is refused | `probeProjectionWindowCandidates` |
 
 ## Op checkpoints
 

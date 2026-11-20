@@ -7,7 +7,7 @@
  * Protects: the queue listing the rebuild sends for five option sets, and each member's text and binds, equal the old
  * raw statements (the texts below were recorded from the raw callers before the move). That includes the deferred
  * chunk replacement's reads and writes (continueDeferredProjectionStep) and the rebuild loop's queue stamps (re-key,
- * deferred stamp in both modes, unclaimed touch, defer) and resealSafeChunks's pending count; the failed mark reuses markProjectionRebuildFailed, whose
+ * deferred stamp in both modes, unclaimed touch, defer), resealSafeChunks's pending count and the resident's window probe; the failed mark reuses markProjectionRebuildFailed, whose
  * text differs from the old one only in whitespace. The queue listing, the keep
  * plan and the vector clear are composed with sqlFragment, which numbers placeholders in text order: they are compared
  * with each placeholder replaced by the value it binds, so only the numbering may differ. The other statements match
@@ -79,6 +79,7 @@ const OLD_STEP = {
   failed: "UPDATE page_projection_jobs j SET reason='rebuild_failed',updated_at=now()\n          WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')",
   defer: "UPDATE page_projection_jobs SET updated_at=now()\n        WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug",
   pending: "SELECT COUNT(*)::int AS chunks,\n    COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks\n    WHERE page_id=$1 AND \"embedding\" IS NULL AND modality='text'",
+  window: "SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage\n      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)\n      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true\n      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q\n        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true",
 };
 
 const KEY = { sourceIncarnation: '00000000-0000-0000-0000-0000000000aa', slug: 'notes/a', revision: '00000000-0000-0000-0000-0000000000bb' };
@@ -164,6 +165,14 @@ test("the re-seal's pending count sends the recorded statement and reads its num
   expect(last()).toEqual({ text: OLD_STEP.pending, params: [9] });
   const empty = recordingEngine();
   expect(await empty.engine.countPendingTextChunks(9, COLUMN)).toEqual({ chunks: 0, chars: 0 });
+});
+
+test("the resident's window probe sends the recorded statement and binds", async () => {
+  const { engine, last } = recordingEngine();
+  const candidates = [{ source_incarnation: KEY.sourceIncarnation, slug: 'notes/a' }, { source_incarnation: KEY.sourceIncarnation, slug: 'notes/b' }];
+  expect(await engine.probeProjectionWindowCandidates(candidates)).toEqual([]);
+  expect(last()).toEqual({ text: OLD_STEP.window, params: [JSON.stringify([
+    { i: 0, source_incarnation: KEY.sourceIncarnation, slug: 'notes/a' }, { i: 1, source_incarnation: KEY.sourceIncarnation, slug: 'notes/b' }])] });
 });
 
 test('the deferred replacement writes send the recorded statements', async () => {

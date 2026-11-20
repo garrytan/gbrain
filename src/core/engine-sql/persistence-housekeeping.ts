@@ -306,6 +306,11 @@ export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'aft
     ORDER BY r.lane,r.ord`;
 }
 
+/** `SEGMENTED_PROJECTION_CLAIMED_SQL` (projections.ts) as a fragment: a queue row `j` a live segmented claim holds. */
+export function segmentedProjectionClaimedFragment(): SqlFragment {
+  return sqlFragment`${trustedSql(SEGMENTED_PROJECTION_CLAIMED_TEXT)}`;
+}
+
 /** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
 export function projectionRetryReadyFragment(): SqlFragment {
   return sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`;

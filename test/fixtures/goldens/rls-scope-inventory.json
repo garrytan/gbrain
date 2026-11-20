@@ -6796,6 +6796,7 @@
         "probeIdleWork": "none",
         "probeLiveConsumerRows": "none",
         "probeNoopEmbeddingSettle": "none",
+        "probeProjectionWindowCandidates": "none",
         "probePurgeDerivations": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",

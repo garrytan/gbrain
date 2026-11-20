@@ -1043,6 +1043,7 @@ export const RUST_ENGINE_MEMBERS = {
   listStaleChunkVectors: 'persistence_journal',
   clearChunkVectors: 'persistence_journal',
   countPendingTextChunks: 'persistence_journal',
+  probeProjectionWindowCandidates: 'persistence_journal',
   readProjectionHead: 'persistence_journal',
   isDeferredReplacementHeld: 'persistence_journal',
   renewDeferredReplacementClaim: 'persistence_journal',

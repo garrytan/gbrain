@@ -10,12 +10,14 @@
  *    seals a job queued for a deferred replacement, answers a job another continuation holds as superseded, and its
  *    stamps (re-key, deferred stamp in both modes, unclaimed touch, defer, failed mark) change only the job at its
  *    revision. The re-seal's pending count (resealSafeChunks) counts the page's text chunks without a vector and
- *    their characters. The answers are equal on every engine arm.
+ *    their characters. The resident's window selection probes each candidate's source and live page by key and
+ *    rebuilds a queued page. The answers are equal on every engine arm.
  *  - Regression: the step read the page head, the held probe, the row fingerprint, the stale vector list and ran the
  *    claim renewal, the unkept delete and the vector clear through `executeRaw`, which the Rust engine refuses
  *    (`This brain's engine does not support executeRaw yet`). The rebuild loop's stamps did the same, so a Rust
  *    brain could not finish a deferred replacement or stamp its queue while PGLite and Postgres did. The re-seal's
- *    pending count was raw too, so every resealSafeChunks call (an extraction receipt's page write) failed on Rust.
+ *    pending count was raw too, so every resealSafeChunks call (an extraction receipt's page write) failed on Rust, and so did the window probe, which every resident projection
+ *    pass (runResidentProjectionInvocation) runs.
  *  - Why existing coverage misses it: test/timeline-chunk-reuse.test.ts runs the replacement on PGLite and Postgres
  *    only, and test/projection-rebuild-sql-pin.test.ts pins the Postgres text on a recording fake with no database.
  *  - Seam: the import queues a deferred job through queuePageProjection, which is still raw on Rust; these cases
@@ -27,6 +29,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ProjectionJobKey } from '../../src/core/engine-sql/projection-rebuild.ts';
 import { continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT,
   rebuildPendingPageProjections, resealSafeChunks } from '../../src/core/page-state/projections.ts';
+import { newProjectionScanCursor } from '../../src/core/page-state/projection-window.ts';
 import { basisEmbedding, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { pageMeta } from '../helpers/page-body-fixtures.ts';
@@ -110,6 +113,17 @@ describe('engine parity: the rebuild loop on a deferred job', () => {
       return out;
     });
 
+  parityTest("the resident's window selection rebuilds a queued page",
+    { methods: ['putPage', 'listQueuedPageProjections', 'selectProjectionWindowJobs', 'probeProjectionWindowCandidates', 'readProjectionJobReason',
+      'deleteProjectionJob'] },
+    async (engine) => {
+      await engine.putPage('notes/window', PAGE('Window', 'a passage about lynx.'));
+      const rebuild = await rebuildPendingPageProjections(engine, 10, { window: newProjectionScanCursor() });
+      const out = { rebuild, end: await chunks(engine, 'notes/window', false), left: (await engine.listQueuedPageProjections({ limit: 10 })).length };
+      expect(out).toEqual({ rebuild: { rebuilt: 1, superseded: 0 }, end: [[0, 'a passage about lynx.', false]], left: 0 });
+      return out;
+    });
+
   parityTest('answers a job another continuation holds as superseded and leaves its claim',
     { methods: ['putPage', 'upsertChunks', 'listQueuedPageProjections', 'renewDeferredReplacementClaim', 'readProjectionJobReason',
       'readProjectionHead', 'isDeferredReplacementHeld'] },
@@ -136,6 +150,30 @@ describe('engine parity: the rebuild loop queue stamps', () => {
       await engine.deletePage('notes/big');
       const out = { before, otherSource, deleted: await engine.hasSegmentedPage('default', 'notes/big') };
       expect(out).toEqual({ before: [false, true, false], otherSource: false, deleted: false });
+      return out;
+    });
+
+  parityTest("the window probe finds each candidate's source and live page by key",
+    { methods: ['putPage', 'createSegmentedPageShell', 'deletePage', 'listQueuedPageProjections', 'probeProjectionWindowCandidates'] },
+    async (engine) => {
+      await engine.putPage('notes/live', PAGE('Live', 'live body.'));
+      await engine.putPage('notes/gone', PAGE('Gone', 'gone body.'));
+      await engine.createSegmentedPageShell('notes/big', pageMeta('Big page'), { sourceId: 'default' });
+      const incarnation = (await jobOf(engine, 'notes/live')).sourceIncarnation;
+      await engine.deletePage('notes/gone');
+      const probed = await engine.probeProjectionWindowCandidates(['notes/live', 'notes/gone', 'notes/big', 'notes/none'].map(slug =>
+        ({ source_incarnation: incarnation, slug })).concat([{ source_incarnation: OTHER_REVISION, slug: 'notes/live' }]));
+      const out = { probed: probed.map(row => ({ ...row, i: Number(row.i) })).sort((a, b) => a.i - b.i),
+        none: await engine.probeProjectionWindowCandidates([]) };
+      const live = { source_id: 'default', archived: false };
+      const missing = { page_kind: null, body_storage: null };
+      expect(out).toEqual({ probed: [
+        { i: 0, ...live, page_kind: 'markdown', body_storage: 'inline' },
+        { i: 1, ...live, ...missing },
+        { i: 2, ...live, page_kind: 'markdown', body_storage: 'segmented' },
+        { i: 3, ...live, ...missing },
+        { i: 4, source_id: null, archived: null, ...missing },
+      ], none: [] });
       return out;
     });
 

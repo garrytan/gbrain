@@ -4,7 +4,7 @@
  * member.
  *
  * The deferred chunk replacement's members (the row fingerprint, the unkept-row delete, the stale-vector list and
- * clear, the page head, the claim probe and renewal) and the rebuild loop's queue stamps are served too. The
+ * clear, the page head, the claim probe and renewal), the rebuild loop's queue stamps and the window probe are served too. The
  * fingerprint is the store's own opaque value: a caller only compares two of them.
  *
  * The store keeps one vector column, `embedding`, so the keep-plan and vector members refuse any other column. The drained probe
@@ -77,6 +77,10 @@ export const countPendingTextChunks: Member<'countPendingTextChunks'> = (brain, 
   keepColumn('countPendingTextChunks', column);
   return storeCall({ member: 'countPendingTextChunks' }, () => brain.countPendingTextChunks(pageId));
 };
+
+export const probeProjectionWindowCandidates: Member<'probeProjectionWindowCandidates'> = (brain, candidates) =>
+  storeCall({ member: 'probeProjectionWindowCandidates' }, () => brain.probeProjectionWindowCandidates(
+    candidates.map(row => ({ source_incarnation: row.source_incarnation, slug: row.slug }))));
 
 export const readProjectionHead: Member<'readProjectionHead'> = (brain, sourceId, slug) =>
   storeCall({ member: 'readProjectionHead', slug, sourceId }, () => brain.readProjectionHead(sourceId, slug));

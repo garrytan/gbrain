@@ -634,13 +634,7 @@ async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCurso
     seen.add(key);
     return true;
   });
-  const probed = candidates.length ? await engine.executeRaw<{ i: number; source_id: string | null; archived: boolean | null; page_kind: string | null; body_storage: string | null }>(
-    `SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage
-      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)
-      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true
-      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q
-        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true`,
-    [JSON.stringify(candidates.map((row, i) => ({ i, source_incarnation: row.source_incarnation, slug: row.slug })))]) : [];
+  const probed = candidates.length ? await engine.probeProjectionWindowCandidates(candidates) : [];
   const jobs: Array<QueuedJob & { ord: number }> = [];
   for (const probe of probed.sort((a, b) => Number(a.i) - Number(b.i))) {
     const row = candidates[Number(probe.i)]!;
