@@ -21,9 +21,9 @@ use std::collections::BTreeSet;
 
 pub(crate) const REDACTIONS: u8 = 0x0c;
 const RECORD: u8 = 0x00;
-const BY_SUBJECT: u8 = 0x01;
-const BY_FIELD_HASH: u8 = 0x02;
-const TABLE: &str = "belief_redactions";
+pub(super) const BY_SUBJECT: u8 = 0x01;
+pub(super) const BY_FIELD_HASH: u8 = 0x02;
+pub(super) const TABLE: &str = "belief_redactions";
 
 /// What is stored for one suppression.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,13 +78,13 @@ pub struct RedactionRelease {
     pub released_hash: Option<String>,
 }
 
-fn record_key(id: u64) -> Vec<u8> {
+pub(super) fn record_key(id: u64) -> Vec<u8> {
     let mut key = vec![keys::TRUST, REDACTIONS, RECORD];
     key.extend_from_slice(&id.to_be_bytes());
     key
 }
 
-fn index_prefix(kind: u8, source: &str, value: &str) -> Vec<u8> {
+pub(super) fn index_prefix(kind: u8, source: &str, value: &str) -> Vec<u8> {
     let mut key = vec![keys::TRUST, REDACTIONS, kind];
     for part in [source, value] {
         key.extend_from_slice(part.as_bytes());
@@ -93,13 +93,13 @@ fn index_prefix(kind: u8, source: &str, value: &str) -> Vec<u8> {
     key
 }
 
-fn index_key(kind: u8, source: &str, value: &str, id: u64) -> Vec<u8> {
+pub(super) fn index_key(kind: u8, source: &str, value: &str, id: u64) -> Vec<u8> {
     let mut key = index_prefix(kind, source, value);
     key.extend_from_slice(&id.to_be_bytes());
     key
 }
 
-fn ids_under(read: &dyn KvRead, prefix: &[u8], into: &mut BTreeSet<u64>) -> Result<()> {
+pub(super) fn ids_under(read: &dyn KvRead, prefix: &[u8], into: &mut BTreeSet<u64>) -> Result<()> {
     scan_prefix(read, prefix, false, &mut |k, _| {
         if let Some(tail) = k
             .get(prefix.len()..)

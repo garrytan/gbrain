@@ -347,3 +347,22 @@ because enable refused on this engine before it, so no store could hold a baseli
   has another incarnation, and the reads by incarnation do not see the old rows. The suppression and claim reads are
   by source id and do see them, as on Postgres.
 - Pinned by `test/engine-parity/belief-ledger.test.ts` on every arm and by the unit tests in each module.
+
+## The belief side of a purge (`trust::belief_purge`)
+
+The store serves the purge statements of src/core/engine-sql/belief-purge.ts
+(src/core/rust-engine/store-members/belief-purge.ts). They keep no keys of their own.
+
+- `bumpSourcePurgeEpoch` raises the source record's `purge_epoch` by one and answers the new value; an unknown source
+  answers null, as the `UPDATE ... RETURNING` finds no row.
+- `hasBeliefEvents` answers whether the source has a belief event of any incarnation: the first key under
+  `t 0x09 0x00 source \0`.
+- `registerPurgeRedaction` adds a suppression under the `t 0x0c` keys unless one with the same source, subject, field,
+  purge request and field hash exists. Its `created_at` is the transaction clock.
+- `releasePurgeRedactionsForField` binds each suppression of one field of one subject to the releasing publication and
+  hash. It skips one already released to that hash and one whose redacted text has that hash, and answers the purge
+  request of each released row, in id order.
+- `replayPagePurges` and `countPagePurgeTombstones` live with the page purge ledger (`facts.md`, `facts/page_purges.rs`).
+- `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
+  and every probed table and column as present.
+- Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.

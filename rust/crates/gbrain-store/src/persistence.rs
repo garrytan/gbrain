@@ -63,6 +63,7 @@ mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod projection_rebuild;
+mod purge_effects;
 mod receipt_list;
 mod topology;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
@@ -78,6 +79,9 @@ pub use projection_queue::{
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use projection_rebuild::{
     ProjectionJobKey, QueuedProjectionFilter, QueuedProjectionKey, QueuedProjectionPages,
+};
+pub use purge_effects::{
+    GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;

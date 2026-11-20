@@ -353,8 +353,9 @@ tombstone per hash under the slug; a hash already tombstoned in the source takes
 (`ON CONFLICT ... DO UPDATE`). The time is the open transaction's clock. An empty list writes nothing and reads no
 source; a repeated hash, a `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing
 source refuses as the foreign key does. The page purge sweep (`persistence/page-purge.ts` `tombstonePage`) writes its
-tombstones through it. The restore replay (`belief/purge-mirror.ts`) still writes the ledger with raw SQL and stops on
-the typed `raw_sql` refusal. Deleting a source deletes its tombstones. A page write that stores a hash tombstoned in its
+tombstones through it. The restore replay (`belief/purge-mirror.ts`) writes them through `replayPagePurges`
+(`engine-sql/belief-purge.ts`), which differs in one way: a hash already tombstoned keeps its `purged_at_us`.
+`countPagePurgeTombstones(sourceId, slug)` counts the source's tombstones under the slug. Deleting a source deletes its tombstones. A page write that stores a hash tombstoned in its
 source refuses with `purged_content`, as the Postgres `pages_refuse_purged` trigger does: `putPage` always (it is an
 upsert, so the `BEFORE INSERT` trigger fires even when the page already holds the hash), every other page write
 (`pages::write_page`) on insert or when the hash or source changes.
@@ -883,8 +884,10 @@ are compared on empty data only.
 The statements `facts/purge.ts` ran through `executeRaw` are 35 typed members, so the Rust arm answers each with the
 typed `raw_sql` refusal until the store holds what it reads. `lockPurgeSource` (the source record's incarnation and
 archived flag; the purge transaction is the store's single writer, so FOR UPDATE changes nothing) and the tombstone
-writes `insertFactPurge` and `insertTakePurge` have Rust implementations. A whole `purge_fact` on the Rust arm admits its
-write request, then stops on the refusal of `listGitEffectsCarryingReason`, and its transaction keeps nothing
+writes `insertFactPurge` and `insertTakePurge` have Rust implementations, as do the Git effect statements
+(`listGitEffectsCarryingReason`, `listPageGitEffectsForStrip`, `setPurgeEffectData`; persistence.md, "Purge effect
+statements") and `countPagePurgeTombstones` (`facts/page_purges.rs`). A whole `purge_fact` on the Rust arm admits its
+write request, then stops on the refusal of `deletePurgeReviewQueue`, and its transaction keeps nothing
 (`test/engine-parity/fact-purge-commit.test.ts`). The parity file
 `test/engine-parity/fact-purge-sites.test.ts` stops on that refusal for every case, and the Postgres text of each
 statement is pinned byte for byte by `test/fact-purge-sites-sql-pin.test.ts`. One statement of `purge.ts` stays a raw

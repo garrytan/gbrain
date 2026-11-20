@@ -3,6 +3,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as BeliefLedgerSql from './engine-sql/belief-ledger.ts';
+import type * as BeliefPurgeSql from './engine-sql/belief-purge.ts';
 import type * as BeliefStateSql from './engine-sql/belief-state.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
@@ -4547,6 +4548,19 @@ export interface BrainEngine {
   readBeliefStateRows(input: BeliefStateSql.BeliefStateRowsInput): Promise<BeliefStateSql.BeliefStateRows>;
   /** Fact rows by id in the state read's columns, for a guard event whose row is outside the batch's streams. No set order. */
   readBeliefFactsById(ids: readonly number[]): Promise<Array<Record<string, unknown>>>;
+  // The belief side of a purge (engine-sql/belief-purge.ts). Each runs the statement belief/purge.ts or purge-mirror.ts ran through executeRaw.
+  /** Raises the source's purge epoch by one; the new epoch, or null for an unknown source. Write; run it in the purge transaction. */
+  bumpSourcePurgeEpoch(sourceId: string): Promise<number | null>;
+  /** Whether the source has any belief event, of any incarnation. */
+  hasBeliefEvents(sourceId: string): Promise<boolean>;
+  /** Records a purge suppression unless the same (source, subject, field, request, hash) is recorded. Write. */
+  registerPurgeRedaction(row: BeliefPurgeSql.PurgeRedactionInsert): Promise<void>;
+  /** Releases one field's suppressions on a subject to the hash of its current text; the purge request of each released row, no set order. Write. */
+  releasePurgeRedactionsForField(row: BeliefPurgeSql.PurgeRedactionRelease): Promise<string[]>;
+  /** The restore replay's page purge tombstones under the slug; a hash already tombstoned takes the new slug and request and keeps its time. Write. */
+  replayPagePurges(row: BeliefPurgeSql.ReplayPagePurges): Promise<void>;
+  /** What the restored archive has that the purge replay probes: which of `stores` exist, page_versions.change_reason, persistence_brain, derivation_inputs, belief_events. */
+  readPurgeReplaySchema(stores: readonly string[]): Promise<BeliefPurgeSql.PurgeReplaySchema>;
 
   /**
    * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the

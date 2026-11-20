@@ -4,6 +4,7 @@
 
 mod access_rules;
 mod belief_ledger;
+mod belief_purge;
 mod chunks;
 mod cli_entities;
 mod cli_reads_export;
@@ -71,6 +72,7 @@ mod ontology;
 mod page_body;
 mod page_embedding_budget;
 mod page_ops;
+mod purge_effects;
 mod purge_plan;
 mod raw_files;
 mod relations;

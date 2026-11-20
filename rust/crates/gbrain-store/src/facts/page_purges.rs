@@ -7,10 +7,13 @@
 //!
 //! - `upsertPagePurges` ([`Store::upsert_page_purges`]) writes it, for the page purge sweep
 //!   (`persistence/page-purge.ts` `tombstonePage`): a hash already tombstoned takes the new slug,
-//!   request id and time (`ON CONFLICT ... DO UPDATE`). The restore replay
-//!   (`belief/purge-mirror.ts`) still writes it with raw SQL and stops on the typed `raw_sql` refusal.
-//! - `countPurgedPageFacts` (facts/repair.rs) and the belief ledger's purge probe
-//!   (trust/belief_history.rs) read it.
+//!   request id and time (`ON CONFLICT ... DO UPDATE`).
+//! - `replayPagePurges` ([`Store::replay_page_purges`]) writes it for the restore replay
+//!   (`belief/purge-mirror.ts`): the same upsert, except a hash already tombstoned keeps its time
+//!   (the replay's statement sets no `purged_at`).
+//! - `countPurgedPageFacts` (facts/repair.rs), the belief ledger's purge probe
+//!   (trust/belief_history.rs) and the purge receipt's `countPagePurgeTombstones`
+//!   ([`Store::count_page_purge_tombstones`]) read it.
 //! - The page guard ([`refuse_purged_page`]) refuses a page write that stores a tombstoned hash in
 //!   its source, as the `pages_refuse_purged` trigger does: `putPage` (an upsert, so the `BEFORE
 //!   INSERT` trigger fires) on every write, other page writes on insert or a hash or source change.
@@ -24,8 +27,8 @@ use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::PageRecord;
-use crate::put_json;
 use crate::sources::require_source;
+use crate::{get_json, put_json};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -162,7 +165,23 @@ impl Store {
     /// nothing. As Postgres refuses a statement that upserts one key twice, a repeated hash is
     /// refused and nothing is written. `purged_at` is the open transaction's clock, else the store's.
     pub fn upsert_page_purges(&self, row: &PagePurgeUpsert) -> Result<()> {
-        let op = "upsertPagePurges";
+        self.write_page_purges("upsertPagePurges", row, false)
+    }
+
+    /// `replayPagePurges`: the restore replay's tombstones, as [`Store::upsert_page_purges`]
+    /// writes them, except a hash already tombstoned in the source keeps its `purged_at`.
+    pub fn replay_page_purges(&self, row: &PagePurgeUpsert) -> Result<()> {
+        self.write_page_purges("replayPagePurges", row, true)
+    }
+
+    /// `countPagePurgeTombstones`: how many of the source's tombstones name the slug (the purge
+    /// receipt's count).
+    pub fn count_page_purge_tombstones(&self, source_id: &str, slug: &str) -> Result<u64> {
+        let rows = source_purges(&*self.read()?, source_id, "countPagePurgeTombstones")?;
+        Ok(rows.iter().filter(|(s, _)| s == slug).count() as u64)
+    }
+
+    fn write_page_purges(&self, op: &str, row: &PagePurgeUpsert, keep_time: bool) -> Result<()> {
         no_nul(op, &[("sourceId", &row.source_id), ("slug", &row.slug)])?;
         for hash in &row.content_hashes {
             no_nul(op, &[("contentHashes", hash)])?;
@@ -187,16 +206,22 @@ impl Store {
         }
         self.write(|tx| {
             require_source(tx, &row.source_id)?;
-            let purged_at_us = crate::env::transaction_clock::transaction_now()
+            let now_us = crate::env::transaction_clock::transaction_now()
                 .unwrap_or_else(|| self.env.now_micros());
             for hash in &row.content_hashes {
+                let key = purge_key(&row.source_id, hash);
+                let kept = if keep_time {
+                    get_json::<PurgeRecord>(tx, &key)?.map(|r| r.purged_at_us)
+                } else {
+                    None
+                };
                 put_json(
                     tx,
-                    &purge_key(&row.source_id, hash),
+                    &key,
                     &PurgeRecord {
                         slug: row.slug.clone(),
                         request_id: request_id.clone(),
-                        purged_at_us,
+                        purged_at_us: kept.unwrap_or(now_us),
                     },
                 )?;
             }
@@ -274,6 +299,45 @@ mod tests {
             .upsert_page_purges(&upsert("missing", &[], "notes/c", None))
             .unwrap();
         assert_eq!(slugs(&store, "default").len(), 2);
+    }
+
+    #[test]
+    fn the_replay_moves_a_tombstoned_hash_to_the_new_slug_and_keeps_its_time() {
+        let (store, _dir) = open("page-purges-replay");
+        let time = |store: &Store, hash: &str| {
+            crate::get_json::<PurgeRecord>(&*store.read().unwrap(), &purge_key("default", hash))
+                .unwrap()
+                .unwrap()
+                .purged_at_us
+        };
+        store
+            .upsert_page_purges(&upsert("default", &["h1"], "notes/a", None))
+            .unwrap();
+        let first = time(&store, "h1");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        store
+            .replay_page_purges(&upsert("default", &["h1", "h2"], "notes/b", None))
+            .unwrap();
+        assert_eq!(slugs(&store, "default"), ["notes/b", "notes/b"]);
+        assert_eq!(time(&store, "h1"), first);
+        assert_eq!(
+            store
+                .count_page_purge_tombstones("default", "notes/b")
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            store
+                .count_page_purge_tombstones("default", "notes/a")
+                .unwrap(),
+            0
+        );
+        assert!(time(&store, "h2") > first);
+        assert!(
+            store
+                .replay_page_purges(&upsert("default", &["h3", "h3"], "notes/c", None))
+                .is_err()
+        );
     }
 
     #[test]

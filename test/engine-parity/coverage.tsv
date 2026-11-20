@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1243/1250
+# covered: 1249/1256
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -55,6 +55,7 @@
 # facts_recall: 7/7
 # facts_conversation: 30/30
 # belief_ledger: 17/17
+# belief_purge: 6/6
 # trust_tier_reads: 14/14
 # memory_mutation_reads: 12/12
 # withdrawal_discovery: 1/1
@@ -507,7 +508,7 @@ readGitHoldRecords	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	1	no	yes	yes	serves
 readReasonPurgeTombstones	persistence_journal	yes	2	no	yes	yes	serves
-readSourcePurgeEpoch	persistence_journal	yes	2	no	yes	yes	serves
+readSourcePurgeEpoch	persistence_journal	yes	3	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
@@ -857,9 +858,9 @@ upsertPagePurges	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeSourceLocalPath	facts_purge	yes	2	no	yes	yes	serves
 insertReasonPurgeTombstones	facts_purge	yes	1	no	yes	yes	refuses:facts
-listGitEffectsCarryingReason	facts_purge	yes	1	no	yes	yes	refuses:facts
-listPageGitEffectsForStrip	facts_purge	yes	1	no	yes	yes	refuses:facts
-setPurgeEffectData	facts_purge	yes	1	no	yes	yes	refuses:facts
+listGitEffectsCarryingReason	facts_purge	yes	1	no	yes	yes	serves
+listPageGitEffectsForStrip	facts_purge	yes	1	no	yes	yes	serves
+setPurgeEffectData	facts_purge	yes	1	no	yes	yes	serves
 listPageChangeReasons	facts_purge	yes	2	no	yes	yes	refuses:facts
 listRequestsRecordingReasons	facts_purge	yes	1	no	yes	yes	refuses:facts
 heldEntityPageDeleted	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -884,7 +885,7 @@ countLegacyDerivedPages	facts_purge	yes	4	no	yes	yes	serves
 vacuumPurgedTables	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPageProseHits	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeReceiptSourcePath	facts_purge	yes	1	no	yes	yes	refuses:facts
-countPagePurgeTombstones	facts_purge	yes	1	no	yes	yes	refuses:facts
+countPagePurgeTombstones	facts_purge	yes	2	no	yes	yes	serves
 readDeletePageRequest	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPurgeEffects	facts_purge	yes	2	no	yes	yes	refuses:facts
 countPurgeFingerprintResidue	facts_purge	yes	2	no	yes	yes	refuses:facts
@@ -1048,7 +1049,7 @@ readLatestBeliefCoverage	belief_ledger	yes	2	no	yes	yes	serves
 hasBeliefBaseline	belief_ledger	yes	1	no	yes	yes	serves
 listBeliefBaselinePending	belief_ledger	yes	3	no	yes	yes	serves
 countBeliefBaselineSlugs	belief_ledger	yes	2	no	yes	yes	serves
-readBeliefRedactions	belief_ledger	yes	2	no	yes	yes	serves
+readBeliefRedactions	belief_ledger	yes	4	no	yes	yes	serves
 insertBeliefRedaction	belief_ledger	yes	2	no	yes	yes	serves
 releaseBeliefRedactions	belief_ledger	yes	2	no	yes	yes	serves
 insertBeliefEvents	belief_ledger	yes	7	no	yes	yes	serves
@@ -1060,6 +1061,12 @@ renameBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
 readMovedBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
 readBeliefStateRows	belief_ledger	yes	1	no	yes	yes	serves
 readBeliefFactsById	belief_ledger	yes	1	no	yes	yes	serves
+bumpSourcePurgeEpoch	belief_purge	yes	1	no	yes	yes	serves
+hasBeliefEvents	belief_purge	yes	1	no	yes	yes	serves
+registerPurgeRedaction	belief_purge	yes	2	no	yes	yes	serves
+releasePurgeRedactionsForField	belief_purge	yes	1	no	yes	yes	serves
+replayPagePurges	belief_purge	yes	1	no	yes	yes	serves
+readPurgeReplaySchema	belief_purge	yes	1	no	yes	yes	serves
 listCorePageRows	trust_tier_reads	yes	3	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
