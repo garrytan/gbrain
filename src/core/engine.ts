@@ -16,6 +16,7 @@ import type { ListReadMembers } from './engine-members/list-reads.ts';
 import type { SurfacedReadMembers } from './engine-members/surfaced-reads.ts';
 import type { HandoverReadMembers } from './engine-members/handover-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as CollateGuestSources from './engine-sql/collate-guest-sources.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
 import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
@@ -1638,6 +1639,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
   /** Whether guest_sources holds a row for the source (the record `guests init` writes). A Rust brain keeps none and refuses (capability guest_sources). */
   hasGuestSourceRow(sourceId: string): Promise<boolean>;
+  /** Writes the source's guest_sources row, or merges `writers` into it (distinct, in byte order; the row keeps its ceiling), and answers the row (guests/sources.ts initGuestSource). */
+  upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string): Promise<CollateGuestSources.GuestSourceRow>;
+  /** The live page at `slug` in each guest source (only `guestSource` when given), by source id in byte order (guests/promote.ts). */
+  listGuestNotes(slug: string, guestSource?: string): Promise<Array<{ id: number; source_id: string }>>;
   /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
   listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether any source is a guest source. */

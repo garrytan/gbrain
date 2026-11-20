@@ -111,6 +111,7 @@ import { assertSchemaNotAhead } from './schema-client-behind.ts';
 import { deadlineReadSettings, isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
+import * as collateGuestSourcesImpl from './engine-sql/collate-guest-sources.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as embedStaleWorkImpl from './engine-sql/embed-stale-work.ts';
 import * as embeddingProvenanceImpl from './engine-sql/embedding-provenance.ts';
@@ -2810,6 +2811,8 @@ export class PostgresEngine implements BrainEngine {
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   hasGuestSourceRow(sourceId: string) { return this.preparationRead(exec => cliReadsImpl.hasGuestSourceRow(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceId)); }
+  upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string) { return collateGuestSourcesImpl.upsertGuestSource(this.executeRaw.bind(this), sourceId, writers, trustCeiling); }
+  listGuestNotes(slug: string, guestSource?: string) { return collateGuestSourcesImpl.listGuestNotes(this.executeRaw.bind(this), slug, guestSource); }
   listGuestSourceIds(sourceIds: readonly string[]) { return this.preparationRead(exec => cliReadsImpl.listGuestSourceIds(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }

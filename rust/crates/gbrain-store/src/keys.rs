@@ -121,6 +121,8 @@ pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
+/// Family `guest_sources` (`guest_sources.rs`): one record per guest source row. Every letter was taken, so the tag is a digit.
+pub const GUEST_SOURCE: u8 = b'0';
 /// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.

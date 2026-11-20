@@ -762,6 +762,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readGuestSourceRow': OOS.cliReadsImport,
   'listGuestSourceIds': OOS.cliReadsImport,
   'hasGuestSourceRow': OOS.cliReadsImport,
+  'upsertGuestSource': OOS.callerRawSql,
+  'listGuestNotes': OOS.callerRawSql,
   'hasGuestSource': OOS.cliReadsImport,
   'readPageTrustRows': OOS.cliReadsImport,
   'readRowTrustRows': OOS.cliReadsImport,
@@ -3023,6 +3025,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['default', (e) => e.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 })],
     ['sourceId+aliases', (e) => e.countPagesDueForMentions({ sourceId: SRC, mentionVersion: 1, aliases: { types: ['person'], version: 1 } })],
   ]),
+  ...variants('upsertGuestSource', [['default', (e) => e.upsertGuestSource('default', ['a-z', 'ab'], 'external_untrusted')]]),
+  ...variants('listGuestNotes', [['all', (e) => e.listGuestNotes('notes/a')], ['one source', (e) => e.listGuestNotes('notes/a', 'default')]]),
   ...variants('readIdentitySiblingCandidates', [
     ['default', (e) => e.readIdentitySiblingCandidates(SRC, { types: ['person'], subject: 'alice', limit: 5 })],
     ['excludePrivate+excludeQuarantined', (e) => e.readIdentitySiblingCandidates(SRC, { types: ['person'], subject: 'alice', limit: 5, excludePrivate: true, excludeQuarantined: true })],

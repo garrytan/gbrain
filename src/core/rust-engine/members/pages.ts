@@ -242,6 +242,8 @@ export const PAGES_MEMBERS = {
   readGuestSourceRow: 'sources',
   // Not served: the store keeps no guest_sources, so a Rust brain refuses naming guest_sources (row 32m-3).
   hasGuestSourceRow: 'guest_sources',
+  upsertGuestSource: 'sources',
+  listGuestNotes: 'pages',
   listGuestSourceIds: 'sources',
   hasGuestSource: 'sources',
   getSourceStrictness: 'sources',

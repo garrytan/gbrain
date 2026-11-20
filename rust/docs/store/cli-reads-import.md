@@ -29,14 +29,12 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
 
 - **Ingestion receipts.** The store keeps no `source_ingestion_receipts`, so `hasCompanyBrainReceipt` is `false`.
   The company-brain profile then reads the source as one that has not finished an ingestion.
-- **Guest sources.** The store has no `guest_sources` table and no row-level security. A guest source is a source
-  whose config has `guest` set to `true` or to the text `"true"`, as the SQL `config->>'guest' = 'true'` reads it.
-  `readGuestSourceRow` is never hidden and never finds a row. This is the Postgres answer for a source that is a
-  guest by config with no `guest_sources` row, so the import guard in `guests/admission.ts` lets the write through,
-  as it does on Postgres for that source. No `guest_sources` row can exist on Rust: `guests/sources.ts` adds one
-  through `executeRaw`, which the engine refuses with `engine_capability_missing`, so the guest admission is loud
-  on Rust and the read stays true. Page trust stamping matches too, because the trigger's guest rules key on a
-  `guest_sources` row only.
+- **Guest sources.** The store has no row-level security. A guest source is a source whose config has `guest` set to
+  `true` or to the text `"true"`, as the SQL `config->>'guest' = 'true'` reads it. `readGuestSourceRow` is never hidden.
+  It finds the source's `guest_sources` row when `upsertGuestSource` wrote one ([guest_sources.md](guest_sources.md)),
+  and no row for a source that is a guest by config alone or is not a guest: the Postgres answer for those sources, so
+  the import guard in `guests/admission.ts` lets the write through, as it does on Postgres for them. Page trust stamping
+  does not read the row: the store models no guest rules there ([trust.md](trust.md)).
 - **Page trust.** A page reads the `trust_tier` and `write_origin` its last write stamped
   ([`write_trust.md`](write_trust.md), "Page stamping"); a page written by an undeclared writer reads
   `trust_tier: 'unknown'` and `write_origin: null`. `flagged` is `activationSuppressedSql`: the page's tier is at or

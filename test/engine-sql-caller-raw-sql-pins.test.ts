@@ -77,6 +77,23 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
+    from: 'src/core/guests/sources.ts:96 initGuestSource, at dded7edc51',
+    case: { method: 'upsertGuestSource', variant: 'default', run: e => e.upsertGuestSource('default', ['a-z', 'ab'], 'external_untrusted') },
+    texts: [`INSERT INTO guest_sources (source_id, writers, trust_ceiling) VALUES ($1, $2::text[], $3)
+      ON CONFLICT (source_id) DO UPDATE SET writers = ARRAY(SELECT DISTINCT w COLLATE "C" FROM unnest(guest_sources.writers || EXCLUDED.writers) AS w ORDER BY w COLLATE "C")
+      RETURNING source_id, writers, trust_ceiling`],
+  },
+  {
+    from: 'src/core/guests/promote.ts:50 guestNote, at dded7edc51',
+    case: { method: 'listGuestNotes', variant: 'all', run: e => e.listGuestNotes('notes/a') },
+    texts: ['SELECT p.id, p.source_id FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.slug = $1 AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C"'],
+  },
+  {
+    from: 'src/core/guests/promote.ts:50 guestNote (one source), at dded7edc51',
+    case: { method: 'listGuestNotes', variant: 'one source', run: e => e.listGuestNotes('notes/a', 'default') },
+    texts: ['SELECT p.id, p.source_id FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.slug = $1 AND p.deleted_at IS NULL AND p.source_id = $2 ORDER BY p.source_id COLLATE "C"'],
+  },
+  {
     from: 'src/commands/guests.ts:140 runGrantOwnerClients, the guest-source check (at a597e7a6c6)',
     case: { method: 'hasGuestSourceRow', variant: 'default', run: e => e.hasGuestSourceRow('guests') },
     texts: ['SELECT 1 FROM guest_sources WHERE source_id = $1'],

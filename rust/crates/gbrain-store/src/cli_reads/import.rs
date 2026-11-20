@@ -237,15 +237,26 @@ impl Store {
         Ok(false)
     }
 
-    /// Never hidden (the store has no row-level security) and never a row (it has no guest_sources).
-    pub fn read_guest_source_row(&self, _source_id: &str) -> Result<GuestSourceLookupRow> {
-        self.read()?;
-        Ok(GuestSourceLookupRow {
-            hidden: false,
-            source_id: None,
-            writers: None,
-            trust_ceiling: None,
-        })
+    /// Never hidden (the store has no row-level security). The row is the source's guest_sources row
+    /// (`guest_sources.rs`), kept only by `upsertGuestSource`: a source whose config says guest has none.
+    pub fn read_guest_source_row(&self, source_id: &str) -> Result<GuestSourceLookupRow> {
+        let read = self.read()?;
+        Ok(
+            match crate::guest_sources::read_guest_row(&*read, source_id)? {
+                Some(row) => GuestSourceLookupRow {
+                    hidden: false,
+                    source_id: Some(source_id.to_string()),
+                    writers: Some(row.writers),
+                    trust_ceiling: Some(row.trust_ceiling),
+                },
+                None => GuestSourceLookupRow {
+                    hidden: false,
+                    source_id: None,
+                    writers: None,
+                    trust_ceiling: None,
+                },
+            },
+        )
     }
 
     /// The ids among `source_ids` (each once) of sources whose config says guest, in id order.
