@@ -105,6 +105,7 @@ import * as repairPageReads from './repair-page-reads.ts';
 import * as aliasOrphans from './alias-orphans.ts';
 import * as repairPageScans from './repair-page-scans.ts';
 import * as repairPlanScans from './repair-plan-scans.ts';
+import * as gitHolds from './git-holds.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -165,6 +166,7 @@ export const STORE_MEMBERS = {
   ...aliasOrphans,
   ...repairPageScans,
   ...repairPlanScans,
+  ...gitHolds,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

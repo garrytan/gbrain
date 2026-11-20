@@ -706,6 +706,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'countSegmentedOriginPages': OOS.repairBookkeeping,
   'listUntiledSegmentedPages': OOS.repairBookkeeping,
   'listSourceHoldRecords': OOS.repairBookkeeping,
+  'swapGitHold': OOS.repairBookkeeping,
+  'readGitHoldRecord': OOS.repairBookkeeping,
+  'requestGitHoldRetry': OOS.repairBookkeeping,
   'readMigrationRows': OOS.engineMigration, 'readMigrationPageColumns': OOS.engineMigration, 'readEngineMigrationHistory': OOS.engineMigration,
   'countLiveTimelineEntries': OOS.engineMigration, 'listManualLinkTransitions': OOS.engineMigration,
   // sources

@@ -223,6 +223,10 @@ export const RUST_ENGINE_MEMBERS = {
   countSegmentedOriginPages: 'pages',
   listUntiledSegmentedPages: 'pages',
   listSourceHoldRecords: 'pages',
+  // The Git sync hold writes and reads (engine-sql/git-holds.ts): hold rows are op checkpoints.
+  swapGitHold: 'persistence_journal',
+  readGitHoldRecord: 'persistence_journal',
+  requestGitHoldRetry: 'persistence_journal',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',

@@ -7,6 +7,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::persistence::GitHoldSummaryDelta;
 
 #[napi]
 impl Brain {
@@ -114,6 +115,63 @@ impl Brain {
         self.run(env, move |s| {
             let completed = (!completed_keys.is_null()).then_some(&completed_keys);
             s.write_op_checkpoint_record(&op, &fingerprint, completed)
+        })
+    }
+
+    /// `swapGitHold(input)`: the hold at `path` replaced by `next` (null deletes it) when it still
+    /// holds `prior` (null: no hold), with the summary counters `summary` moves; resolves whether it
+    /// swapped.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn swap_git_hold<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        path: String,
+        prior: Value,
+        next: Value,
+        summary: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let summary: Option<GitHoldSummaryDelta> = required(summary, "swapGitHold summary")?;
+            s.swap_git_hold(
+                &source_id,
+                &incarnation,
+                &path,
+                (!prior.is_null()).then_some(&prior),
+                (!next.is_null()).then_some(&next),
+                summary.as_ref(),
+            )
+        })
+    }
+
+    /// `readGitHoldRecord(sourceId, incarnation, path)`: `{ record, mirror_read_only }` or null.
+    #[napi]
+    pub fn read_git_hold_record<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        path: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_git_hold_record(&source_id, &incarnation, &path)
+        })
+    }
+
+    /// `requestGitHoldRetry(sourceId, incarnation, paths, requestedAt)`.
+    #[napi]
+    pub fn request_git_hold_retry<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        paths: Vec<String>,
+        requested_at: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.request_git_hold_retry(&source_id, &incarnation, &paths, &requested_at)
         })
     }
 }

@@ -61,7 +61,8 @@ import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
 export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
-export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
+import { GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_COUNTERS, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryCounter, type GitHoldSummaryDelta } from '../engine-sql/git-holds.ts';
+export { GIT_HOLD_RETRY_OP, gitHoldFingerprint, summaryFingerprint };
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export const SYNC_CONVERSION_OP = 'sync-conversions';
@@ -314,36 +315,17 @@ export interface GitHoldItem {
   docs: string;
 }
 
-export function gitHoldFingerprint(sourceId: string, incarnation: string, path: string): string {
-  return `${sourceId}:${incarnation}:${path}`;
-}
-
-export const summaryFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
-
-/** Locks the source's summary row (creating it), so hold writes of one source serialize. */
-async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Promise<number> {
-  const [row] = await tx.executeRaw<{ count: number | string }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0,'stale',0)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now()
-    RETURNING COALESCE((completed_keys->0->>'count')::int,0) AS count`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation]);
-  return Number(row?.count ?? 0);
-}
-
 /**
- * `count` is every hold; `stale` the holds of files whose page exists (the rest are missing pages);
- * `images` the #5493 unsupported-image holds, which never escalate; `fences` the #6188 `invalid_fence` holds;
- * `concurrent` the #6194 `concurrent_write` holds; `stalled` the #6278 `preparation_stalled` holds; `dirty` the #6340 `worktree_dirty` holds;
- * `drift` the #6712 `file_drift` holds, which never escalate (each is a database edit a person decides on, not a generator fault).
+ * The engine members a hold write runs through (engine-sql/git-holds.ts): every write reads the hold, computes the next
+ * record and swaps it in only when the row still holds what it read, the source's summary row created or locked first,
+ * so concurrent cursors of one source serialize and a write never replaces a record it did not read.
  */
-const SUMMARY_COUNTERS = ['stale', 'images', 'fences', 'concurrent', 'stalled', 'dirty', 'drift'] as const;
-type SummaryWeights = Record<typeof SUMMARY_COUNTERS[number], number>;
-async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, weights: SummaryWeights): Promise<void> {
-  const pairs = SUMMARY_COUNTERS.map((name, i) => `'${name}',GREATEST(0,COALESCE((completed_keys->0->>'${name}')::int,0)+$${i + 4}::int)`).join(',');
-  await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
-      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),${pairs})),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, ...SUMMARY_COUNTERS.map(name => weights[name])]);
-}
+type HoldStore = Pick<BrainEngine, 'readOpCheckpointRecord' | 'swapGitHold'>;
+/** How many times a hold write reads again after another write changed the row between its read and its swap. */
+const HOLD_SWAP_TRIES = 5;
+
+type SummaryWeights = Record<GitHoldSummaryCounter, number>;
+const SUMMARY_COUNTERS = GIT_HOLD_SUMMARY_COUNTERS;
 
 const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record && record.page_id !== null ? 1 : 0;
 const imageWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'managed_image_sync_unsupported' ? 1 : 0;
@@ -355,46 +337,58 @@ const driftWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code
 const weightsOf = (record: Pick<GitHoldRecord, 'code' | 'page_id'>, sign = 1): SummaryWeights => ({ stale: sign * staleWeight(record), images: sign * imageWeight(record),
   fences: sign * fenceWeight(record), concurrent: sign * concurrentWeight(record), stalled: sign * stalledWeight(record), dirty: sign * dirtyWeight(record), drift: sign * driftWeight(record) });
 
-async function readRow(tx: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path)]);
-  return row?.record ?? null;
+/** A hold row as a write reads it: the stored records (the swap's `prior`) and the hold record, null when the row has none. */
+interface HoldRow { keys: unknown[]; record: GitHoldRecord | null }
+async function readRow(tx: Pick<BrainEngine, 'readOpCheckpointRecord'>, sourceId: string, incarnation: string, path: string): Promise<HoldRow | null> {
+  const row = await tx.readOpCheckpointRecord(GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path));
+  if (!row) return null;
+  const keys = row.completed_keys as unknown[];
+  return { keys, record: (Array.isArray(keys) ? keys[0] ?? null : null) as GitHoldRecord | null };
 }
 
-/** GBRA-542: the hold record as readers return it, marked when its source is a read-only mirror (`s`: the sources row). */
-const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
+function holdSwapContended(path: string): Error {
+  return new Error(`sync hold ${path}: another write changed the hold ${HOLD_SWAP_TRIES} times between this write's read and its swap`);
+}
+
+/**
+ * GBRA-542: a read-only mirror's hold record, marked `read_only_checkout: true` with its keys in jsonb order (shorter keys
+ * first, then by bytes), as Postgres's jsonb_set returned it.
+ */
+export function markReadOnlyCheckout<T extends object>(record: T): T & { read_only_checkout: true } {
+  const entries = Object.entries({ ...record, read_only_checkout: true });
+  entries.sort(([a], [b]) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+  return Object.fromEntries(entries) as T & { read_only_checkout: true };
+}
 
 /**
  * Records or replaces a hold. Call it inside the transaction that advances the
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
  * when a newer run already wrote this path's hold.
  */
-export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
-  await lockSummary(tx, input.source_id, input.incarnation);
-  const existing = await readRow(tx, input.source_id, input.incarnation, input.path);
-  if (existing && existing.observed_at > input.observed_at) return 'skipped';
-  const now = new Date().toISOString();
-  // #6340: a path held again with the same code counts an attempt, so a page that keeps moving can be named.
-  const attempts = existing && existing.code === input.code ? (existing.meta.attempts ?? 1) + 1 : 1;
-  // #6188/#6377: a re-screen of the same bytes under the same code keeps the last repair verdict; a changed file drops it.
-  const sameBytes = existing && existing.code === input.code && existing.upstream_version === input.upstream_version;
-  const keepDeleted = existing && !input.meta.keep_deleted ? await carriedKeepDeleted(tx, existing, input) : undefined;
-  const kept = sameBytes ? { ...(existing.meta.fence_repair && !input.meta.fence_repair ? { fence_repair: existing.meta.fence_repair } : {}),
-    ...(existing.meta.content_repair && !input.meta.content_repair ? { content_repair: existing.meta.content_repair } : {}) } : {};
-  const record: GitHoldRecord = { version: 1, ...input, meta: { ...kept, ...(keepDeleted ? { keep_deleted: keepDeleted } : {}), ...input.meta, attempts, ...escalationStamps(existing, input, now) },
-    held_at: existing && existing.upstream_version === input.upstream_version && existing.code === input.code ? existing.held_at : now, updated_at: now };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.source_id, input.incarnation, input.path), JSON.stringify([record])]);
-  if (existing) {
-    const next = weightsOf(input), prior = weightsOf(existing);
-    if (SUMMARY_COUNTERS.some(name => next[name] !== prior[name])) {
-      await adjustSummary(tx, input.source_id, input.incarnation, 0, Object.fromEntries(SUMMARY_COUNTERS.map(name => [name, next[name] - prior[name]])) as SummaryWeights);
+export async function writeGitHold(tx: HoldStore, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
+  for (let attempt = 0; attempt < HOLD_SWAP_TRIES; attempt++) {
+    const row = await readRow(tx, input.source_id, input.incarnation, input.path);
+    const existing = row?.record ?? null;
+    if (existing && existing.observed_at > input.observed_at) return 'skipped';
+    const now = new Date().toISOString();
+    // #6340: a path held again with the same code counts an attempt, so a page that keeps moving can be named.
+    const attempts = existing && existing.code === input.code ? (existing.meta.attempts ?? 1) + 1 : 1;
+    // #6188/#6377: a re-screen of the same bytes under the same code keeps the last repair verdict; a changed file drops it.
+    const sameBytes = existing && existing.code === input.code && existing.upstream_version === input.upstream_version;
+    const keepDeleted = existing && !input.meta.keep_deleted ? await carriedKeepDeleted(tx, existing, input) : undefined;
+    const kept = sameBytes ? { ...(existing.meta.fence_repair && !input.meta.fence_repair ? { fence_repair: existing.meta.fence_repair } : {}),
+      ...(existing.meta.content_repair && !input.meta.content_repair ? { content_repair: existing.meta.content_repair } : {}) } : {};
+    const record: GitHoldRecord = { version: 1, ...input, meta: { ...kept, ...(keepDeleted ? { keep_deleted: keepDeleted } : {}), ...input.meta, attempts, ...escalationStamps(existing, input, now) },
+      held_at: existing && existing.upstream_version === input.upstream_version && existing.code === input.code ? existing.held_at : now, updated_at: now };
+    const next = weightsOf(input), prior = existing ? weightsOf(existing) : null;
+    const summary: GitHoldSummaryDelta = prior
+      ? { count: 0, ...Object.fromEntries(SUMMARY_COUNTERS.map(name => [name, next[name] - prior[name]])) as SummaryWeights }
+      : { count: 1, ...next };
+    if (await tx.swapGitHold({ sourceId: input.source_id, incarnation: input.incarnation, path: input.path, prior: row?.keys ?? null, next: [record], summary })) {
+      return existing ? 'updated' : 'inserted';
     }
-    return 'updated';
   }
-  await adjustSummary(tx, input.source_id, input.incarnation, 1, weightsOf(input));
-  return 'inserted';
+  throw holdSwapContended(input.path);
 }
 
 /** #6712 PR 2: the first-held time of the code's attempt count, the soak count's stamp, and a `worktree_dirty` hold's last edit (a changed `working_hash`). */
@@ -420,12 +414,12 @@ export function holdEscalation(record: Pick<GitHoldRecord, 'code' | 'meta' | 'he
  * its repair left the file held): one more failed attempt, and for `worktree_dirty` the uncommitted bytes it saw now
  * (`workingHash`), so a changed edit restarts the live-editor clock. A no-op when the path holds another code by now.
  */
-export function recordHoldAttempt(tx: Exec, input: { sourceId: string; incarnation: string; path: string; code: GitHoldCode; workingHash?: string }): Promise<boolean> {
+export function recordHoldAttempt(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string; code: GitHoldCode; workingHash?: string }): Promise<boolean> {
   return rewriteHoldMeta(tx, input, existing => ({ ...edit(existing, input.workingHash), attempts: (existing.meta.attempts ?? 1) + 1 })).then(record => record !== null);
 }
 
 /** #6712 PR 2 (L4): a `worktree_dirty` hold whose uncommitted bytes changed since it last looked: a live editor (no attempt counted). */
-export function noteHoldEdit(tx: Exec, input: { sourceId: string; incarnation: string; path: string; workingHash: string }): Promise<GitHoldRecord | null> {
+export function noteHoldEdit(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string; workingHash: string }): Promise<GitHoldRecord | null> {
   return rewriteHoldMeta(tx, { ...input, code: 'worktree_dirty' }, existing => existing.meta.working_hash === input.workingHash ? null : edit(existing, input.workingHash));
 }
 
@@ -437,24 +431,22 @@ function edit(existing: GitHoldRecord, workingHash: string | undefined): Partial
  * Rewrites one hold's meta when it still holds `code`, guarded on the exact record it read: a hold another run replaced
  * or re-held meanwhile is left as that run wrote it (the update matches no row), so this never restores an obsolete record.
  */
-async function rewriteHoldMeta(tx: Exec, input: { sourceId: string; incarnation: string; path: string; code: GitHoldCode }, change: (existing: GitHoldRecord) => Partial<GitHoldMeta> | null): Promise<GitHoldRecord | null> {
-  const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
-  if (!existing || existing.code !== input.code) return null;
+async function rewriteHoldMeta(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string; code: GitHoldCode }, change: (existing: GitHoldRecord) => Partial<GitHoldMeta> | null): Promise<GitHoldRecord | null> {
+  const row = await readRow(tx, input.sourceId, input.incarnation, input.path);
+  const existing = row?.record ?? null;
+  if (!row || !existing || existing.code !== input.code) return null;
   const meta = change(existing);
   if (!meta) return null;
   const now = new Date().toISOString();
   const record: GitHoldRecord = { ...existing, meta: { ...existing.meta, ...escalationStamps(existing, existing, now), ...meta }, updated_at: now };
-  const rows = await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now()
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$4::text::jsonb RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify([record]), JSON.stringify([existing])]);
-  return rows.length ? record : null;
+  return await tx.swapGitHold({ sourceId: input.sourceId, incarnation: input.incarnation, path: input.path, prior: row.keys, next: [record], summary: null }) ? record : null;
 }
 
 /**
  * Records the user's keep-the-deletion decision on the mirror hold at `path`, guarded on the hold the preview observed
  * (`observedAt`) still being that deleted-side `file_drift` hold in `state`; false when it moved meanwhile. The hold stays.
  */
-export function recordKeepDeleted(tx: Exec, input: { sourceId: string; incarnation: string; path: string; observedAt: string; state: FileDriftDeletedState; decision: KeepDeletedDecision }): Promise<boolean> {
+export function recordKeepDeleted(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string; observedAt: string; state: FileDriftDeletedState; decision: KeepDeletedDecision }): Promise<boolean> {
   return rewriteHoldMeta(tx, { ...input, code: 'file_drift' }, existing => existing.observed_at === input.observedAt && existing.meta.side === 'deleted' && existing.meta.state === input.state
     ? { keep_deleted: input.decision } : null).then(record => record !== null);
 }
@@ -464,15 +456,15 @@ export function recordKeepDeleted(tx: Exec, input: { sourceId: string; incarnati
  * file's import, deletion or no-op; `observedAt` is the discovery time of the
  * run doing it, so an older run never clears a newer hold.
  */
-export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnation: string; path: string; observedAt: string }): Promise<boolean> {
-  const [any] = await tx.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  if (!any) return false;
-  await lockSummary(tx, input.sourceId, input.incarnation);
-  const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
-  if (!existing || existing.observed_at > input.observedAt) return false;
-  await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  await adjustSummary(tx, input.sourceId, input.incarnation, -1, weightsOf(existing, -1));
-  return true;
+export async function clearGitHold(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string; observedAt: string }): Promise<boolean> {
+  for (let attempt = 0; attempt < HOLD_SWAP_TRIES; attempt++) {
+    const row = await readRow(tx, input.sourceId, input.incarnation, input.path);
+    const existing = row?.record ?? null;
+    if (!row || !existing || existing.observed_at > input.observedAt) return false;
+    if (await tx.swapGitHold({ sourceId: input.sourceId, incarnation: input.incarnation, path: input.path, prior: row.keys, next: null,
+      summary: { count: -1, ...weightsOf(existing, -1) } })) return true;
+  }
+  throw holdSwapContended(input.path);
 }
 
 /**
@@ -480,8 +472,8 @@ export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnat
  * edited, a purged page whose file came back) once the page is soft-deleted, the decision it waited for. False when the
  * path has no such hold.
  */
-export async function clearDeletionHold(tx: Exec, input: { sourceId: string; incarnation: string; path: string }): Promise<boolean> {
-  const hold = await readRow(tx, input.sourceId, input.incarnation, input.path);
+export async function clearDeletionHold(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string }): Promise<boolean> {
+  const hold = (await readRow(tx, input.sourceId, input.incarnation, input.path))?.record ?? null;
   if (!hold || hold.code !== 'file_drift' || fileDriftSide(hold.meta) !== 'deleted') return false;
   return clearGitHold(tx, { ...input, observedAt: hold.observed_at });
 }
@@ -544,10 +536,10 @@ export async function recordContentHoldRepair(engine: Exec, input: { sourceId: s
   return rows.length === 1;
 }
 
-export async function readGitHold(engine: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h LEFT JOIN sources s ON s.id=$3
-    WHERE h.op=$1 AND h.fingerprint=$2`, [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path), sourceId]);
-  return row?.record ?? null;
+export async function readGitHold(engine: Pick<BrainEngine, 'readGitHoldRecord'>, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
+  const row = await engine.readGitHoldRecord(sourceId, incarnation, path);
+  if (!row) return null;
+  return (row.mirror_read_only ? markReadOnlyCheckout(row.record) : row.record) as unknown as GitHoldRecord;
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
@@ -572,9 +564,9 @@ export async function countGitHolds(engine: Exec, sourceId: string, incarnation:
  * status` and `sources retry-held` merge the two.
  */
 export async function readGitSourceHolds(engine: Pick<BrainEngine, 'listSourceHoldRecords'>, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  // GBRA-542: a read-only mirror's holds read as such (READ_HOLD_RECORD_SQL's mark, applied over the engine's listing).
+  // GBRA-542: a read-only mirror's holds read as such (markReadOnlyCheckout over the engine's listing).
   const rows = (await engine.listSourceHoldRecords(GIT_HOLD_OP, { sourceIds: opts.sourceIds ?? null, runId: opts.runId ?? null }))
-    .map(({ record, mirror_read_only }) => ({ record: (mirror_read_only ? { ...record, read_only_checkout: true } : record) as unknown as GitHoldRecord }));
+    .map(({ record, mirror_read_only }) => ({ record: (mirror_read_only ? markReadOnlyCheckout(record) : record) as unknown as GitHoldRecord }));
   const out = new Map<string, GitSourceHolds>();
   for (const { record } of rows) {
     const entry = out.get(record.source_id) ?? { sourceId: record.source_id, incarnation: record.incarnation, count: 0, holds: [] };
@@ -1167,16 +1159,12 @@ export async function readSyncConversions(engine: Exec, sourceIds: string[], lim
   return out;
 }
 
-/** `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. */
-export async function requestGitHoldRetry(engine: Exec, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,'paths',$4::text::jsonb,'requested_at',now())))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,
-      'paths',(SELECT COALESCE(jsonb_agg(DISTINCT p),'[]'::jsonb) FROM (
-        SELECT jsonb_array_elements_text(COALESCE(op_checkpoints.completed_keys->0->'paths','[]'::jsonb)) AS p
-        UNION SELECT jsonb_array_elements_text($4::text::jsonb)) paths),
-      'requested_at',now())),updated_at=now()`,
-  [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation), sourceId, JSON.stringify(paths), incarnation]);
+/**
+ * `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. The request
+ * keeps each path once, in byte order, stamped now.
+ */
+export async function requestGitHoldRetry(engine: Pick<BrainEngine, 'requestGitHoldRetry'>, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
+  await engine.requestGitHoldRetry(sourceId, incarnation, paths, new Date().toISOString());
 }
 
 export async function readGitHoldRetryPaths(engine: Exec, sourceId: string, incarnation: string): Promise<string[]> {
@@ -1202,7 +1190,7 @@ export async function clearGitHoldRetryPaths(engine: Exec, sourceId: string, inc
  * freshness write. Before, those waited for the next commit, so a printed exit (exclude the file, then sync) did not
  * clear its hold.
  */
-export async function releaseDiscoveredHolds(tx: Exec, discovery: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'discoveredAt' | 'releasedHolds' | 'retryTaken'>): Promise<void> {
+export async function releaseDiscoveredHolds(tx: Exec & HoldStore, discovery: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'discoveredAt' | 'releasedHolds' | 'retryTaken'>): Promise<void> {
   const observedAt = discovery.discoveredAt ?? new Date().toISOString();
   for (const path of discovery.releasedHolds ?? []) await clearGitHold(tx, { sourceId: discovery.sourceId, incarnation: discovery.incarnation, path, observedAt });
   await clearGitHoldRetryPaths(tx, discovery.sourceId, discovery.incarnation, discovery.retryTaken ?? []);
@@ -1337,11 +1325,9 @@ export function syncImportParsers(schemaPack: string | null): (path: string) => 
 
 const provenanceFingerprint = (sourceId: string, incarnation: string, pageId: number) => `${sourceId}:${incarnation}:${pageId}`;
 
-export async function recordSyncImportProvenance(tx: Exec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
+export async function recordSyncImportProvenance(tx: Pick<BrainEngine, 'writeOpCheckpointRecord'>, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
   const record: SyncImportProvenance = { ...value, validated: true, recorded_at: new Date().toISOString() };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), JSON.stringify([record])]);
+  await tx.writeOpCheckpointRecord(SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), [record]);
 }
 
 /** Several pages' provenance in one statement (a waiver run); the last value for a page wins. */
@@ -1363,10 +1349,10 @@ export async function readSyncImportProvenances(engine: Exec, sourceId: string, 
   return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
 }
 
-export async function readSyncImportProvenance(engine: Exec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
-  const [row] = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId)]);
-  return row?.record ?? null;
+export async function readSyncImportProvenance(engine: Pick<BrainEngine, 'readOpCheckpointRecord'>, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
+  const row = await engine.readOpCheckpointRecord(SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId));
+  const keys = row?.completed_keys;
+  return Array.isArray(keys) ? (keys[0] ?? null) as SyncImportProvenance | null : null;
 }
 
 export interface RecoveredFrontmatter {

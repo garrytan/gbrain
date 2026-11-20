@@ -256,11 +256,11 @@ test('the hold write and the batch step past it commit together: a crash between
   let injected = 0;
   target.transaction = function (fn) {
     return inherited.call(this, (tx: BrainEngine) => fn(new Proxy(tx, { get(t, prop) {
-      if (prop === 'executeRaw') {
-        return async (sql: string, params?: unknown[]) => {
-          const rows = await t.executeRaw(sql, params);
-          if (params?.[0] === GIT_HOLD_OP && /^\s*INSERT/.test(sql)) { injected++; throw new Error('injected crash after the hold write'); }
-          return rows;
+      if (prop === 'swapGitHold') {
+        return async (input: Parameters<BrainEngine['swapGitHold']>[0]) => {
+          const landed = await t.swapGitHold(input);
+          if (landed && input.prior === null && input.next !== null) { injected++; throw new Error('injected crash after the hold write'); }
+          return landed;
         };
       }
       const value = Reflect.get(t, prop, t);

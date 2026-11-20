@@ -80,6 +80,7 @@ import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './en
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type { LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, SafeChunksPendingRow } from './engine-sql/repair-page-scans.ts';
 import type { OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
+import type { GitHoldSwap } from './engine-sql/git-holds.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1591,6 +1592,12 @@ export interface BrainEngine {
   listUntiledSegmentedPages(opts?: UntiledPageQuery): Promise<UntiledPage[]>;
   /** The first record of each `op` checkpoint naming a source and its current incarnation, by source then fingerprint. */
   listSourceHoldRecords(op: string, opts?: SourceHoldQuery): Promise<SourceHoldRecordRow[]>;
+  /** A Git hold row's compare-and-set with its source's summary counters; true when the row still held `prior` (engine-sql/git-holds.ts). */
+  swapGitHold(input: GitHoldSwap): Promise<boolean>;
+  /** One Git hold record with its source's read-only-mirror flag; null when the path has no hold. */
+  readGitHoldRecord(sourceId: string, incarnation: string, path: string): Promise<SourceHoldRecordRow | null>;
+  /** Adds paths to a Git source's retry request, once each in byte order, stamped `requestedAt`. */
+  requestGitHoldRetry(sourceId: string, incarnation: string, paths: readonly string[], requestedAt: string): Promise<void>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

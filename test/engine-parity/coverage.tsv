@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 965/965
+# covered: 968/968
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
-# repair_bookkeeping: 39/39
+# repair_bookkeeping: 42/42
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -132,7 +132,7 @@ readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 setSourceContextualRetrievalMode	pages	yes	1	no	yes	yes	serves
 countSourcePages	pages	yes	2	no	yes	yes	serves
-insertSource	pages	yes	2	no	yes	yes	serves
+insertSource	pages	yes	3	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
@@ -848,7 +848,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	10	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	12	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
@@ -877,8 +877,8 @@ writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	8	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	9	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	10	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	10	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
@@ -936,6 +936,9 @@ listPagesByOriginPath	repair_bookkeeping	yes	1	no	yes	yes	serves
 countSegmentedOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listUntiledSegmentedPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listSourceHoldRecords	repair_bookkeeping	yes	1	no	yes	yes	serves
+swapGitHold	repair_bookkeeping	yes	2	no	yes	yes	serves
+readGitHoldRecord	repair_bookkeeping	yes	2	no	yes	yes	serves
+requestGitHoldRetry	repair_bookkeeping	yes	1	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

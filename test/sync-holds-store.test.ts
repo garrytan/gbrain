@@ -81,8 +81,15 @@ describe('git hold store', () => {
     await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
       SELECT $1,'holds-b:'||$2||':bulk/'||g||'.md',jsonb_build_array(jsonb_build_object('source_id','holds-b','incarnation',$2::text,'path','bulk/'||g||'.md','observed_at','2026-01-01T00:00:00.000Z'))
       FROM generate_series(1,20000) g`, [GIT_HOLD_OP, 'inc-b']);
+    // Counts the engine member calls a write makes (each is one statement, or one store write on Rust).
     let statements = 0;
-    const counting = { executeRaw: async (sql: string, params?: unknown[]) => { statements++; return engine.executeRaw(sql, params); } } as Pick<BrainEngine, 'executeRaw'>;
+    const counting = new Proxy(engine, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => { statements++; return value.apply(target, args); };
+      },
+    });
     await writeGitHold(counting, hold('notes/d.md', '2026-03-01T00:00:00.000Z'));
     const few = statements;
     statements = 0;
