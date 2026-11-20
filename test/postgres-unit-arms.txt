@@ -156,6 +156,7 @@ test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts

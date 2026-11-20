@@ -436,3 +436,69 @@ test('database side: a slug-derived title under a file that names one is re-impo
   await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect((await engine.getPage('notes/launch-plan', { sourceId: s.id }))?.title).toBe('The real launch plan');
 }), 180_000);
+
+/** LC-2 (decision E1): deletes a page the way `gbrain delete [--purge]` does, then lets its Git effect (the file's removal) settle. */
+async function deletePage(engine: BrainEngine, sourceId: string, slug: string, purge = false) {
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }))!;
+  const receipt = await submitPageMutation(localCtx(engine, sourceId), { operation: 'delete_page',
+    params: { slug, source_id: sourceId, request_id: randomUUID(), expected_revision: snapshot.revision, ...(purge ? { purge: true } : {}) }, waitMs: 30_000 });
+  expect(receipt.state).toBe('committed');
+  await gitEffectsSettled(engine, sourceId);
+}
+
+const reviewCodes = (result: RepairResult) => details(result).needs_review.map(entry => [entry.path, entry.code]).sort();
+
+test('LC-2: held files of a purged and a soft-deleted page are needs_review routed to repair file-drift, never imported as safe', () => each(async engine => {
+  const s = await managed(engine, { 'notes/ivy.md': note('Ivy', 'Ivy private note. Okapi keyword.'), 'notes/jon.md': note('Jon', 'Jon note.') });
+  await s.sync();
+  await deletePage(engine, s.id, 'notes/ivy', true);
+  await deletePage(engine, s.id, 'notes/jon');
+  // Someone puts both files back with one more line and commits: sync holds each one for the user's decision.
+  s.write('notes/ivy.md', note('Ivy', 'Ivy private note. Okapi keyword.\none more line'));
+  s.write('notes/jon.md', note('Jon', 'Jon note.\none more line'));
+  commit(s.root, 'restore with an edit');
+  await s.sync();
+  expect((await s.holds()).map(hold => [hold.path, hold.code, hold.meta.state]).sort()).toEqual([
+    ['notes/ivy.md', 'file_drift', 'purged_differs'], ['notes/jon.md', 'file_drift', 'tombstone_edited']]);
+  for (const includeAmbiguous of [false, true]) {
+    const preview = await s.run({ includeAmbiguous });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 2 });
+    expect(reviewCodes(preview)).toEqual([['notes/ivy.md', 'file_drift'], ['notes/jon.md', 'file_drift']]);
+    const byPath = new Map(details(preview).needs_review.map(entry => [entry.path, entry.resolution]));
+    expect(byPath.get('notes/ivy.md')).toContain(`gbrain repair file-drift --source ${s.id} --held --side deleted --state purged_differs --only notes/ivy.md --prefer database`);
+    expect(byPath.get('notes/jon.md')).toContain(`gbrain repair file-drift --source ${s.id} --held --side deleted --state tombstone_edited --only notes/jon.md --prefer database`);
+  }
+  // Nothing came back: the purged page stays gone and the soft-deleted one stays deleted, both still held.
+  expect(await engine.readPageSnapshot('notes/ivy', { sourceId: s.id, includeDeleted: true })).toBeNull();
+  expect((await engine.readPageSnapshot('notes/jon', { sourceId: s.id, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+  expect((await s.holds()).length).toBe(2);
+}), 240_000);
+
+test('LC-2: a case-collision hold is needs_review with its own fix, never imported as safe', () => each(async engine => {
+  const s = await managed(engine, { 'notes/Foo.md': note('Foo upper'), 'notes/foo.md': note('Foo lower') });
+  await s.sync();
+  const holds = await s.holds();
+  expect(holds.length).toBeGreaterThan(0);
+  expect(holds.every(hold => hold.code === 'page_identity_changed')).toBe(true);
+  const preview = await s.run({ includeAmbiguous: true });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0 });
+  expect(reviewCodes(preview)).toEqual(holds.map(hold => [hold.path, 'page_identity_changed']).sort());
+}), 240_000);
+
+test('LC-2: an unheld file whose page was soft-deleted or purged is needs_review, never a safe repair that brings the page back', () => each(async engine => {
+  const s = await managed(engine, { 'notes/kim.md': note('Kim'), 'notes/lee.md': note('Lee') });
+  await s.sync();
+  await deletePage(engine, s.id, 'notes/kim');
+  await deletePage(engine, s.id, 'notes/lee', true);
+  // Both files come back with a value that only quoting fixes, before any sync has looked at them.
+  s.write('notes/kim.md', QUOTABLE);
+  s.write('notes/lee.md', QUOTABLE.replace('Payments roundup', 'Lee roundup'));
+  commit(s.root, 'files back, unsynced');
+  expect(await s.holds()).toEqual([]);
+  const preview = await s.run({ includeAmbiguous: true });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 2 });
+  expect(reviewCodes(preview)).toEqual([['notes/kim.md', 'page_deleted'], ['notes/lee.md', 'page_purged']]);
+  expect(details(preview).needs_review.find(entry => entry.code === 'page_deleted')!.resolution).toContain(`gbrain restore notes/kim --source-id ${s.id} --force`);
+  expect(await engine.readPageSnapshot('notes/lee', { sourceId: s.id, includeDeleted: true })).toBeNull();
+  expect((await engine.readPageSnapshot('notes/kim', { sourceId: s.id, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+}), 240_000);
