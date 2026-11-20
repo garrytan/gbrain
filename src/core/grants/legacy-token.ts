@@ -236,9 +236,7 @@ export async function rescopeLegacyToken(engine: BrainEngine, args: RescopeToken
 }
 
 async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Promise<RescopeTokenResult> {
-  const rows = 'id' in args.target
-    ? await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE', [args.target.id])
-    : await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE', [args.target.name]);
+  const rows = await tx.lockActiveAccessTokens('id' in args.target ? { id: args.target.id } : { name: args.target.name });
   const label = 'id' in args.target ? `id ${args.target.id}` : `"${args.target.name}"`;
   if (rows.length === 0) throw new GrantError('invalid_grant', `No active token ${label} (see gbrain auth list)`);
   if (rows.length > 1) throw new GrantError('invalid_grant', `${rows.length} active tokens are named ${label}; pass --id <uuid> from gbrain auth list`);

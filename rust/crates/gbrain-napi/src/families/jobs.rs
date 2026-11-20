@@ -6,6 +6,7 @@
 
 mod access_tokens;
 mod checks;
+mod credential_binding;
 mod credentials;
 mod health;
 mod insight;

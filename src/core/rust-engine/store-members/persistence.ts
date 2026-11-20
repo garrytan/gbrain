@@ -24,7 +24,7 @@ import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } fro
 import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
-import { requestRow, topologyRow } from '../store-codec.ts';
+import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { storeCall, type StoreMember, requireTextColumn } from './common.ts';
 
@@ -132,12 +132,21 @@ export const countOutstandingBySource: StoreMember<[principalKind: string, princ
 export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 
 /**
- * The Rust store keeps OAuth clients and access tokens, but these grant reads do not read them yet, so a write owned
- * by either finds no live grant row and refuses permission_denied (rust/docs/store/journal.md).
+ * The grant row of the OAuth client or legacy access token that owns a write, deleted or revoked rows included (the
+ * caller reads `deleted_at` and `revoked_at`, as Dates), or null; gbrain-store `jobs::credential_binding`. `lock`
+ * changes nothing: the store runs one write transaction at a time, so no revocation can land between the read and the
+ * write.
  */
-export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
-export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
-/** The grant reads above read no credential row, so the lock holds nothing (the store runs one write at a time). */
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId) => {
+  const row = await storeCall({ member: 'readOAuthClientWriteGrant' }, () => brain.readOauthClientWriteGrant(clientId)) as OAuthClientWriteGrant | null;
+  return row ? withDates(row, ['deleted_at']) : null;
+};
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+  const id = uuidText(tokenId);
+  const row = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.readAccessTokenWriteGrant(id)) as AccessTokenWriteGrant | null;
+  return row ? withDates(row, ['revoked_at']) : null;
+};
+/** The store runs one write transaction at a time, so the share lock has nothing to hold off. */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */

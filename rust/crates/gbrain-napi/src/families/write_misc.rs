@@ -38,14 +38,18 @@ impl Brain {
         })
     }
 
-    /// `listPagesNamingReader(principal, limit)`: `[{ slug, source_id }]` by (source, slug).
+    /// `listPagesNamingReader(principal, limit, live)`: `[{ slug, source_id }]` by (source, slug); `live` leaves out the
+    /// soft-deleted pages.
     #[napi]
     pub fn list_pages_naming_reader<'env>(
         &self,
         env: &'env Env,
         principal: String,
         limit: u32,
+        live: bool,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_pages_naming_reader(&principal, limit))
+        self.run(env, move |s| {
+            s.list_pages_naming_reader(&principal, limit, live)
+        })
     }
 }

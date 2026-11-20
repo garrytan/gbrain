@@ -884,6 +884,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readScopeSourceConfigs': OOS.callerRawSql,
   'readOauthAccessTokenRows': OOS.callerRawSql,
   'insertOauthToken': OOS.callerRawSql,
+  'lockActiveAccessTokens': OOS.callerRawSql,
   'readActiveAccessTokenByHash': OOS.callerRawSql,
   'touchAccessTokenLastUsed': OOS.callerRawSql,
   'deleteExpiredOauthCredentials': OOS.callerRawSql,

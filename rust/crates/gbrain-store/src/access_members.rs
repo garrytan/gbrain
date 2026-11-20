@@ -1,7 +1,8 @@
 //! Access members and groups: the `access_members`, `access_groups` and `access_group_members`
 //! tables of the PGLite engine (schema migrations v282, v301, v305 and v308).
 //!
-//! Members: insertAccessMember, setAccessMemberDisabled, setAccessMemberEmail,
+//! Members: insertAccessMember (with the token it binds, written to the token record of
+//! `jobs/access_tokens.rs` in the same write), setAccessMemberDisabled, setAccessMemberEmail,
 //! setAccessMemberKind, setAccessMemberLabelledOnly, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
 //! deleteAccessGroup, readAccessMembers, readAccessGroupIds, readAccessGroups, listActiveAccessMembers.
 //!
@@ -101,7 +102,8 @@ pub(crate) struct GroupRecord {
     pub created_at_us: i64,
 }
 
-/// `insertAccessMember(spec)`: the member row and the groups it joins.
+/// `insertAccessMember(spec)`: the member row, the groups it joins and the token it binds (`bindTokenId`, the token
+/// whose id text is exactly that).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AccessMemberInsert {
@@ -110,6 +112,7 @@ pub struct AccessMemberInsert {
     pub email: Option<String>,
     pub kind: Option<String>,
     pub groups: Vec<String>,
+    pub bind_token_id: Option<String>,
 }
 
 /// `readAccessMembers(lookup)`: one member by exact id (any status); every member that declares
@@ -310,8 +313,9 @@ fn row_json(m: &MemberRecord, groups: Vec<String>) -> Value {
 
 impl Store {
     /// `insertAccessMember(spec)`: inserts the member (kind `person` when unset), creates the groups
-    /// it names that are missing and adds it to each, in one write. Resolves `{ groupsCreated }`,
-    /// the groups this call created, in the order named.
+    /// it names that are missing, adds it to each and binds the token `bindTokenId` names to it (no
+    /// token has the id: nothing is bound), in one write. Resolves `{ groupsCreated }`, the groups
+    /// this call created, in the order named.
     pub fn insert_access_member(&self, spec: &AccessMemberInsert) -> Result<Value> {
         let kind = spec.kind.as_deref().unwrap_or("person");
         check_id(&spec.id, "access_members")?;
@@ -351,6 +355,9 @@ impl Store {
             }
             for group in &spec.groups {
                 add_group_member(tx, group, &spec.id)?;
+            }
+            if let Some(token_id) = &spec.bind_token_id {
+                crate::jobs::bind_token_member(tx, token_id, &spec.id)?;
             }
             Ok(json!({ "groupsCreated": created }))
         })

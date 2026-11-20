@@ -26,7 +26,7 @@
  *  - Seam: none. Real engines, typed members only. Ids are generated per engine, so each is reported as the name of the
  *    row it belongs to.
  */
-import { describe } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
@@ -130,6 +130,45 @@ describe('engine parity: access_tokens members', () => {
         notAnId: { privatePages: await readActiveTokenPrivatePages(engine, 'minted'), permissions: await readActiveTokenPermissions(engine, 'minted') },
         member: await engine.readActiveAccessTokenGrant(nobody, 'permissions'),
       };
+    });
+
+  // gbrain auth rescope locks the one active token it edits: by id (any case) or by exact name, revoked tokens left out.
+  // Postgres returns the rows in no set order, so the case sorts them by when they were made; the hash is never compared.
+  parityTest('lockActiveAccessTokens reads the active tokens with one id or one exact name, with the columns rescope reads',
+    { methods: ['insertAccessToken', 'lockActiveAccessTokens', 'revokeAccessToken'] }, async (engine) => {
+      const late = await insert(engine, 'twin', 'h-lk-late', { created_at: new Date('2026-02-02T00:00:00Z'), may_act_for: ['member:alice-example'] });
+      const early = await insert(engine, 'twin', 'h-lk-early', { created_at: new Date('2026-01-01T00:00:00Z'), scopes: ['read', 'write'] });
+      const solo = await insert(engine, 'solo', 'h-lk-solo', { created_at: new Date('2026-01-03T00:00:00Z'), min_trust: 'tool_observed' });
+      const gone = await insert(engine, 'solo-old', 'h-lk-gone', { created_at: new Date('2026-01-04T00:00:00Z') });
+      await engine.revokeAccessToken(gone.id);
+      const names = new Map([[late.id, 'twin-late'], [early.id, 'twin-early'], [solo.id, 'solo'], [gone.id, 'solo-old']]);
+      const KEYS = ['id', 'name', 'scopes', 'created_at', 'revoked_at', 'permissions', 'source_grant', 'source_id', 'federated_read',
+        'allowed_operations', 'takes_holders', 'grant_revision', 'min_trust', 'member_id', 'may_act_for', 'attest_actor', 'reads_unscoped'];
+      const shown = (rows: Record<string, unknown>[]) => [...rows]
+        .sort((a, b) => (a.created_at as Date).getTime() - (b.created_at as Date).getTime())
+        .map(r => ({
+          ...Object.fromEntries(KEYS.map(k => [k, r[k] ?? null])),
+          id: names.get(String(r.id)) ?? 'unknown',
+          created_at: (r.created_at as Date).toISOString(),
+          grant_revision: Number(r.grant_revision),
+        }));
+      const out = {
+        twin: shown(await engine.lockActiveAccessTokens({ name: 'twin' })),
+        solo: shown(await engine.lockActiveAccessTokens({ name: 'solo' })),
+        partial: (await engine.lockActiveAccessTokens({ name: 'sol' })).length,
+        otherCase: (await engine.lockActiveAccessTokens({ name: 'Solo' })).length,
+        revokedByName: (await engine.lockActiveAccessTokens({ name: 'solo-old' })).length,
+        byId: shown(await engine.lockActiveAccessTokens({ id: solo.id })),
+        byUpperId: shown(await engine.lockActiveAccessTokens({ id: solo.id.toUpperCase() })).map(r => r.id),
+        revokedById: (await engine.lockActiveAccessTokens({ id: gone.id })).length,
+        unknownId: (await engine.lockActiveAccessTokens({ id: '00000000-0000-4000-8000-0000000000e1' })).length,
+        inTransaction: (await engine.transaction(tx => tx.lockActiveAccessTokens({ name: 'twin' }))).length,
+      };
+      expect(out.twin.map(r => r.id)).toEqual(['twin-early', 'twin-late']);
+      expect(out.solo.map(r => r.id)).toEqual(['solo']);
+      expect([out.partial, out.otherCase, out.revokedByName, out.revokedById, out.unknownId, out.inTransaction]).toEqual([0, 0, 0, 0, 0, 2]);
+      expect(out.byUpperId).toEqual(['solo']);
+      return out;
     });
 
   parityTest('list: every token newest first, revoked ones included, with its grant columns and never its hash',

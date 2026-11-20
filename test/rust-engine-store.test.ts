@@ -288,26 +288,26 @@ describe('Rust engine on the store', () => {
     expect((await engine.getFile('default', 'f/a.png'))?.page_id).toBe(created.id);
   });
 
-  withAddon('access members: a token bind and every credential binding member refuse before anything is written', async () => {
+  withAddon('access members: a token bind and every credential binding member serve; a bind to a missing token writes nothing', async () => {
     const { engine } = await open();
-    const spec = { id: 'alice-example', displayName: null, email: null, kind: 'person' as const, groups: ['team-a'], bindTokenId: 'c0000000-0000-4000-8000-0000000000e9' };
-    expect(await code(() => engine.insertAccessMember(spec))).toBe('engine_capability_missing');
-    expect(await engine.listActiveAccessMembers()).toEqual([]);
-    expect(await engine.getConfig('access.restrictions_present')).toBeNull();
-    const target = { kind: 'token' as const, id: spec.bindTokenId };
-    expect(await code(() => engine.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toBe('engine_capability_missing');
-    expect(await code(() => engine.writeCredentialBinding(target, { member: null, mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }))).toBe('engine_capability_missing');
-    expect(await code(() => engine.writeCredentialReadsUnscoped(target, true))).toBe('engine_capability_missing');
-    // bindCredential (gbrain auth rescope --member none) stops at the locked read, so applyAttestSources never runs.
-    expect(await code(() => bindCredential(engine, target, { member: null }))).toBe('engine_capability_missing');
-    // gbrain access member add --bind-token looks the token up first. The fresh store has no token 'laptop', so the lookup
-    // finds none and the command refuses before it writes.
+    // gbrain access member add --bind-token looks the token up first. With no token of that name the command refuses
+    // before it writes.
     expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('invalid_params');
     expect(await getMember(engine, 'alice-example')).toBeNull();
     expect(await engine.getConfig('access.restrictions_present')).toBeNull();
-    // Without a token the same insert writes the member.
-    expect(await engine.insertAccessMember({ ...spec, bindTokenId: null })).toEqual({ groupsCreated: ['team-a'] });
+    // With the token kept, the same command writes the member and binds the token to it.
+    const { id: tokenId } = await engine.insertAccessToken({ name: 'laptop', token_hash: 'hash-laptop', scopes: ['read'], permissions: {}, source_grant: null,
+      source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+    expect((await addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' })).member.id).toBe('alice-example');
     expect(await engine.listActiveAccessMembers()).toEqual(['alice-example']);
+    const target = { kind: 'token' as const, id: tokenId };
+    const read = () => engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: false }));
+    expect((await read())?.member_id).toBe('alice-example');
+    // gbrain auth rescope --member none: the locked read, then the write, clear the binding.
+    await bindCredential(engine, target, { member: null });
+    expect((await read())?.member_id).toBeNull();
+    await engine.transaction(tx => tx.writeCredentialReadsUnscoped(target, true));
+    expect((await engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: true })))?.reads_unscoped).not.toBeNull();
   });
 
   withAddon('access members: gbrain access member add keeps the archive pages to the owner first, then adds the member', async () => {

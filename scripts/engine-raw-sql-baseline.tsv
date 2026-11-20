@@ -5,7 +5,7 @@
 # Counts fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows. docs/ci-guards.md#engine-raw-sql-ratchet
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	5
-src/commands/access-read-by-nobody.ts	execute_raw	2
+src/commands/access-read-by-nobody.ts	execute_raw	1
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access.ts	execute_raw	5
 src/commands/agent-logs.ts	execute_raw	1
@@ -188,7 +188,6 @@ src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
 src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
-src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
@@ -405,7 +404,7 @@ src/core/google/loops-extract.ts	execute_raw	1
 src/core/google/loops-reciprocity.ts	execute_raw	1
 src/core/google/people-calendar-sweep.ts	execute_raw	3
 src/core/google/sweep-shared.ts	execute_raw	2
-src/core/grants/legacy-token.ts	execute_raw	9
+src/core/grants/legacy-token.ts	execute_raw	7
 src/core/grants/legacy-token.ts	sql_template	3
 src/core/grants/lifecycle.ts	sql_template	7
 src/core/grants/migration.ts	execute_raw	1
