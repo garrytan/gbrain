@@ -57,3 +57,26 @@ Differences from PGLite:
   identity and private-readable grant included), and a page it hides has no raw data. A caller whose
   policy differs in any other way gets `engine_capability_missing`. PGLite's `getRawData` ignores the
   other `PageReadScope` options, and so does the member.
+
+## Files commands and file operations (`src/core/engine-sql/files-ops.ts`)
+
+Twenty-one members for the statements `gbrain files` (`src/commands/files.ts`) and the file operations (`src/core/ops/files.ts`)
+ran as raw SQL. None is served on Rust today: each is absent from `store-members/*`, so it refuses with
+`engine_capability_missing` naming the member (the capability in `members.ts` is `files`, or `sources` or `pages` for the
+three that read only those tables). The caller sees the refusal; no member changes behaviour. What the store would need to
+serve them:
+
+| Members | Reads or writes | The store would need |
+| --- | --- | --- |
+| `listFileRowsForSlug`, `listAllFileRows`, `listFileRowsForVerify` | every `files` column, 100, 100 and 1000 rows | a scan of the `r 0x02` records ordered by `filename`, by `page_slug` then `filename` (nulls last), and by `storage_path`; `size_bytes` as a number, `metadata` as the object |
+| `hasFileWithHash` | `files` by hash and path | the record at the path (the key) and a compare of its `content_hash` |
+| `readSourceLocalPathForVerify` | `sources.local_path` | the source record's checkout path, null when absent |
+| `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | insert, or on the path update `content_hash`, `size_bytes`, `mime_type` and merge `metadata` | `upsertFile`'s write plus the metadata merge: the new keys over the old object, a stored value that is not an object read as `{}`; the raw lane also sets `source_id`, the others take `default` |
+| `upsertOpFileRow` | the same, and on conflict `source_id` and `page_id` change only when the new row names a page | the same write with the page-keeps-source rule |
+| `registerFileRow` | insert, or update only when `page_slug`, `filename`, `source_id` and `page_id` all match (null equals null) | a conditional update and a written flag; false leaves the row alone |
+| `readFileOwner`, `claimFilePage`, `countFilesRegisteredElsewhere` | `source_id`, `page_id`, `content_hash` of the row at a path; a `source_id` and `page_id` update; a count of rows at the path whose identity differs | the record at the path and its page index entry (`r 0x03`) kept in step on a page change |
+| `sourceIdExists`, `readPageIdInSource` | `sources.id`, `pages.id` by slug and source | the source and page records, soft-deleted pages included, as the statements did not filter them |
+| `listReadableFileRows`, `readReadableFileForUrl`, `listReadableFilePaths`, `readReadableFileForVerify`, `countUnreadableFilesAt`, `readReadablePageId` | `files` and `pages`, with `excludePrivate` hiding a file whose page, by `page_id` or by `page_slug` in any source, the caller cannot read | the caller's page policy applied to a file's page by id and by slug (the member sends only the boolean; the policy text comes from `privatePagesFilterForCaller`) |
+
+The hand-numbered placeholders of the readable statements (`$1` limit after a `$2` slug), the inlined metadata merge text
+and the four vetted builders are Postgres text only; the store reads the typed arguments, never the statement.

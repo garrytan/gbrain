@@ -52,6 +52,7 @@ mod fence;
 mod fence_overlay;
 pub mod generations;
 mod held_cells;
+pub mod holding_purges;
 pub mod loops;
 mod page_purges;
 mod privacy;
