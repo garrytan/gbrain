@@ -3050,6 +3050,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFencedFactsOfMissingPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFiles#default": {
         "flagOffLanes": [
           "pool"
@@ -3117,6 +3128,17 @@
         "flagOnScopes": []
       },
       "listGazetteerSourceIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listHeldFactRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5553,6 +5575,17 @@
         ],
         "flagOnScopes": []
       },
+      "readPageFileOrigin#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSnapshot#default": {
         "flagOffLanes": [
           "pool"
@@ -6426,6 +6459,17 @@
         "flagOnScopes": []
       },
       "revokeAccessTokensNamed#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "scanUnfencedFactRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7795,6 +7839,7 @@
         "listFenceHoldRows": "none",
         "listFenceRetireCandidates": "none",
         "listFenceRowGroups": "none",
+        "listFencedFactsOfMissingPages": "none",
         "listFiles": "none",
         "listFilesForPage": "none",
         "listFreshExtractionOutcomes": "none",
@@ -7803,6 +7848,7 @@
         "listGazetteerPages": "none",
         "listGazetteerSourceIds": "none",
         "listGuestSourceIds": "none",
+        "listHeldFactRows": "none",
         "listHeldFenceCells": "none",
         "listHeldFenceFactRows": "none",
         "listHeldFenceTakeRows": "none",
@@ -8149,6 +8195,7 @@
         "readPageAccessRows": "none",
         "readPageAliasRows": "none",
         "readPageEmbeddingBudget": "none",
+        "readPageFileOrigin": "none",
         "readPageHiddenFromCaller": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
@@ -8313,6 +8360,7 @@
         "sampleEffectiveDateSources": "none",
         "sampleEffectiveDates": "none",
         "scanExactBatch": "none",
+        "scanUnfencedFactRows": "none",
         "sealChunks": "none",
         "sealImportedPage": "none",
         "sealSegmentedPage": "none",

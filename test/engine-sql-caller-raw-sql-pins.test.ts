@@ -951,6 +951,8 @@ SELECT source_id, type FROM pairs`],
       ORDER BY w.weight ASC, w.source_id COLLATE "C", w.element_key COLLATE "C" LIMIT 10`, `SELECT source_id, element_key AS slug, weight FROM retrieval_weights
       WHERE element_kind = 'page' AND weight > 0.5
       ORDER BY weight DESC, source_id COLLATE "C", element_key COLLATE "C" LIMIT 10`],
+  },
+  {
     from: 'src/core/facts/facts-home.ts:77 scanFactsHome, at dded7edc51',
     case: { method: 'scanUnfencedFactRows', variant: 'default', run: e => e.scanUnfencedFactRows('default') },
     texts: [`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
