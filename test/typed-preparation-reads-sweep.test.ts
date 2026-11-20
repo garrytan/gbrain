@@ -40,6 +40,9 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['findByTitleFuzzy', 'SELECT slug, similarity(title,', e => e.findByTitleFuzzy('A title', undefined, 0.55, 'default')],
   ['readSegmentTexts', 'FROM page_segment_texts t', e => e.readSegmentTexts('default', [new Uint8Array(32)])],
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
+  // The sync change-reason scan (reason-trailers.ts), which a managed sync preparer runs through its bounded view.
+  ['readSourcePurgeEpoch', 'SELECT purge_epoch FROM sources WHERE id = $1', e => e.readSourcePurgeEpoch('default')],
+  ['readReasonPurgeTombstones', 'FROM reason_purge_tombstones WHERE source_id = $1', e => e.readReasonPurgeTombstones('default')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];
