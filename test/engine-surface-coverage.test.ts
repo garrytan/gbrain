@@ -148,6 +148,17 @@ const INTERFACE_METHODS: readonly string[] = [
   'listRootPageSlugsAfter',
   // Belief ledger orphan lifetime read (engine-sql/collate-belief-reads.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'listOrphanLifetimes',
+  // Belief ledger write path (engine-sql/collate-belief-writes.ts; covered by test/engine-parity/belief-ledger-writes.test.ts)
+  'readBeliefCoverage',
+  'hasBaselineEvent',
+  'countBaselinedSlugs',
+  'listPendingBaselineSlugs',
+  'listPurgedFingerprints',
+  'readBeliefRedactions',
+  'insertBeliefRedaction',
+  'releaseBeliefRedactions',
+  'insertBeliefEvents',
+  'recordBeliefCommitMarks',
   // Propose-takes failure tombstones (engine-sql/collate-take-proposals.ts; covered by test/engine-parity/collate-belief-cycle-walks.test.ts)
   'recordFailureTombstone', 'listFailureTombstones',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)

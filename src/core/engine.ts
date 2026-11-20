@@ -4202,6 +4202,26 @@ export interface BrainEngine {
   listRootPageSlugsAfter(sourceId: string, after: string, exclude: readonly string[], limit: number): Promise<string[]>;
   /** The belief ledger's integrity finding: open lifetimes with no page at their slug, and (`deep`) events naming a lifetime that does not exist, by slug and lifetime bytes, at most `limit`, with the total (engine-sql/collate-belief-reads.ts). */
   listOrphanLifetimes(sourceId: string, limit: number, deep: boolean): Promise<import('./engine-sql/collate-belief-reads.ts').OrphanLifetimeSamples>;
+  /** The newest coverage event of the source at its current incarnation other than `coverage.restored`, or null; `coverageKey` is the coverage subject key (engine-sql/collate-belief-writes.ts). */
+  readBeliefCoverage(sourceId: string, coverageKey: string): Promise<import('./engine-sql/collate-belief-writes.ts').BeliefCoverageRow | null>;
+  /** Whether a baseline event of the run exists at the slug. */
+  hasBaselineEvent(sourceId: string, slug: string, runId: string): Promise<boolean>;
+  /** The distinct slugs a baseline run has covered. */
+  countBaselinedSlugs(sourceId: string, runId: string): Promise<number>;
+  /** Slugs of the source after `after` (bytewise) not in `skip` that the run has not baselined (pages, then database-only fact subjects), in byte order, at most `limit`. */
+  listPendingBaselineSlugs(sourceId: string, runId: string, after: string, skip: readonly string[], limit: number): Promise<string[]>;
+  /** The fingerprints among `factFps` and `takeFps` the source's purge tombstones name. */
+  listPurgedFingerprints(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
+  /** The source's redaction register rows under any of the subject keys or field hashes. */
+  readBeliefRedactions(sourceId: string, subjectKeys: readonly string[], fieldHashes: readonly string[]): Promise<import('./engine-sql/collate-belief-writes.ts').BeliefRedactionRow[]>;
+  /** Registers a redaction of one subject's field; returns its id. */
+  insertBeliefRedaction(sourceId: string, subjectKey: string, field: string, purgeRequest: string, fieldHash: string): Promise<number>;
+  /** Marks redactions released by a publication, bound to the hash of the value that replaced them. */
+  releaseBeliefRedactions(ids: readonly number[], publicationId: string, releasedHash: string): Promise<void>;
+  /** Inserts belief events in `ord` order, skipping a row whose event key exists; returns how many it inserted. */
+  insertBeliefEvents(rows: readonly import('./engine-sql/collate-belief-writes.ts').BeliefEventRow[]): Promise<number>;
+  /** Records the commit observation of each given publication that has events and no mark yet. */
+  recordBeliefCommitMarks(publicationIds: readonly string[]): Promise<void>;
   /** Records a propose_takes failure tombstone (a `rejected` take_proposals row); true when it inserted, false when the claim was already recorded for the page, content hash and prompt version (engine-sql/collate-take-proposals.ts). */
   recordFailureTombstone(input: import('./engine-sql/collate-take-proposals.ts').FailureTombstoneInput): Promise<boolean>;
   /** A source's unacted `rejected` proposals whose claim text starts with `claimPrefix`, by page slug bytes. */

@@ -1611,6 +1611,84 @@ SELECT source_id, type FROM pairs`],
     ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT $3`],
   },
   {
+    from: 'src/core/belief/coverage.ts:26 latestCoverage, at 415d733e9f',
+    case: { method: 'readBeliefCoverage', variant: 'default', run: e => e.readBeliefCoverage('default', 'coverage') },
+    texts: [`SELECT e.event_type, e.cause->>'run' AS run, e.recorded_at, e.id
+    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
+    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 AND e.event_type <> 'coverage.restored' ORDER BY e.id DESC LIMIT 1`],
+  },
+  {
+    from: 'src/core/belief/coverage.ts:93 lacksBaseline',
+    case: { method: 'hasBaselineEvent', variant: 'default', run: e => e.hasBaselineEvent('default', 'a', 'run-1') },
+    texts: [`SELECT 1 FROM belief_events
+  WHERE source_id = $1 AND slug = $2 AND event_type = 'baseline' AND cause->>'run' = $3 LIMIT 1`],
+  },
+  {
+    from: 'src/core/belief/coverage.ts enableBeliefLedger completion count (the member is countBaselinedSlugs)',
+    case: { method: 'countBaselinedSlugs', variant: 'default', run: e => e.countBaselinedSlugs('default', 'run-1') },
+    texts: [`SELECT count(DISTINCT slug)::int AS n FROM belief_events WHERE source_id = $1 AND event_type = 'baseline' AND cause->>'run' = $2`],
+  },
+  {
+    from: 'src/core/belief/coverage.ts:97 pendingSlugs (the moved statement binds its limit as $5 instead of splicing BASELINE_BATCH)',
+    case: { method: 'listPendingBaselineSlugs', variant: 'default', run: e => e.listPendingBaselineSlugs('default', 'run-1', '', ['x'], 2) },
+    texts: [`SELECT slug FROM (
+      SELECT p.slug FROM pages p WHERE p.source_id = $1
+      UNION SELECT f.entity_slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.expired_at IS NULL AND f.entity_slug IS NOT NULL
+      UNION SELECT f.source_markdown_slug FROM facts f WHERE f.source_id = $1 AND f.dimension IS NOT NULL AND f.row_num IS NULL AND f.expired_at IS NULL AND f.source_markdown_slug IS NOT NULL
+    ) s WHERE s.slug COLLATE "C" > $3 AND NOT (s.slug = ANY($4::text[])) AND NOT EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = $1 AND e.slug = s.slug AND e.event_type = 'baseline' AND e.cause->>'run' = $2)
+    ORDER BY s.slug COLLATE "C" LIMIT $5`],
+  },
+  {
+    from: 'src/core/belief/append.ts:81 tombstoned',
+    case: { method: 'listPurgedFingerprints', variant: 'default', run: e => e.listPurgedFingerprints('default', ['a'], ['b']) },
+    texts: [`SELECT fact_hash AS fp FROM fact_purges WHERE source_id = $1 AND fact_hash = ANY($2::text[])
+    UNION SELECT claim_hash AS fp FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($3::text[])`],
+  },
+  {
+    from: 'src/core/belief/append.ts:100 applyRedactions',
+    case: { method: 'readBeliefRedactions', variant: 'default', run: e => e.readBeliefRedactions('default', ['k'], ['h']) },
+    texts: [`SELECT id, subject_key, field, purge_request::text AS purge_request, field_hash, released_hash
+    FROM belief_redactions WHERE source_id = $1 AND (subject_key = ANY($2::text[]) OR field_hash = ANY($3::text[]))`],
+  },
+  {
+    from: 'src/core/belief/append.ts:117 applyRedactions',
+    case: { method: 'insertBeliefRedaction', variant: 'default', run: e => e.insertBeliefRedaction('default', 'k', 'f', '00000000-0000-4000-8000-000000000002', 'h'), rows: [[/INSERT INTO belief_redactions/, [{ id: 1 }]]] },
+    texts: [`INSERT INTO belief_redactions (source_id, subject_key, field, purge_request, field_hash)
+          VALUES ($1, $2, $3, $4::uuid, $5) RETURNING id`],
+  },
+  {
+    from: 'src/core/belief/append.ts:124 applyRedactions',
+    case: { method: 'releaseBeliefRedactions', variant: 'default', run: e => e.releaseBeliefRedactions([1], '00000000-0000-4000-8000-000000000002', 'h') },
+    texts: [`UPDATE belief_redactions SET released_by = $2::uuid, released_hash = $3 WHERE id = ANY($1::bigint[])`],
+  },
+  {
+    from: 'src/core/belief/append.ts:175 insertBeliefEvents',
+    case: { method: 'insertBeliefEvents', variant: 'default', run: e => e.insertBeliefEvents([{ event_key: 'ab', source_id: 'default', source_incarnation: '00000000-0000-4000-8000-000000000001', page_lifetime: null, slug: 'a', subject_kind: 'page', subject_key: 'a', event_type: 'baseline', origin: 'baseline', trust_tier: 'unknown', writer_tier: null, tier_basis: 'unknown', visibility: 'private', publication_id: '00000000-0000-4000-8000-000000000002', ord: 0, source_time: null, valid_from: null, valid_until: null, value: null, value_hash: null, prior_hash: null, state_hash: 'h', cause: '{}', claim_fp: null, purged: false, redacted_fields: null }]) },
+    texts: [`INSERT INTO belief_events (event_key, source_id, source_incarnation, page_lifetime, slug, subject_kind,
+      subject_key, event_type, origin, trust_tier, writer_tier, tier_basis, visibility, publication_id, ord, source_time, valid_from, valid_until,
+      value, value_hash, prior_hash, state_hash, cause, claim_fp, purged, redacted_fields)
+    SELECT decode(r.event_key, 'hex'), r.source_id, r.source_incarnation::uuid, r.page_lifetime::uuid, r.slug, r.subject_kind, r.subject_key, r.event_type,
+      r.origin, r.trust_tier, r.writer_tier, r.tier_basis, r.visibility, r.publication_id::uuid, r.ord, r.source_time::timestamptz,
+      r.valid_from::timestamptz, r.valid_until::timestamptz, r.value::jsonb, r.value_hash, r.prior_hash, r.state_hash, r.cause::jsonb, r.claim_fp,
+      r.purged, r.redacted_fields
+    FROM jsonb_to_recordset($1::text::jsonb) AS r(event_key text, source_id text, source_incarnation text, page_lifetime text, slug text,
+      subject_kind text, subject_key text, event_type text, origin text, trust_tier text, writer_tier text, tier_basis text, visibility text,
+      publication_id text, ord integer, source_time text, valid_from text, valid_until text, value text, value_hash text, prior_hash text,
+      state_hash text, cause text, claim_fp text, purged boolean, redacted_fields text[])
+    ORDER BY r.ord
+    ON CONFLICT (event_key) DO NOTHING RETURNING id`],
+  },
+  {
+    from: 'src/core/belief/append.ts:199 markBeliefCommits',
+    case: { method: 'recordBeliefCommitMarks', variant: 'default', run: e => e.recordBeliefCommitMarks(['00000000-0000-4000-8000-000000000002']) },
+    texts: [`WITH t AS MATERIALIZED (SELECT clock_timestamp() AS at)
+    INSERT INTO belief_commit_marks (publication_id, observed_at)
+    SELECT e.publication_id, t.at FROM t, belief_events e
+    WHERE e.publication_id = ANY($1::uuid[])
+    GROUP BY e.publication_id, t.at HAVING max(e.recorded_at) <= t.at
+    ON CONFLICT (publication_id) DO NOTHING`],
+  },
+  {
     from: 'src/core/wakeshift/forget.ts:23 forgetWakePrincipal (member), called from members.ts removeMember',
     case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
     texts: [

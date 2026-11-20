@@ -77,6 +77,7 @@ import * as collateCommandReads from './collate-command-reads.ts';
 import * as collateCycleWindow from './collate-cycle-window.ts';
 import * as collateIdentityDowngrades from './collate-identity-downgrades.ts';
 import * as collateBeliefReads from './collate-belief-reads.ts';
+import * as collateBeliefWrites from './collate-belief-writes.ts';
 import * as collatePhantomRedirect from './collate-phantom-redirect.ts';
 import * as collateTakeProposals from './collate-take-proposals.ts';
 import * as accessPolicy from './access-policy.ts';
@@ -160,6 +161,8 @@ export const STORE_MEMBERS = {
   ...collateIdentityDowngrades,
   // The belief ledger's orphan lifetime read (rust/docs/store/collate-belief-reads.md).
   ...collateBeliefReads,
+  // The belief ledger's event insert, commit marks, redaction register and coverage reads (rust/docs/store/collate-belief-writes.md).
+  ...collateBeliefWrites,
   // The phantom-redirect pass's root-page walk (rust/docs/store/collate-phantom-redirect.md).
   ...collatePhantomRedirect,
   // The propose_takes failure tombstones (rust/docs/store/collate-take-proposals.md).

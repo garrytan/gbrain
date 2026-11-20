@@ -227,6 +227,7 @@ import * as collateCommandReadsImpl from './engine-sql/collate-command-reads.ts'
 import * as collateCycleWindowImpl from './engine-sql/collate-cycle-window.ts';
 import * as collateIdentityDowngradesImpl from './engine-sql/collate-identity-downgrades.ts';
 import * as collateBeliefReadsImpl from './engine-sql/collate-belief-reads.ts';
+import * as collateBeliefWritesImpl from './engine-sql/collate-belief-writes.ts';
 import * as collatePhantomRedirectImpl from './engine-sql/collate-phantom-redirect.ts';
 import * as collateTakeProposalsImpl from './engine-sql/collate-take-proposals.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
@@ -1910,6 +1911,16 @@ export class PGLiteEngine implements BrainEngine {
   readOpCheckpointValues(op: string, fingerprint: string) { return collateIdentityDowngradesImpl.readOpCheckpointValues(this.rawRead, op, fingerprint); }
   listRootPageSlugsAfter(sourceId: string, after: string, exclude: readonly string[], limit: number) { return collatePhantomRedirectImpl.listRootPageSlugsAfter(this.rawRead, sourceId, after, exclude, limit); }
   listOrphanLifetimes(sourceId: string, limit: number, deep: boolean) { return collateBeliefReadsImpl.listOrphanLifetimes(this.rawRead, sourceId, limit, deep); }
+  readBeliefCoverage(sourceId: string, coverageKey: string) { return collateBeliefWritesImpl.readBeliefCoverage(this.rawRead, sourceId, coverageKey); }
+  hasBaselineEvent(sourceId: string, slug: string, runId: string) { return collateBeliefWritesImpl.hasBaselineEvent(this.rawRead, sourceId, slug, runId); }
+  countBaselinedSlugs(sourceId: string, runId: string) { return collateBeliefWritesImpl.countBaselinedSlugs(this.rawRead, sourceId, runId); }
+  listPendingBaselineSlugs(sourceId: string, runId: string, after: string, skip: readonly string[], limit: number) { return collateBeliefWritesImpl.listPendingBaselineSlugs(this.rawRead, sourceId, runId, after, skip, limit); }
+  listPurgedFingerprints(sourceId: string, factFps: readonly string[], takeFps: readonly string[]) { return collateBeliefWritesImpl.listPurgedFingerprints(this.rawRead, sourceId, factFps, takeFps); }
+  readBeliefRedactions(sourceId: string, subjectKeys: readonly string[], fieldHashes: readonly string[]) { return collateBeliefWritesImpl.readBeliefRedactions(this.rawRead, sourceId, subjectKeys, fieldHashes); }
+  insertBeliefRedaction(sourceId: string, subjectKey: string, field: string, purgeRequest: string, fieldHash: string) { return collateBeliefWritesImpl.insertBeliefRedaction(this.rawRead, sourceId, subjectKey, field, purgeRequest, fieldHash); }
+  releaseBeliefRedactions(ids: readonly number[], publicationId: string, releasedHash: string) { return collateBeliefWritesImpl.releaseBeliefRedactions(this.rawRead, ids, publicationId, releasedHash); }
+  insertBeliefEvents(rows: readonly collateBeliefWritesImpl.BeliefEventRow[]) { return collateBeliefWritesImpl.insertBeliefEvents(this.rawRead, rows); }
+  recordBeliefCommitMarks(publicationIds: readonly string[]) { return collateBeliefWritesImpl.recordBeliefCommitMarks(this.rawRead, publicationIds); }
   recordFailureTombstone(input: collateTakeProposalsImpl.FailureTombstoneInput) { return collateTakeProposalsImpl.recordFailureTombstone(this.rawRead, input); }
   listFailureTombstones(sourceId: string, claimPrefix: string) { return collateTakeProposalsImpl.listFailureTombstones(this.rawRead, sourceId, claimPrefix); }
   readCycleListingInstant() { return collateCycleWindowImpl.readCycleListingInstant(this.rawRead); }

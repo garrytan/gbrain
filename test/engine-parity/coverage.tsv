@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1026/1036
+# covered: 1036/1046
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -67,6 +67,7 @@
 # collate_identity_downgrades: 5/5
 # collate_cycle_window: 2/2
 # collate_belief_reads: 1/1
+# collate_belief_writes: 10/10
 # collate_phantom_redirect: 1/1
 # collate_take_proposals: 2/2
 # write_misc: 65/71
@@ -102,7 +103,7 @@ getPage	pages	yes	115	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	559	yes	yes	yes	serves
+putPage	pages	yes	561	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -367,7 +368,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	58	yes	yes	yes	serves
-insertFacts	facts	yes	76	no	yes	yes	serves
+insertFacts	facts	yes	77	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	29	no	yes	yes	serves
 listFactsByEntity	facts	yes	31	yes	yes	yes	serves
@@ -433,7 +434,7 @@ applyTransactionSettings	import_guards	yes	48	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
-readLedgerSource	import_guards	yes	9	no	yes	yes	serves
+readLedgerSource	import_guards	yes	13	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
 readOAuthClientReceiptGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenReceiptGrant	access_grants	yes	1	no	yes	yes	serves
@@ -819,7 +820,7 @@ listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	2	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	1	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	3	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	4	no	yes	yes	serves
 loopFactDrift	facts_repair	yes	3	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -931,6 +932,16 @@ readOpCheckpointValues	collate_identity_downgrades	yes	1	no	yes	yes	serves
 readCycleListingInstant	collate_cycle_window	yes	1	no	yes	yes	serves
 listSourceChangedPagesAfter	collate_cycle_window	yes	1	no	yes	yes	serves
 listOrphanLifetimes	collate_belief_reads	yes	1	no	yes	yes	serves
+readBeliefCoverage	collate_belief_writes	yes	2	no	yes	yes	serves
+hasBaselineEvent	collate_belief_writes	yes	1	no	yes	yes	serves
+countBaselinedSlugs	collate_belief_writes	yes	1	no	yes	yes	serves
+listPendingBaselineSlugs	collate_belief_writes	yes	2	no	yes	yes	serves
+listPurgedFingerprints	collate_belief_writes	yes	1	no	yes	yes	serves
+readBeliefRedactions	collate_belief_writes	yes	1	no	yes	yes	serves
+insertBeliefRedaction	collate_belief_writes	yes	1	no	yes	yes	serves
+releaseBeliefRedactions	collate_belief_writes	yes	1	no	yes	yes	serves
+insertBeliefEvents	collate_belief_writes	yes	4	no	yes	yes	serves
+recordBeliefCommitMarks	collate_belief_writes	yes	1	no	yes	yes	serves
 listRootPageSlugsAfter	collate_phantom_redirect	yes	1	no	yes	yes	serves
 recordFailureTombstone	collate_take_proposals	yes	1	no	yes	yes	serves
 listFailureTombstones	collate_take_proposals	yes	1	no	yes	yes	serves

@@ -23,10 +23,8 @@ const BASELINE_BATCH = 200;
 type Coverage = { type: string; run: string | null; recorded_at: string; id: number };
 
 /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored` (a restore never starts or stops recording). */
-export async function latestCoverage(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<Coverage | null> {
-  const [row] = await engine.executeRaw<{ event_type: string; run: string | null; recorded_at: string; id: number }>(`SELECT e.event_type, e.cause->>'run' AS run, e.recorded_at, e.id
-    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
-    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 AND e.event_type <> 'coverage.restored' ORDER BY e.id DESC LIMIT 1`, [sourceId, COVERAGE_KEY]);
+export async function latestCoverage(engine: Pick<BrainEngine, 'readBeliefCoverage'>, sourceId: string): Promise<Coverage | null> {
+  const row = await engine.readBeliefCoverage(sourceId, COVERAGE_KEY);
   return row ? { type: row.event_type, run: row.run, recorded_at: new Date(row.recorded_at).toISOString(), id: Number(row.id) } : null;
 }
 
@@ -38,7 +36,7 @@ async function appendCoverage(engine: BrainEngine, sourceId: string,
   decide: (latest: Coverage | null, tx: BrainEngine) => Promise<{ eventType: string; cause: Record<string, unknown> } | null>): Promise<{ latest: Coverage | null; appended: Record<string, unknown> | null }> {
   const publicationId = randomUUID();
   const out = await engine.transaction(async tx => {
-    if (!(await tx.executeRaw('SELECT id FROM sources WHERE id = $1 FOR UPDATE', [sourceId])).length) throw new Error(`source not found: ${sourceId}`);
+    if (!(await tx.lockSourceRow(sourceId))) throw new Error(`source not found: ${sourceId}`);
     const source = (await readLedgerSource(tx, sourceId))!;
     const latest = await latestCoverage(tx, sourceId);
     const next = await decide(latest, tx);
@@ -90,18 +88,11 @@ async function baselinePage(engine: BrainEngine, sourceId: string, slug: string,
   return appended === null ? 'nothing' : appended > 0 ? 'baselined' : 'dropped';
 }
 
-const lacksBaseline = async (engine: BrainEngine, sourceId: string, slug: string, runId: string) => !(await engine.executeRaw(`SELECT 1 FROM belief_events
-  WHERE source_id = $1 AND slug = $2 AND event_type = 'baseline' AND cause->>'run' = $3 LIMIT 1`, [sourceId, slug, runId])).length;
+const lacksBaseline = async (engine: Pick<BrainEngine, 'hasBaselineEvent'>, sourceId: string, slug: string, runId: string) => !(await engine.hasBaselineEvent(sourceId, slug, runId));
 
 /** Slugs of the source still lacking a baseline in this run: live and soft-deleted pages, then page-less database-only fact subjects. */
-async function pendingSlugs(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, runId: string, after: string, skip: readonly string[]): Promise<string[]> {
-  const rows = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM (
-      SELECT p.slug FROM pages p WHERE p.source_id = $1
-      UNION SELECT f.entity_slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.expired_at IS NULL AND f.entity_slug IS NOT NULL
-      UNION SELECT f.source_markdown_slug FROM facts f WHERE f.source_id = $1 AND f.dimension IS NOT NULL AND f.row_num IS NULL AND f.expired_at IS NULL AND f.source_markdown_slug IS NOT NULL
-    ) s WHERE s.slug COLLATE "C" > $3 AND NOT (s.slug = ANY($4::text[])) AND NOT EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = $1 AND e.slug = s.slug AND e.event_type = 'baseline' AND e.cause->>'run' = $2)
-    ORDER BY s.slug COLLATE "C" LIMIT ${BASELINE_BATCH}`, [sourceId, runId, after, skip]);
-  return rows.map(r => r.slug);
+function pendingSlugs(engine: Pick<BrainEngine, 'listPendingBaselineSlugs'>, sourceId: string, runId: string, after: string, skip: readonly string[]): Promise<string[]> {
+  return engine.listPendingBaselineSlugs(sourceId, runId, after, skip, BASELINE_BATCH);
 }
 
 /**
@@ -138,9 +129,8 @@ export async function enableBeliefLedger(engine: BrainEngine, sourceId: string):
     const end = await appendCoverage(engine, sourceId, async (latest, tx) => {
       if (latest?.type !== 'coverage.started' || latest.run !== runId) return null;
       if ((await pendingSlugs(tx, sourceId, runId, '', [...unkeyable, ...attempted])).length) return null;
-      const [done] = await tx.executeRaw<{ n: number }>(`SELECT count(DISTINCT slug)::int AS n FROM belief_events WHERE source_id = $1 AND event_type = 'baseline' AND cause->>'run' = $2`,
-        [sourceId, runId]);
-      return { eventType: 'coverage.complete', cause: { run: runId, certified, pages: Number(done?.n ?? 0), ...(unkeyable.length ? { unkeyable_slugs: unkeyable } : {}),
+      const pages = await tx.countBaselinedSlugs(sourceId, runId);
+      return { eventType: 'coverage.complete', cause: { run: runId, certified, pages, ...(unkeyable.length ? { unkeyable_slugs: unkeyable } : {}),
         ...(unbaselined.length ? { unbaselined_slugs: unbaselined } : {}) } };
     });
     const complete = !!end.appended || (end.latest?.type === 'coverage.complete' && end.latest.run === runId);
