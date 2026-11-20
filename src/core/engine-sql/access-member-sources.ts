@@ -2,9 +2,9 @@
  * Personal sources: the `access_member_sources` rows (v299) for both engines (rust/docs/store/access-members.md).
  *
  * A row binds a source to the member it belongs to; a source with at least one binding is personal
- * (access/member-sources.ts). The statements are the text access/member-sources.ts sent through `executeRaw`, byte for
- * byte, so the lists sort ids in the database collation (byte order on PGLite, a C-collated Postgres and the Rust
- * store). The callers keep every input check and every refusal.
+ * (access/member-sources.ts). The statements are the text access/member-sources.ts sent through `executeRaw`, except
+ * that the list sort keys carry COLLATE "C": the lists sort ids by byte on every Postgres locale, as PGLite and the
+ * Rust store sort. The callers keep every input check and every refusal.
  */
 import type { SqlExecutor } from './executor.ts';
 
@@ -32,16 +32,16 @@ export async function deleteAccessMemberSource(exec: RawExec, memberId: string, 
   await exec.executeRaw('DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2', [memberId, sourceId]);
 }
 
-/** Every binding, or one member's bindings, by member id and source id. */
+/** Every binding, or one member's bindings, by member id and source id in byte order. */
 export async function listAccessMemberSources(exec: RawExec, memberId: string | null): Promise<AccessMemberSourceRow[]> {
   return memberId === null
-    ? exec.executeRaw<AccessMemberSourceRow>('SELECT member_id, source_id, created_at FROM access_member_sources ORDER BY member_id, source_id')
-    : exec.executeRaw<AccessMemberSourceRow>('SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 ORDER BY member_id, source_id', [memberId]);
+    ? exec.executeRaw<AccessMemberSourceRow>('SELECT member_id, source_id, created_at FROM access_member_sources ORDER BY member_id COLLATE "C", source_id COLLATE "C"')
+    : exec.executeRaw<AccessMemberSourceRow>('SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 ORDER BY member_id COLLATE "C", source_id COLLATE "C"', [memberId]);
 }
 
-/** The members bound to one source, by member id; empty for a source that is not personal. */
+/** The members bound to one source, by member id in byte order; empty for a source that is not personal. */
 export async function listAccessMemberSourceOwners(exec: RawExec, sourceId: string): Promise<string[]> {
-  const rows = await exec.executeRaw<{ member_id: string }>('SELECT member_id FROM access_member_sources WHERE source_id = $1 ORDER BY member_id', [sourceId]);
+  const rows = await exec.executeRaw<{ member_id: string }>('SELECT member_id FROM access_member_sources WHERE source_id = $1 ORDER BY member_id COLLATE "C"', [sourceId]);
   return rows.map(r => r.member_id);
 }
 

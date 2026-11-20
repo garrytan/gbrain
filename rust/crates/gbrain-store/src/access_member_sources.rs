@@ -10,8 +10,8 @@
 //! are the prefix `x 0x10 <member id> 0x00`. A brain holds few bindings, so the reads by source scan
 //! the prefix. Sub-keys 0x05-0x0c of `x` are taken on other lanes; 0x10 is clear of them.
 //!
-//! Every list is in byte order of the member id, then the source id, as PGLite and a C-collated
-//! Postgres sort (the SQL orders in the database collation). Refusals carry `constraint_violation` with the Postgres constraint name in the
+//! Every list is in byte order of the member id, then the source id, as PGLite and Postgres sort
+//! (the SQL sort keys carry COLLATE "C", so every Postgres locale sorts by byte). Refusals carry `constraint_violation` with the Postgres constraint name in the
 //! message: the member reference (`access_member_sources_member_id_fkey`). `source_id` has no
 //! foreign key, as on Postgres. A source id holding NUL is refused by name, as Postgres refuses NUL
 //! in text. Members are never deleted (a removal is a tombstone), so the `ON DELETE CASCADE` of the

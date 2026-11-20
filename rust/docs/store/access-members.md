@@ -45,8 +45,8 @@ there is no reverse index.
 | `readAccessMemberSource(memberId, sourceId)` | `{ member_id, source_id, created_at }`, matched exactly, or null | `SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2` |
 | `insertAccessMemberSource(memberId, sourceId)` | null; nothing when the binding exists | `INSERT INTO access_member_sources (member_id, source_id) VALUES ($1, $2) ON CONFLICT DO NOTHING` |
 | `deleteAccessMemberSource(memberId, sourceId)` | null; nothing for no such binding | `DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2` |
-| `listAccessMemberSources(memberId \| null)` | every binding, or the bindings of exactly that member, by member id and source id | `SELECT ... ORDER BY member_id, source_id` |
-| `listAccessMemberSourceOwners(sourceId)` | the member ids bound to the source, by id; empty when the source is not personal | `SELECT member_id ... WHERE source_id = $1 ORDER BY member_id` |
+| `listAccessMemberSources(memberId \| null)` | every binding, or the bindings of exactly that member, by member id and source id in byte order | `SELECT ... ORDER BY member_id COLLATE "C", source_id COLLATE "C"` |
+| `listAccessMemberSourceOwners(sourceId)` | the member ids bound to the source, by id in byte order; empty when the source is not personal | `SELECT member_id ... WHERE source_id = $1 ORDER BY member_id COLLATE "C"` |
 | `readMemberSourceBindings(sourceIds)` | `{ source_id, member_id }` of every binding of the named sources (the store answers by source id, then member id; the SQL has no order) | `SELECT source_id, member_id ... WHERE source_id = ANY($1::text[])` |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction

@@ -405,10 +405,10 @@ insertAccessMemberLink	access_members	yes	2	no	yes	yes	serves
 deleteAccessMemberLink	access_members	yes	1	no	yes	yes	serves
 listAccessMemberLinks	access_members	yes	1	no	yes	yes	serves
 readAccessMemberSource	access_members	yes	1	no	yes	yes	serves
-insertAccessMemberSource	access_members	yes	1	no	yes	yes	serves
+insertAccessMemberSource	access_members	yes	2	no	yes	yes	serves
 deleteAccessMemberSource	access_members	yes	1	no	yes	yes	serves
-listAccessMemberSources	access_members	yes	1	no	yes	yes	serves
-listAccessMemberSourceOwners	access_members	yes	1	no	yes	yes	serves
+listAccessMemberSources	access_members	yes	2	no	yes	yes	serves
+listAccessMemberSourceOwners	access_members	yes	2	no	yes	yes	serves
 readMemberSourceBindings	access_members	yes	1	no	yes	yes	serves
 readCredentialBindingForUpdate	access_members	yes	3	no	yes	yes	serves
 readCredentialMemberId	access_members	yes	1	no	yes	yes	serves

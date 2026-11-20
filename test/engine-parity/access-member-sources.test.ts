@@ -11,7 +11,8 @@
  *    readable.
  *  - Regression: an engine that sends these statements as raw SQL (the Rust engine refused them by name, so personal
  *    sources could not be bound, listed or enforced there), that binds twice, that loses a binding on an unbind
- *    preview, or that lists ids in another order than PGLite's byte order (the ids mix `a-z`, `ab`, `a.b`, `a_b`).
+ *    preview, or that lists ids in another order than PGLite's byte order (the ids mix `a-z`, `ab`, `a.b`, `a_b`,
+ *    and the order case `a1`, `a-x`, `ax`, `b-x`: an en_US Postgres without COLLATE "C" sorted them otherwise).
  *  - Why existing coverage misses it: the other personal-source tests (test/qm-personal-sources.test.ts,
  *    test/thin-client-member-sources.test.ts, test/access-room.test.ts) never run on the Rust engine.
  *  - Seam: none. Real engines; members are written through access/members.ts and sources through the harness.
@@ -116,6 +117,35 @@ describe('engine parity: personal sources', () => {
         scopeForOwner: { sourceId: 'dm-ab', allowed: ['dm-ab', 'dm-a-z', 'shared'] },
       };
       if (JSON.stringify(out) !== JSON.stringify(want)) throw new Error(`personal sources: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  // An en_US Postgres (the CI image's default) sorts `a1` before `a-x` and `dm1` before `dm-x`; byte order puts the
+  // dash first. Without COLLATE "C" on the sort keys these lists differ from PGLite and the store on such a server.
+  parityTest('personal-source lists sort member and source ids by byte on every Postgres locale',
+    { methods: ['insertAccessMemberSource', 'listAccessMemberSources', 'listAccessMemberSourceOwners'], timeout: 120_000 },
+    async (engine: BrainEngine, backend) => {
+      for (const s of ['dm-x', 'dm1', 'dmx']) await createSource(engine, backend, s);
+      for (const m of ['a1', 'a-x', 'ax', 'b-x']) await addMember(engine, m, { name: m });
+      for (const [m, s] of [['ax', 'dmx'], ['b-x', 'dm-x'], ['a1', 'dm1'], ['ax', 'dm-x'], ['a-x', 'dmx'], ['a1', 'dm-x'], ['a-x', 'dm-x']]) {
+        await engine.insertAccessMemberSource(m, s);
+      }
+      const ids = (rows: Array<{ member_id: string; source_id: string }>) => rows.map(r => `${r.member_id}>${r.source_id}`);
+      const out = {
+        all: ids(await engine.listAccessMemberSources(null)),
+        ofA1: ids(await engine.listAccessMemberSources('a1')),
+        ofAX: ids(await engine.listAccessMemberSources('ax')),
+        ownersDashX: await engine.listAccessMemberSourceOwners('dm-x'),
+        ownersDmx: await engine.listAccessMemberSourceOwners('dmx'),
+      };
+      const want = {
+        all: ['a-x>dm-x', 'a-x>dmx', 'a1>dm-x', 'a1>dm1', 'ax>dm-x', 'ax>dmx', 'b-x>dm-x'],
+        ofA1: ['a1>dm-x', 'a1>dm1'],
+        ofAX: ['ax>dm-x', 'ax>dmx'],
+        ownersDashX: ['a-x', 'a1', 'ax', 'b-x'],
+        ownersDmx: ['a-x', 'ax'],
+      };
+      if (JSON.stringify(out) !== JSON.stringify(want)) throw new Error(`personal-source order: ${JSON.stringify(out)}`);
       return out;
     });
 });

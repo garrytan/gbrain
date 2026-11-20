@@ -858,19 +858,19 @@ const PINS: Pin[] = [
     texts: ['DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2'],
   },
   {
-    from: 'src/core/access/member-sources.ts:70 listMemberSources, every member (at 8e72de1bb6)',
+    from: 'src/core/access/member-sources.ts:70 listMemberSources, every member (at 8e72de1bb6) (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessMemberSources', variant: 'all', run: e => e.listAccessMemberSources(null) },
-    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources ORDER BY member_id, source_id'],
+    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources ORDER BY member_id COLLATE "C", source_id COLLATE "C"'],
   },
   {
-    from: 'src/core/access/member-sources.ts:70 listMemberSources, one member (at 8e72de1bb6)',
+    from: 'src/core/access/member-sources.ts:70 listMemberSources, one member (at 8e72de1bb6) (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessMemberSources', variant: 'member', run: e => e.listAccessMemberSources('alice-example') },
-    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 ORDER BY member_id, source_id'],
+    texts: ['SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 ORDER BY member_id COLLATE "C", source_id COLLATE "C"'],
   },
   {
-    from: 'src/core/access/member-sources.ts:76 sourceOwners (at 8e72de1bb6)',
+    from: 'src/core/access/member-sources.ts:76 sourceOwners (at 8e72de1bb6) (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAccessMemberSourceOwners', variant: 'default', run: e => e.listAccessMemberSourceOwners('dm-alice') },
-    texts: ['SELECT member_id FROM access_member_sources WHERE source_id = $1 ORDER BY member_id'],
+    texts: ['SELECT member_id FROM access_member_sources WHERE source_id = $1 ORDER BY member_id COLLATE "C"'],
   },
   {
     from: 'src/core/access/member-sources.ts:89 hiddenPersonalSources (at 8e72de1bb6)',
