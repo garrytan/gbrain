@@ -3330,7 +3330,7 @@ mod tests {
         let page = put(&store, "notes/big");
         let big =
             "x".repeat(usize::try_from(crate::version_prune::PAGE_INLINE_MAX_BYTES).unwrap() + 1);
-        let kept = usize::try_from(crate::version_prune::LARGE_PAGE_VERSIONS_KEPT).unwrap();
+        let kept = crate::version_prune::LARGE_PAGE_VERSIONS_KEPT;
         for _ in 0..kept + 2 {
             store
                 .create_version_opts("notes/big", &with_preimage(preimage_of(&page, &big), None))
