@@ -150,6 +150,13 @@ async function* readVirtual(file: FileHandle, bom: number, prefix: Uint8Array, s
   }
 }
 
+/** The file's leading FRONTMATTER_HEAD_MAX_BYTES as text (a cut multibyte character at its end decodes lossily, which only touches its last line). */
+async function fileHead(file: FileHandle, size: number): Promise<string> {
+  const buffer = Buffer.alloc(Math.min(FRONTMATTER_HEAD_MAX_BYTES, size));
+  const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+  return buffer.toString('utf8', 0, bytesRead);
+}
+
 /** sha256 of each READ_BYTES block of the file after its BOM, from pass 1's reads whatever their sizes. */
 class BlockDigests {
   readonly digests: string[] = [];
@@ -349,7 +356,8 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const frontmatterHold = classifyImportHold(parsed);
   if (frontmatterHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: frontmatterHold.message, refusal: frontmatterHold, skip_reason: frontmatterHold.code };
   // #7848: a private request page privacy would not read, or a readers key page access would not read, is held; only an upload session (`content` plus `coordinated`) refuses it at its own guard.
-  const privateHold = opts.content && opts.coordinated ? null : noncanonicalPrivateHold('', parsed.frontmatter) ?? noncanonicalReadersHold('', parsed.frontmatter);
+  // The readers hold also reads the file's own head (a spelling the parse drops, such as one after a leading space, is still a line in it).
+  const privateHold = opts.content && opts.coordinated ? null : noncanonicalPrivateHold('', parsed.frontmatter) ?? noncanonicalReadersHold(await fileHead(file, size), parsed.frontmatter);
   if (privateHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
   let slug = expectedSlug;
   if (!expectedSlug || parsed.slug !== expectedSlug) {

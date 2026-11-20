@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { readPageBodyPolicy } from '../page-body/limits.ts';
+import { FRONTMATTER_HEAD_MAX_BYTES, readPageBodyPolicy } from '../page-body/limits.ts';
 import { importStreamedMarkdownFile, type StreamedPreparedImport } from '../page-body/streamed-import.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION } from '../import-screen.ts';
@@ -100,16 +100,25 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
   let trust: WriteTrust | undefined;
   const dir = await mkdtemp(join(tmpdir(), 'gbrain-upload-'));
   let ready: StreamedPreparedImport | undefined;
+  let headText = '';
   let result: Awaited<ReturnType<typeof importStreamedMarkdownFile>>;
   try {
     const path = join(dir, 'page.md');
     const spool = await open(path, 'wx', 0o600);
+    const head: Buffer[] = [];
+    let headBytes = 0;
     try {
       for await (const part of stagedUploadParts(engine, ref)) {
         if (!part) throw bodyStagingGoneError(row.slug, ref.staging_id, null);
+        if (headBytes < FRONTMATTER_HEAD_MAX_BYTES) {
+          const keep = Buffer.from(part.subarray(0, FRONTMATTER_HEAD_MAX_BYTES - headBytes));
+          head.push(keep);
+          headBytes += keep.length;
+        }
         await spool.write(part);
       }
     } finally { await spool.close(); }
+    headText = Buffer.concat(head).toString('utf8');
     const stat = await lstat(path);
     if (stat.size !== ref.bytes) throw bodyStagingGoneError(row.slug, ref.staging_id, null);
     stagedUploadWork.streamed++;
@@ -142,7 +151,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
   await remoteLabelsChecked(engine, row.authority, row.slug, snapshot?.page, { parsedPage: { frontmatter: prepared.frontmatter } });
   const privateRequest = privateRequestGuarded(row.operation, p.kind) ? readPrivateRequest('', () => prepared.frontmatter) : null;
   if (privateRequest) assertPrivateRequestKept(row, privateRequest.frontmatter);
-  if (privateRequestGuarded(row.operation, p.kind)) assertReadersKeyCanonical(row, '', prepared.frontmatter, !row.authority.remote);
+  if (privateRequestGuarded(row.operation, p.kind)) assertReadersKeyCanonical(row, headText, prepared.frontmatter, !row.authority.remote);
   if (coreMarking(snapshot?.page.frontmatter).core || coreMarking(prepared.frontmatter).core) {
     throw opError('page_body_segmented', `Page ${row.slug} is (or would become) always-loaded core memory, whose budget renders the page whole, and this upload is over ${PAGE_MAX_BYTES} bytes. Nothing was written.`,
       'Write a core page within the single-string ceiling, or drop always_load from its frontmatter.');

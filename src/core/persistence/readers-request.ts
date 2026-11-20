@@ -24,21 +24,60 @@ const SPELLINGS_NAMED = 3;
 /** True when `key` reads as the readers key in another spelling: the same letters once case, `-`, `_` and spaces are ignored. */
 const misspelled = (key: string): boolean => key !== READERS_KEY && key.toLowerCase().replace(/[-_\s]+/g, '') === 'readableby';
 
-/** The top-level keys the content's leading frontmatter block states line by line; empty without a closed block. */
+/** Where a value's text leaves the scan: inside a flow collection (`{`, `[`) or a quoted scalar a line break did not close. */
+interface ValueState { depth: number; quote: '"' | "'" | null; last: string }
+
+/** Advances `state` over `text`, the rest of a line: flow brackets and quotes open only where a YAML value can start, and a `#` after a space is a comment. */
+function scanValue(text: string, state: ValueState): void {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (state.quote === '"') {
+      if (c === '\\') i++;
+      else if (c === '"') { state.quote = null; state.last = c; }
+    } else if (state.quote === "'") {
+      if (c !== "'") continue;
+      if (text[i + 1] === "'") i++;
+      else { state.quote = null; state.last = c; }
+    } else {
+      if (c === '#' && (i === 0 || /\s/.test(text[i - 1]!))) return;
+      if (/\s/.test(c)) continue;
+      const startsValue = state.last === '' || ':[{,'.includes(state.last);
+      if ((c === '"' || c === "'") && startsValue) state.quote = c;
+      else if ((c === '[' || c === '{') && startsValue) state.depth++;
+      else if ((c === ']' || c === '}') && state.depth > 0) state.depth--;
+      state.last = c;
+    }
+  }
+}
+
+/**
+ * The top-level keys the content's leading frontmatter block states line by line; empty without a closed block.
+ * A line inside a flow collection or a multiline quoted scalar belongs to its value and names no key (it parses as nested data);
+ * when such a value never closes before the block ends the block is ambiguous, so every key-looking line counts (the guard only refuses).
+ */
 function frontmatterLineKeys(content: string): string[] {
   const lines = content.replace(/^﻿/, '').split(/\r?\n/);
   let i = 0;
   while (i < lines.length && lines[i]!.trim() === '') i++;
   if (lines[i]?.trim() !== '---') return [];
   const keys: string[] = [];
+  const every: string[] = [];
+  const state: ValueState = { depth: 0, quote: null, last: '' };
   for (i++; i < lines.length; i++) {
     const line = lines[i]!;
-    if (/^(?:---|\.\.\.)\s*$/.test(line)) return keys;
+    if (/^(?:---|\.\.\.)\s*$/.test(line)) return state.depth > 0 || state.quote ? every : keys;
+    const inside = state.depth > 0 || state.quote !== null;
+    if (inside) scanValue(line, state);
     if (/^[\s#]/.test(line) || /^-(?:\s|$)/.test(line)) continue;
     const quoted = /^(?:"([^"]*)"|'([^']*)')\s*:(?:\s|$)/.exec(line);
     const plain = quoted ? null : /^(.*?):(?:\s|$)/.exec(line);
     const key = quoted ? (quoted[1] ?? quoted[2]!) : plain?.[1]?.trim();
-    if (key) keys.push(key);
+    if (!key) continue;
+    every.push(key);
+    if (inside) continue;
+    state.last = '';
+    scanValue(line.slice((quoted ?? plain)![0].length), state);
+    keys.push(key);
   }
   return [];
 }

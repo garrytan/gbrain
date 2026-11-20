@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { persistSavedIdea } from '../src/commands/brainstorm.ts';
@@ -31,6 +31,8 @@ import { isWriteErrorCode } from '../src/core/persistence/types.ts';
 import { normalizeReaders } from '../src/core/access/principals.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
+import { readPageBodyPolicy } from '../src/core/page-body/limits.ts';
+import { importStreamedMarkdownFile } from '../src/core/page-body/streamed-import.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -137,6 +139,19 @@ describe('readers key detection', () => {
     expect(noncanonicalReadersHold(page(), {})).toBeNull();
   });
 
+  test('a key-looking line inside a flow collection or a multiline quoted scalar is nested data, not a top-level key; a real one after it is still found', () => {
+    const nested = ['meta: {\nReadable_By: [alice-example]\n}\n', 'meta: [\n  a,\nReadable_By: [alice-example]\n]\n', 'note: "first line\nReadable_By: x\nlast"\n',
+      "note: 'it''s\nReadable_By: x'\n", 'meta: { a: "}", b: [1, 2] }\nnote: it\'s plain\n', 'meta: {\n  a: 1 # {\n}\n'];
+    for (const extra of nested) expect({ extra, keys: misspelledReaderKeys(page(extra), null) }).toEqual({ extra, keys: [] });
+    for (const extra of nested) expect({ extra, keys: misspelledReaderKeys(page(`${extra}Readable_By: [alice-example]\n`), null) }).toEqual({ extra, keys: ['Readable_By'] });
+    expect(misspelledReaderKeys(page(nested[0]), parseMarkdown(page(nested[0]), 'notes/example.md').frontmatter)).toEqual([]);
+  });
+
+  test('a flow collection or quote that never closes before the block ends counts every key-looking line (the guard only refuses)', () => {
+    expect(misspelledReaderKeys(page('meta: {\nReadable_By: [alice-example]\n'), null)).toEqual(['Readable_By']);
+    expect(misspelledReaderKeys(page('note: "open\nReadable_By: x\n'), null)).toEqual(['Readable_By']);
+  });
+
   test('a hold names the spelling for a file and leaves it out when asked, and tells the fix', () => {
     const named = noncanonicalReadersHold(page('Readable_By: [alice-example]\n'), null)!;
     expect(named.code).toBe('readers_noncanonical');
@@ -194,6 +209,17 @@ for (const managed of [false, true]) describe(`${managed ? 'managed brain with a
     });
   }, 120_000);
 
+  test('a Readable_By line that is nested data in a flow collection or a multiline quoted scalar is stored as it is; a top-level misspelling after it is refused', async () => {
+    await brain(managed, async (ctx, engine) => {
+      for (const [slug, extra] of [['notes/flow', 'meta: {\nReadable_By: [alice-example]\n}\n'], ['notes/quoted', 'note: \"first\nReadable_By: x\nlast\"\n']] as const) {
+        expect({ slug, thrown: (await put(ctx, slug, page(extra))).thrown }).toEqual({ slug, thrown: undefined });
+        expect(normalizeReaders((await snapshot(engine, ctx, slug))!.page.frontmatter)).toBeNull();
+        expect({ slug, thrown: (await put(ctx, `${slug}-bad`, page(`${extra}Readable_By: [alice-example]\n`))).thrown }).toEqual({ slug, thrown: 'readers_noncanonical' });
+        expect(await snapshot(engine, ctx, `${slug}-bad`)).toBeNull();
+      }
+    });
+  }, 120_000);
+
   test('a misspelling on an existing page is refused and the page and its revision are unchanged', async () => {
     await brain(managed, async (ctx, engine) => {
       await put(ctx, 'notes/example', page('readable_by: [alice-example]\n'));
@@ -220,6 +246,33 @@ for (const managed of [false, true]) describe(`${managed ? 'managed brain with a
     });
   }, 120_000);
 });
+
+test('the streamed (segmented-body) import holds a readers key the parse drops (a leading space before the opening fence), and stores the fixed file restricted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-readers-stream-'));
+  const path = join(dir, 'large.md');
+  const body = 'A line about acme-example.\n'.repeat(2000);
+  try {
+    for (const engine of engines) {
+      const policy = { ...(await readPageBodyPolicy(engine)), segmented: true };
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      try {
+        for (const [slug, head] of [['notes/large-spaced', ' ---\nReadable_By: [alice-example]\n---\n'], ['notes/large-plain', '---\nReadable_By: [alice-example]\n---\n']] as const) {
+          writeFileSync(path, head + body);
+          expect({ slug, result: await importStreamedMarkdownFile(engine, path, `${slug}.md`, { noEmbed: true }, statSync(path), policy) })
+            .toMatchObject({ result: { status: 'skipped', skip_reason: 'readers_noncanonical' } });
+          expect(await engine.getPage(slug)).toBeNull();
+        }
+        writeFileSync(path, '---\nreadable_by: [alice-example]\n---\n' + body);
+        expect((await importStreamedMarkdownFile(engine, path, 'notes/large-fixed.md', { noEmbed: true }, statSync(path), policy)).status).not.toBe('skipped');
+        expect(normalizeReaders((await engine.getPage('notes/large-fixed'))!.frontmatter)).toEqual(['member:alice-example']);
+      } finally {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 180_000);
 
 test('a derived write (add_tag) on a page that already stores a misspelled key is not refused: the guard governs authored content only', async () => {
   await brain(false, async (ctx, engine) => {
