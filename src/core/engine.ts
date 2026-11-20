@@ -1,3 +1,4 @@
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
@@ -35,6 +36,12 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
+import type { PageTypeRef } from './engine-sql/trust-tier-reads.ts';
+import type {
+  PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
+} from './engine-sql/jobs-health.ts';
+import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
+import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow } from './engine-sql/alias-fanout-reads.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
@@ -1415,6 +1422,11 @@ export interface BrainEngine {
   listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }): Promise<TimelineOrphanPage[]>;
   /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
   readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
+  readPageTitle(sourceId: string, slug: string): Promise<string | null>;
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]): Promise<PageAliasRow[]>;
+  /** The entity card's alias rows: every alias row of a listed slug in the source, by alias (no tie order). */
+  readEntityAliasRows(sourceId: string, slugs: readonly string[]): Promise<EntityAliasRow[]>;
 
   // Chunks
   /**
@@ -2988,6 +3000,30 @@ export interface BrainEngine {
   /** The reads behind `describeJobs`: submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs (engine-sql/jobs-insight.ts). */
   readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
 
+  /** gbrain export: the next 256 live page keys after page id `q.afterId`, in id order, within the filters (engine-sql/export-reads.ts). */
+  listExportPageKeys(q: ExportPageKeyQuery): Promise<ExportPageKey[]>;
+  /** gbrain export: the size in bytes of the source's withdrawal ledger, which the export caps (engine-sql/export-reads.ts). */
+  readExportWithdrawalLedgerBytes(sourceId: string): Promise<number>;
+  /** gbrain export: the source's withdrawals and purge tombstones, by visibility, fact hash and subject (engine-sql/export-reads.ts). */
+  listExportWithdrawals(sourceId: string): Promise<ExportWithdrawalRow[]>;
+  /** gbrain export: the live pages among `ids` with their tags in tag order, in no set order (engine-sql/export-reads.ts). */
+  readExportPageRows(ids: readonly string[]): Promise<ExportPageRow[]>;
+  /** gbrain export: each body and timeline lower-cased with whitespace runs made one space, line by line (engine-sql/export-reads.ts). */
+  normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]>;
+  /** A segmented body read: page `pageId`'s body columns and revision, deleted or not, or undefined (engine-sql/export-reads.ts). */
+  readSegmentedPageHead(pageId: number): Promise<SegmentedPageHead | undefined>;
+  /** A segmented body read: a generation's published manifest rows in seq order, `generation` null for the live one (engine-sql/export-reads.ts). */
+  readBodyManifestRows(pageId: number, generation: number | null): Promise<BodyManifestRow[]>;
+  /** A segmented body read: the entry state and protected regions of the named occurrences in one published generation (engine-sql/export-reads.ts). */
+  readBodyManifestMeta(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<BodyManifestMeta[]>;
+  /** A segmented outline read: the facts slots and stored outline of the named occurrences in one published generation (engine-sql/export-reads.ts). */
+  readBodyManifestOutline(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<BodyManifestOutline[]>;
+  /** A segmented body read: the seqs of one published generation's rows that end at a forced cut, in seq order (engine-sql/export-reads.ts). */
+  listForcedCutSeqs(pageId: number, generation: number): Promise<number[]>;
+  /** A segmented body read: body_bytes of the newest segmented version that references `generation` and records a size, or null (engine-sql/export-reads.ts). */
+  readSegmentedVersionBodyBytes(pageId: number, generation: number): Promise<number | null>;
+  /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
+  listAccessPolicySourceIds(): Promise<string[]>;
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;
 
@@ -3015,6 +3051,10 @@ export interface BrainEngine {
    * replaced, and switches the transaction to generic plans when coverage is active.
    */
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null>;
+  /** The sources with a belief event about `subjectKey` in their current incarnation, by id (engine-sql/belief.ts). */
+  listCoveredSources(subjectKey: string): Promise<string[]>;
+  /** reindex-search-vector's row inventory (SQL in engine-sql/search-vector.ts); the trigger replacement and backfills stay in the command (they write). */
+  countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
 
   /**
    * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the
@@ -3135,6 +3175,33 @@ export interface BrainEngine {
     acquisitionToken: string;
     maxAgeSeconds: number;
   }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
+  // Queue health reads (lane 5 group A; engine-sql/jobs-health.ts): what doctor's queue checks, the advisor and the submit probe ask.
+  /** The `queue_health` check's counts: stalled-forever, deep, watchdog-killed, prompt_too_long and old embed-backfill jobs. */
+  readQueueHealthSignals(spec: QueueHealthSpec): Promise<QueueHealthSignals>;
+  /** Waiting jobs per queue (depth, oldest age in seconds), deepest first. */
+  listWaitingByQueue(): Promise<WaitingByQueueRow[]>;
+  /** Intake, completions and waiting per job name, and the waiting-TTL cancellations, over a window. */
+  readQueueDivergence(spec: QueueDivergenceSpec): Promise<QueueDivergence>;
+  /** Per queue (private dream queues excluded): live active rows, waiting rows and minutes since the last completion. */
+  listQueueWedgeCounts(): Promise<QueueWedgeRow[]>;
+  /** Per dream-inline private queue: live active, waiting-class and paused rows, oldest wait and birth, source id. */
+  listPrivateQueueHealth(): Promise<PrivateQueueHealthRow[]>;
+  /** One queue's wedge signals (stalled, live active, waiting, claimable, last completions). `opts.signal` cancels a SQL statement. */
+  readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
+  /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
+  readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
+  listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
+
+  // Group D (trust tier reads): the stamped-tier reads of page history and the quote path.
+  /** The stored snapshot tier of each listed page version, by id. */
+  listVersionTrustTiers(ids: readonly number[]): Promise<Array<{ id: number; trust_tier: string | null }>>;
+  /** The type and tier of the write that replaced each listed version (the next snapshot, or the live page), by id. */
+  listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
+  /** The stored type of each listed page, deleted or not, by id (the quoting reads); unknown ids answer nothing. */
+  listPageTypesByIds(ids: readonly number[]): Promise<PageTypeRef[]>;
+  /** One read withdrawal discovery makes (WithdrawalDiscoveryRead: claim keys, fence and chunk matches, split fence slots, targets, sample slugs). */
+  readWithdrawalDiscovery<K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K }>): Promise<WithdrawalDiscoveryRows[K]>;
   /** The id and slug of the segmented pages among `slugs` in the source (engine-sql/withdrawal-pages.ts). */
   listSegmentedPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
   /** A fact withdrawal's page invalidation: a new knowledge revision, no text projection or embedding signature, for the inline pages among `slugs`. */
