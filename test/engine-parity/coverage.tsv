@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 913/913
+# covered: 916/916
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 83/83
+# persistence_journal: 85/85
 # entity_reads: 10/10
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 34/34
+# write_misc: 35/35
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -93,13 +93,13 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	549	yes	yes	yes	serves
+putPage	pages	yes	551	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	158	yes	yes	yes	serves
+softDeletePage	pages	yes	159	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -423,6 +423,8 @@ readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
+readReasonPurgeTombstones	persistence_journal	yes	2	no	yes	yes	serves
+readSourcePurgeEpoch	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	9	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
@@ -885,6 +887,7 @@ readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
 readFolderAccess	write_misc	yes	4	no	yes	yes	serves
+listPagesNamingReader	write_misc	yes	3	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

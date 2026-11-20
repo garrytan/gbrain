@@ -1465,7 +1465,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `h i y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive and `x` is access_members).
+until then no family writes under them. The free lowercase bytes today are `h y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `i` is entity_identities and `x` is access_members).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
