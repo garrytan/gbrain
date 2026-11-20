@@ -351,16 +351,18 @@ final class ContactsHarness {
         #expect(!SystemContactsStore.keys.contains(CNContactNoteKey))
     }
 
-    @Test func helperSourcesNeverBuildAContactsWrite() throws {
+    @Test func contactsWritesLiveOnlyInTheSystemStore() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
         #expect(files.contains { $0.lastPathComponent == "SystemContactsStore.swift" })
-        for file in files {
+        for file in files where file.lastPathComponent != "SystemContactsStore.swift" {
             let text = try String(contentsOf: file, encoding: .utf8)
             for banned in ["CNSaveRequest", "CNMutableContact", "CNMutableGroup", ".execute("] {
                 #expect(!text.contains(banned), "\(file.lastPathComponent) contains \(banned)")
             }
         }
+        let reader = try String(contentsOf: root.appendingPathComponent("HelperCore/Contacts.swift"), encoding: .utf8)
+        #expect(!reader.contains("ContactsWriteStore") && !reader.contains(".save("))
     }
 }
 
