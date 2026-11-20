@@ -32,12 +32,12 @@ Any program already running as you can read the signing keychain's password, or 
 
 ## Layout
 
-- `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`).
+- `Sources/HelperCore/`: the Messages reader, the HTTP server, tokens, config, source modules and the send door (`Send*.swift`, `MessagesApp.swift`, `DeliveryLedger.swift`) and the Contacts reader (`Contacts.swift`, `SystemContactsStore.swift`).
 - `Sources/gbrain-apple-helper/`: the command-line program.
 - `Bundle/`: `Info.plist`, the background agent's property list and the entitlements for `GBrain Helper.app`.
 - `scripts/install.sh`: builds, signs, installs and registers the app (above).
 - `scripts/signing-probe.sh`: CI probe that asks whether a self-signed certificate made on the machine signs the app with no dialog, or first needs a one-time Always Trust step. Its answer goes to the job summary.
-- `Tests/HelperCoreTests/`: tests against a synthetic Messages database.
+- `Tests/HelperCoreTests/`: tests against a synthetic Messages database and an in-memory Contacts store.
 
 ## Routes
 
