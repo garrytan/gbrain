@@ -365,33 +365,10 @@ async function cmdGrades(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   const { gradeJudgeMeasured } = await import('../core/cycle/grade-takes-measured.ts');
-  const rows = await engine.executeRaw<{
-    take_id: number; source_id: string; page_slug: string; row_num: number; claim: string; holder: string; since_date: string | null;
-    verdict: string; confidence: number; applied: boolean; judge_model_id: string; prompt_version: string; graded_at: string | Date;
-  }>(
-    `SELECT * FROM (
-       SELECT DISTINCT ON (g.take_id)
-              g.take_id, p.source_id, p.slug AS page_slug, t.row_num, t.claim, t.holder, t.since_date,
-              g.verdict, g.confidence, g.applied, g.judge_model_id, g.prompt_version, g.graded_at
-         FROM take_grade_cache g
-         JOIN takes t ON t.id = g.take_id
-         JOIN pages p ON p.id = t.page_id
-        WHERE p.deleted_at IS NULL
-        ORDER BY g.take_id, g.graded_at DESC
-     ) latest
-     WHERE ($1::text IS NULL OR verdict = $1)
-       AND ($2::real IS NULL OR confidence >= $2)
-       AND ($3::boolean IS NULL OR applied = $3)
-     ORDER BY graded_at DESC, take_id DESC
-     LIMIT $4`,
-    [verdict ?? null, minConfidence ?? null, applied ? true : unapplied ? false : null, limit],
-  );
-  const grades = rows.map(r => ({
-    ...r,
-    confidence: Number(r.confidence),
-    graded_at: r.graded_at instanceof Date ? r.graded_at.toISOString() : String(r.graded_at),
-    judge_measured: gradeJudgeMeasured(r.judge_model_id, r.prompt_version),
-  }));
+  const rows = await engine.listLatestTakeGrades({
+    verdict: verdict ?? null, minConfidence: minConfidence ?? null, applied: applied ? true : unapplied ? false : null, limit,
+  });
+  const grades = rows.map(r => ({ ...r, judge_measured: gradeJudgeMeasured(r.judge_model_id, r.prompt_version) }));
 
   if (json) {
     console.log(JSON.stringify(grades, null, 2));

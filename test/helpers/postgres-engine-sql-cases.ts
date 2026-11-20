@@ -647,6 +647,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listHeldFenceTakeRows': OOS.takesReads,
   'readLivePageIdBySlug': OOS.extractTakes, 'readPageTierRef': OOS.extractTakes, 'readPageTierRows': OOS.extractTakes, 'pageHasFrontmatterKey': OOS.extractTakes,
   'listTakeIdsLeavingFence': OOS.extractTakes, 'listTakePreimages': OOS.extractTakes, 'deleteTakesByIds': OOS.extractTakes, 'findTakeId': OOS.extractTakes,
+  'listLatestTakeGrades': OOS.takesReads, 'readTakeGrade': OOS.takesReads, 'insertTakeGrade': OOS.takesReads, 'deleteTakeGrade': OOS.takesReads,
   'countMcpResolvedTakes': OOS.takesReads,
   'listTakeSupersessionCandidates': OOS.takesReads,
   'countZeroWeightWithTakes': OOS.takesReads,

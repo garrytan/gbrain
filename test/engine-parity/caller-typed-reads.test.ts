@@ -173,3 +173,96 @@ describe('engine parity: the name-and-topic split of gbrain recall', () => {
     return got;
   });
 });
+
+describe('engine parity: the grade_takes verdict cache and gbrain takes grades', () => {
+  parityTest('takes grades lists the newest verdict of each live take, filtered, in the same bytes; the cache keeps one verdict per key', {
+    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'softDeletePage', 'insertTakeGrade', 'readTakeGrade', 'deleteTakeGrade', 'listLatestTakeGrades'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const takeOf = async (slug: string, claim: string, sourceId = 'default') => {
+      const page = await engine.putPage(slug, body(slug), { sourceId });
+      await engine.addTakesBatch([{ page_id: Number(page.id), row_num: 1, claim, kind: 'bet', holder: 'alice-example', weight: 0.7, since_date: '2023-02-01' }]);
+      return (await engine.findTakeId(Number(page.id), 1))!;
+    };
+    const ids = {
+      acme: await takeOf('companies/acme-example', 'Acme-example will reach $5M ARR by the end of 2024'),
+      bluefin: await takeOf('companies/bluefin-example', 'Bluefin-example will open a Berlin office by Q2 2024'),
+      other: await takeOf('companies/other-example', 'Other-example will ship by 2025', 'other'),
+      gone: await takeOf('companies/gone-example', 'Gone-example will be acquired before 2025'),
+    };
+    const key = (take: keyof typeof ids, gradedAt: string, judge = 'claude-sonnet-4-6', prompt = 'hybrid-evidence-v1') =>
+      ({ takeId: ids[take], promptVersion: prompt, judgeModelId: judge, evidenceSignature: `sig-${take}-${gradedAt}` });
+    const grade = (take: keyof typeof ids, verdict: 'correct' | 'incorrect' | 'partial' | 'unresolvable', confidence: number, gradedAt: string, applied = false, judge?: string, prompt?: string) =>
+      engine.insertTakeGrade({ ...key(take, gradedAt, judge, prompt), verdict, confidence, applied, gradedAt });
+    await grade('acme', 'unresolvable', 0.4, '2026-01-01T00:00:00Z');
+    await grade('acme', 'correct', 0.97, '2026-03-01T00:00:00Z', true, 'gpt-6.1-sol');
+    await grade('bluefin', 'unresolvable', 0.5, '2026-01-15T00:00:00Z', false, 'gpt-6.1-sol', 'hybrid-evidence-v2');
+    await grade('bluefin', 'incorrect', 0.8, '2026-02-01T00:00:00Z', false, 'openai:gpt-6.1-sol', 'hybrid-evidence-v2');
+    await grade('other', 'partial', 0.65, '2026-02-10T00:00:00.123Z');
+    await grade('gone', 'correct', 0.99, '2026-02-15T00:00:00Z');
+    await engine.softDeletePage('companies/gone-example');
+    // The cache itself: a second verdict at a key leaves the first; a delete clears only its key.
+    await grade('acme', 'incorrect', 0.1, '2026-01-01T00:00:00Z');
+    const cache = {
+      kept: await engine.readTakeGrade(key('acme', '2026-01-01T00:00:00Z')),
+      applied: await engine.readTakeGrade(key('acme', '2026-03-01T00:00:00Z', 'gpt-6.1-sol')),
+      otherJudge: await engine.readTakeGrade(key('acme', '2026-03-01T00:00:00Z')),
+      missing: await engine.readTakeGrade(key('bluefin', '2026-09-01T00:00:00Z')),
+    };
+    await grade('bluefin', 'correct', 0.9, '2026-09-01T00:00:00Z');
+    await engine.deleteTakeGrade(key('bluefin', '2026-09-01T00:00:00Z'));
+    await engine.deleteTakeGrade(key('bluefin', '2026-10-01T00:00:00Z'));
+    const deleted = await engine.readTakeGrade(key('bluefin', '2026-09-01T00:00:00Z'));
+    // Take ids never compare across arms: name them in the output.
+    const named = (text: string) => Object.entries(ids).reduce((t, [name, id]) => t.replaceAll(`"take_id": ${id},`, `"take_id": "${name}",`), text);
+    const grades = async (...args: string[]) => {
+      const run = await runCommand(() => runTakes(engine, ['grades', ...args]));
+      return { ...run, stdout: named(run.stdout) };
+    };
+    // The typed read itself, before the command shapes it: ids map back to names, the time is ISO with milliseconds.
+    const nameOf = new Map(Object.entries(ids).map(([name, id]) => [id, name]));
+    const direct = (await engine.listLatestTakeGrades({ verdict: null, minConfidence: 0.6, applied: false, limit: 10 }))
+      .map((r) => [nameOf.get(r.take_id), r.confidence, r.graded_at]);
+    const got = {
+      cache, deleted, direct,
+      json: await grades('--json'),
+      text: await grades(),
+      verdict: await grades('--json', '--verdict', 'incorrect'),
+      minConfidence: await grades('--json', '--min-confidence', '0.95'),
+      applied: await grades('--json', '--applied'),
+      unapplied: await grades('--json', '--unapplied', '--limit', '1'),
+      none: await grades('--verdict', 'partial', '--min-confidence', '0.9'),
+    };
+    const row = (take: string, source: string, slug: string, claim: string, verdict: string, confidence: number, applied: boolean, judge: string, prompt: string, gradedAt: string, measured: boolean) =>
+      ({ take_id: take, source_id: source, page_slug: slug, row_num: 1, claim, holder: 'alice-example', since_date: '2023-02-01', verdict, confidence, applied, judge_model_id: judge, prompt_version: prompt, graded_at: gradedAt, judge_measured: measured });
+    const acme = row('acme', 'default', 'companies/acme-example', 'Acme-example will reach $5M ARR by the end of 2024', 'correct', 0.97, true, 'gpt-6.1-sol', 'hybrid-evidence-v1', '2026-03-01T00:00:00.000Z', false);
+    const other = row('other', 'other', 'companies/other-example', 'Other-example will ship by 2025', 'partial', 0.65, false, 'claude-sonnet-4-6', 'hybrid-evidence-v1', '2026-02-10T00:00:00.123Z', false);
+    const bluefin = row('bluefin', 'default', 'companies/bluefin-example', 'Bluefin-example will open a Berlin office by Q2 2024', 'incorrect', 0.8, false, 'openai:gpt-6.1-sol', 'hybrid-evidence-v2', '2026-02-01T00:00:00.000Z', true);
+    const json = (rows: unknown[]) => ({ code: null, stdout: JSON.stringify(rows, null, 2), stderr: '' });
+    expect(got).toEqual({
+      cache: {
+        kept: { verdict: 'unresolvable', confidence: 0.4, applied: false },
+        applied: { verdict: 'correct', confidence: 0.97, applied: true },
+        otherJudge: null, missing: null,
+      },
+      deleted: null,
+      direct: [['other', 0.65, '2026-02-10T00:00:00.123Z'], ['bluefin', 0.8, '2026-02-01T00:00:00.000Z']],
+      json: json([acme, other, bluefin]),
+      text: { code: null, stderr: '', stdout: [
+        '# grade_takes verdicts (newest per take, 3 shown)',
+        '  companies/acme-example#1 [alice-example] correct @ 0.97 applied  judge gpt-6.1-sol (not measured by W6)  2026-03-01',
+        '      Acme-example will reach $5M ARR by the end of 2024  (made 2023-02-01)',
+        '  companies/other-example#1 [alice-example] partial @ 0.65  judge claude-sonnet-4-6 (not measured by W6)  2026-02-10',
+        '      Other-example will ship by 2025  (made 2023-02-01)',
+        '  companies/bluefin-example#1 [alice-example] incorrect @ 0.80  judge openai:gpt-6.1-sol  2026-02-01',
+        '      Bluefin-example will open a Berlin office by Q2 2024  (made 2023-02-01)',
+      ].join('\n') },
+      verdict: json([bluefin]),
+      minConfidence: json([acme]),
+      applied: json([acme]),
+      unapplied: json([other]),
+      none: { code: null, stdout: 'No grade_takes verdicts match.', stderr: '' },
+    });
+    return got;
+  });
+});

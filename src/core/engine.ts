@@ -89,7 +89,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef, PageQuoteTier, PageQuoteTierSpec,
@@ -4396,6 +4396,14 @@ export interface BrainEngine {
   deleteTakesByIds(ids: readonly number[]): Promise<void>;
   /** The id of the page's take at `rowNum`, or null. */
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
+  /** `gbrain takes grades`: each live take's newest grade_takes verdict, filtered, newest first (engine-sql/takes-reads.ts). */
+  listLatestTakeGrades(filter: TakeGradeFilter): Promise<TakeGradeRow[]>;
+  /** grade_takes: the cached verdict at `key`, or null (engine-sql/takes-reads.ts). */
+  readTakeGrade(key: TakeGradeKey): Promise<TakeGrade | null>;
+  /** grade_takes: cache a verdict; a row already at its key stays (engine-sql/takes-reads.ts). */
+  insertTakeGrade(row: TakeGradeKey & TakeGrade & { gradedAt?: string }): Promise<void>;
+  /** grade_takes: drop the cached verdict at `key` (engine-sql/takes-reads.ts). */
+  deleteTakeGrade(key: TakeGradeKey): Promise<void>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

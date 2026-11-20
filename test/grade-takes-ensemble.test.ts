@@ -24,6 +24,8 @@ import {
 } from '../src/core/cycle/grade-takes.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../src/core/engine.ts';
+import * as takesReads from '../src/core/engine-sql/takes-reads.ts';
+import type { TakeGradeKey } from '../src/core/engine-sql/takes-reads.ts';
 
 const { aggregateEnsemble } = __testing;
 
@@ -57,6 +59,10 @@ function buildMockEngine(opts: { takes: Take[] }): {
       if (sql.includes('SELECT verdict, confidence, applied FROM take_grade_cache')) return [];
       return [];
     },
+    // The verdict cache members are typed; they run the real SQL against this fake, so the captured text stays the same.
+    async readTakeGrade(key: TakeGradeKey) { return takesReads.readTakeGrade(engine, key); },
+    async insertTakeGrade(row: Parameters<typeof takesReads.insertTakeGrade>[1]) { return takesReads.insertTakeGrade(engine, row); },
+    async deleteTakeGrade(key: TakeGradeKey) { return takesReads.deleteTakeGrade(engine, key); },
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     async readManagedModeRows() {
       return engine.executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1');

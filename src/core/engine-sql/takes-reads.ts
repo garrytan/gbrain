@@ -226,3 +226,86 @@ export async function findTakeId(tx: Raw, pageId: number, rowNum: number): Promi
   const [take] = await tx.executeRaw<{ id: number | string }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [pageId, rowNum]);
   return take ? Number(take.id) : null;
 }
+
+/** A take_grade_cache row's key: one verdict per take, prompt, judge and evidence. */
+export interface TakeGradeKey { takeId: number; promptVersion: string; judgeModelId: string; evidenceSignature: string }
+
+/** A cached grade_takes verdict. */
+export interface TakeGrade { verdict: 'correct' | 'incorrect' | 'partial' | 'unresolvable'; confidence: number; applied: boolean }
+
+/** The cached verdict at `key`, or null: grade_takes skips a take it already judged on the same evidence. */
+export async function readTakeGrade(tx: Raw, key: TakeGradeKey): Promise<TakeGrade | null> {
+  const [row] = await tx.executeRaw<{ verdict: TakeGrade['verdict']; confidence: number | string; applied: boolean }>(
+    `SELECT verdict, confidence, applied FROM take_grade_cache
+      WHERE take_id = $1 AND prompt_version = $2 AND judge_model_id = $3 AND evidence_signature = $4
+      LIMIT 1`,
+    [key.takeId, key.promptVersion, key.judgeModelId, key.evidenceSignature],
+  );
+  return row ? { verdict: row.verdict, confidence: Number(row.confidence), applied: row.applied } : null;
+}
+
+/**
+ * Cache a verdict. A row already at `key` stays as it is (another run judged it first). `gradedAt` (ISO 8601) is for
+ * an import or a fixture; grade_takes leaves it out and the store stamps the time now.
+ */
+export async function insertTakeGrade(tx: Raw, row: TakeGradeKey & TakeGrade & { gradedAt?: string }): Promise<void> {
+  await tx.executeRaw(
+    `INSERT INTO take_grade_cache
+       (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied, graded_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, now()))
+     ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
+    [row.takeId, row.promptVersion, row.judgeModelId, row.evidenceSignature, row.verdict, row.confidence, row.applied, row.gradedAt ?? null],
+  );
+}
+
+/** Drop the cached verdict at `key`, so the next grade_takes run judges the take again. */
+export async function deleteTakeGrade(tx: Raw, key: TakeGradeKey): Promise<void> {
+  await tx.executeRaw(
+    `DELETE FROM take_grade_cache
+      WHERE take_id = $1 AND prompt_version = $2 AND judge_model_id = $3 AND evidence_signature = $4`,
+    [key.takeId, key.promptVersion, key.judgeModelId, key.evidenceSignature],
+  );
+}
+
+/** `gbrain takes grades` filters: each null filter matches every verdict. */
+export interface TakeGradeFilter { verdict: string | null; minConfidence: number | null; applied: boolean | null; limit: number }
+
+/** One take's newest cached grade_takes verdict, with the take and its page. */
+export interface TakeGradeRow {
+  take_id: number; source_id: string; page_slug: string; row_num: number; claim: string; holder: string; since_date: string | null;
+  verdict: TakeGrade['verdict']; confidence: number; applied: boolean; judge_model_id: string; prompt_version: string; graded_at: string;
+}
+
+/**
+ * `gbrain takes grades`: the newest take_grade_cache verdict of each take on a live page (any source), then the
+ * filters, newest first (graded_at, then take id), at most `limit` rows. `graded_at` is an ISO 8601 UTC string.
+ */
+export async function listLatestTakeGrades(tx: Raw, f: TakeGradeFilter): Promise<TakeGradeRow[]> {
+  const rows = await tx.executeRaw<Omit<TakeGradeRow, 'take_id' | 'row_num' | 'confidence' | 'graded_at'> & {
+    take_id: number | string; row_num: number | string; confidence: number | string; graded_at: string | Date;
+  }>(
+    `SELECT * FROM (
+       SELECT DISTINCT ON (g.take_id)
+              g.take_id, p.source_id, p.slug AS page_slug, t.row_num, t.claim, t.holder, t.since_date,
+              g.verdict, g.confidence, g.applied, g.judge_model_id, g.prompt_version, g.graded_at
+         FROM take_grade_cache g
+         JOIN takes t ON t.id = g.take_id
+         JOIN pages p ON p.id = t.page_id
+        WHERE p.deleted_at IS NULL
+        ORDER BY g.take_id, g.graded_at DESC
+     ) latest
+     WHERE ($1::text IS NULL OR verdict = $1)
+       AND ($2::real IS NULL OR confidence >= $2)
+       AND ($3::boolean IS NULL OR applied = $3)
+     ORDER BY graded_at DESC, take_id DESC
+     LIMIT $4`,
+    [f.verdict, f.minConfidence, f.applied, f.limit],
+  );
+  return rows.map(r => ({
+    ...r,
+    take_id: Number(r.take_id),
+    row_num: Number(r.row_num),
+    confidence: Number(r.confidence),
+    graded_at: r.graded_at instanceof Date ? r.graded_at.toISOString() : new Date(r.graded_at).toISOString(),
+  }));
+}
