@@ -6,11 +6,12 @@
  *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), as PGLite sorts: the member-disable pages
  *    check (pagesReadByNobodyNaming: source id, slug), the reconcile-links page walk (runReconcileLinks: slug), the
  *    visibility proposal's unmatched pages (proposeVisibility: source, slug), the integrity scan's page cut
- *    (scanIntegrity with a limit), the admin clients list (created_at, then client id), and the git-gap census's counts
+ *    (scanIntegrity with a limit; its sequential walk reads source id, then slug, as the batch scan does), the admin clients list (created_at, then client id), and the git-gap census's counts
  *    by link source, hold code and parked effect (censusGitGap: link_source, code, kind).
  *  - Regression: an en_US Postgres sorted these text keys by its locale, which skips `-` and `/` (`ab` before `a-z`),
  *    so a command named, walked, cut or counted its items in another order than on a PGLite brain: the integrity scan
- *    read the wrong pages under its limit, and the census listed its counts in another key order.
+ *    read the wrong pages under its limit (and its sequential walk, slug first by localeCompare, stopped at other pages
+ *    than its source-first batch scan), and the census listed its counts in another key order.
  *  - Why existing coverage misses it: the tests for these commands use keys that sort the same in every locale, and
  *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
@@ -99,6 +100,17 @@ describe('command listings sort text keys by byte', () => {
     const scan = await scanIntegrity(engine, { limit: 2 });
     expect(scan.pagesScanned).toBe(2);
     expect(scan.bareHits.map(h => h.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
+  });
+
+  parityTest('scanIntegrity under a limit reads pages by source id, then slug, on the batch and sequential paths', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+    await sources(engine, backend);
+    // Slug order runs opposite to source order, so a slug-first walk reads `aa` first and the source-first batch `zz`.
+    const slugOf: Record<string, string> = { 'a-z': 'zz', a0: 'mm', ab: 'aa' };
+    for (const source of MIXED_SOURCES) await page(engine, source, slugOf[source]!, {}, 'He tweeted about the launch last week.');
+    const read = async (batchLoad: boolean) => (await scanIntegrity(engine, { limit: 2, batchLoad })).bareHits.map(h => h.slug);
+    const expected = BYTE_SOURCES.slice(0, 2).map(source => slugOf[source]);
+    expect(await read(false)).toEqual(expected);
+    expect(await read(true)).toEqual(expected);
   });
 
   parityTest('the admin clients list breaks a created_at tie by byte client id', { methods: ['executeRaw', 'insertOauthClient'], requires: 'raw_sql' }, async (engine, backend) => {
