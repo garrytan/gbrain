@@ -89,6 +89,7 @@ import type {
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
+import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1598,6 +1599,16 @@ export interface BrainEngine {
   readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string>;
   /** A worktree's recorded manifest, read before a transfer accept's transaction; null when it has none or is missing. */
   readWorktreeManifest(worktreeId: string): Promise<StoredWorktreeManifest | null>;
+  /** Writer status's diagnostics rows (engine-sql/writer-status.ts): a running claim untouched since `abandonedCutoff` (ISO) is abandoned. */
+  readWriterDiagnosticRows(abandonedCutoff: string | null, excludedOrigins: readonly string[]): Promise<WriterDiagnosticRows>;
+  /** Writer status's source bindings with `hostId`'s root, and its stopped retire requests (one source, or all). */
+  readWriterStatusRows(hostId: string | null, sourceId: string | null): Promise<WriterStatusRows>;
+  /** The active sources (one, or all) the writer onboarding preflight reads, by id in byte order. */
+  listOnboardingSources(sourceId: string | null): Promise<OnboardingSourceRow[]>;
+  /** The effects that keep the brain from quiescing, by id, at most `limit` (persistence/blocking-effects.ts). */
+  listBlockingEffectRows(sourceId: string | null, limit: number, recoveringOnly: boolean): Promise<BlockingEffectRow[]>;
+  /** The active worktree refreshes (of one source's worktree, or all), oldest first. */
+  listActiveWorktreeRefreshRows(sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]>;
   /**
    * The writer-admin store for writer lock and unlock and transfer prepare, accept and cancel (engine-sql/writer-admin.ts).
    * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.

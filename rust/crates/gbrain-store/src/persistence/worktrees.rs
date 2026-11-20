@@ -47,51 +47,51 @@ const WORKTREE_STATES: &[&str] = &["active", "draining", "recovering"];
 /// `persistence_host_bindings.git_durability` CHECK (null is allowed).
 const GIT_DURABILITY: &[&str] = &["enabled", "disabled"];
 
-const WORKTREE: u8 = 0x01;
-const HOST_BINDING: u8 = 0x02;
-const SOURCE_BINDING: u8 = 0x03;
+pub(super) const WORKTREE: u8 = 0x01;
+pub(super) const HOST_BINDING: u8 = 0x02;
+pub(super) const SOURCE_BINDING: u8 = 0x03;
 
 /// One stored worktree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct WorktreeRecord {
-    id: String,
+pub(super) struct WorktreeRecord {
+    pub(super) id: String,
     #[serde(default)]
-    owner_host_id: Option<String>,
+    pub(super) owner_host_id: Option<String>,
     #[serde(default)]
-    owner_epoch: i64,
+    pub(super) owner_epoch: i64,
     #[serde(default = "one")]
-    topology_generation: i64,
+    pub(super) topology_generation: i64,
     #[serde(default = "active")]
-    state: String,
+    pub(super) state: String,
     #[serde(default)]
-    manifest: Option<Value>,
+    pub(super) manifest: Option<Value>,
     #[serde(default)]
-    heartbeat_at_us: Option<i64>,
+    pub(super) heartbeat_at_us: Option<i64>,
     #[serde(default)]
-    created_at_us: i64,
+    pub(super) created_at_us: i64,
 }
 
 /// One stored host binding: where a worktree is on one host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HostBindingRecord {
-    worktree_id: String,
-    host_id: String,
-    local_path: String,
-    coordination_path: String,
+pub(super) struct HostBindingRecord {
+    pub(super) worktree_id: String,
+    pub(super) host_id: String,
+    pub(super) local_path: String,
+    pub(super) coordination_path: String,
     #[serde(default)]
-    git_durability: Option<String>,
+    pub(super) git_durability: Option<String>,
 }
 
 /// One stored source binding: the worktree a source lives in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SourceBindingRecord {
-    source_id: String,
-    source_incarnation: String,
-    worktree_id: String,
+pub(super) struct SourceBindingRecord {
+    pub(super) source_id: String,
+    pub(super) source_incarnation: String,
+    pub(super) worktree_id: String,
     #[serde(default)]
-    relative_path: String,
+    pub(super) relative_path: String,
     #[serde(default = "one")]
-    topology_generation: i64,
+    pub(super) topology_generation: i64,
 }
 
 fn one() -> i64 {
@@ -169,7 +169,7 @@ fn source_binding_key(source_id: &str) -> Vec<u8> {
 }
 
 /// Every record under one tag, in key order.
-fn scan_records<T: for<'de> Deserialize<'de>>(
+pub(super) fn scan_records<T: for<'de> Deserialize<'de>>(
     read: &dyn KvRead,
     tag: u8,
     what: &str,
@@ -474,7 +474,7 @@ pub(crate) fn worktree_heartbeat_in(read: &dyn KvRead, id: &str) -> Result<Optio
 }
 
 /// `config->>'kind'`: a string as itself, another JSON value as its jsonb text, null as null.
-fn kind_text(config: &serde_json::Map<String, Value>) -> Value {
+pub(super) fn kind_text(config: &serde_json::Map<String, Value>) -> Value {
     match config.get("kind") {
         None | Some(Value::Null) => Value::Null,
         Some(Value::String(s)) => json!(s),

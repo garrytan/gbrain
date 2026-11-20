@@ -30,6 +30,11 @@ export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdmi
   return parseLock(row?.value);
 }
 
+/** `readWriterAdminLock` through the typed config read every engine serves (writer status). */
+export async function readWriterAdminLockTyped(engine: Pick<BrainEngine, 'getConfig'>): Promise<WriterAdminLock> {
+  return parseLock(await engine.getConfig(WRITER_ADMIN_LOCK_KEY));
+}
+
 /**
  * Runs inside claim, activation and transfer transactions for every caller, reviewed or internal.
  * FOR SHARE serializes with lock/unlock (FOR UPDATE) without blocking admission, which also shares this row.

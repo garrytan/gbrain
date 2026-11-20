@@ -53,7 +53,7 @@ async function brainIdentity(facts: Pick<PhysicalRootFacts, 'brainId'>): Promise
 export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim,
   facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<PhysicalRootReservation> {
   const root = canonicalFilesystemPath(path), brainId = await brainIdentity(facts);
-  await repairWedgedReservation(tx, root, opts.hostId);
+  await repairWedgedReservation(facts, root, opts.hostId);
   const previous = readPhysicalRootReservation(root);
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? resolveCoordinationLock(root, worktreeId, { reservation: previous?.coordinationPath }, opts.hostId).path;

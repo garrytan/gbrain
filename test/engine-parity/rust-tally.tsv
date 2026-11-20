@@ -145,6 +145,7 @@ test/engine-parity/vector-options.test.ts	4	0
 test/engine-parity/versions-raw.test.ts	17	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/wanted-markers.test.ts	4	0
+test/engine-parity/wedged-reservation.test.ts	2	0
 test/engine-parity/withdrawal-discovery-reads.test.ts	5	0
 test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
@@ -156,4 +157,5 @@ test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-admin.test.ts	1	4
 test/engine-parity/writer-registration.test.ts	2	0
+test/engine-parity/writer-status.test.ts	2	1
 test/engine-parity/writer-versions.test.ts	3	0

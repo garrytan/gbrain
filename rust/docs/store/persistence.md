@@ -476,7 +476,35 @@ over no rows gives. Two parts differ from a SQL brain:
 - **The digest.** Each brain has its own id, so a state reviewed on one brain never matches
   another, on any engine.
 
-`acceptWriterTransfer` still reads raw SQL and refuses here.
+A real `gbrain sources writer claim` refuses on this engine before it writes
+(`persistence/claim-release-gate.ts`, `member=writer_claim_release_path`): the release path
+(`writer deactivate`, `writer activate`) still reads raw SQL, so a claim could not be lifted.
+
+A claim that finds a wedged reservation (its coordination lock recorded inside the checkout, #6766)
+repairs it in one claim-store transaction (`persistence/coordination-lock.ts`
+`repairWedgedReservation`): the store's `brainId` and `worktree` answer the brain and worktree checks
+from the brain row and the worktree records.
+
+## Writer status
+
+`gbrain sources writer status` reads five members of `src/core/engine-sql/writer-status.ts`,
+answered here by `persistence/writer_status.rs`:
+
+- `readWriterDiagnosticRows(abandonedCutoff, excludedOrigins)`: the request, counter and claim row
+  sets of the diagnostics block. A running claim untouched since the cutoff is abandoned. A cutoff
+  that is not an ISO time refuses, as the SQL cast does.
+- `readWriterStatusRows(hostId, sourceId)`: the source bindings with the host's root, and the
+  stopped retire requests.
+- `listOnboardingSources(sourceId)`: the active sources of the onboarding preflight.
+- `listBlockingEffectRows(sourceId, limit, recoveringOnly)`: the effects that keep the brain from
+  quiescing, by id.
+- `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
+  their deferred request count and age.
+
+Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
+(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
+first two refuse and source movement reports `not_read`.
 
 ## TypeScript members with no stored state
 

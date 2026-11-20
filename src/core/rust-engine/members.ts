@@ -208,6 +208,12 @@ export const RUST_ENGINE_MEMBERS = {
   readWriterAdminState: 'persistence_journal',
   writerAdminStore: 'persistence_journal',
   readWorktreeManifest: 'persistence_journal',
+  // Writer status (engine-sql/writer-status.ts).
+  readWriterDiagnosticRows: 'persistence_journal',
+  readWriterStatusRows: 'persistence_journal',
+  listOnboardingSources: 'persistence_journal',
+  listBlockingEffectRows: 'persistence_journal',
+  listActiveWorktreeRefreshRows: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
