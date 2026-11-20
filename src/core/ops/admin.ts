@@ -23,8 +23,7 @@ import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 import { memoizedHealth } from '../health-memo.ts';
-import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
-import { worldOnlyFacts } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { GUEST_MARKER_CAPABILITY } from '../guests/marker.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
@@ -70,10 +69,9 @@ const get_stats: Operation = {
 async function visibleMostConnected(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[] }, entries: Array<{ slug: string; link_count: number }>) {
   if (ctx.remote === false || !entries?.length) return entries;
   const sourceIds = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
-  const rows = await ctx.engine.executeRaw<{ slug: string }>(`SELECT DISTINCT p.slug FROM pages p
-    WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
-      AND ${await remoteReadPolicySql(ctx.engine, 'p')}`, [entries.map(e => e.slug), sourceIds]);
-  const visible = new Set(rows.map(r => r.slug));
+  const policy = await resolveExcludePrivatePages(ctx.engine, true) ? 'read' : 'access';
+  const rows = await ctx.engine.listVisiblePageSlugs(entries.map(e => e.slug), sourceIds, policy);
+  const visible = new Set(rows);
   return entries.filter(e => visible.has(e.slug));
 }
 
@@ -264,8 +262,7 @@ const get_versions: Operation = {
     const out = [];
     const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.listVersionTrustTiers(versions.map(v => Number(v.id)))).map(r => [r.id, r.trust_tier] as const));
     const reason = await remoteReasons(ctx, String(p.slug), versions);
-    const lives = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.executeRaw<{ id: number | string; slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
-      'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(versions.map(v => Number(v.page_id)))]]);
+    const lives = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.readPagesForVersionHistory([...new Set(versions.map(v => Number(v.page_id)))]);
     const quarantines = new Map(lives.map(live => [Number(live.id), historyQuarantine(ctx, live)] as const));
     for (const v of versions) {
       const quarantined = quarantines.get(Number(v.page_id))?.(v.frontmatter as Record<string, unknown> | null) ?? null;

@@ -32,7 +32,8 @@ type Row = { result_type?: string; chunk_text?: string; fact_row?: { history_una
 const CONVERSATION = 'cli:extract-conversation-facts:v1';
 const ROLE_Q = 'In plain words, which job titles has Alice Example held over time?';
 const head = (from: string, until = 'unknown') => '[observed unknown; valid ' + from + ' to ' + until + ']';
-const HISTORY_READ = "COALESCE(f.dim_status, 'active') = 'active'";
+/** The slot history read (engine-sql/facts-recall.ts listSlotRows): H1 makes this member call fail. */
+const HISTORY_READ = 'listSlotRows' as const;
 const logger = { info() {}, warn() {}, error() {} };
 
 describe('slotHistoryDimension', () => {
@@ -262,8 +263,7 @@ for (const backend of testBackends()) {
 
     describe('H1 a failed history read', () => {
       const failing = (base: BrainEngine) => new Proxy(base, { get(target, prop) {
-        if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => sql.includes(HISTORY_READ)
-          ? Promise.reject(new Error('history read failed')) : target.executeRaw(sql, params);
+        if (prop === HISTORY_READ) return () => Promise.reject(new Error('history read failed'));
         const v = (target as unknown as Record<string, unknown>)[prop as string];
         return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
       } }) as BrainEngine;
@@ -281,14 +281,11 @@ for (const backend of testBackends()) {
           return JSON.stringify(r._meta ?? {});
         };
         expect(await call()).not.toContain('facts_history_unavailable');
-        const original = engine.executeRaw;
-        engine.executeRaw = (function (this: BrainEngine, sql: string, ...rest: unknown[]) {
-          if (sql.includes(HISTORY_READ)) return Promise.reject(new Error('history read failed'));
-          return (original as (...a: unknown[]) => unknown).call(this, sql, ...rest);
-        }) as typeof engine.executeRaw;
+        const original = engine[HISTORY_READ];
+        engine[HISTORY_READ] = () => Promise.reject(new Error('history read failed'));
         try {
           expect(await call()).toContain('facts_history_unavailable');
-        } finally { engine.executeRaw = original; }
+        } finally { engine[HISTORY_READ] = original; }
       }, 60_000);
     });
   });

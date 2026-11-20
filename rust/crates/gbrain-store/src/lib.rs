@@ -46,6 +46,7 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod dream_config;
 pub mod embedding_catalog;
 pub mod embedding_install;
 pub mod embeddings;

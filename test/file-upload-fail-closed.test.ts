@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, OperationError } from '../src/core/operations.ts';
+import { FILES_METADATA_MERGE_SQL } from '../src/core/sql-query.ts';
 
 let engine: PGLiteEngine;
 let storageDir: string;
@@ -138,15 +139,22 @@ describe('file_upload fail-closed (#4302)', () => {
   });
 
   // The MCP op above is one of five files upserts (the CLI upload/upload-raw/
-  // smart-upload/sync lanes are the other four). They all merge through the
-  // one hoisted fragment so the non-object guard cannot drift per site.
+  // smart-upload/sync lanes are the other four), plus the file_register insert.
+  // Their statements live in engine-sql/files-ops.ts; each merges metadata with
+  // the FILES_METADATA_MERGE_SQL text so the non-object guard cannot drift per site.
   test('every files upsert merges metadata through FILES_METADATA_MERGE_SQL', () => {
     for (const f of ['src/commands/files.ts', 'src/core/ops/files.ts']) {
       const src = readFileSync(join(import.meta.dir, '..', f), 'utf8');
+      expect(src).not.toMatch(/ON CONFLICT \(storage_path\)/);
       expect(src).not.toMatch(/files\.metadata\s*\|\|\s*EXCLUDED\.metadata/);
-      const conflicts = src.match(/ON CONFLICT \(storage_path\)/g)?.length ?? 0;
-      expect(conflicts).toBeGreaterThan(0);
-      expect(src.match(/\$\{FILES_METADATA_MERGE_SQL\}/g)?.length ?? 0).toBe(conflicts);
+    }
+    // test-reads-source-ok[structural]: the five upserts are SQL text in files-ops.ts; the pin is that each one carries the shared merge fragment.
+    const home = readFileSync(join(import.meta.dir, '..', 'src/core/engine-sql/files-ops.ts'), 'utf8');
+    expect(home).not.toMatch(/files\.metadata\s*\|\|\s*EXCLUDED\.metadata/);
+    const statements = home.split('INSERT INTO files ').slice(1);
+    expect(statements.length).toBe(5);
+    for (const text of statements) {
+      expect(text.slice(0, text.indexOf('`;'))).toContain(FILES_METADATA_MERGE_SQL);
     }
   });
 

@@ -19,7 +19,7 @@ import { sharedReadSources } from '../grants/read-shared.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { calibrationKey } from './supersession-threshold.ts';
-import { rowToFact, type FactRowSqlShape } from '../engine-sql/facts.ts';
+import { rowToFact } from '../engine-sql/facts.ts';
 import { collapseFactReads, type CollapsedFactRead } from './capture-dedup.ts';
 import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
@@ -256,7 +256,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
     let ids = ranked.map(s => s.candidate.id);
     const raw = ids.length
-      ? await ctx.engine.executeRaw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [input.factSources, ids])
+      ? await ctx.engine.listFactRowsByIds(input.factSources, ids)
       : [];
     const byId = new Map(raw.map(r => { const row = rowToFact(r); return [row.id, { ...row, embedding: null }] as const; }));
     const modelKey = embedding && pool.column ? calibrationKey(getEmbeddingModel(), getEmbeddingDimensions()) : null;

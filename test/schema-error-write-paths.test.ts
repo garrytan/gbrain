@@ -16,7 +16,8 @@ const missingTable = (table: string) => Object.assign(new Error(`relation "${tab
 
 /** A transaction handle whose statements throw `error` (the withdrawal-subject move, which runs outside a savepoint, succeeds). */
 function tx(error: Error): Pick<BrainEngine, 'transaction' | 'executeRaw' | 'moveFactWithdrawalSubject'> {
-  const savepoint = { executeRaw: async () => { throw error; } } as unknown as BrainEngine;
+  // Every statement in the savepoint throws: raw SQL and the typed members (the ontology re-key's listRekeyLosers and its siblings).
+  const savepoint = new Proxy({}, { get: () => async () => { throw error; } }) as unknown as BrainEngine;
   return {
     transaction: (async <T>(fn: (t: BrainEngine) => Promise<T>) => fn(savepoint)) as BrainEngine['transaction'],
     executeRaw: (async () => []) as BrainEngine['executeRaw'],

@@ -189,6 +189,7 @@ test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFi
 test/fence-format-reference.test.ts	docs/guides/fence-format.md	3	readFileSync
 test/fence-format-reference.test.ts	write-refusals fence reason rows	3	readFileSync
 test/fence-refusal.test.ts	every PR1 reason routes to the fence repair, never to frontmatter repair	3	readFileSync
+test/file-upload-fail-closed.test.ts	file_upload fail-closed (#4302)	6	readFileSync
 test/files.test.ts	collectFiles (production import)	9	readFileSync
 test/files.test.ts	files upload-raw git-storage branch (#2297)	6	readFileSync
 test/files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync

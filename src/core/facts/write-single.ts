@@ -168,8 +168,8 @@ export async function writeSingleFact(
     const written = await publishManagedEntityFacts(engine, sourceId, resolvedSlug, [{ fact: factText, kind, notability: 'medium',
       source: input.provenance, visibility, confidence: input.confidence ?? 1.0, validFrom: new Date(), validUntil,
       embedding, embedding_model: embeddingModel, sessionId: input.sessionId ?? null }], { supersede: true, attributeFallback: true, derivation: input.derivation });
-    const [stored] = await engine.executeRaw<{ entity_slug: string | null }>('SELECT entity_slug FROM facts WHERE id=$1', [written.ids[0]]);
-    return { id: written.ids[0], status: written.superseded ? 'superseded' : written.inserted ? 'inserted' : 'duplicate', entity_slug: stored?.entity_slug ?? null,
+    const storedSlug = await engine.readFactEntitySlugById(written.ids[0]);
+    return { id: written.ids[0], status: written.superseded ? 'superseded' : written.inserted ? 'inserted' : 'duplicate', entity_slug: storedSlug,
       valid_until: validUntil, degraded_dedup: degradedDedup };
   }
 
@@ -304,9 +304,7 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
   );
   try {
     const { forgetFactInFence } = await import('./forget.ts');
-    const [replacement] = await engine.executeRaw<{ row_num: number | null; same_page: boolean; valid_from: Date | string; old_from: Date | string; old_until: Date | string | null }>(
-      `SELECT n.row_num, n.source_markdown_slug IS NOT DISTINCT FROM o.source_markdown_slug AS same_page, n.valid_from, o.valid_from AS old_from, o.valid_until AS old_until
-         FROM facts n, facts o WHERE n.id = $1 AND o.id = $2`, [newId, oldId]);
+    const replacement = await engine.readSupersessionReplacement(newId, oldId);
     const rowNum = replacement?.same_page && replacement.row_num !== null ? Number(replacement.row_num) : null;
     const validUntil = replacement ? supersededValidUntil({ valid_from: replacement.old_from, valid_until: replacement.old_until }, new Date(replacement.valid_from)) : new Date();
     await forgetFactInFence(engine, oldId, { supersededBy: { rowNum, validUntil } });
@@ -314,7 +312,7 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
     report('fence strike', err);
   }
   try {
-    await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET superseded_by = $1 WHERE id = $2`, [newId, oldId]));
+    await maintenanceTransaction(engine, tx => tx.linkSupersededFact(oldId, newId));
   } catch (err) {
     report('superseded_by link', err);
   }

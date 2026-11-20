@@ -727,7 +727,7 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
   /** A DB-only insert: one attributed transaction at the derived tier, gated, with input edges for a new row. */
   const insertDerivedFact = (newFact: NewFact) => maintenanceTransaction(ctx.engine, tx =>
     applyGateDecision(tx, decideFact(newFact, newFact.entity_slug ?? null, { ...newFact }), { table: 'facts', sourceId: ctx.sourceId }, async () => {
-      await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR SHARE', [ctx.sourceId]);
+      await tx.lockSourceShared(ctx.sourceId);
       const { isFactWithdrawn } = await import('./withdrawal.ts');
       if (await isFactWithdrawn(tx, ctx.sourceId, null, newFact.fact, newFact.entity_slug ?? null)) { countWithdrawnSkip(counts); return null; }
       const result = await tx.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: the facts backstop's DB-only fallbacks (unparented / thin-client facts, stub-guard or unresolvable targets, a declined fence lane)
