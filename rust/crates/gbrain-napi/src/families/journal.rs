@@ -724,6 +724,16 @@ impl Brain {
         self.run(env, move |s| s.recent_writer_versions(days))
     }
 
+    /// `segmentedGateEvidence(days)`: the segmented-storage gate's writers in the window.
+    #[napi]
+    pub fn segmented_gate_evidence<'env>(
+        &self,
+        env: &'env Env,
+        days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.segmented_gate_evidence(days))
+    }
+
     #[napi]
     pub fn read_capacity_forecast_inputs<'env>(
         &self,

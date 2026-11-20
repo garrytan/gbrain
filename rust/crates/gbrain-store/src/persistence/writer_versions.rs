@@ -6,6 +6,8 @@
 //! requests on Postgres) is the brain's creation time here: a Rust brain stamps every request it
 //! admits from birth. No request is bound to a worktree on this engine (`persistence.rs`), so an
 //! unstamped consumer has no owner host to fall back to.
+//!
+//! The segmented-storage gate evidence also reads the ingest log's writer stamps (`stats.rs`).
 
 use super::all_requests;
 use crate::env::{Env, iso, parse_iso};
@@ -193,6 +195,91 @@ pub(crate) fn recent_writer_versions_in(
     Ok(rows.iter().map(|s| s.row(true)).collect())
 }
 
+/// One writer of the segmented-storage gate: (role, host, principal, version, mark) and its rows.
+struct GateWriter {
+    last_seen: i64,
+    first_seen: i64,
+    requests: i64,
+}
+
+/// `SEGMENTED_GATE_EVIDENCE_SQL`: every writer seen in the last `days`, grouped per role, host,
+/// principal, version and segment-reader mark, newest first. Admitters count in any state by
+/// admission, consumers when committed by publication, importers by the ingest log row. No request
+/// is bound to a worktree here, so an unstamped consumer has no owner host to fall back to, and the
+/// store runs no resident persistence consumer, so the resident arm reads no row.
+pub(crate) fn segmented_gate_evidence_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    days: f64,
+) -> Result<Vec<Value>> {
+    let since = env.now_micros() - (days * DAY_US) as i64;
+    type Group = (&'static str, Option<String>, String, Option<String>, bool);
+    let mut groups: BTreeMap<Group, GateWriter> = BTreeMap::new();
+    let mut add = |key: Group, at: i64| {
+        let g = groups.entry(key).or_insert(GateWriter {
+            last_seen: at,
+            first_seen: at,
+            requests: 0,
+        });
+        g.requests += 1;
+        g.last_seen = g.last_seen.max(at);
+        g.first_seen = g.first_seen.min(at);
+    };
+    let mark = |r: &RequestRecord, column: &str| r.extra.get(column).and_then(Value::as_bool) == Some(true);
+    for r in all_requests(read)? {
+        if r.created_at_us >= since {
+            let key = (
+                "admitter",
+                text(&r, "admitter_host_id"),
+                principal(&r),
+                text(&r, "admitter_version"),
+                mark(&r, "admitter_segment_reader"),
+            );
+            add(key, r.created_at_us);
+        }
+        if r.state == "committed"
+            && let Some(published) = publication(&r).filter(|p| *p >= since)
+        {
+            let key = (
+                "consumer",
+                text(&r, "consumer_host_id"),
+                principal(&r),
+                text(&r, "consumer_version"),
+                mark(&r, "consumer_segment_reader"),
+            );
+            add(key, published);
+        }
+    }
+    for row in crate::stats::ingest_writers_since(read, since)? {
+        let key = (
+            "importer",
+            row.host_id,
+            format!("ingest:{}", row.source_type),
+            row.version,
+            row.segment_reader,
+        );
+        add(key, row.created_at_us);
+    }
+    let mut rows: Vec<(Group, GateWriter)> = groups.into_iter().collect();
+    // `ORDER BY last_seen DESC`; ties fall back to the group key so every read answers the same.
+    rows.sort_by(|(ka, a), (kb, b)| b.last_seen.cmp(&a.last_seen).then_with(|| ka.cmp(kb)));
+    Ok(rows
+        .into_iter()
+        .map(|((role, host_id, principal, version, segment_reader), g)| {
+            json!({
+                "role": role,
+                "host_id": host_id,
+                "principal": principal,
+                "version": version,
+                "segment_reader": segment_reader,
+                "last_seen": iso(g.last_seen),
+                "requests": g.requests,
+                "first_seen": iso(g.first_seen),
+            })
+        })
+        .collect())
+}
+
 impl Store {
     /// `readWriterVersionCutoff()`.
     pub fn read_writer_version_cutoff(&self) -> Result<Option<String>> {
@@ -207,5 +294,10 @@ impl Store {
     /// `recentWriterVersions(days)`.
     pub fn recent_writer_versions(&self, days: f64) -> Result<Vec<Value>> {
         recent_writer_versions_in(&*self.read()?, &*self.env, days)
+    }
+
+    /// `segmentedGateEvidence(days)`.
+    pub fn segmented_gate_evidence(&self, days: f64) -> Result<Vec<Value>> {
+        segmented_gate_evidence_in(&*self.read()?, &*self.env, days)
     }
 }

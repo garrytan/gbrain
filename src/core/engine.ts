@@ -7,7 +7,7 @@ import type * as LoopMutesSql from './engine-sql/loop-mutes.ts';
 import type * as SourceArchiveSql from './engine-sql/source-archive.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
-import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
+import type { RecentWriterVersionRow, SegmentedGateEvidenceRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
@@ -3968,6 +3968,8 @@ export interface BrainEngine {
   listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
   /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
   recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
+  /** The segmented-storage gate's evidence: every admitter, consumer, importer and resident writer seen in the last `days`, newest first. */
+  segmentedGateEvidence(days: number): Promise<SegmentedGateEvidenceRow[]>;
 
   // The connect gate's persistence reads (engine-sql/connect-gate.ts): table probes, managed roots, graduation, retired epochs.
   /** Whether persistence table `table` exists (a brain before the persistence migrations has none). */

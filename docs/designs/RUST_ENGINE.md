@@ -225,7 +225,7 @@ The maintainer's principle (D20) is no PGLite-style locking. gbrain's TypeScript
 - A few reads of tables that only exist on a SQL engine skip on an engine without `raw_sql` instead of refusing, because "no rows" or "nothing to analyze" is the true answer there: Rust has no persistence custody tables and no query planner. `lacksRawSql(engine)` in `src/core/engine-capabilities.ts` is the one test; it is true only for an engine that reports a capability set without `raw_sql`, so PGLite, Postgres and transaction handles run their SQL as before. Pinned by `test/raw-sql-skip.test.ts`. The skips:
   - `readGraduationConnectRow` (`persistence/graduation-schema.ts`, the connect gate): no custody row.
   - `cleanupRetiredManagedMarkers` (`persistence/deactivation.ts`, on connect): no retired epoch, so nothing to clean. It also covers the committed writer-deactivate read in `readRetired`.
-  - `segmentedGateEvidence` (`persistence/writer-versions.ts`): no request journal or ingest-log rows from an older writer.
+  - The segmented-storage gate evidence is no skip: it is the typed `segmentedGateEvidence` member (`engine-sql/writer-versions.ts`), which the Rust store answers from its request stamps and ingest-log writer stamps.
   - `readPlannerStatsState` (`planner-stats.ts`): null, the same answer as a brain before the planner-stats migration, so `maybeRefreshPlannerStats` reports `unavailable`.
   - `analyzePlannerTables` and `beginFullAnalyze` (`planner-stats.ts`): nothing analyzed, no watermark read, published or trimmed.
   - `refreshProjectionStatistics` (`search/projection-statistics.ts`): succeeds with nothing to analyze and prints no warning; `canAnalyzePages` answers false. This covers the `reltuples` read and the `ANALYZE` inside the refresh.

@@ -5,7 +5,7 @@
  * (readCapacityForecastInputs) and the projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs),
  * the segmented projector's queue writes (claimSegmentedProjection, renewSegmentedProjectionClaim, releaseSegmentedProjectionClaim,
  * deleteProjectionJob, markProjectionRebuildFailed) and the writer-version reads (readWriterVersionCutoff, listWriterVersions,
- * recentWriterVersions).
+ * recentWriterVersions, segmentedGateEvidence).
  *
  * The store keeps no `persistence_consumers` rows and no worktree topology, so a live consumer never blocks a turn. Its
  * `persistence_effects` rows size the true-up as on Postgres. It keeps the page projection queue: every page write
@@ -19,7 +19,8 @@ import type {
 } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from '../../page-state/projection-window.ts';
 import {
-  isoTime, recentWriterVersionRow, writerVersionRow, type RecentWriterVersionRow, type WriterVersionRow,
+  isoTime, recentWriterVersionRow, segmentedGateEvidenceRow, writerVersionRow, type RecentWriterVersionRow, type SegmentedGateEvidenceRow,
+  type WriterVersionRow,
 } from '../../engine-sql/writer-versions.ts';
 import { requestRow } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -104,3 +105,10 @@ export const listWriterVersions: StoreMember<[limit: number], WriterVersionRow[]
 
 export const recentWriterVersions: StoreMember<[days: number], RecentWriterVersionRow[]> = async (brain, days) =>
   ((await storeCall({ member: 'recentWriterVersions' }, () => brain.recentWriterVersions(days))) as Parameters<typeof recentWriterVersionRow>[0][]).map(recentWriterVersionRow);
+
+/**
+ * The segmented-storage gate evidence: admitters and consumers from the request stamps, importers from the ingest log's
+ * writer stamps. The store runs no resident persistence consumer, so no resident row is read.
+ */
+export const segmentedGateEvidence: StoreMember<[days: number], SegmentedGateEvidenceRow[]> = async (brain, days) =>
+  ((await storeCall({ member: 'segmentedGateEvidence' }, () => brain.segmentedGateEvidence(days))) as Parameters<typeof segmentedGateEvidenceRow>[0][]).map(segmentedGateEvidenceRow);

@@ -793,6 +793,7 @@ export const RUST_ENGINE_MEMBERS = {
   readWriterVersionCutoff: 'persistence_journal',
   listWriterVersions: 'persistence_journal',
   recentWriterVersions: 'persistence_journal',
+  segmentedGateEvidence: 'persistence_journal',
   listPendingSegmentedProjections: 'persistence_journal',
   selectProjectionWindowJobs: 'persistence_journal',
   claimSegmentedProjection: 'persistence_journal',

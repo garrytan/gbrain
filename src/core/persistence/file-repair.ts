@@ -95,6 +95,8 @@ export interface ManagedFileRepairIntent extends Record<string, unknown> {
   /** Digest of the canonical page result the preview showed. */
   resultDigest: string;
   ownerEpoch: string;
+  /** The repair that wrote the request when it carries no receipt (`rows-behind`, `file-drift`); its refusals name that repair. */
+  repairKind?: ManagedRepairOrigin;
   expected_revision?: string;
   /** A held renamed file: the page it moves, bound to the revision the preview read. */
   renameFrom?: SyncRename;
@@ -109,9 +111,15 @@ export interface ManagedFileRepairIntent extends Record<string, unknown> {
   adoptLocalEdit?: { blob: string; replaced_revision: string; head: string | null; caller?: { id: string; token: string | null } };
 }
 
-/** The repair command a refusal names (D6 router): a fence repair's, the content repair's, or the frontmatter repair's. */
-export type FileRepairKind = 'frontmatter' | 'fences' | 'content';
-const WORK: Record<FileRepairKind, string> = { frontmatter: 'frontmatter', fences: 'fence', content: 'slug-conflict' };
+/**
+ * The repair command a refusal names (D6 router): a fence repair's, the content repair's, a re-import's
+ * (`rows-behind`), a held file's (`file-drift`), or the frontmatter repair's.
+ */
+export type FileRepairKind = 'frontmatter' | 'fences' | 'content' | ManagedRepairOrigin;
+/** The repairs that write through `submitManagedFileRepair` without a receipt of their own, named by `repairKind`. */
+export type ManagedRepairOrigin = 'rows-behind' | 'file-drift';
+const ORIGINS: readonly ManagedRepairOrigin[] = ['rows-behind', 'file-drift'];
+const WORK: Record<FileRepairKind, string> = { frontmatter: 'frontmatter', fences: 'fence', content: 'slug-conflict', 'rows-behind': 'rows-behind', 'file-drift': 'file-drift' };
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner and its state, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
@@ -169,9 +177,11 @@ function checkedContentRepair(input: { contentRepair?: unknown; beforeHash: stri
   return receipt;
 }
 
-/** Which repair command a request belongs to, from the receipt it carries. */
-function repairKindOf(input: { fenceRepair?: unknown; contentRepair?: unknown }): FileRepairKind {
-  return input.fenceRepair !== undefined ? 'fences' : input.contentRepair !== undefined ? 'content' : 'frontmatter';
+/** Which repair command a request belongs to, from the receipt it carries or the repair that names itself. */
+function repairKindOf(input: { fenceRepair?: unknown; contentRepair?: unknown; repairKind?: unknown }): FileRepairKind {
+  if (input.fenceRepair !== undefined) return 'fences';
+  if (input.contentRepair !== undefined) return 'content';
+  return ORIGINS.find(origin => origin === input.repairKind) ?? 'frontmatter';
 }
 
 /**
@@ -300,6 +310,8 @@ export interface ManagedFileRepairInput {
   contentRepair?: ContentRepairReceipt;
   /** #6696 C8: clear the hold only while it is this observation. */
   holdObservedAt?: string;
+  /** Set by `gbrain repair rows-behind` and `gbrain repair file-drift`: their refusals name that repair, not the frontmatter repair. */
+  repairKind?: ManagedRepairOrigin;
 }
 
 export async function submitManagedFileRepair(ctx: OperationContext, input: ManagedFileRepairInput): Promise<Record<string, unknown>> {

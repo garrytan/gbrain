@@ -175,7 +175,7 @@ async function applyRow(ctx: OperationContext, row: ApprovedRow, embed: boolean)
   const requestId = await repairRequestId(local, 'rows-behind', { source_id: row.source_id, slug: row.slug }, `${row.revision}:${row.blob}`);
   try {
     const outcome = await submitManagedFileRepair(local, { sourceId: row.source_id, requestId, slug: row.slug, path: row.path, sourcePath: row.source_path, content,
-      beforeHash: sha256(bytes), resultDigest: row.digest!, expected_revision: row.revision, noEmbed: !embed });
+      beforeHash: sha256(bytes), resultDigest: row.digest!, expected_revision: row.revision, noEmbed: !embed, repairKind: 'rows-behind' });
     return { applied: true, outcome: 'reimported', detail: { request_id: requestId, path: row.path, checkpoint: row.checkpoint, blob: row.blob, status: outcome.status, hold_cleared: outcome.hold_cleared === true } };
   } catch (error) {
     if (acceptedPendingReceipt(error) || !(error instanceof OperationError)) throw error;

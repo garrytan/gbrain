@@ -290,7 +290,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange', 'claimHousekeepingTurn',
   'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter', 'listTrueUpRequests', 'trueUpReservations', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
   'claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed',
-  'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
+  'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions', 'segmentedGateEvidence',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).

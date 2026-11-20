@@ -52,6 +52,51 @@ struct IngestRecord {
     pages_updated: Value,
     summary: String,
     created_at_us: i64,
+    /// The writer stamp (`writer_version`, `writer_host_id`, `writer_segment_reader`, migration
+    /// v254). A row written before the store kept it reads as unstamped and unmarked, as an older
+    /// binary's row reads on Postgres.
+    #[serde(default)]
+    writer_version: Option<String>,
+    #[serde(default)]
+    writer_host_id: Option<String>,
+    #[serde(default)]
+    writer_segment_reader: Option<bool>,
+}
+
+/// One ingest log row as the segmented-storage gate reads it (`persistence/writer_versions.rs`).
+pub(crate) struct IngestWriter {
+    pub source_type: String,
+    pub version: Option<String>,
+    pub host_id: Option<String>,
+    pub segment_reader: bool,
+    pub created_at_us: i64,
+}
+
+/// Every ingest log row created at or after `since_us`, newest first.
+pub(crate) fn ingest_writers_since(read: &dyn KvRead, since_us: i64) -> Result<Vec<IngestWriter>> {
+    let mut rows = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &[keys::INGEST_LOG], true, &mut |_, v| {
+        // The scan runs newest first, so the first row before the window ends it.
+        match serde_json::from_slice::<IngestRecord>(v) {
+            Ok(r) if r.created_at_us >= since_us => {
+                rows.push(IngestWriter {
+                    source_type: r.source_type,
+                    version: r.writer_version,
+                    host_id: r.writer_host_id,
+                    segment_reader: r.writer_segment_reader == Some(true),
+                    created_at_us: r.created_at_us,
+                });
+                true
+            }
+            Ok(_) => false,
+            Err(e) => {
+                failure = Some(StoreError::from(e));
+                false
+            }
+        }
+    })?;
+    failure.map_or(Ok(rows), Err)
 }
 
 impl IngestRecord {
@@ -85,6 +130,10 @@ pub struct IngestInput {
     pub source_ref: Option<String>,
     pub pages_updated_json: Option<String>,
     pub summary: Option<String>,
+    /// This binary's version and host (`writerStamp({ mint: false })`); the row is marked as
+    /// written by a segment reader.
+    pub writer_version: Option<String>,
+    pub writer_host_id: Option<String>,
 }
 
 /// Options of `getIngestLog`; the member resolves `limit` (`opts.limit || 50`).
@@ -484,6 +533,9 @@ impl Store {
                 ("summary", &summary),
             ],
         )?;
+        if let Some(version) = &input.writer_version {
+            no_nul("logIngest", &[("writer_version", version)])?;
+        }
         let pages_updated: Value = serde_json::from_str(pages_json).map_err(|e| {
             StoreError::new(INVALID_ARGUMENT, format!("logIngest: pages_updated: {e}"))
         })?;
@@ -495,6 +547,11 @@ impl Store {
         }
         // jsonb keeps one value per key (the last; a parsed Map already did) in jsonb key order.
         let pages_updated = crate::jsonb::order(pages_updated);
+        let writer_host_id = input
+            .writer_host_id
+            .as_deref()
+            .map(|h| crate::persistence::uuid_param(h, "logIngest: writer_host_id"))
+            .transpose()?;
         let created_at_us = self.env.now_micros();
         self.write(|tx| {
             let id = next_id(tx, NEXT_INGEST_LOG_ID)?;
@@ -506,6 +563,9 @@ impl Store {
                 pages_updated: pages_updated.clone(),
                 summary: summary.clone(),
                 created_at_us,
+                writer_version: input.writer_version.clone(),
+                writer_host_id: writer_host_id.clone(),
+                writer_segment_reader: Some(true),
             };
             put_json(tx, &ingest_key(created_at_us, id), &record)
         })

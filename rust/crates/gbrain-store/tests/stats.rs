@@ -49,6 +49,7 @@ fn ingest(source_ref: &str, source: Option<&str>) -> IngestInput {
         source_ref: Some(source_ref.into()),
         pages_updated_json: Some(r#"{"b":1,"a":[2]}"#.into()),
         summary: Some("ok".into()),
+        ..IngestInput::default()
     }
 }
 

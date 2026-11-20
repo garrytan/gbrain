@@ -755,7 +755,7 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
       const live = await assertDeletedPin(ctx.engine, page.source_id, pin);
       await asLocalCli(ctx.engine, () => submitManagedFileRepair(ctx, { sourceId: page.source_id, requestId, slug: artifact.slug, path: pin.path, sourcePath: pin.source_path,
         content: live.raw.toString('utf8'), beforeHash: pin.raw_file_hash, resultDigest: artifact.import_file.result_digest, ...(pin.revision ? { expected_revision: pin.revision } : {}),
-        noEmbed: !embed, holdObservedAt: pin.observed_at }));
+        noEmbed: !embed, holdObservedAt: pin.observed_at, repairKind: 'file-drift' }));
     }
     return { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: artifact.prefer, action, state: pin.state } };
   } catch (error) {
