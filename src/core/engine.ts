@@ -14,6 +14,7 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AppliedPolicyRevision } from './engine-sql/access-control.ts';
+import type { ExtractReceiptPriorRow, ExtractRollupRow } from './engine-sql/extract-bookkeeping.ts';
 import type { FactsFencePagesQuery, SweepPageRefRow, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
@@ -4415,6 +4416,12 @@ export interface BrainEngine {
   listSweepDeferredPages(q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]>;
   /** The live pages of any source whose slug is in `slugs` (the links pass's refs), in no set order. */
   listPageRefsForSlugs(slugs: readonly string[]): Promise<SweepPageRefRow[]>;
+  /** Adds one event to its extract_rollup_7d row (engine-sql/extract-bookkeeping.ts); `pre_v141` for a schema behind v141. */
+  upsertExtractRollup(row: ExtractRollupRow, form?: 'pre_v141'): Promise<void>;
+  /** The page row an extract receipt write checks first, deleted or not; undefined when there is none. */
+  readExtractReceiptPrior(sourceId: string, slug: string): Promise<ExtractReceiptPriorRow | undefined>;
+  /** Whether the page is sealed at the safe-chunk fence (the SQL value as read); undefined when there is none. */
+  readExtractReceiptSealed(sourceId: string, slug: string): Promise<{ sealed: boolean | null } | undefined>;
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;

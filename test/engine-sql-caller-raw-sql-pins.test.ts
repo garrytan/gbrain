@@ -16,6 +16,9 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
 import { trustRankSql } from '../src/core/trust/tier.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../src/core/search/safe-chunks.ts';
+
+const ROLLUP_ROW = { kind: 'facts', sourceId: 'src-a', day: '2026-01-01', cost: 0.5, halts: 1, evalFails: 0, evalPasses: 2, completed: 0, expectedLimits: 0, failures: 0, reason: 'unknown' };
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed. */
@@ -268,6 +271,57 @@ const PINS: Pin[] = [
     case: { method: 'listPageRefsForSlugs', variant: 'default', run: e => e.listPageRefsForSlugs(['a', 'b']) },
     texts: [`SELECT slug, source_id, type, knowledge_revision FROM pages
         WHERE deleted_at IS NULL AND slug IN ($1, $2)`],
+  },
+  {
+    from: 'src/core/extract/rollup-writer.ts:199 upsertExtractRollup (at 54246f2bd8)',
+    case: { method: 'upsertExtractRollup', variant: 'default', run: e => e.upsertExtractRollup(ROLLUP_ROW) },
+    texts: [`INSERT INTO extract_rollup_7d (
+         kind, source_id, day,
+         cost_usd, halt_count, eval_fail_count, eval_pass_count,
+         round_completed_count, expected_limit_count, rollup_write_failures, halt_reasons, updated_at
+       )
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10,
+         CASE WHEN $11::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object($11::text, $5::int) END, now())
+       ON CONFLICT (kind, source_id, day) DO UPDATE SET
+         cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
+         halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
+         eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
+         eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
+         round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
+         expected_limit_count   = extract_rollup_7d.expected_limit_count   + EXCLUDED.expected_limit_count,
+         rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
+         halt_reasons           = CASE WHEN $11::text IS NULL THEN extract_rollup_7d.halt_reasons
+           ELSE jsonb_set(extract_rollup_7d.halt_reasons, ARRAY[$11::text],
+             to_jsonb(COALESCE((extract_rollup_7d.halt_reasons->>$11::text)::int, 0) + $5::int)) END,
+         updated_at             = now()`],
+  },
+  {
+    from: 'src/core/extract/rollup-writer.ts:238 upsertExtractRollup, the pre-v141 retry (at 54246f2bd8)',
+    case: { method: 'upsertExtractRollup', variant: 'pre-v141', run: e => e.upsertExtractRollup(ROLLUP_ROW, 'pre_v141') },
+    texts: [`INSERT INTO extract_rollup_7d (
+             kind, source_id, day,
+             cost_usd, halt_count, eval_fail_count, eval_pass_count,
+             round_completed_count, rollup_write_failures, updated_at
+           )
+           VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, now())
+           ON CONFLICT (kind, source_id, day) DO UPDATE SET
+             cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
+             halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
+             eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
+             eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
+             round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
+             rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
+             updated_at             = now()`],
+  },
+  {
+    from: 'src/core/extract/receipt-writer.ts:226 writeReceipt, the prior-row check (at 54246f2bd8)',
+    case: { method: 'readExtractReceiptPrior', variant: 'default', run: e => e.readExtractReceiptPrior('src-a', 'extracts/a') },
+    texts: ['SELECT type, source_path, source_uri, withheld_source_path FROM pages WHERE source_id=$1 AND slug=$2'],
+  },
+  {
+    from: 'src/core/extract/receipt-writer.ts:242 writeReceipt, the seal check (at 54246f2bd8)',
+    case: { method: 'readExtractReceiptSealed', variant: 'default', run: e => e.readExtractReceiptSealed('src-a', 'extracts/a') },
+    texts: [`SELECT chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} AND text_projection_revision = knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2`],
   },
 ];
 

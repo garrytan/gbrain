@@ -827,6 +827,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSweepStalePages': OOS.callerRawSql,
   'listSweepDeferredPages': OOS.callerRawSql,
   'listPageRefsForSlugs': OOS.callerRawSql,
+  'upsertExtractRollup': OOS.callerRawSql,
+  'readExtractReceiptPrior': OOS.callerRawSql,
+  'readExtractReceiptSealed': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readAdmissionSource': OOS.writeMisc,
@@ -1081,6 +1084,7 @@ const SLUG = 'people/alice-example';
 const SLUG2 = 'companies/acme-example';
 const SRC = 'src-a';
 const SRCS = ['src-a', 'src-b'];
+const ROLLUP_ROW = { kind: 'facts', sourceId: SRC, day: '2026-01-01', cost: 0.5, halts: 1, evalFails: 0, evalPasses: 2, completed: 0, expectedLimits: 0, failures: 0, reason: 'unknown' };
 const JOURNAL_REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
 const JOURNAL_KEYS = ['brain', 'principal:local_cli:writer-1'];
 const EMB = new Float32Array([0.1, 0.2, 0.3]);
@@ -1710,6 +1714,12 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listSweepStalePages', [['default', (e) => e.listSweepStalePages({ sourceId: SRC, since: '2026-01-01T00:00:00.000Z', limit: 8, exclude: ['a'] })]]),
   ...variants('listSweepDeferredPages', [['default', (e) => e.listSweepDeferredPages({ sourceId: SRC, since: '2026-01-01T00:00:00.000Z', slugs: ['a'] })]]),
   ...variants('listPageRefsForSlugs', [['default', (e) => e.listPageRefsForSlugs(['a', 'b'])]]),
+  ...variants('upsertExtractRollup', [
+    ['default', (e) => e.upsertExtractRollup(ROLLUP_ROW)],
+    ['pre-v141', (e) => e.upsertExtractRollup(ROLLUP_ROW, 'pre_v141')],
+  ]),
+  ...variants('readExtractReceiptPrior', [['default', (e) => e.readExtractReceiptPrior(SRC, 'extracts/a')]]),
+  ...variants('readExtractReceiptSealed', [['default', (e) => e.readExtractReceiptSealed(SRC, 'extracts/a')]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

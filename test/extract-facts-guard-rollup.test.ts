@@ -16,6 +16,7 @@ import { describe, test, expect } from 'bun:test';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { stubSourceMembers } from './helpers/source-members-stub.ts';
+import * as extractBookkeepingSql from '../src/core/engine-sql/extract-bookkeeping.ts';
 
 interface CapturedCall {
   sql: string;
@@ -38,6 +39,8 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     // The ontology-hold and deleted-page reads moved off executeRaw onto typed members; the raw stub answered both with no rows.
     async listOntologyObservationSlugs() { return []; },
     async listDeletedPageSlugsWithActiveFacts() { return []; },
+    // The rollup write moved off executeRaw onto a typed member; it runs the same statement on this stub.
+    async upsertExtractRollup(row: extractBookkeepingSql.ExtractRollupRow, form?: 'pre_v141') { return extractBookkeepingSql.upsertExtractRollup(engine, row, form); },
     // The held-fact move's two reads (held-fact-move.ts) moved off executeRaw onto typed members; the raw stub answered both with no rows.
     async listHeldMoveRows() { return []; },
     async listStruckHeldRows() { return []; },

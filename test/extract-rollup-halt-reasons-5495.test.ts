@@ -31,6 +31,7 @@ import { computeExtractHealthCheck } from '../src/commands/doctor/checks/extract
 import { v239 } from '../src/core/schema-migrations/v239-extract-rollup-halt-reasons.ts';
 import { MIGRATIONS } from '../src/core/migrate.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import * as extractBookkeepingSql from '../src/core/engine-sql/extract-bookkeeping.ts';
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from './helpers/extract-atoms-page-fixtures.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -204,6 +205,8 @@ test('extract_atoms records a credentials abort as provider_auth; an extract_fac
     // The ontology-hold and deleted-page reads moved off executeRaw onto typed members; the raw stub answered both with no rows.
     async listOntologyObservationSlugs() { return []; },
     async listDeletedPageSlugsWithActiveFacts() { return []; },
+    // The rollup write moved off executeRaw onto a typed member; it runs the same statement on this stub.
+    async upsertExtractRollup(row: extractBookkeepingSql.ExtractRollupRow, form?: 'pre_v141') { return extractBookkeepingSql.upsertExtractRollup(stub, row, form); },
     // The held-fact move's two reads (held-fact-move.ts) moved off executeRaw onto typed members; the raw stub answered both with no rows.
     async listHeldMoveRows() { return []; },
     async listStruckHeldRows() { return []; },
