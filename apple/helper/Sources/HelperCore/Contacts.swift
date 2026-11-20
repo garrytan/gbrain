@@ -155,6 +155,7 @@ public final class ContactsSource: SourceModule {
             } else {
                 for page in index.pending.values {
                     for id in page.upserts.keys { index.entries[id] = "" }
+                    for id in page.deletes { index.entries[id] = "" }
                 }
             }
             index.pending = [:]

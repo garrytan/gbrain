@@ -198,6 +198,20 @@ final class ContactsHarness {
         #expect(h.get(retried.cursor).items.isEmpty)
     }
 
+    @Test func aRetriedCursorResendsAContactRestoredAfterAnUnsavedDelete() {
+        let h = ContactsHarness()
+        h.store.records = [person("id-a", "alice"), person("id-b", "bob")]
+        let snapshot = h.get()
+        let start = h.get(snapshot.cursor)
+        #expect(start.items.isEmpty)
+        h.store.records = [person("id-a", "alice")]
+        #expect(h.get(start.cursor).ops == ["delete id-b"])
+        h.store.records = [person("id-a", "alice"), person("id-b", "bob")]
+        let retried = h.get(start.cursor)
+        #expect(retried.ops == ["upsert id-b"])
+        #expect(h.get(retried.cursor).items.isEmpty)
+    }
+
     @Test func anUnappliedSnapshotPageIsNeverCountedAsSent() {
         let h = ContactsHarness()
         h.store.records = [person("id-a", "alice"), person("id-b", "bob")]
@@ -302,9 +316,30 @@ final class ContactsHarness {
         let h = ContactsHarness()
         h.store.records = [person("id-a", "alice", email: "alice@example.invalid", phone: "+1 555 0100", title: "Engineer", groups: ["Friends"])]
         _ = h.get()
-        let text = try String(contentsOfFile: h.indexPath, encoding: .utf8)
-        for data in ["alice", "example.invalid", "555", "Engineer", "Friends", "Acme"] {
-            #expect(!text.contains(data), "\(data)")
+        let data = try Data(contentsOf: URL(fileURLWithPath: h.indexPath))
+        let index = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(index.keys) == ["generation", "entries", "pending"])
+        let entries = try #require(index["entries"] as? [String: String])
+        let pending = try #require(index["pending"] as? [String: [String: Any]])
+        var ids = Set(entries.keys)
+        var hashes = Array(entries.values)
+        for page in pending.values {
+            let upserts = try #require(page["upserts"] as? [String: String])
+            let deletes = try #require(page["deletes"] as? [String])
+            ids.formUnion(upserts.keys)
+            ids.formUnion(deletes)
+            hashes += upserts.values
+        }
+        #expect(ids == ["id-a"])
+        #expect(!hashes.isEmpty)
+        for hash in hashes {
+            #expect(hash.isEmpty || (hash.count == 64 && hash.allSatisfy { "0123456789abcdef".contains($0) }), "\(hash)")
+        }
+        let generation = try #require(index["generation"] as? String)
+        #expect(UUID(uuidString: generation) != nil)
+        let text = String(decoding: data, as: UTF8.self)
+        for value in ["alice", "Example", "example.invalid", "+1 555 0100", "Engineer", "Friends", "Acme", "work", "mobile"] {
+            #expect(!text.contains(value), "\(value)")
         }
         let mode = try FileManager.default.attributesOfItem(atPath: h.indexPath)[.posixPermissions] as? Int
         #expect(mode == 0o600)
