@@ -27,6 +27,7 @@ import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
 import { readBrainMode } from './writer-release.ts';
 
 /** The one singleton row with the stored brain mode (gbrain-store `persistence::worktrees::release`; classic until activated). */
@@ -130,10 +131,18 @@ export const countOutstandingBySource: StoreMember<[principalKind: string, princ
 export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 
 /**
- * The Rust store keeps no OAuth clients or legacy access tokens (its writers are local_cli and local_stdio), so a
- * write owned by either finds no live grant row, as a Postgres or PGLite brain without that credential does.
+ * The grant columns of the OAuth client that owns a write, projected from the client's whole stored row
+ * (rust/docs/store/oauth-clients.md), or null for a client the store does not have. `lock` holds nothing: one process
+ * owns the store, as shareLockWriteCredential below.
  */
-export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId) => {
+  const row = await readOauthClient(brain, clientId) as unknown as Record<string, unknown> | null;
+  if (!row) return null;
+  return { deleted_at: row.deleted_at ?? null, scope: row.scope ?? null, source_id: row.source_id ?? null, source_grant: row.source_grant ?? null,
+    allowed_operations: row.allowed_operations ?? null, bound_slug_prefixes: row.bound_slug_prefixes ?? null, bound_tools: row.bound_tools ?? null,
+    delegated_namespace: row.delegated_namespace ?? null, delegated_slug_prefixes: row.delegated_slug_prefixes ?? null };
+};
+/** The store keeps no legacy access tokens, so a write owned by one finds no live grant row. */
 export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
 /** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};

@@ -1,0 +1,88 @@
+/**
+ * Engine parity for the credential grant reads a remote write runs: the OAuth client grant authorizeWrite re-checks, and
+ * the scope-source check a legacy token minted with a source grant runs before it is inserted.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: an MCP put_page over http owned by a live OAuth client commits on every engine; a deleted client's write
+ *    refuses permission_denied. A legacy token minted with a grant to a named source is inserted and reads that source's
+ *    page over http; a grant that names a marked scope source (`config.qm_scope`) refuses invalid_grant and inserts no
+ *    token.
+ *  - Regression: on the Rust engine readOAuthClientWriteGrant answered null for every client, so a live client's write
+ *    refused "The owning OAuth client is revoked"; assertScopeSourceGrant read the sources through raw SQL
+ *    (`... FOR SHARE`), so a source-granted mint refused raw_sql.
+ *  - Why existing coverage misses it: persistence-declaration.test.ts pins only a client and token with no live grant
+ *    row; access-tokens.test.ts mints only default-grant tokens. Over MCP a refusal comes back inside the tool result,
+ *    so the remote cases go through dispatchToolCall.
+ *  - Seam: none. Real engines, the MCP dispatcher, the token mint.
+ */
+import { describe } from 'bun:test';
+import { createSource, parityArms } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { mintLegacyToken } from '../../src/core/token-mint.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+const SOURCE = 'notes';
+const SLUG = 'notes/credential-grant';
+const CONTENT = '---\ntitle: Credential grant\n---\n\nA page written over http.\n';
+
+// readsUnscoped and createdAt as the http verifier sets them, so requester-scope.ts credentialScopeFor reads nothing.
+type Auth = { token: string; clientId: string; principal: { kind: 'oauth_client' | 'legacy_token'; id: string }; sourceId: string; allowedSources: string[]; scopes: string[];
+  readsUnscoped: false; createdAt: null };
+
+/** One MCP call over http. A refusal is in the tool result: its code, or the tool's answer on success. */
+async function http(engine: BrainEngine, tool: string, params: Record<string, unknown>, auth: Auth): Promise<Record<string, unknown>> {
+  const result = await dispatchToolCall(engine, tool, params, { remote: true, transport: 'http', sourceId: auth.sourceId,
+    admissionOrigin: 'interactive', takesHoldersAllowList: ['world'], auth } as never);
+  const body = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+  if (result.isError === true) {
+    const code = String(body.code ?? body.error);
+    if (code === 'engine_capability_missing') throw body;
+    return { ok: false, code };
+  }
+  return { ok: true, body };
+}
+
+async function oauthClient(engine: BrainEngine, id: string, deleted: boolean): Promise<Auth> {
+  await engine.insertOauthClient({ client_id: id, client_name: id, scope: 'read write', source_id: SOURCE,
+    ...(deleted ? { deleted_at: new Date('2026-01-01T00:00:00Z') } : {}) } as never);
+  return { token: '', clientId: id, principal: { kind: 'oauth_client', id }, sourceId: SOURCE, allowedSources: [SOURCE], scopes: ['read', 'write'], readsUnscoped: false, createdAt: null };
+}
+
+async function pageWritten(engine: BrainEngine): Promise<boolean> {
+  return (await engine.getPage(SLUG, { sourceId: SOURCE })) !== null;
+}
+
+describe('credential grant reads of a remote write', () => {
+  parityTest('an MCP put_page over http owned by a live OAuth client commits', { methods: [] }, async (engine, backend) => {
+    await createSource(engine, backend, SOURCE);
+    const put = await http(engine, 'put_page', { slug: SLUG, content: CONTENT }, await oauthClient(engine, 'client-writer', false));
+    return { put: { ok: put.ok, status: (put.body as Record<string, unknown> | undefined)?.status ?? null }, page: await pageWritten(engine) };
+  });
+
+  parityTest('an MCP put_page over http owned by a deleted OAuth client refuses permission_denied', { methods: [] }, async (engine, backend) => {
+    await createSource(engine, backend, SOURCE);
+    const put = await http(engine, 'put_page', { slug: SLUG, content: CONTENT }, await oauthClient(engine, 'client-gone', true));
+    return { put, page: await pageWritten(engine) };
+  });
+
+  parityTest('a legacy token minted with a grant to a named source reads that source over http', { methods: [] }, async (engine, backend) => {
+    await createSource(engine, backend, SOURCE);
+    await engine.putPage(SLUG, { type: 'note', title: 'Credential grant', compiled_truth: 'A page in the granted source.' }, { sourceId: SOURCE });
+    const minted = await mintLegacyToken(engine, { name: 'source-granted', scopes: ['read'], sourceGrant: [SOURCE], takesHolders: ['world'] });
+    const auth: Auth = { token: '', clientId: minted.id, principal: { kind: 'legacy_token', id: minted.id }, sourceId: SOURCE, allowedSources: [SOURCE], scopes: ['read'], readsUnscoped: false, createdAt: null };
+    const read = await http(engine, 'get_page', { slug: SLUG }, auth);
+    return { read: { ok: read.ok, title: (read.body as Record<string, unknown> | undefined)?.title ?? null },
+      live: (await engine.findActiveAccessTokens('source-granted')).length };
+  });
+
+  parityTest('a token grant that names a marked scope source refuses invalid_grant and inserts no token', { methods: [] }, async (engine, backend) => {
+    await createSource(engine, backend, 'scope-a', { qm_scope: true });
+    const refusal = await mintLegacyToken(engine, { name: 'scope-reader', scopes: ['read'], sourceGrant: ['scope-a'], takesHolders: ['world'] })
+      .then(() => null, (e: unknown) => e as { code?: unknown; name?: unknown });
+    if (refusal && (refusal as { code?: unknown }).code === 'engine_capability_missing') throw refusal;
+    return { refused: refusal !== null, code: refusal?.code ?? null, live: (await engine.findActiveAccessTokens('scope-reader')).length };
+  });
+});

@@ -11,6 +11,7 @@ import { catalogueError } from '../error-catalogue.ts';
 import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PagePolicyPart } from '../engine-sql/page-visibility.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
@@ -294,10 +295,11 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
 export async function defaultSourceMemberWriter(engine: BrainEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
   const { principal } = authority;
   if (!authority.remote || authority.actingFor || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
-  const [row] = await engine.executeRaw<{ member_id: string | null }>(principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [principal.id]);
-  return row?.member_id && await noGrantFloorReads(engine, authority.sourceId) ? `member:${row.member_id}` : null;
+  // An OAuth client's binding comes from its typed row read, which every engine serves; a token's is still raw SQL.
+  const memberId = principal.kind === 'oauth_client'
+    ? await engine.readOauthClient(principal.id).then(found => found ? requireOauthClientColumns(found, ['member_id']).member_id : null)
+    : (await engine.executeRaw<{ member_id: string | null }>('SELECT member_id FROM access_tokens WHERE id::text = $1', [principal.id]))[0]?.member_id;
+  return memberId && await noGrantFloorReads(engine, authority.sourceId) ? `member:${memberId}` : null;
 }
 
 /**

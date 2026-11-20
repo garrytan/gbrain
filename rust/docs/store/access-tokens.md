@@ -17,8 +17,9 @@ brain.
 ## Callers
 
 `insertUnifiedToken` (`src/core/token-mint.ts`, behind `mintLegacyToken` and `gbrain auth create`) calls
-`insertAccessToken`. A grant that reads a named source still checks the source and inserts in one transaction
-(`assertScopeSourceGrant`, raw SQL), so that branch keeps stopping on a Rust brain. `setMinTrust` and `setTokenMinTrust`
+`insertAccessToken`. A grant that reads a named source checks the source and inserts in one transaction
+(`assertScopeSourceGrant`): the sources' share locks go through `lockRegisteredSourceIds` and their marks through
+`getSource`, so that branch works on a Rust brain too. `setMinTrust` and `setTokenMinTrust`
 (`src/core/trust/min-trust.ts`, behind `gbrain auth set-min-trust`, `auth create --min-trust` and `auth-mint`) call
 `findActiveAccessTokens` and `setAccessTokenMinTrust`; their `migrations_pending` answer for a brain without the
 `min_trust` column still comes from the undefined-column error the SQL engines raise.
