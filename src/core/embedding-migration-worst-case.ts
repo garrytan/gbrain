@@ -132,6 +132,8 @@ async function eachStaleFactBatch(engine: BrainEngine, plan: EmbeddingMigrationP
   const flush = () => { if (batch.length) visit(batch.map(row => row.fact)); batch = []; };
   let after = { source: '', id: '0' };
   for (;;) {
+    // Keyset walk, not output: the ORDER BY and the cursor test compare source_id with the same database collation, so no
+    // row is skipped on any locale, and only the batched texts' sizes leave this walk.
     const rows = await engine.executeRaw<FactRow>(`SELECT f.id::text AS id, f.source_id, f.fact FROM facts f
       WHERE ($1::text IS NULL OR f.source_id=$1) AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}
         AND (f.source_id > $5 OR (f.source_id = $5 AND f.id > $6::bigint))

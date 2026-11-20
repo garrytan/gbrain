@@ -317,6 +317,7 @@ export class EmbeddingCache {
       }
     }
     const h = createHash('sha256');
+    // SQLite BINARY collation is byte order, so no COLLATE "C" is needed.
     const rows = db
       .query<{ key: string; dims: number; vector: Uint8Array }, []>(
         'SELECT key, dims, vector FROM embed_cache ORDER BY key',
