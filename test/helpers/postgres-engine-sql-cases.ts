@@ -100,6 +100,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'invalidateWithdrawnPages': OOS.withdrawalPages,
   'listSegmentedPages': OOS.withdrawalPages,
   'searchRead': OOS.helper,
+  'decideRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
   'readFieldUsageSamples': OOS.fieldUsage,
   'cosinesByChunkIds': OOS.searchReads,

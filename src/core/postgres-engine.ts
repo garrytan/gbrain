@@ -1104,25 +1104,26 @@ export class PostgresEngine implements BrainEngine {
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
-  // Group A (decide store).
-  readDecideState(key: string) { return decideStoreImpl.readDecideState(this, key); }
+  // Group A (decide store). The reads a doctor check reaches run bounded: they honour a read deadline as the typed preparation reads do (statement-deadline.ts BOUNDED_TYPED_READS).
+  private decideRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) { return this.preparationRead(exec => fn(unscopedExecutor(exec, 'decide store: master engine.executeRaw, unscoped'))); }
+  readDecideState(key: string) { return this.decideRead(exec => decideStoreImpl.readDecideState(exec, key)); }
   upsertDecideState(key: string, value: string) { return decideStoreImpl.upsertDecideState(this, key, value); }
   deleteDecideState(key: string) { return decideStoreImpl.deleteDecideState(this, key); }
   ensureDecideState(key: string, value: string) { return decideStoreImpl.ensureDecideState(this, key, value); }
   insertDecideSpend(rows: readonly decideStoreImpl.DecideSpendInsert[]) { return decideStoreImpl.insertDecideSpend(this, rows); }
-  dailyDecideSpend(since: Date) { return decideStoreImpl.dailyDecideSpend(this, since); }
+  dailyDecideSpend(since: Date) { return this.decideRead(exec => decideStoreImpl.dailyDecideSpend(exec, since)); }
   listDecideSpendBySlot() { return decideStoreImpl.listDecideSpendBySlot(this); }
   insertDecideReceipts(rows: readonly decideStoreImpl.DecideReceiptInsert[]) { return decideStoreImpl.insertDecideReceipts(this, rows); }
   pruneDecideReceipts(retentionDays: number) { return decideStoreImpl.pruneDecideReceipts(this, retentionDays); }
-  listDecideReceiptStats(opts: { slot?: string; sinceHours: number }) { return decideStoreImpl.listDecideReceiptStats(this, opts); }
-  decideSlotUsage(sinceHours: number) { return decideStoreImpl.decideSlotUsage(this, sinceHours); }
+  listDecideReceiptStats(opts: { slot?: string; sinceHours: number }) { return this.decideRead(exec => decideStoreImpl.listDecideReceiptStats(exec, opts)); }
+  decideSlotUsage(sinceHours: number) { return this.decideRead(exec => decideStoreImpl.decideSlotUsage(exec, sinceHours)); }
   decideConflictNoEntityCounts(sinceHours: number) { return decideStoreImpl.decideConflictNoEntityCounts(this, sinceHours); }
   listDecideReplayReceipts(slot: string, sinceHours: number) { return decideStoreImpl.listDecideReplayReceipts(this, slot, sinceHours); }
-  listDecideResolvedModels(sinceHours: number) { return decideStoreImpl.listDecideResolvedModels(this, sinceHours); }
-  listDecideMixedModelDecisions(sinceHours: number) { return decideStoreImpl.listDecideMixedModelDecisions(this, sinceHours); }
+  listDecideResolvedModels(sinceHours: number) { return this.decideRead(exec => decideStoreImpl.listDecideResolvedModels(exec, sinceHours)); }
+  listDecideMixedModelDecisions(sinceHours: number) { return this.decideRead(exec => decideStoreImpl.listDecideMixedModelDecisions(exec, sinceHours)); }
   insertDecideCalibration(row: decideStoreImpl.DecideCalibrationInsert) { return decideStoreImpl.insertDecideCalibration(this, row); }
   storeDecideQualification(id: number, q: decideStoreImpl.DecideQualification) { return decideStoreImpl.storeDecideQualification(this, id, q); }
-  listDecideCalibrations(opts?: { slot?: string; includeRetired?: boolean }) { return decideStoreImpl.listDecideCalibrations(this, opts); }
+  listDecideCalibrations(opts?: { slot?: string; includeRetired?: boolean }) { return this.decideRead(exec => decideStoreImpl.listDecideCalibrations(exec, opts)); }
   getDecideCalibration(id: number) { return decideStoreImpl.getDecideCalibration(this, id); }
   setDecideCalibrationRetired(id: number, retired: boolean) { return decideStoreImpl.setDecideCalibrationRetired(this, id, retired); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
