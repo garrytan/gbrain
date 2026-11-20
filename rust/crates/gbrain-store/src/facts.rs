@@ -1468,6 +1468,16 @@ fn page_of(
     rows.into_iter().skip(offset).take(limit).collect()
 }
 
+/// A fact's newest-first ranking time: its `valid_from`, or its `created_at` when it is dated
+/// after `now` (`CASE WHEN valid_from > now() THEN created_at ELSE valid_from END`).
+pub(crate) fn ranked_time(r: &FactRecord, now: i64) -> i64 {
+    if r.valid_from_us > now {
+        r.created_at_us
+    } else {
+        r.valid_from_us
+    }
+}
+
 impl Store {
     #[allow(clippy::too_many_arguments)]
     fn list_facts(
@@ -1621,11 +1631,21 @@ impl Store {
         self.write(|tx| delete_for_page(tx, trust, "deleteFactsForPage", args))
     }
 
-    /// `listFactsByEntity`: `valid_from DESC, id DESC`.
+    /// `listFactsByEntity`: newest first by `valid_from`, except that a fact dated in the future
+    /// ranks by its `created_at` (as of when it was written), then `id DESC`.
     pub fn list_facts_by_entity(&self, q: &FactQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsByEntity";
         let offset = count_arg(OP, "offset", q.offset)?;
-        self.list_facts(OP, q, |r| r.valid_from_us, true, offset, |_| true, false)
+        let now = self.env.now_micros();
+        self.list_facts(
+            OP,
+            q,
+            move |r| ranked_time(r, now),
+            true,
+            offset,
+            |_| true,
+            false,
+        )
     }
 
     /// `listFactsSince`: rows at or after `since` on `created_at` (or `valid_from` with
