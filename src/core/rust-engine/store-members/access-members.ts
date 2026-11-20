@@ -17,6 +17,7 @@
  */
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
+import type { AccessMemberSourceRow, MemberSourceBinding } from '../../engine-sql/access-member-sources.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -93,6 +94,33 @@ export const deleteAccessMemberLink: StoreMember<[system: string, externalId: st
 
 export const listAccessMemberLinks: StoreMember<[memberId: string | null], AccessMemberLinkRow[]> = async (brain, memberId) =>
   (await storeCall({ member: 'listAccessMemberLinks' }, () => brain.listAccessMemberLinks(memberId)) as Record<string, unknown>[]).map(asLink);
+
+const asSource = (r: Record<string, unknown>): AccessMemberSourceRow => ({ member_id: String(r.member_id), source_id: String(r.source_id),
+  created_at: new Date(String(r.created_at)) });
+
+/** Personal sources (v299): the bindings in byte order of member id, then source id, as the SQL sorts with `COLLATE "C"`. */
+export const readAccessMemberSource: StoreMember<[memberId: string, sourceId: string], AccessMemberSourceRow | null> = async (brain, memberId, sourceId) => {
+  const row = await storeCall({ member: 'readAccessMemberSource' }, () => brain.readAccessMemberSource(memberId, sourceId)) as Record<string, unknown> | null;
+  return row ? asSource(row) : null;
+};
+
+export const insertAccessMemberSource: StoreMember<[memberId: string, sourceId: string], void> = async (brain, memberId, sourceId) => {
+  await write('insertAccessMemberSource', () => brain.insertAccessMemberSource(memberId, sourceId));
+};
+
+export const deleteAccessMemberSource: StoreMember<[memberId: string, sourceId: string], void> = async (brain, memberId, sourceId) => {
+  await write('deleteAccessMemberSource', () => brain.deleteAccessMemberSource(memberId, sourceId));
+};
+
+export const listAccessMemberSources: StoreMember<[memberId: string | null], AccessMemberSourceRow[]> = async (brain, memberId) =>
+  (await storeCall({ member: 'listAccessMemberSources' }, () => brain.listAccessMemberSources(memberId)) as Record<string, unknown>[]).map(asSource);
+
+export const listAccessMemberSourceOwners: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  (await storeCall({ member: 'listAccessMemberSourceOwners' }, () => brain.listAccessMemberSourceOwners(sourceId)) as unknown[]).map(String);
+
+export const readMemberSourceBindings: StoreMember<[sourceIds: readonly string[]], MemberSourceBinding[]> = async (brain, sourceIds) =>
+  (await storeCall({ member: 'readMemberSourceBindings' }, () => brain.readMemberSourceBindings([...sourceIds])) as Record<string, unknown>[])
+    .map(r => ({ source_id: String(r.source_id), member_id: String(r.member_id) }));
 
 /** The enabled member a link names, with its groups in byte order (Postgres orders them in the database collation). */
 export const readLinkedMember: StoreMember<[system: string, externalId: string], LinkedMemberRow | null> = async (brain, system, externalId) =>

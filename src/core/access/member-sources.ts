@@ -19,7 +19,7 @@ import { existingMember } from './members.ts';
 
 export interface MemberSource { member_id: string; source_id: string; created_at: string | null }
 
-function toBinding(row: Record<string, unknown>): MemberSource {
+function toBinding(row: { member_id: unknown; source_id: unknown; created_at: unknown }): MemberSource {
   return { member_id: String(row.member_id), source_id: String(row.source_id), created_at: row.created_at ? new Date(row.created_at as string).toISOString() : null };
 }
 
@@ -27,8 +27,8 @@ async function liveSource(engine: BrainEngine, raw: unknown): Promise<string> {
   if (!isValidSourceId(raw)) {
     throw opError('invalid_params', `"${String(raw ?? '')}" is not a valid source id.`, 'Pass a source id from gbrain sources list.');
   }
-  const [row] = await engine.executeRaw<{ ok: number }>('SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE', [raw]);
-  if (!row) throw opError('unknown_source', `No live source "${raw}" exists on this brain.`, 'Pick an id from gbrain sources list.');
+  const row = await engine.readSourceRow(raw);
+  if (!row || row.archived === true) throw opError('unknown_source', `No live source "${raw}" exists on this brain.`, 'Pick an id from gbrain sources list.');
   return raw;
 }
 
@@ -42,9 +42,9 @@ export async function bindMemberSource(engine: BrainEngine, rawMember: unknown, 
   const owners = await sourceOwners(engine, source);
   const changed = !owners.includes(member.id);
   if (changed && !opts.dryRun) {
-    await engine.executeRaw('INSERT INTO access_member_sources (member_id, source_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [member.id, source]);
+    await engine.insertAccessMemberSource(member.id, source);
   }
-  const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2', [member.id, source]);
+  const row = await engine.readAccessMemberSource(member.id, source);
   return { binding: row ? toBinding(row) : { member_id: member.id, source_id: source, created_at: null }, applied: changed && !opts.dryRun, changed,
     owners: changed ? [...owners, member.id].sort() : owners };
 }
@@ -56,37 +56,34 @@ export async function bindMemberSource(engine: BrainEngine, rawMember: unknown, 
 export async function unbindMemberSource(engine: BrainEngine, rawMember: unknown, rawSource: unknown, opts: { apply?: boolean } = {}): Promise<{ binding: MemberSource; applied: boolean; owners: string[]; still_personal: boolean }> {
   const member = await existingMember(engine, rawMember, 'unbound from a source');
   if (!isValidSourceId(rawSource)) throw opError('invalid_params', `"${String(rawSource ?? '')}" is not a valid source id.`, 'Pass a source id from gbrain access member source list.');
-  const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2', [member.id, rawSource]);
+  const row = await engine.readAccessMemberSource(member.id, rawSource);
   if (!row) {
     throw opError('invalid_params', `Source "${rawSource}" is not bound to member "${member.id}".`, `List the bindings with gbrain access member source list ${member.id}.`, { reason: 'unknown_binding' });
   }
-  if (opts.apply) await engine.executeRaw('DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2', [member.id, rawSource]);
+  if (opts.apply) await engine.deleteAccessMemberSource(member.id, rawSource);
   const owners = (await sourceOwners(engine, rawSource)).filter(o => o !== member.id);
   return { binding: toBinding(row), applied: opts.apply === true, owners, still_personal: owners.length > 0 };
 }
 
 export async function listMemberSources(engine: BrainEngine, opts: { member?: string } = {}): Promise<MemberSource[]> {
   const member = opts.member === undefined ? undefined : (await existingMember(engine, opts.member, 'listed')).id;
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT member_id, source_id, created_at FROM access_member_sources${member ? ' WHERE member_id = $1' : ''} ORDER BY member_id, source_id`, member ? [member] : []);
-  return rows.map(toBinding);
+  return (await engine.listAccessMemberSources(member ?? null)).map(toBinding);
 }
 
 async function sourceOwners(engine: BrainEngine, source: string): Promise<string[]> {
-  const rows = await engine.executeRaw<{ member_id: string }>('SELECT member_id FROM access_member_sources WHERE source_id = $1 ORDER BY member_id', [source]);
-  return rows.map(r => r.member_id);
+  return engine.listAccessMemberSourceOwners(source);
 }
 
 /**
  * The personal sources among `sources` an attested call for `member` must not read: every personal source not bound to
  * that member, or every personal source under a scope read. A schema before v299 has no personal source.
  */
-export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'executeRaw'>, sources: readonly string[], member: string, scopeRead: boolean): Promise<Set<string>> {
+export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'readMemberSourceBindings'>, sources: readonly string[], member: string, scopeRead: boolean): Promise<Set<string>> {
   const ids = [...new Set(sources)];
   if (!ids.length) return new Set();
   let rows: { source_id: string; member_id: string }[];
   try {
-    rows = await engine.executeRaw<{ source_id: string; member_id: string }>('SELECT source_id, member_id FROM access_member_sources WHERE source_id = ANY($1::text[])', [ids]);
+    rows = await engine.readMemberSourceBindings(ids);
   } catch (e) {
     if (!isMissingSchemaObject(e, 'table', 'access_member_sources')) throw e;
     return new Set();
@@ -105,7 +102,7 @@ export interface ReadScopeOpts { auth?: AuthInfo; sourceId?: string; localFedera
  * source, or to NO_SOURCES, which refuses. Unchanged (the same object) when nothing is hidden. A grant left empty reads
  * nothing (NO_SOURCES never names a source).
  */
-export async function attestedReadScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'executeRaw'>, opts: T, member: string, scopeRead: boolean): Promise<T> {
+export async function attestedReadScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'readMemberSourceBindings'>, opts: T, member: string, scopeRead: boolean): Promise<T> {
   const auth = opts.auth;
   if (!auth || auth.sourceId === NO_SOURCES) return opts;
   const federated = opts.localFederatedSourceIds;

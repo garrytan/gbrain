@@ -176,6 +176,7 @@ import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as accessGrantsImpl from './engine-sql/access-grants.ts';
 import * as accessMembersImpl from './engine-sql/access-members.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import * as accessMemberSourcesImpl from './engine-sql/access-member-sources.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
@@ -1866,6 +1867,12 @@ export class PGLiteEngine implements BrainEngine {
   insertAccessMemberLink(system: string, externalId: string, memberId: string) { return accessMembersImpl.insertAccessMemberLink(this.engineSql, system, externalId, memberId); }
   deleteAccessMemberLink(system: string, externalId: string) { return accessMembersImpl.deleteAccessMemberLink(this.engineSql, system, externalId); }
   listAccessMemberLinks(memberId: string | null) { return accessMembersImpl.listAccessMemberLinks(this.engineSql, memberId); }
+  readAccessMemberSource(memberId: string, sourceId: string) { return accessMemberSourcesImpl.readAccessMemberSource(this, memberId, sourceId); }
+  insertAccessMemberSource(memberId: string, sourceId: string) { return accessMemberSourcesImpl.insertAccessMemberSource(this, memberId, sourceId); }
+  deleteAccessMemberSource(memberId: string, sourceId: string) { return accessMemberSourcesImpl.deleteAccessMemberSource(this, memberId, sourceId); }
+  listAccessMemberSources(memberId: string | null) { return accessMemberSourcesImpl.listAccessMemberSources(this, memberId); }
+  listAccessMemberSourceOwners(sourceId: string) { return accessMemberSourcesImpl.listAccessMemberSourceOwners(this, sourceId); }
+  readMemberSourceBindings(sourceIds: readonly string[]) { return accessMemberSourcesImpl.readMemberSourceBindings(this, sourceIds); }
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }) { return accessMembersImpl.readCredentialBindingForUpdate(this.engineSql, target, opts); }
   readCredentialMemberId(target: AccessMembersSql.CredentialTarget) { return accessMembersImpl.readCredentialMemberId(this.engineSql, target); }
   readLinkedMember(system: string, externalId: string) { return accessMembersImpl.readLinkedMember(this, system, externalId); }

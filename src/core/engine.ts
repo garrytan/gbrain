@@ -6,6 +6,7 @@ import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writ
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import type * as AccessMemberSourcesSql from './engine-sql/access-member-sources.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
@@ -1484,6 +1485,13 @@ export interface BrainEngine {
   insertAccessMemberLink(system: string, externalId: string, memberId: string): Promise<void>;
   deleteAccessMemberLink(system: string, externalId: string): Promise<void>;
   listAccessMemberLinks(memberId: string | null): Promise<AccessMembersSql.AccessMemberLinkRow[]>;
+  /** Personal sources (v299, engine-sql/access-member-sources.ts): read one binding, add one, remove one, list all or one member's, a source's members, the bindings of named sources. */
+  readAccessMemberSource(memberId: string, sourceId: string): Promise<AccessMemberSourcesSql.AccessMemberSourceRow | null>;
+  insertAccessMemberSource(memberId: string, sourceId: string): Promise<void>;
+  deleteAccessMemberSource(memberId: string, sourceId: string): Promise<void>;
+  listAccessMemberSources(memberId: string | null): Promise<AccessMemberSourcesSql.AccessMemberSourceRow[]>;
+  listAccessMemberSourceOwners(sourceId: string): Promise<string[]>;
+  readMemberSourceBindings(sourceIds: readonly string[]): Promise<AccessMemberSourcesSql.MemberSourceBinding[]>;
   /** A credential's binding columns locked FOR UPDATE (inside the binding's transaction), or undefined. */
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
   /** The member a credential is bound to (a revoked or deleted one too, nothing locked), or null. */

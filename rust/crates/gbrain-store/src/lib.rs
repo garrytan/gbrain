@@ -10,6 +10,7 @@
 
 mod access_flag;
 pub mod access_member_links;
+pub mod access_member_sources;
 pub mod access_members;
 mod cascade;
 pub mod chunks;

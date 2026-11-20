@@ -5,7 +5,9 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 The member commands (`gbrain access member add|disable|enable|set|kind|rm` and `gbrain access group add|rm`,
 `src/core/access/members.ts`) write members and groups through the members of `src/core/engine-sql/access-members.ts`.
 The store keeps the three tables of schema migrations v282, v301, v305 and v308 (`access_members`, `access_groups`,
-`access_group_members`). Timestamps leave as ISO strings; the TypeScript members turn them into `Date`s.
+`access_group_members`), the member links of v286 and the personal sources of v299 (`access_member_sources`, read and
+written by `src/core/access/member-sources.ts` through `src/core/engine-sql/access-member-sources.ts`). Timestamps leave
+as ISO strings; the TypeScript members turn them into `Date`s.
 
 Keys (tag `x`, `keys::ACCESS_MEMBERS`):
 
@@ -15,6 +17,7 @@ Keys (tag `x`, `keys::ACCESS_MEMBERS`):
 | `x 0x02 <group id>` | group record: `id`, `created_at` | `access_groups` |
 | `x 0x03 <group id> 0x00 <member id>` | empty | `access_group_members`, primary key `(group_id, member_id)` |
 | `x 0x04 <system> 0x00 <external id>` | link record: `member_id`, `created_at` | `access_member_links` (v286), primary key `(system, external_id)`; `access_member_links.rs` |
+| `x 0x10 <member id> 0x00 <source id>` | binding record: `created_at` | `access_member_sources` (v299), primary key `(member_id, source_id)`; `x 0x05`-`x 0x0c` are taken by other families |
 
 Ids never hold NUL (the id check), so the members of one group are one prefix. A brain holds few members, so the email
 uniqueness check, the groups of one member and the enabled-member count scan the member and group-member prefixes;
@@ -39,6 +42,12 @@ there is no reverse index.
 | `insertAccessMemberLink(system, externalId, memberId)` | null | `INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)` |
 | `deleteAccessMemberLink(system, externalId)` | null; nothing for no such link | `DELETE FROM access_member_links WHERE system = $1 AND external_id = $2` |
 | `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id | `SELECT ... ORDER BY member_id, system, external_id` (`gbrain access member links`) |
+| `readAccessMemberSource(memberId, sourceId)` | `{ member_id, source_id, created_at }`, matched exactly, or null | `SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2` |
+| `insertAccessMemberSource(memberId, sourceId)` | null; nothing when the binding exists | `INSERT INTO access_member_sources (member_id, source_id) VALUES ($1, $2) ON CONFLICT DO NOTHING` |
+| `deleteAccessMemberSource(memberId, sourceId)` | null; nothing for no such binding | `DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2` |
+| `listAccessMemberSources(memberId \| null)` | every binding, or the bindings of exactly that member, by member id and source id | `SELECT ... ORDER BY member_id, source_id` |
+| `listAccessMemberSourceOwners(sourceId)` | the member ids bound to the source, by id; empty when the source is not personal | `SELECT member_id ... WHERE source_id = $1 ORDER BY member_id` |
+| `readMemberSourceBindings(sourceIds)` | `{ source_id, member_id }` of every binding of the named sources (the store answers by source id, then member id; the SQL has no order) | `SELECT source_id, member_id ... WHERE source_id = ANY($1::text[])` |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction
 does.
@@ -72,6 +81,8 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 | `access_member_links_system_check` | a system that does not match `^[a-z][a-z0-9_-]{0,31}$` |
 | `access_member_links_external_id_check` | an external id that is not 1-256 visible ASCII characters (`^[!-~]+$`) |
 | `access_member_links_member_id_fkey` | a link to a member id that does not exist |
+| `access_member_sources_member_id_fkey` | a binding to a member id that does not exist |
+| `access_member_sources_source_id` | a source id holding NUL (Postgres refuses NUL in text) |
 
 ## What the store does not do
 
@@ -85,6 +96,9 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
   `access_member_links.member_id` has nothing to do; a removed member keeps its links, as on Postgres. The attested
   read of a link (`linkedMember` in `src/core/access/actor.ts`) is `readLinkedMember`, which reads the link, the member
   and its groups in one read.
+- Personal-source cascade and source check: as for links, the `ON DELETE CASCADE` of `access_member_sources.member_id`
+  has nothing to do, and `source_id` has no foreign key (on Postgres neither), so a binding outlives its source. The
+  caller (`src/core/access/member-sources.ts`) checks the source is live with `readSourceRow` before it binds.
 - Order: ids sort in byte order. Postgres sorts `ORDER BY m.id` and `array_agg(... ORDER BY g.group_id)` in the
   database collation, so ids with `.`, `_` or `-` can order differently from an `en_US` database.
 
@@ -95,4 +109,8 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
   and group add, remove and cascade.
 - `crates/gbrain-store/tests/access_member_links.rs`: a link read exactly, listed by member and removed once; every link
   refusal with nothing written; a removed member keeps its links.
+- `crates/gbrain-store/tests/access_member_sources.rs`: a binding read exactly, bound once, listed by member and by
+  source in byte order and removed once; the member reference and NUL refusals with nothing written.
+- `test/engine-parity/access-member-sources.test.ts`: bind, unbind and list through `access/member-sources.ts`, and the
+  attested read that hides other members' personal sources, on every arm.
 - `test/engine-parity/access-members.test.ts`: the same writes on every arm, read through the engine.

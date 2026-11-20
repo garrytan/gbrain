@@ -210,4 +210,75 @@ impl Brain {
             s.list_access_member_links(member_id.as_deref())
         })
     }
+
+    /// `readAccessMemberSource(memberId, sourceId)`: the binding, or null.
+    #[napi]
+    pub fn read_access_member_source<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_access_member_source(&member_id, &source_id)
+        })
+    }
+
+    /// `insertAccessMemberSource(memberId, sourceId)`: resolves null; nothing when bound already.
+    #[napi]
+    pub fn insert_access_member_source<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_access_member_source(&member_id, &source_id)
+        })
+    }
+
+    /// `deleteAccessMemberSource(memberId, sourceId)`: resolves null.
+    #[napi]
+    pub fn delete_access_member_source<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_access_member_source(&member_id, &source_id)
+        })
+    }
+
+    /// `listAccessMemberSources(memberId | null)`: every binding, or one member's, in byte order.
+    #[napi]
+    pub fn list_access_member_sources<'env>(
+        &self,
+        env: &'env Env,
+        member_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_access_member_sources(member_id.as_deref())
+        })
+    }
+
+    /// `listAccessMemberSourceOwners(sourceId)`: the member ids bound to the source, in byte order.
+    #[napi]
+    pub fn list_access_member_source_owners<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_access_member_source_owners(&source_id))
+    }
+
+    /// `readMemberSourceBindings(sourceIds)`: `{ source_id, member_id }` of the named sources' bindings.
+    #[napi]
+    pub fn read_member_source_bindings<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_member_source_bindings(&source_ids))
+    }
 }

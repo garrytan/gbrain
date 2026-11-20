@@ -170,6 +170,7 @@ import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as accessGrantsImpl from './engine-sql/access-grants.ts';
 import * as accessMembersImpl from './engine-sql/access-members.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import * as accessMemberSourcesImpl from './engine-sql/access-member-sources.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
@@ -1550,6 +1551,13 @@ export class PostgresEngine implements BrainEngine {
   insertAccessMemberLink(system: string, externalId: string, memberId: string) { return accessMembersImpl.insertAccessMemberLink(this.engineSql, system, externalId, memberId); }
   deleteAccessMemberLink(system: string, externalId: string) { return accessMembersImpl.deleteAccessMemberLink(this.engineSql, system, externalId); }
   listAccessMemberLinks(memberId: string | null) { return accessMembersImpl.listAccessMemberLinks(this.engineSql, memberId); }
+  /** Personal sources: master sent these through executeRaw (access/member-sources.ts), so the reads end at a read deadline. */
+  readAccessMemberSource(memberId: string, sourceId: string) { return this.ownRawRead(exec => accessMemberSourcesImpl.readAccessMemberSource(exec, memberId, sourceId)); }
+  insertAccessMemberSource(memberId: string, sourceId: string) { return accessMemberSourcesImpl.insertAccessMemberSource(this, memberId, sourceId); }
+  deleteAccessMemberSource(memberId: string, sourceId: string) { return accessMemberSourcesImpl.deleteAccessMemberSource(this, memberId, sourceId); }
+  listAccessMemberSources(memberId: string | null) { return this.ownRawRead(exec => accessMemberSourcesImpl.listAccessMemberSources(exec, memberId)); }
+  listAccessMemberSourceOwners(sourceId: string) { return this.ownRawRead(exec => accessMemberSourcesImpl.listAccessMemberSourceOwners(exec, sourceId)); }
+  readMemberSourceBindings(sourceIds: readonly string[]) { return this.ownRawRead(exec => accessMemberSourcesImpl.readMemberSourceBindings(exec, sourceIds)); }
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }) { return accessMembersImpl.readCredentialBindingForUpdate(this.engineSql, target, opts); }
   /** A preparation read (page-visibility.ts defaultSourceMemberWriter): master sent it through executeRaw, so it ends at a read deadline. */
   readCredentialMemberId(target: AccessMembersSql.CredentialTarget) { return this.ownRawRead(exec => accessMembersImpl.readCredentialMemberId(exec, target)); }
