@@ -77,7 +77,7 @@ export async function resolvePageRef(engine: Pick<BrainEngine, 'executeRaw'>, re
   const sourceId = ref.sourceId ?? explicitSource ?? null;
   if (sourceId) return { sourceId, slug: ref.slug };
   const rows = await engine.executeRaw<{ source_id: string }>(
-    'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id', [ref.slug]);
+    'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"', [ref.slug]);
   if (rows.length > 1) {
     throw opError('invalid_params', `Slug "${ref.slug}" exists in ${rows.length} sources: ${rows.map(r => r.source_id).join(', ')}.`,
       `Pick one with --source ${rows[0]!.source_id} (or another listed source), or write the page as ${pageRef(rows[0]!.source_id, ref.slug)}.`);

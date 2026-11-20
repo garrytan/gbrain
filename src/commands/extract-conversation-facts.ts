@@ -1665,7 +1665,7 @@ conversation_facts_backlog check counts pages without this row.
 async function resolveGrammarSource(engine: BrainEngine, explicit: string | undefined, slug: string): Promise<string> {
   if (await managedPersistenceEnabled(engine)) throw usageError('--grammar applies to an unmanaged brain: a managed brain extracts a conversation page whole', ECF_HELP_HINT);
   const holders = explicit ? [explicit] : (await engine.executeRaw<{ source_id: string }>(
-    'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id', [slug])).map(r => r.source_id);
+    'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"', [slug])).map(r => r.source_id);
   if (holders.length !== 1) {
     const commands = holders.map(s => `gbrain extract-conversation-facts --source-id ${s} --slug ${slug} --grammar <format|none> --dry-run`);
     throw usageError(holders.length ? `--grammar chooses the format of one page, and ${slug} is in ${holders.length} sources (${holders.join(', ')}): pass --source-id`
