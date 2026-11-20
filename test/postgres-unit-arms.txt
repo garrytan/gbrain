@@ -140,6 +140,7 @@ test/engine-parity/cli-capabilities.test.ts
 test/engine-parity/cli-reads-import.test.ts
 test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
+test/engine-parity/collate-ontology-config.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts

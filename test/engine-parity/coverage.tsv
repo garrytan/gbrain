@@ -290,10 +290,10 @@ getLastSeen	timeline	yes	5	no	yes	yes	serves
 upsertEventProjection	timeline	yes	19	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
-mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
-getOntology	ontology	yes	5	no	yes	yes	serves
-discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
-findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
+mergeOntologyFact	ontology	yes	13	no	yes	yes	serves
+getOntology	ontology	yes	6	no	yes	yes	serves
+discoverOntologyDimensions	ontology	yes	2	no	yes	yes	serves
+findOntologyConflicts	ontology	yes	5	no	yes	yes	serves
 putRawData	raw_files	yes	5	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	3	no	yes	yes	serves
@@ -384,9 +384,9 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	19	no	yes	yes	serves
-setConfig	config	yes	31	no	yes	yes	serves
+setConfig	config	yes	34	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
-listConfigKeys	config	yes	4	no	yes	yes	serves
+listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
@@ -790,7 +790,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	6	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	8	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

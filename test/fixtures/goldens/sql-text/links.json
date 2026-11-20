@@ -290,8 +290,8 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT key FROM config WHERE key LIKE $1 ESCAPE '\\' ORDER BY key",
-            "textSha256": "3b7f63477b863dc13bb07fe9cd6980979bd0f7e84196810c1f74ea994df43e79"
+            "sql": "SELECT key FROM config WHERE key LIKE $1 ESCAPE '\\' ORDER BY key COLLATE \"C\"",
+            "textSha256": "d292626489b4c889aed87d9e834a4500947e761fe33fa03a5a15698b7e3b85b8"
           },
           {
             "lane": "tx",
@@ -475,8 +475,8 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT key FROM config WHERE key LIKE $1 ESCAPE '\\' ORDER BY key",
-            "textSha256": "3b7f63477b863dc13bb07fe9cd6980979bd0f7e84196810c1f74ea994df43e79"
+            "sql": "SELECT key FROM config WHERE key LIKE $1 ESCAPE '\\' ORDER BY key COLLATE \"C\"",
+            "textSha256": "d292626489b4c889aed87d9e834a4500947e761fe33fa03a5a15698b7e3b85b8"
           },
           {
             "lane": "tx",

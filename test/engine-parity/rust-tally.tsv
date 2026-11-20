@@ -15,6 +15,7 @@ test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-import.test.ts	17	0
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
+test/engine-parity/collate-ontology-config.test.ts	4	2
 test/engine-parity/config-ingest.test.ts	8	0
 test/engine-parity/connect-gate.test.ts	6	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
