@@ -386,7 +386,7 @@ Thirty-six members that were raw `executeRaw` statements in seventeen callers (`
 `listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
 statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
 (dimensions once when the column type is declared), so its `$n` numbers differ from the old text. Except `readFactForForget`, `expireFactSuperseded`, `expireFactAtDate` and `readWithdrawalAnchor`
-(served by `facts/forget.rs`, below) and the fourteen of `facts/remember_reads.rs` (below), none is implemented on Rust
+(served by `facts/forget.rs`, below) the fourteen of `facts/remember_reads.rs` and the six of `facts/recall.rs` (both below), none is implemented on Rust
 yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
 serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
 
@@ -396,7 +396,7 @@ serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw
 | Expiry and supersession | `expireSupersededFact`, `restoreSupersededFact`, `expireFactSuperseded`, `expireFactAtDate`, `expireDerivedFacts`, `deactivateDerivedTakes`, `softDeleteDerivedPages`, `markNeedsRederive` | `expired_at`, `superseded_by` and the derived-row columns; each update runs in the caller's transaction. |
 | Provenance and listing | `listOversizedStaleFacts`, `listLivePersonTitles`, `readLiveFactEntityPage`, `listFactsToRetireFromPage`, `listContestedProposalPairs`, `listFactProvenance`, `recordDerivationEdges`, `listDerivedRows`, `readFactForForget`, `readWithdrawalAnchor` | Live-page lookups, the oversized-fact scan cap, derivation edges and the proposal tables. |
 | FTS index | `readFactsFtsIndexState`, `swapFactsFtsIndex` | The `facts` full-text index language and its swap. |
-| Recall pool | the seven `facts-recall.ts` members | The embedding column, nearest-vector scan, slot rows, unbacked keys, call-off cues, entity pairs and rows by id. |
+| Recall pool | the seven `facts-recall.ts` members | The embedding column, nearest-vector scan, slot rows, unbacked keys, call-off cues, entity pairs and rows by id (all seven are served: `listFactRowsByIds` by `facts/remember_reads.rs`, the other six by `facts/recall.rs`). |
 
 ## Group 5: stamped trust reads (`facts/trust_reads.rs`)
 
@@ -466,6 +466,28 @@ only; `readSupersessionReplacement`, `linkSupersededFact` and `readFactEntitySlu
 `writeSingleFact` path, so only the member case exercises them.
 Parity: `test/engine-parity/remember-members.test.ts` (the members one by one) and `remember-supersede.test.ts` (a whole
 `remember` that replaces a fact, and the refusals of a gone or already replaced target).
+
+## Recall candidate-pool reads (`facts/recall.rs`)
+
+Six of the `facts-recall.ts` members are served: the pool reads a recall, a search that adds facts and a question recall make
+(`search/fact-relevance.ts`). The TypeScript members are `rust-engine/store-members/facts-recall.ts`; the napi family is
+`families/facts_recall.rs`. Every read admits a row as `listFactsForRelevance` does (`Pool::admits` in `facts/trust.rs`: the
+source, the expiry clauses, the audit sources, a quarantined provenance page, the visibility and private-provenance policies,
+a soft-deleted page, the trust floor and the filters), so a row the caller cannot read never shapes a result.
+
+| Member | What the store does |
+| --- | --- |
+| `readFactsEmbeddingColumn()` | `{ type: 'halfvec', dims }` with the configured embedding width (1536 by default). |
+| `listNearestFacts({ scope, filters, vector, declared, limit })` | Pool rows holding a vector of the query's model, nearest by cosine first (ties by id), at most `limit`, each with `similarity` (`1 - distance`). When the column does not declare its width (`declared` false) a row of another length is left out; a row of another length than the query's when `declared` is true refuses as `halfvec` does ("different halfvec dimensions"). |
+| `listSlotRows(scope, slots)` | Pool rows, expired ones included in the read, that are still active conversation slot rows (unexpired, not superseded, a value hash, `dim_status` active, a conversation source) of the `(source, entity, dimension)` slots, by `valid_from` then id. The rows carry no `similarity`. |
+| `listPoolUnbackedKeys(scope, keys, limit)` | The distinct `(source, entity)` pairs of pool rows whose entity is in `keys` and has no live page (none, or soft-deleted), by source then slug, at most `limit`. |
+| `listCallOffCueFacts(scope, pairs)` | For each pair, the newest 50 pool rows (by `valid_from`, then id) whose text holds one of 28 retraction or call-off phrases as whole words, case-insensitive (`\m...\M`, so `cancelledX` and `retractor` do not match; `called off-site` does). |
+| `listPoolEntityPairs(scope, filters)` | The distinct `(source, entity)` pairs of pool rows that have an entity. |
+
+The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and a read policy
+other than the no-caller or reader-identity one; `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
+Parity: `test/engine-parity/recall-members.test.ts` (edges of each member and the pool functions a search and a recall call, whole),
+and the same members in `facts-rest-sites.test.ts`.
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
 

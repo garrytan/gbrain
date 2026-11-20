@@ -34,7 +34,7 @@ test/engine-parity/facts-purge-sites.test.ts	0	27
 test/engine-parity/facts-purge.test.ts	23	2
 test/engine-parity/facts-repair-sites.test.ts	1	13
 test/engine-parity/facts-repair.test.ts	14	2
-test/engine-parity/facts-rest-sites.test.ts	8	11
+test/engine-parity/facts-rest-sites.test.ts	11	8
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	10	0
 test/engine-parity/facts.test.ts	36	0
@@ -77,6 +77,7 @@ test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	41	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/recall-members.test.ts	4	0
 test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-supersede.test.ts	1	1
 test/engine-parity/remember-whole.test.ts	1	0

@@ -81,7 +81,7 @@ const CORRECTION_PHRASES: [&str; 20] = [
 ];
 
 /// An ARE word character: alphanumeric or `_`.
-fn word_char(c: char) -> bool {
+pub(super) fn word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 

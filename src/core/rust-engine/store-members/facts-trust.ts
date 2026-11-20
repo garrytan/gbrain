@@ -17,39 +17,17 @@
  * withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { escapeLikePattern } from '../../cjk.ts';
-import { factVisibilitySql, grantedPrivateFactSql } from '../../access/member-facts.ts';
+import { grantedPrivateFactSql } from '../../access/member-facts.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
-import { privateFactFilterForReader, privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
+import { privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { CORRECTION_CUE } from '../../search/saved-facts-match.ts';
-import type { FactPoolFilters, FactPoolScope } from '../../engine-sql/facts-trust.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { withDates } from '../store-codec.ts';
+import { poolArgs } from './fact-codec.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
-
-/** The pool's scope and filters as the store reads them, or a refusal for a policy it cannot answer. */
-function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters | undefined): Row {
-  if (scope.worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
-    refuseMember(member, 'visibility widened by member pages or grants');
-  }
-  const grep = filters?.grep?.trim();
-  return {
-    sourceIds: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'])],
-    worldOnly: scope.worldOnly,
-    // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
-    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }),
-    minTrust: scope.minTrust || null,
-    suppressFlagged: scope.suppressFlagged === true,
-    ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
-    ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
-    ...(filters?.since ? { since: filters.since.toISOString() } : {}),
-    ...(grep ? { grep: `%${escapeLikePattern(grep)}%` } : {}),
-    includeExpired: filters?.includeExpired === true,
-  };
-}
 
 export const listFactsForRelevance: Member<'listFactsForRelevance'> = async (brain, q) => {
   const member = 'listFactsForRelevance';
