@@ -756,7 +756,7 @@ const PINS: Pin[] = [
     texts: ['SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL'],
   },
   {
-    from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98)',
+    from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98); also grants/legacy-token.ts:193 assertActiveSources (at 5a32485552)',
     case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
     texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
   },
@@ -1068,6 +1068,30 @@ const PINS: Pin[] = [
     from: 'src/core/grants/legacy-token.ts:241 rescopeInTransaction by name (at 30750dcd6c)',
     case: { method: 'lockActiveAccessTokens', variant: 'by-name', run: e => e.lockActiveAccessTokens({ name: 'laptop' }) },
     texts: ['SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE'],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:211 writeTokenGrant (at 5a32485552)',
+    case: { method: 'writeAccessTokenGrant', variant: 'default', run: e => e.writeAccessTokenGrant('00000000-0000-4000-8000-0000000000b1',
+      { columns: { source_grant: 'federated', source_id: 'default', federated_read: ['default', 'wiki'], allowed_operations: null, takes_holders: ['world'] },
+        scopes: ['read'], permissions: { source_id: ['default', 'wiki'] } }) },
+    texts: [`UPDATE access_tokens SET source_grant = $2, source_id = $3, federated_read = $4::text[], allowed_operations = $5::text[],
+       takes_holders = $6::text[], scopes = COALESCE($7::text[], scopes), grant_revision = grant_revision + 1, permissions = $8::jsonb
+     WHERE id = $1::uuid RETURNING grant_revision`],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:317 rescopeInTransaction --private-pages (at 5a32485552)',
+    case: { method: 'writeAccessTokenPrivateGrant', variant: 'private_pages', run: e => e.writeAccessTokenPrivateGrant('00000000-0000-4000-8000-0000000000b1', 'private_pages', 'granted_sources') },
+    texts: ['UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid'],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:321 rescopeInTransaction --private-facts (at 5a32485552)',
+    case: { method: 'writeAccessTokenPrivateGrant', variant: 'private_facts', run: e => e.writeAccessTokenPrivateGrant('00000000-0000-4000-8000-0000000000b1', 'private_facts', 'none') },
+    texts: ['UPDATE access_tokens SET private_facts = $2 WHERE id = $1::uuid'],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:347 migrateLegacyTokens (at 5a32485552)',
+    case: { method: 'lockLegacyAccessTokens', variant: 'default', run: e => e.lockLegacyAccessTokens() },
+    texts: ['SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE'],
   },
   {
     from: 'src/core/oauth-provider.ts:1021 verifyAccessToken legacy fallback (at d51679a5fd)',

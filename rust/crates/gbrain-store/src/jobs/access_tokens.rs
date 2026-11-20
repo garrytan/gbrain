@@ -15,11 +15,11 @@
 //!
 //! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
 //! columns, grant_revision, min_trust, revoked_at, created_at, last_used_at, member_id, may_act_for, the four attest
-//! columns and reads_unscoped) and the table's constraints on them: the unique
+//! columns, reads_unscoped and the two private grants) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
-//! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Not kept: the two private columns and the `trust_generation_update` trigger: a listed row reads them as the table's
-//! defaults (`private_pages` and `private_facts` `'none'`). `member_id` and `may_act_for` are set by the insert (when it
+//! `source_grant` list, the `min_trust` list and the two private-grant lists. A refusal is `constraint_violation` with the Postgres message.
+//! The two private grants (`private_pages`, `private_facts`) are kept with their CHECK lists, `'none'` at insert; a
+//! record written before they were kept reads `'none'`. Not kept: the `trust_generation_update` trigger. `member_id` and `may_act_for` are set by the insert (when it
 //! names them), by a member insert that binds the token, and by the credential binding write. `last_used_at` is
 //! stamped by the bearer check (`touch_access_token_last_used`) and NULL before. Only `readLiveAccessToken` returns
 //! `token_hash`. Setting the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
@@ -84,6 +84,18 @@ pub(super) struct TokenRecord {
     pub(super) attest_read: Option<String>,
     #[serde(default)]
     pub(super) reads_unscoped: Option<i64>,
+    /// The private-pages grant (`'none'` or `'granted_sources'`); a record written before the store kept it reads `'none'`.
+    #[serde(default = "private_default")]
+    pub(super) private_pages: String,
+    /// The private-facts grant, kept the same way.
+    #[serde(default = "private_default")]
+    pub(super) private_facts: String,
+}
+
+const PRIVATE_GRANTS: [&str; 2] = ["none", "granted_sources"];
+
+fn private_default() -> String {
+    "none".to_string()
 }
 
 fn refuse_check(constraint: &str) -> StoreError {
@@ -100,6 +112,12 @@ impl TokenRecord {
             && !MIN_TRUST_TIERS.contains(&tier.as_str())
         {
             return Err(refuse_check("access_tokens_min_trust_check"));
+        }
+        if !PRIVATE_GRANTS.contains(&self.private_facts.as_str()) {
+            return Err(refuse_check("access_tokens_private_facts_check"));
+        }
+        if !PRIVATE_GRANTS.contains(&self.private_pages.as_str()) {
+            return Err(refuse_check("access_tokens_private_pages_check"));
         }
         if let Some(grant) = &self.source_grant
             && !SOURCE_GRANTS.contains(&grant.as_str())
@@ -233,6 +251,8 @@ impl Store {
                 attest_sources: None,
                 attest_read: None,
                 reads_unscoped: None,
+                private_pages: private_default(),
+                private_facts: private_default(),
             };
             record.check()?;
             if all_tokens(&*tx)?
@@ -281,8 +301,7 @@ impl Store {
 }
 
 impl TokenRecord {
-    /// The whole row (`SELECT *` or `RETURNING *`) less `token_hash`: the two private grants are not kept and read as
-    /// the table's default `'none'`.
+    /// The whole row (`SELECT *` or `RETURNING *`) less `token_hash`.
     fn whole_row(&self) -> Value {
         let t = self;
         json!({
@@ -290,14 +309,14 @@ impl TokenRecord {
             "last_used_at": t.last_used_at.map(iso), "revoked_at": t.revoked_at.map(iso), "permissions": t.permissions,
             "source_grant": t.source_grant, "source_id": t.source_id, "federated_read": t.federated_read,
             "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
-            "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": "none",
+            "grant_revision": t.grant_revision, "min_trust": t.min_trust, "private_pages": t.private_pages,
             "member_id": t.member_id, "may_act_for": t.may_act_for, "attest_actor": t.attest_actor,
             "attest_ops": t.attest_ops, "attest_sources": t.attest_sources, "attest_read": t.attest_read,
-            "reads_unscoped": t.reads_unscoped.map(iso), "private_facts": "none",
+            "reads_unscoped": t.reads_unscoped.map(iso), "private_facts": t.private_facts,
         })
     }
 
-    /// The row `listAccessTokens` returns: the columns `gbrain auth list` prints, the ones not kept at their defaults.
+    /// The row `listAccessTokens` returns: the columns `gbrain auth list` prints.
     fn listed(&self) -> Value {
         json!({
             "id": self.id,
@@ -306,8 +325,8 @@ impl TokenRecord {
             "created_at": iso(self.created_at),
             "last_used_at": self.last_used_at.map(iso),
             "revoked_at": self.revoked_at.map(iso),
-            "private_pages": "none",
-            "private_facts": "none",
+            "private_pages": self.private_pages,
+            "private_facts": self.private_facts,
             "member_id": self.member_id,
         })
     }
@@ -328,13 +347,12 @@ impl Store {
 
     /// `readActiveAccessTokenGrant(id)`: `{ permissions, private_pages }` of the token not revoked with this id (a UUID,
     /// so any case), or None.
-    /// `private_pages` is not kept, so it reads as the column's default.
     pub fn read_active_access_token_grant(&self, id: &str) -> Result<Option<Value>> {
         let read = self.read()?;
         Ok(
             get_json::<TokenRecord>(&*read, &token_key(&id.to_ascii_lowercase()))?
                 .filter(|t| t.revoked_at.is_none())
-                .map(|t| json!({ "permissions": t.permissions, "private_pages": "none" })),
+                .map(|t| json!({ "permissions": t.permissions, "private_pages": t.private_pages })),
         )
     }
 
@@ -422,6 +440,86 @@ impl Store {
             put_json(tx, &token_key(&id), &t)?;
             Ok(Some(t.whole_row()))
         })
+    }
+
+    /// `writeAccessTokenGrant(id, write)` (`auth rescope`'s grant write): the token with this id (a UUID, so any case),
+    /// revoked or not as the statement has no revoked filter, gets the five grant columns, the scopes when given (None
+    /// keeps them), the `permissions` mirror and one more grant revision, in one write; the new revision, or None when no
+    /// token has the id. `constraint_violation` for a `source_grant` outside the list, and then the row is untouched.
+    pub fn write_access_token_grant(
+        &self,
+        id: &str,
+        columns: &TokenGrantColumns,
+        scopes: Option<Vec<String>>,
+        permissions: Value,
+    ) -> Result<Option<i32>> {
+        let id = id.to_ascii_lowercase();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
+                return Ok(None);
+            };
+            t.source_grant = Some(columns.source_grant.clone());
+            t.source_id = columns.source_id.clone();
+            t.federated_read = columns.federated_read.clone();
+            t.allowed_operations = columns.allowed_operations.clone();
+            t.takes_holders = columns.takes_holders.clone();
+            if let Some(scopes) = &scopes {
+                t.scopes = Some(scopes.clone());
+            }
+            t.grant_revision += 1;
+            t.permissions = permissions.clone();
+            t.check()?;
+            put_json(tx, &token_key(&id), &t)?;
+            Ok(Some(t.grant_revision))
+        })
+    }
+
+    /// `writeAccessTokenPrivateGrant(id, axis, value)`: sets `private_pages` or `private_facts` of the token with this id
+    /// (a UUID, so any case) to `value`; nothing changes when no token has the id. `constraint_violation` for a value
+    /// other than `'none'` and `'granted_sources'`, and then the row is untouched; `invalid_argument` for another axis.
+    pub fn write_access_token_private_grant(
+        &self,
+        id: &str,
+        axis: &str,
+        value: &str,
+    ) -> Result<()> {
+        if axis != "private_pages" && axis != "private_facts" {
+            return Err(StoreError::invalid(format!(
+                "writeAccessTokenPrivateGrant: \"{axis}\" is not private_pages or private_facts"
+            )));
+        }
+        let id = id.to_ascii_lowercase();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
+                return Ok(());
+            };
+            if axis == "private_pages" {
+                t.private_pages = value.to_string();
+            } else {
+                t.private_facts = value.to_string();
+            }
+            t.check()?;
+            put_json(tx, &token_key(&id), &t)
+        })
+    }
+
+    /// `lockLegacyAccessTokens()` (`SELECT * ... WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id
+    /// FOR UPDATE`): the whole rows of the active tokens still on the legacy shape, oldest first and a tie by id. The store
+    /// runs one write at a time, so no lock is needed. The rows leave out `token_hash`.
+    pub fn lock_legacy_access_tokens(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut rows: Vec<TokenRecord> = all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| t.revoked_at.is_none() && t.source_grant.is_none())
+            .collect();
+        rows.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(Value::Array(
+            rows.iter().map(TokenRecord::whole_row).collect(),
+        ))
     }
 
     /// `touchAccessTokenLastUsed(id, unified)`: stamps the token's `last_used_at` with the store clock, once per token per

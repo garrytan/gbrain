@@ -7,7 +7,7 @@
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
-import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget } from '../../engine-sql/access-credentials.ts';
+import { normalizeAccessTokenListRow, type AccessTokenGrantWrite, type AccessTokenListRow, type AccessTokenPrivateAxis, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 import { uuidText, withDates } from '../store-codec.ts';
@@ -93,3 +93,26 @@ export const convertLegacyAccessTokenGrant: StoreMember<[id: string, columns: Le
     const raw = await storeCall({ member: 'convertLegacyAccessTokenGrant' }, () => brain.convertLegacyAccessTokenGrant(id, columns)) as Record<string, unknown> | null;
     return raw ? { ...raw, created_at: new Date(String(raw.created_at)) } : null;
   };
+
+/**
+ * `auth rescope`'s grant write: the five grant columns, the scopes when given, the `permissions` mirror and one more
+ * grant revision; the new revision, or null when no token has the id. A `source_grant` outside the list is refused as
+ * 23514 with the constraint name, and an id that is not a UUID with Postgres's text.
+ */
+export const writeAccessTokenGrant: StoreMember<[id: string, write: AccessTokenGrantWrite], number | null> = async (brain, id, write) => {
+  const uuid = uuidText(id);
+  const revision = await refusing('writeAccessTokenGrant', () => brain.writeAccessTokenGrant(uuid, write.columns, write.scopes, write.permissions)) as number | null;
+  return revision === null ? null : Number(revision);
+};
+
+/** One private grant column of a token; a value other than `none` and `granted_sources` is refused as 23514 with the constraint name. */
+export const writeAccessTokenPrivateGrant: StoreMember<[id: string, axis: AccessTokenPrivateAxis, value: string], void> = async (brain, id, axis, value) => {
+  const uuid = uuidText(id);
+  await refusing('writeAccessTokenPrivateGrant', () => brain.writeAccessTokenPrivateGrant(uuid, axis, value));
+};
+
+/** The whole rows of the active tokens with no `source_grant`, oldest first, the times as Dates; the store takes no lock (one write at a time). */
+export const lockLegacyAccessTokens: StoreMember<[], Record<string, unknown>[]> = async (brain) => {
+  const rows = await storeCall({ member: 'lockLegacyAccessTokens' }, () => brain.lockLegacyAccessTokens()) as Record<string, unknown>[];
+  return rows.map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
+};

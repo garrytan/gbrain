@@ -33,7 +33,8 @@ import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePage
 import { hashToken } from '../../src/core/utils.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
+import { migrateLegacyTokens, rescopeLegacyToken, type RescopeTokenArgs } from '../../src/core/grants/legacy-token.ts';
 import type { Server } from 'node:http';
 import express from 'express';
 import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
@@ -168,6 +169,126 @@ describe('engine parity: access_tokens members', () => {
       expect(out.solo.map(r => r.id)).toEqual(['solo']);
       expect([out.partial, out.otherCase, out.revokedByName, out.revokedById, out.unknownId, out.inTransaction]).toEqual([0, 0, 0, 0, 0, 2]);
       expect(out.byUpperId).toEqual(['solo']);
+      return out;
+    });
+
+  // gbrain auth rescope writes a token's grant in one statement: the five grant columns, the scopes when the edit names
+  // them, the permissions mirror and one more grant revision, by id in any case. A bad source grant writes nothing.
+  parityTest('writeAccessTokenGrant writes the grant columns, the scopes when given, the permissions and one more revision; an unknown id writes nothing',
+    { methods: ['insertAccessToken', 'writeAccessTokenGrant', 'lockActiveAccessTokens'] }, async (engine) => {
+      const token = await insert(engine, 'grant', 'h-wg', { scopes: ['read', 'write'], permissions: { keep: 1 } });
+      const other = await insert(engine, 'bystander', 'h-wg-other');
+      const KEYS = ['scopes', 'permissions', 'source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders', 'grant_revision'];
+      const read = async (id: string) => {
+        const [row] = await engine.lockActiveAccessTokens({ id });
+        return { ...Object.fromEntries(KEYS.map(k => [k, row[k] ?? null])), grant_revision: Number(row.grant_revision) };
+      };
+      const federated = { source_grant: 'federated', source_id: 'default', federated_read: ['default', 'work'], allowed_operations: ['get_page', 'search'], takes_holders: ['world', 'brain'] };
+      const out: Record<string, unknown> = {};
+      out.first = await engine.writeAccessTokenGrant(token.id, { columns: federated, scopes: null, permissions: { keep: 1, source_id: ['default', 'work'] } });
+      out.afterFirst = await read(token.id);
+      out.second = await engine.writeAccessTokenGrant(token.id.toUpperCase(), {
+        columns: { source_grant: 'none', source_id: null, federated_read: [], allowed_operations: [], takes_holders: null }, scopes: ['read'], permissions: {},
+      });
+      out.afterSecond = await read(token.id);
+      out.unknown = await engine.writeAccessTokenGrant('00000000-0000-4000-8000-0000000000e1', { columns: federated, scopes: null, permissions: {} });
+      out.badGrant = await refusal(() => engine.writeAccessTokenGrant(token.id, { columns: { ...federated, source_grant: 'everything' }, scopes: null, permissions: {} }));
+      out.afterBad = await read(token.id);
+      out.bystander = await read(other.id);
+      out.inTransaction = await engine.transaction(tx => tx.writeAccessTokenGrant(other.id, { columns: { ...GRANT, source_grant: 'scalar', source_id: 'default' }, scopes: null, permissions: { source_id: 'default' } }));
+      expect([out.first, out.second, out.unknown, out.inTransaction]).toEqual([2, 3, null, 2]);
+      expect(out.afterBad).toEqual(out.afterSecond);
+      return out;
+    });
+
+  // The private-pages and private-facts grants live in their own columns; every read of a token row shows what was set.
+  parityTest('writeAccessTokenPrivateGrant sets private_pages or private_facts, every token read shows it, and a value outside the two is refused',
+    { methods: ['insertAccessToken', 'writeAccessTokenPrivateGrant', 'listAccessTokens', 'readActiveAccessTokenGrant', 'readAccessTokenWriteGrant', 'lockActiveAccessTokens'] }, async (engine) => {
+      const token = await insert(engine, 'private', 'h-pv');
+      const reads = async () => {
+        const listed = (await engine.listAccessTokens()).find(r => r.id === token.id)!;
+        const [locked] = await engine.lockActiveAccessTokens({ id: token.id });
+        const write = await engine.readAccessTokenWriteGrant(token.id);
+        return {
+          listed: [listed.private_pages, listed.private_facts], locked: [locked.private_pages, locked.private_facts],
+          active: (await engine.readActiveAccessTokenGrant(token.id, 'private_pages'))?.value, write: [write?.private_pages, write?.private_facts],
+          revision: Number(locked.grant_revision),
+        };
+      };
+      const out: Record<string, unknown> = { fresh: await reads() };
+      await engine.writeAccessTokenPrivateGrant(token.id, 'private_pages', 'granted_sources');
+      out.pages = await reads();
+      await engine.writeAccessTokenPrivateGrant(token.id.toUpperCase(), 'private_facts', 'granted_sources');
+      out.facts = await reads();
+      await engine.writeAccessTokenPrivateGrant(token.id, 'private_pages', 'none');
+      out.pagesOff = await reads();
+      out.badPages = await refusal(() => engine.writeAccessTokenPrivateGrant(token.id, 'private_pages', 'everything'));
+      out.badFacts = await refusal(() => engine.writeAccessTokenPrivateGrant(token.id, 'private_facts', 'everything'));
+      out.afterBad = await reads();
+      await engine.writeAccessTokenPrivateGrant('00000000-0000-4000-8000-0000000000e1', 'private_pages', 'granted_sources');
+      expect(out.afterBad).toEqual(out.pagesOff);
+      return out;
+    });
+
+  // gbrain auth rescope --migrate-legacy locks every active token still on the legacy shape, oldest first.
+  parityTest('lockLegacyAccessTokens reads the active tokens with no source grant, oldest first, with the columns the migration reads',
+    { methods: ['insertAccessToken', 'lockLegacyAccessTokens', 'revokeAccessToken'] }, async (engine) => {
+      const legacy = { source_grant: null, permissions: { source_id: 'default', takes_holders: ['world'] } };
+      const late = await insert(engine, 'late', 'h-ll-late', { ...legacy, created_at: new Date('2026-02-02T00:00:00Z') });
+      const early = await insert(engine, 'early', 'h-ll-early', { ...legacy, created_at: new Date('2026-01-01T00:00:00Z'), scopes: ['read', 'write'] });
+      await insert(engine, 'unified', 'h-ll-unified', { created_at: new Date('2026-01-05T00:00:00Z') });
+      const gone = await insert(engine, 'gone', 'h-ll-gone', { ...legacy, created_at: new Date('2026-01-03T00:00:00Z') });
+      await engine.revokeAccessToken(gone.id);
+      const names = new Map([[late.id, 'late'], [early.id, 'early']]);
+      const KEYS = ['name', 'scopes', 'permissions', 'source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders', 'grant_revision', 'private_pages', 'private_facts', 'revoked_at'];
+      const rows = (await engine.lockLegacyAccessTokens()).map(r => ({
+        ...Object.fromEntries(KEYS.map(k => [k, r[k] ?? null])), id: names.get(String(r.id)) ?? 'unknown',
+        created_at: (r.created_at as Date).toISOString(), grant_revision: Number(r.grant_revision),
+      }));
+      const inTransaction = (await engine.transaction(tx => tx.lockLegacyAccessTokens())).length;
+      expect(rows.map(r => r.id)).toEqual(['early', 'late']);
+      expect(inTransaction).toBe(2);
+      return { rows, inTransaction };
+    });
+
+  // The command end to end: rescopeLegacyToken (each grant axis, the private grants, the refusals) and the migration.
+  parityTest('rescopeLegacyToken edits each grant axis and the private grants, refuses an unknown source, and migrateLegacyTokens converts the legacy tokens',
+    { methods: ['insertAccessToken', 'lockActiveAccessTokens', 'listUnarchivedSourceIds', 'writeAccessTokenGrant', 'writeAccessTokenPrivateGrant', 'lockLegacyAccessTokens', 'transaction'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const token = await insert(engine, 'edited', 'h-rs');
+      const base = { target: { name: 'edited' }, reset: [], refreshOperations: false, allNew: false, dryRun: false, json: false } as RescopeTokenArgs;
+      const run = async (args: Partial<RescopeTokenArgs>) => {
+        try {
+          const r = await rescopeLegacyToken(engine, { ...base, ...args });
+          return { ...r, id: r.id === token.id ? 'edited' : 'other' };
+        } catch (error) {
+          const e = error as { code?: unknown; message?: unknown };
+          if (e.code === 'engine_capability_missing') throw error;
+          return { code: e.code, message: String(e.message) };
+        }
+      };
+      const out: Record<string, unknown> = {};
+      out.sources = await run({ sources: ['default', 'work'] });
+      out.operations = await run({ operations: ['get_page', 'search'] });
+      out.holders = await run({ takesHolders: ['world', 'brain'] });
+      out.pages = await run({ privatePages: 'granted_sources' });
+      out.facts = await run({ privateFacts: 'granted_sources', scopes: ['read', 'write'] });
+      out.preview = await run({ privatePages: 'none', dryRun: true });
+      out.reset = await run({ reset: ['sources', 'takes-holders', 'operations'] });
+      out.unknownSource = await run({ sources: ['nosuch'] });
+      out.stale = await run({ sources: ['default'], expectedRevision: 1 });
+      out.show = await run({});
+      const legacy = { source_grant: null, permissions: { source_id: ['default', 'work'], takes_holders: ['world'] } };
+      await insert(engine, 'legacy-a', 'h-rs-a', { ...legacy, created_at: new Date('2026-01-01T00:00:00Z') });
+      await insert(engine, 'legacy-b', 'h-rs-b', { ...legacy, permissions: { allowed_operations: ['get_page'] }, created_at: new Date('2026-01-02T00:00:00Z') });
+      const shown = (r: Awaited<ReturnType<typeof migrateLegacyTokens>>) => ({ ...r,
+        migrated: r.migrated.map(m => ({ ...m, id: 'id' })), skipped: r.skipped.map(m => ({ ...m, id: 'id', fix: m.fix.replace(/--id \S+/, '--id <id>') })) });
+      out.migratePreview = shown(await migrateLegacyTokens(engine, { dryRun: true }));
+      out.migrate = shown(await migrateLegacyTokens(engine, { dryRun: false }));
+      out.migrateAgain = shown(await migrateLegacyTokens(engine, { dryRun: false }));
+      const [a] = await engine.lockActiveAccessTokens({ name: 'legacy-a' });
+      out.legacyA = { source_grant: a.source_grant, source_id: a.source_id, federated_read: a.federated_read, takes_holders: a.takes_holders, grant_revision: Number(a.grant_revision) };
       return out;
     });
 

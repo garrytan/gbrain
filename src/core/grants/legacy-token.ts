@@ -30,7 +30,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { assertAllowedScopes, operationScopesAllowed } from '../scope.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { executeRawJsonb, type SqlQuery } from '../sql-query.ts';
+import type { SqlQuery } from '../sql-query.ts';
 import { TOKEN_ID_RE } from '../token-mint.ts';
 import { isUndefinedColumnError } from '../utils.ts';
 import { requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
@@ -190,9 +190,7 @@ async function assertActiveSources(engine: BrainEngine, ids: string[]): Promise<
     if (!isValidSourceId(id)) throw new GrantError('invalid_grant', `Invalid source id: ${id}`);
   }
   if (ids.length === 0) return;
-  const rows = await engine.executeRaw<{ id: string }>(
-    'SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [ids]);
-  const active = new Set(rows.map(r => r.id));
+  const active = new Set(await engine.listUnarchivedSourceIds(ids));
   const missing = ids.filter(id => !active.has(id));
   if (missing.length) throw new GrantError('invalid_grant', `Unknown or archived source: ${missing.join(', ')} (see gbrain sources list)`);
 }
@@ -208,15 +206,8 @@ async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, gr
   const { assertScopeSourceGrant, sourcesOf } = await import('../access/attest-sources.ts');
   const before = sourcesOf(grantFromTokenRow(row).sources).reads;
   await assertScopeSourceGrant(tx, { kind: 'token', id: String(row.id) }, sourcesOf(grant.sources).reads.filter(s => !before.includes(s)), { writeSource: sourcesOf(grant.sources).write });
-  const [written] = await executeRawJsonb<{ grant_revision: number }>(
-    tx,
-    `UPDATE access_tokens SET source_grant = $2, source_id = $3, federated_read = $4::text[], allowed_operations = $5::text[],
-       takes_holders = $6::text[], scopes = COALESCE($7::text[], scopes), grant_revision = grant_revision + 1, permissions = $8::jsonb
-     WHERE id = $1::uuid RETURNING grant_revision`,
-    [String(row.id), ...tokenGrantColumnValues(grant), scopes === undefined ? null : `{${scopes.join(',')}}`],
-    [permissionsMirror(grant, row.permissions)],
-  );
-  return Number(written.grant_revision);
+  const written = await tx.writeAccessTokenGrant(String(row.id), { columns: tokenGrantColumnArrays(grant), scopes: scopes ?? null, permissions: permissionsMirror(grant, row.permissions) });
+  return Number(written);
 }
 
 function driftRefusal(name: string, id: string, axes: readonly LegacyGrantAxis[]): GrantError {
@@ -314,11 +305,11 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
   const revision = write ? await writeTokenGrant(tx, row, next, args.scopes) : current.revision;
   if (write && privatePages !== current.privatePages) {
     await (await import('../access/attest-sources.ts')).assertScopeSourceGrant(tx, { kind: 'token', id }, [], { privatePages: privatePages === 'granted_sources' });
-    await tx.executeRaw('UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid', [id, privatePages]);
+    await tx.writeAccessTokenPrivateGrant(id, 'private_pages', privatePages);
   }
   if (write && privateFacts !== current.privateFacts) {
     await (await import('../access/attest-sources.ts')).assertScopeSourceGrant(tx, { kind: 'token', id }, [], { privateFacts: privateFacts === 'granted_sources' });
-    await tx.executeRaw('UPDATE access_tokens SET private_facts = $2 WHERE id = $1::uuid', [id, privateFacts]);
+    await tx.writeAccessTokenPrivateGrant(id, 'private_facts', privateFacts);
   }
   return {
     id, name, dryRun: args.dryRun, changed, before, after,
@@ -344,8 +335,7 @@ export interface MigrateLegacyResult {
 export async function migrateLegacyTokens(engine: BrainEngine, opts: { dryRun: boolean }): Promise<MigrateLegacyResult> {
   try {
     return await engine.transaction(async tx => {
-      const rows = await tx.executeRaw<Record<string, unknown>>(
-        'SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE');
+      const rows = await tx.lockLegacyAccessTokens();
       const result: MigrateLegacyResult = { dryRun: opts.dryRun, migrated: [], skipped: [] };
       for (const row of rows) {
         const grant = grantFromTokenRow(row);

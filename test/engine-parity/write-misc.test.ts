@@ -561,17 +561,19 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  parityTest('readFolderAccess reads the rules the readers meet and every pending prefix, and folderAccessForAll keeps the rules every identity meets', { methods: ['readFolderAccess'] }, async (engine, backend) => {
-    const seeded = await engine.executeRaw("INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT (source_id) DO NOTHING").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.readFolderAccess(['member:alice-example'])).toEqual({ rules: [], coverage: [] });
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
-    await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES
-      ('default', 'team', 'team/', ARRAY['member:alice-example', 'group:team-a'], 1), ('default', 'bob', 'bob/', ARRAY['member:bob-example'], 1)`);
-    await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'drafts/', 'pending'), ('default', 'drafts/', 'invalid')");
+  parityTest('readFolderAccess reads the rules the readers meet and every pending prefix, and folderAccessForAll keeps the rules every identity meets', {
+    methods: ['readFolderAccess', 'ensureAccessPolicyState', 'applyAccessRuleChanges', 'replaceAccessInvalidCoverage'],
+  }, async (engine) => {
+    // Seeded through the typed policy writes `gbrain access apply` uses, so every arm writes the same rows.
+    await engine.ensureAccessPolicyState('default');
+    await engine.applyAccessRuleChanges('default', {
+      remove: [], pending: ['drafts/'], revision: 1, actor: 'parity',
+      insert: [
+        { rule_id: 'team', prefix: 'team/', readable_by: ['member:alice-example', 'group:team-a'], covers_derived: false },
+        { rule_id: 'bob', prefix: 'bob/', readable_by: ['member:bob-example'], covers_derived: false },
+      ],
+    });
+    await engine.replaceAccessInvalidCoverage('default', ['drafts/'], { reason: 'parity' });
     const byRule = (r: FolderAccessRows): FolderAccessRows => ({ ...r, rules: [...r.rules].sort((a, b) => a.rule_id.localeCompare(b.rule_id)) });
     const answers = {
       alice: byRule(await engine.readFolderAccess(['member:alice-example'])),

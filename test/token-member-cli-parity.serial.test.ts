@@ -5,7 +5,9 @@
  * (`src/cli.ts`, one child process per command) on a fresh brain per engine: PGLite, Postgres (when DATABASE_URL is
  * set; a fresh database per run) and Rust (when the addon is built). The script adds, edits, disables, enables and
  * removes members, mints and lists tokens, registers a client bound to a member, and edits a token's member binding
- * (`auth rescope --member / --reads-unscoped / --may-act-for / --attest-actor`), with the refusals in between. Each
+ * (`auth rescope --member / --reads-unscoped / --may-act-for / --attest-actor`) and its grants (`--sources`,
+ * `--operations`, `--takes-holders`, `--private-pages`, `--private-facts`, `--reset-default`, `--migrate-legacy`), with
+ * the refusals in between. Each
  * command's exit code, stdout and stderr must equal PGLite's byte for byte once what no two runs share is masked:
  * UUIDs, minted secrets, client ids and wall-clock instants. The first command only opens the brain (a fresh
  * PGLite brain prints its schema setup, which no other engine does) and is not compared.
@@ -14,7 +16,8 @@
  * 1. Protects: the user-visible output of the token and member commands, end to end (flag parsing, the access
  *    checks, engine members, rendering), on each engine.
  * 2. Fails when: an engine answers one of these commands with other text, another exit code or an engine error, for
- *    example a Rust brain that cannot read the member a token is bound to, or that cannot lock the token rescope edits.
+ *    example a Rust brain that cannot read the member a token is bound to, that cannot lock the token rescope edits,
+ *    or that cannot write the grant a rescope sets.
  * 3. Existing coverage: the engine parity suite (test/engine-parity/) compares single members in process;
  *    test/rust-cli-parity.serial.test.ts compares the read commands' JSON, not these commands' text.
  * 4. Seams: none. It runs the real CLI. The Rust brain needs the addon `bun run rust:build` writes and is skipped
@@ -71,6 +74,24 @@ const SCRIPT: string[][] = [
   ['access', 'member', 'list', '--all', '--json'],
   ['auth', 'list'],
   ['auth', 'clients', '--json'],
+  // The grant edits of one token (index 33 on): each axis, the private grants, a reset, the refusals, a preview and the
+  // bulk migration, then the list that shows what they wrote.
+  ['auth', 'rescope', '--token', 'service', '--sources', 'default'],
+  ['auth', 'rescope', '--token', 'service', '--operations', 'get_page,search'],
+  ['auth', 'rescope', '--token', 'service', '--takes-holders', 'world,brain'],
+  ['auth', 'rescope', '--token', 'service', '--private-pages', 'granted-sources'],
+  ['auth', 'rescope', '--token', 'service', '--private-facts', 'granted-sources'],
+  ['auth', 'rescope', '--token', 'service', '--json'],
+  ['auth', 'list', '--json'],
+  ['auth', 'rescope', '--token', 'service', '--reset-default', 'sources,takes-holders,operations', '--json'],
+  ['auth', 'rescope', '--token', 'service', '--sources', 'nosuch'],
+  ['auth', 'rescope', '--token', 'service', '--operations', 'not_an_op'],
+  ['auth', 'rescope', '--token', 'service', '--if-version', '1', '--sources', 'default'],
+  ['auth', 'rescope', '--token', 'service', '--refresh-operations', '--json'],
+  ['auth', 'rescope', '--token', 'service', '--private-pages', 'none', '--dry-run'],
+  ['auth', 'rescope', '--token', 'service', '--private-pages', 'none', '--private-facts', 'none', '--scopes', 'read,write'],
+  ['auth', 'rescope', '--migrate-legacy', '--json'],
+  ['auth', 'list'],
 ];
 
 type Engine = 'pglite' | 'postgres' | 'rust';
@@ -150,7 +171,7 @@ describe('token and member commands on every engine', () => {
   test('the script runs as written on PGLite: each command succeeds or refuses where it should', () => {
     // dave-example names a token that does not exist; a token bound to a member cannot attest an actor; rescope of
     // an unknown token and to an unknown member refuse.
-    const refused = new Map([[7, 2], [19, 2], [21, 1], [22, 1]]);
+    const refused = new Map([[7, 2], [19, 2], [21, 1], [22, 1], [41, 1], [42, 1], [43, 1]]);
     const codes = runs.get('pglite')!.map((r, i) => `${r.exitCode} ${SCRIPT[i].join(' ')}`);
     expect(codes).toEqual(SCRIPT.map((args, i) => `${refused.get(i) ?? 0} ${args.join(' ')}`));
   });

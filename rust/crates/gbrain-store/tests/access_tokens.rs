@@ -466,3 +466,198 @@ fn the_rescope_read_finds_active_tokens_by_id_in_any_case_or_exact_name_oldest_f
             .is_err()
     );
 }
+
+#[test]
+fn a_grant_write_sets_the_columns_scopes_and_permissions_with_one_more_revision_and_a_bad_kind_leaves_the_row()
+ {
+    use gbrain_store::jobs::TokenGrantColumns;
+    let b = brain("tokens-grant-write");
+    let id = insert(&b, token("laptop", "hash-g", json!({}))).unwrap();
+    let columns = |kind: &str| -> TokenGrantColumns {
+        serde_json::from_value(json!({
+            "source_grant": kind, "source_id": "default", "federated_read": ["default", "work"],
+            "allowed_operations": ["query"], "takes_holders": ["world"],
+        }))
+        .unwrap()
+    };
+    let before = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    let revision = before["grant_revision"].as_i64().unwrap();
+    let refused = b
+        .write_access_token_grant(&id, &columns("everything"), None, json!({ "x": 1 }))
+        .expect_err("a source grant outside the list");
+    assert_eq!(refused.code, "constraint_violation");
+    assert_eq!(
+        refused.message,
+        "new row for relation \"access_tokens\" violates check constraint \"access_tokens_source_grant_check\""
+    );
+    assert_eq!(
+        b.read_active_access_token_by_hash("hash-g")
+            .unwrap()
+            .unwrap(),
+        before,
+        "a refused write leaves the row"
+    );
+
+    let written = b
+        .write_access_token_grant(
+            &id.to_ascii_uppercase(),
+            &columns("federated"),
+            None,
+            json!({ "keep": 1 }),
+        )
+        .unwrap();
+    assert_eq!(written, Some(revision as i32 + 1));
+    let row = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["source_grant"], json!("federated"));
+    assert_eq!(row["federated_read"], json!(["default", "work"]));
+    assert_eq!(row["allowed_operations"], json!(["query"]));
+    assert_eq!(row["takes_holders"], json!(["world"]));
+    assert_eq!(row["scopes"], json!(["read"]), "no scopes keeps them");
+    assert_eq!(row["permissions"], json!({ "keep": 1 }));
+
+    let written = b
+        .write_access_token_grant(
+            &id,
+            &columns("scalar"),
+            Some(vec!["read".into(), "write".into()]),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(written, Some(revision as i32 + 2));
+    let row = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["scopes"], json!(["read", "write"]));
+    assert_eq!(
+        b.write_access_token_grant(
+            "00000000-0000-4000-8000-00000000dead",
+            &columns("default"),
+            None,
+            json!({})
+        )
+        .unwrap(),
+        None,
+        "an id no token has writes nothing"
+    );
+}
+
+#[test]
+fn the_private_grants_are_kept_read_back_and_refused_outside_the_two_values() {
+    let b = brain("tokens-private-grants");
+    let id = insert(&b, token("laptop", "hash-p", json!({}))).unwrap();
+    let row = || {
+        b.read_active_access_token_by_hash("hash-p")
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        (
+            row()["private_pages"].clone(),
+            row()["private_facts"].clone()
+        ),
+        (json!("none"), json!("none"))
+    );
+    b.write_access_token_private_grant(
+        &id.to_ascii_uppercase(),
+        "private_pages",
+        "granted_sources",
+    )
+    .unwrap();
+    b.write_access_token_private_grant(&id, "private_facts", "granted_sources")
+        .unwrap();
+    assert_eq!(row()["private_pages"], json!("granted_sources"));
+    assert_eq!(row()["private_facts"], json!("granted_sources"));
+    let grant = b.read_access_token_write_grant(&id).unwrap().unwrap();
+    assert_eq!(grant["private_pages"], json!("granted_sources"));
+    assert_eq!(grant["private_facts"], json!("granted_sources"));
+    let listed = b.lock_active_access_tokens(Some(&id), None).unwrap();
+    assert_eq!(listed[0]["private_pages"], json!("granted_sources"));
+
+    for (axis, constraint) in [
+        ("private_pages", "access_tokens_private_pages_check"),
+        ("private_facts", "access_tokens_private_facts_check"),
+    ] {
+        let refused = b
+            .write_access_token_private_grant(&id, axis, "everything")
+            .expect_err("a value outside the two");
+        assert_eq!(refused.code, "constraint_violation");
+        assert_eq!(
+            refused.message,
+            format!(
+                "new row for relation \"access_tokens\" violates check constraint \"{constraint}\""
+            )
+        );
+    }
+    assert_eq!(
+        row()["private_pages"],
+        json!("granted_sources"),
+        "a refused write leaves the row"
+    );
+    let other = b
+        .write_access_token_private_grant(&id, "scopes", "none")
+        .expect_err("another axis");
+    assert_eq!(other.code, "invalid_argument");
+    b.write_access_token_private_grant(
+        "00000000-0000-4000-8000-00000000dead",
+        "private_pages",
+        "none",
+    )
+    .unwrap();
+
+    b.write_access_token_private_grant(&id, "private_pages", "none")
+        .unwrap();
+    assert_eq!(row()["private_pages"], json!("none"));
+    assert_eq!(row()["private_facts"], json!("granted_sources"));
+}
+
+#[test]
+fn the_migration_read_finds_the_active_tokens_with_no_source_grant_oldest_first_without_the_hash() {
+    let b = brain("tokens-lock-legacy");
+    let late = insert(
+        &b,
+        token(
+            "late",
+            "h-late",
+            json!({ "source_grant": null, "created_at": "2026-02-02T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let early = insert(
+        &b,
+        token(
+            "early",
+            "h-early",
+            json!({ "source_grant": null, "created_at": "2026-01-01T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("unified", "h-unified", json!({}))).unwrap();
+    insert(
+        &b,
+        token(
+            "gone",
+            "h-gone",
+            json!({ "source_grant": null, "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let rows = b.lock_legacy_access_tokens().unwrap();
+    let rows = rows.as_array().unwrap();
+    let ids: Vec<Value> = rows.iter().map(|r| r["id"].clone()).collect();
+    assert_eq!(
+        ids,
+        vec![json!(early), json!(late)],
+        "oldest first, the unified and revoked tokens left out"
+    );
+    assert_eq!(rows[0]["name"], json!("early"));
+    assert_eq!(rows[0]["source_grant"], Value::Null);
+    assert_eq!(rows[0]["permissions"], json!({ "source_id": "wiki" }));
+    assert!(rows[0].get("token_hash").is_none());
+}
