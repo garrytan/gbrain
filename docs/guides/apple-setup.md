@@ -99,6 +99,12 @@ A file under `.gbrain-owned/` is not what its source wrote (edited or added by h
 folder), or another command tried to use the folder. Nothing there was changed. Move the file out (or restore it
 with `git checkout -- <path>`), then `gbrain sync --source <id>`.
 
+## Contacts
+
+The same helper serves your Mac's address book to the `apple-contacts` source kind: one private contact page per
+contact, an exact email or phone link to the matching person page, and `## Facts` rows on that page for the
+company, job title and Contacts groups. Phones and emails stay on the owner-only contact pages. See [Apple Contacts](apple-contacts.md).
+
 ## Errors
 
 ### apple_helper_not_running

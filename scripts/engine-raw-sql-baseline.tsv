@@ -306,6 +306,10 @@ src/core/ai/decide/proposals-store.ts	execute_raw	16
 src/core/ai/decide/review-lane.ts	execute_raw	17
 src/core/ai/decide/store.ts	execute_raw	19
 src/core/analyze-lock.ts	execute_raw	1
+src/core/apple-contacts/apple-contacts-source.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads the source row, finds the page a contact id owns and the ids the source owns, rereads a contact page for its review, stamps sources.last_sync_at; no typed engine method exists yet
+src/core/apple-contacts/identity-match.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): lists the candidate sources, runs the exactIdentityStatement candidate read (engine-sql/exact-identity.ts, the whois read), and reads/writes/clears the identity-review op_checkpoints row; no typed engine method exists yet
+src/core/apple-contacts/person-facts.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): fingerprints the wanted claims and reads the active facts on one person page (this source's rows and the claims already there, matched by fact fingerprint as remember does), and reads/writes/clears the person-facts ownership op_checkpoints row; no typed engine method exists yet
+src/core/apple-contacts/review-status.ts	execute_raw	3	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads, writes and clears the pending-deletions op_checkpoints row the incremental delete floor holds; no typed engine method exists yet
 src/core/attendance-repair.ts	execute_raw	17
 src/core/backfill-base.ts	execute_raw	12
 src/core/backfill-effective-date.ts	execute_raw	6
@@ -827,6 +831,7 @@ src/core/persistence/links-extraction-holds.ts	execute_raw	2
 src/core/persistence/links-preparation.ts	execute_raw	4
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
+src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/maintenance.ts	execute_raw	3
 src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
