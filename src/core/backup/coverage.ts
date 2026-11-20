@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { loadAllSources, parseSourceConfig, type SourceRow } from '../sources-load.ts';
 import { connectorAuthorities, type ConnectorAuthority } from '../persistence/connector-authority.ts';
 import { discoverGitRoot } from '../sync-git.ts';
@@ -129,7 +130,9 @@ async function countLivePages(engine: BrainEngine): Promise<number | null> {
     // An empty rowset / non-numeric n is UNESTABLISHED, not zero — returning 0
     // would fabricate a "no pages at risk" all-clear and skip the degraded flag.
     return typeof n === 'number' && Number.isFinite(n) ? n : null;
-  } catch {
+  } catch (e) {
+    // A refused read is not an unestablished count: it propagates as the typed refusal.
+    rethrowCapabilityRefusal(e);
     return null;
   }
 }
