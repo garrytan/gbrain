@@ -471,7 +471,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // dirty_age, git_convergence, quarantined_changes, shared_skills_sources, tracked_ownership_marker,
       // transcript_secret_exposure) are gone from this list: the typed sources reads now show the brain has no git
       // source root, so those checks emit nothing, as on PGLite.
-      onlyRust: ['sync_failures'],
+      // sync_failures is gone from this list: its reads are typed members Rust serves, so on this brain it emits nothing,
+      // as on PGLite.
+      onlyRust: [],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
@@ -488,8 +490,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // retrieval_reflex_health is gone from this list: its reads are served (doctor-search, slice 17), so it reports
       // ok with the same no-socket message as PGLite. text_projection_readiness is gone as well: readProjectionBacklog
       // counts the projection queue in the store (doctor-search, slice 20). extract_atoms_backlog is gone too:
-      // countAtomExtractionBacklog counts the backlog in the store (doctor-search, slice 21).
-      untypedWarnings: ['provenance_stamp_drift', 'sync_failures', 'trust_scan'],
+      // countAtomExtractionBacklog counts the backlog in the store (doctor-search, slice 21). sync_failures is gone
+      // as well: the managed-sync failure and orphan reads are served (doctor-sync, slice 22).
+      untypedWarnings: ['provenance_stamp_drift', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path

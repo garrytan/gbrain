@@ -575,6 +575,10 @@ export const RUST_ENGINE_MEMBERS = {
   readSyncAdmissionSettingRow: 'config',
   readLatestConnectorReceipt: 'ingest_log',
   listFactsAbsorbFailureGroups: 'ingest_log',
+  // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
+  listManagedSyncCursorFailureRows: 'persistence_journal',
+  listManagedSyncOrphanRowsets: 'persistence_journal',
+  listDurableManagedSyncFailureKeys: 'persistence_journal',
   // doctor reads over sources (engine-sql/doctor-sources.ts)
   readDoctorSources: 'sources',
   listGuestSourceRows: 'sources',

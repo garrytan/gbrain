@@ -34,6 +34,7 @@ import type * as ProjectionBacklogSql from './engine-sql/projection-backlog.ts';
 import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
 import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
 import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
+import type * as DoctorSyncSql from './engine-sql/doctor-sync.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -5355,6 +5356,13 @@ export interface BrainEngine {
   readLatestConnectorReceipt(): Promise<string | null>;
   /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
   listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
+  /** The unfinished managed-sync cursors of live source incarnations with their pending receipt, failure row and manifest path (`sourceIds` null reads every source). */
+  listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null): Promise<DoctorSyncSql.ManagedSyncCursorFailureRow[]>;
+  /** The five rowsets the managed-sync orphan classification reads; `movedMessage` is the refusal message of a checkpoint that lost the last_commit race. */
+  listManagedSyncOrphanRowsets(sourceIds: readonly string[] | null, movedMessage: string): Promise<DoctorSyncSql.ManagedSyncOrphanRowsets>;
+  /** The cursor keys among `keys` that still have a durable managed-sync failure row, under any incarnation. */
+  listDurableManagedSyncFailureKeys(keys: readonly string[]): Promise<string[]>;
   // Doctor reads over `sources` (engine-sql/doctor-sources.ts).
   /** The rows of one doctor `sources` read (`variant` names the statement; `scope` confines it to some ids or one source). */
   readDoctorSources<V extends DoctorSourcesSql.DoctorSourceVariant>(variant: V, scope?: DoctorSourcesSql.DoctorSourceScope): Promise<DoctorSourcesSql.DoctorSourceRows[V][]>;

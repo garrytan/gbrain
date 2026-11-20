@@ -227,6 +227,7 @@ import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
+import * as doctorSyncImpl from './engine-sql/doctor-sync.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
@@ -1728,6 +1729,9 @@ export class PGLiteEngine implements BrainEngine {
   readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.rawRead, key, op, fingerprint); }
   readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.rawRead); }
   listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.rawRead); }
+  listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null) { return doctorSyncImpl.listManagedSyncCursorFailureRows(this.rawRead, sourceIds); }
+  listManagedSyncOrphanRowsets(sourceIds: readonly string[] | null, movedMessage: string) { return doctorSyncImpl.listManagedSyncOrphanRowsets(this.rawRead, sourceIds, movedMessage); }
+  listDurableManagedSyncFailureKeys(keys: readonly string[]) { return doctorSyncImpl.listDurableManagedSyncFailureKeys(this.rawRead, keys); }
   readDoctorSources<V extends doctorSourcesImpl.DoctorSourceVariant>(variant: V, scope?: doctorSourcesImpl.DoctorSourceScope) { return doctorSourcesImpl.readDoctorSources(this.rawRead, variant, scope); }
   listGuestSourceRows() { return doctorSourcesImpl.listGuestSourceRows(this.rawRead); }
   listCheckoutRoots(hostId: string | null) { return doctorSourcesImpl.listCheckoutRoots(this.rawRead, hostId); }

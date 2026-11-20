@@ -115,7 +115,7 @@ const ORPHAN_WORKSPACE_FACTS_SQL = `SELECT s.id
              WHERE c.deleted_at IS NULL
                AND (c.source_id = s.id OR s.id = ANY(c.federated_read))
           )
-        ORDER BY s.id`;
+        ORDER BY s.id COLLATE "C"`;
 const ORPHAN_WORKSPACE_SQL = `SELECT s.id
          FROM sources s
         WHERE s.id LIKE '%' || $1
@@ -127,7 +127,7 @@ const ORPHAN_WORKSPACE_SQL = `SELECT s.id
              WHERE c.deleted_at IS NULL
                AND (c.source_id = s.id OR s.id = ANY(c.federated_read))
           )
-        ORDER BY s.id`;
+        ORDER BY s.id COLLATE "C"`;
 
 /**
  * Derived-workspace sources (id ending in `suffix`) with no path, no pages, no facts, not archived and no live client

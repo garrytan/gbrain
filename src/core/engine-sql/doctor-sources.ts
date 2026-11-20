@@ -131,8 +131,8 @@ const PLANS: { readonly [V in DoctorSourceVariant]: Plan } = {
   strict_git: () => one("SELECT id, local_path, last_commit FROM sources WHERE NOT archived AND COALESCE(config->>'canonical','')='git' ORDER BY id COLLATE \"C\""),
   google_connectors: () => one("SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' = 'google' ORDER BY id COLLATE \"C\""),
   guest_marked_ids: () => one("SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id COLLATE \"C\""),
-  first_two_ids: () => one('SELECT id FROM sources ORDER BY id LIMIT 2'),
-  all_ids: () => one('SELECT id FROM sources ORDER BY id'),
+  first_two_ids: () => one('SELECT id FROM sources ORDER BY id COLLATE "C" LIMIT 2'),
+  all_ids: () => one('SELECT id FROM sources ORDER BY id COLLATE "C"'),
   ids_with_live_pages: () => one('SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM pages p WHERE p.source_id = s.id AND p.deleted_at IS NULL) ORDER BY s.id COLLATE "C"'),
   local_path_state: () => one('SELECT id, local_path, archived FROM sources'),
   storage_shelf: (scope) => one('SELECT local_path, config FROM sources WHERE id = $1 AND archived IS NOT TRUE', [requireSourceId('storage_shelf', scope)]),
@@ -145,7 +145,7 @@ const PLANS: { readonly [V in DoctorSourceVariant]: Plan } = {
     : [[FRESH_UPSTREAM], [FRESH_BARE], [FRESH_ANY]]),
   shared_skills_view: (scope) => one('SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived', [requireSourceId('shared_skills_view', scope)]),
   detached: (scope) => one("SELECT local_path, config->>'strategy' AS strategy, last_commit FROM sources WHERE id=$1 AND archived IS NOT TRUE", [requireSourceId('detached', scope)]),
-  synopsis_ids: () => one("SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id"),
+  synopsis_ids: () => one("SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE \"C\""),
   claim_candidates: () => one("SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage')) AS claimed, "
     + "(s.config ? 'trust_claim_lifted_at') AS lifted FROM sources s WHERE NOT s.archived AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage') ORDER BY s.id COLLATE \"C\""),
 };

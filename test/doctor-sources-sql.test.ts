@@ -54,15 +54,15 @@ describe('doctor source reads SQL text', () => {
     expect(texts('strict_git')).toEqual(["SELECT id, local_path, last_commit FROM sources WHERE NOT archived AND COALESCE(config->>'canonical','')='git' ORDER BY id COLLATE \"C\""]);
     expect(texts('google_connectors')).toEqual(["SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' = 'google' ORDER BY id COLLATE \"C\""]);
     expect(texts('guest_marked_ids')).toEqual(["SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id COLLATE \"C\""]);
-    expect(texts('first_two_ids')).toEqual(['SELECT id FROM sources ORDER BY id LIMIT 2']);
-    expect(texts('all_ids')).toEqual(['SELECT id FROM sources ORDER BY id']);
+    expect(texts('first_two_ids')).toEqual(['SELECT id FROM sources ORDER BY id COLLATE "C" LIMIT 2']);
+    expect(texts('all_ids')).toEqual(['SELECT id FROM sources ORDER BY id COLLATE "C"']);
     expect(texts('ids_with_live_pages')).toEqual([squash(`SELECT s.id FROM sources s WHERE EXISTS (
       SELECT 1 FROM pages p WHERE p.source_id = s.id AND p.deleted_at IS NULL ) ORDER BY s.id COLLATE "C"`)]);
     expect(texts('local_path_state')).toEqual(['SELECT id, local_path, archived FROM sources']);
     expect(texts('storage_shelf', { sourceId: 'x' })).toEqual(['SELECT local_path, config FROM sources WHERE id = $1 AND archived IS NOT TRUE']);
     expect(texts('shared_skills_view', { sourceId: 'x' })).toEqual(['SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived']);
     expect(texts('detached', { sourceId: 'x' })).toEqual(["SELECT local_path, config->>'strategy' AS strategy, last_commit FROM sources WHERE id=$1 AND archived IS NOT TRUE"]);
-    expect(texts('synopsis_ids')).toEqual(["SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id"]);
+    expect(texts('synopsis_ids')).toEqual(["SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE \"C\""]);
     expect(texts('live_incarnations')).toEqual(['SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE']);
   });
 
