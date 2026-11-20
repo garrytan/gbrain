@@ -192,7 +192,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // facts_trust: search relevance and trust reads
   facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint',
-    'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival', 'listFactIdsAtTrustRank', 'listBeliefStreamSlugs'],
+    'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival', 'listFactIdsAtTrustRank', 'listBeliefStreamSlugs', 'recordDerivationEdges'],
+
+  // facts_recall: the quote and slot-history reads (facts/quoted.rs; the recall pool reads join this family on rust-engine/memory-records-rest)
+  facts_recall: ['listFactsFromQuotedPages', 'listFactIdsAtTrustFloor', 'readPageTypesByIds', 'listReadablePageSlugs'],
 
   // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
   trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',

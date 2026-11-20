@@ -541,6 +541,13 @@ const PINS: Pin[] = [
     texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
   },
   {
+    from: 'src/core/facts/derivation-inputs.ts:39 recordDerivationInputs, at 30232f54c3 (member ported from a359a2201b)',
+    case: { method: 'recordDerivationEdges', variant: 'default', run: e => e.recordDerivationEdges({ table: 'facts', id: '7' }, 's1', [{ table: 'pages', id: '3' }, { table: 'facts', id: '2' }]) },
+    texts: [`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`],
+  },
+  {
     from: 'src/core/belief/writers.ts:41 ontologyStreamSlugs, at 432ac446f4',
     case: { method: 'listOntologyStreamSlugs', variant: 'default', run: e => e.listOntologyStreamSlugs('default', 'people/a', 'role') },
     texts: [`SELECT DISTINCT source_markdown_slug AS slug FROM facts

@@ -203,6 +203,8 @@ import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
 import * as factsPurgeImpl from './engine-sql/facts-purge.ts';
+import * as factsRecallImpl from './engine-sql/facts-recall.ts';
+import type { TrustTier } from './trust/tier.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as factsTrustImpl from './engine-sql/facts-trust.ts';
 import type { ExactScanOpts } from './search/exact-scan.ts';
@@ -1290,10 +1292,15 @@ export class PostgresEngine implements BrainEngine {
   listRestatedPrivateCopies(opts: Parameters<typeof factsTrustImpl.listRestatedPrivateCopies>[1]) { return factsTrustImpl.listRestatedPrivateCopies(this.executeRaw.bind(this), opts); }
   countDerivedFactTaint() { return factsTrustImpl.countDerivedFactTaint(this.executeRaw.bind(this)); }
   listFactProvenance(opts: Parameters<typeof factsTrustImpl.listFactProvenance>[1]) { return factsTrustImpl.listFactProvenance(this.executeRaw.bind(this), opts); }
+  recordDerivationEdges(derived: factsTrustImpl.DerivationEdgeRef, sourceId: string | null, edges: readonly factsTrustImpl.DerivationEdgeRef[]) { return factsTrustImpl.recordDerivationEdges(this.executeRaw.bind(this), derived, sourceId, edges); }
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.executeRaw.bind(this), sourceId, entitySlug, dimension); }
   readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.executeRaw.bind(this), sourceId, entitySlug, dimension, excludeId); }
   listFactIdsAtTrustRank(ids: readonly number[], minRank: number) { return factsTrustImpl.listFactIdsAtTrustRank(this.executeRaw.bind(this), ids, minRank); }
   listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]) { return factsTrustImpl.listBeliefStreamSlugs(this.executeRaw.bind(this), table, ids); }
+  listFactsFromQuotedPages(ids: readonly number[], pageTypes: readonly string[], backstopSessions: factsRecallImpl.QuotedBackstopSessions) { return factsRecallImpl.listFactsFromQuotedPages(this.executeRaw.bind(this), ids, pageTypes, backstopSessions); }
+  listFactIdsAtTrustFloor(ids: readonly number[], floor: TrustTier) { return factsRecallImpl.listFactIdsAtTrustFloor(this.executeRaw.bind(this), ids, floor); }
+  readPageTypesByIds(ids: readonly number[]) { return factsRecallImpl.readPageTypesByIds(this.executeRaw.bind(this), ids); }
+  listReadablePageSlugs(sourceId: string, slugs: readonly string[], scope: PageReadScope, limit: number) { return factsRecallImpl.listReadablePageSlugs(this.executeRaw.bind(this), sourceId, slugs, scope, limit); }
 
 
   getSourceStrictness(sourceId: string) { return this.preparationRead(exec => persistenceStateImpl.getSourceStrictness(unscopedExecutor(exec, 'persistence: strict-source read ran unscoped through executeRaw'), sourceId)); }

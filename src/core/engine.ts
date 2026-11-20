@@ -24,6 +24,7 @@ import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from 
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
+import type * as FactsRecallSql from './engine-sql/facts-recall.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
@@ -3613,6 +3614,8 @@ export interface BrainEngine {
   countDerivedFactTaint(): Promise<{ derived: number; external: number }>;
   /** The stored provenance (`facts.source`) of the named facts of one source (ops/facts.ts `withProvenance`). */
   listFactProvenance(opts: { sourceId: string; ids: readonly number[] }): Promise<Array<{ id: number; source: string }>>;
+  /** Records every input of one derived row (idempotent), in the transaction that writes the row. */
+  recordDerivationEdges(derived: FactsTrustSql.DerivationEdgeRef, sourceId: string | null, edges: readonly FactsTrustSql.DerivationEdgeRef[]): Promise<void>;
   /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
   /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */
@@ -3621,6 +3624,14 @@ export interface BrainEngine {
   listFactIdsAtTrustRank(ids: readonly number[], minRank: number): Promise<number[]>;
   /** The ledger stream slug of each listed fact, take or page row found (null where it has none), in no promised order. */
   listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>>;
+  /** Of `ids`, the facts taken from a page of one of `pageTypes` (holding page, derivation input, or backstop session page). */
+  listFactsFromQuotedPages(ids: readonly number[], pageTypes: readonly string[], backstopSessions: FactsRecallSql.QuotedBackstopSessions): Promise<number[]>;
+  /** Of `ids`, the facts whose stored tier ranks at or above `floor`. */
+  listFactIdsAtTrustFloor(ids: readonly number[], floor: import('./trust/tier.ts').TrustTier): Promise<number[]>;
+  /** Each page id's stored type, deleted or not; an id with no page is absent. */
+  readPageTypesByIds(ids: readonly number[]): Promise<Array<{ id: number; type: string | null }>>;
+  /** Of `slugs` in `sourceId`, the live pages the read policy of `scope` admits (its sources ignored), at most `limit`. */
+  listReadablePageSlugs(sourceId: string, slugs: readonly string[], scope: PageReadScope, limit: number): Promise<string[]>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */

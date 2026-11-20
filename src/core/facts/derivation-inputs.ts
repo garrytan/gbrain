@@ -36,9 +36,7 @@ export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef
   const derived = refKey(row);
   if (inputs.length > DERIVATION_EDGE_LIMIT) throw new RangeError(`A derivation records at most ${DERIVATION_EDGE_LIMIT} inputs.`);
   const edges = inputs.map(refKey);
-  await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
-    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
-    ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
+  await tx.recordDerivationEdges(derived, row.sourceId ?? null, edges);
 }
 
 export interface DerivedRow { table: string; id: string; depth: number }

@@ -133,7 +133,7 @@ export interface FactRelevanceRow {
   similarity: number | null;
 }
 
-function similarity(vector: RelevanceVector | null): SqlFragment {
+export function relevanceSimilarity(vector: RelevanceVector | null): SqlFragment {
   if (!vector) return sqlFragment`NULL::float8 AS similarity`;
   const cast = vector.type === 'halfvec' ? '::halfvec' : '::vector';
   return sqlFragment`CASE WHEN ${comparable(vector.model, vector.dims)} THEN 1 - (f.embedding <=> ${vector.literal}${trustedSql(cast)}) END AS similarity`;
@@ -159,7 +159,7 @@ function customPlan<T>(transaction: EngineRawTransaction, fragment: SqlFragment)
  * the row's embedding is comparable with it.
  */
 export async function listFactsForRelevance(raw: EngineRawRead, transaction: EngineRawTransaction, q: FactRelevanceQuery): Promise<FactRelevanceRow[]> {
-  const sim = similarity(q.vector);
+  const sim = relevanceSimilarity(q.vector);
   if (q.arm === 'keyword') {
     const doc = trustedSql(factsFtsDocument('f'));
     const tsq = sqlFragment`NULLIF(replace(plainto_tsquery('${trustedSql(getFtsLanguage())}'::regconfig, ${q.terms ?? ''})::text, ' & ', ' | '), '')::tsquery`;
@@ -343,6 +343,16 @@ export async function listFactProvenance(raw: EngineRawRead, opts: { sourceId: s
     'SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [opts.sourceId, [...opts.ids]],
   );
   return rows.map((r) => ({ id: Number(r.id), source: r.source }));
+}
+
+/** A row reference in the derivation graph: the owning table's name and the row's primary key (stringified). */
+export interface DerivationEdgeRef { table: string; id: string }
+
+/** Records every input of one derived row (idempotent). Runs in the transaction that writes the derived row. */
+export async function recordDerivationEdges(raw: EngineRawRead, derived: DerivationEdgeRef, sourceId: string | null, edges: readonly DerivationEdgeRef[]): Promise<void> {
+  await raw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
+    SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
+    ON CONFLICT DO NOTHING`, [derived.table, derived.id, sourceId, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
 }
 
 /**

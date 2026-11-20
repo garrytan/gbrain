@@ -90,6 +90,7 @@ const OOS = {
   factsPurge: 'out-of-scope:facts-purge (born in engine-sql/facts-purge.ts; pinned by test/engine-parity/facts-purge.test.ts)',
   factsRepair: 'out-of-scope:facts-repair (born in engine-sql/facts-repair.ts; pinned by test/engine-parity/facts-repair.test.ts)',
   factsTrust: 'out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)',
+  factsQuotedReads: 'out-of-scope:facts-quoted-reads (quote and slot-history reads, born in engine-sql/facts-recall.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-quoted.test.ts)',
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
   pageRetrievals: 'out-of-scope:page-retrievals (born in engine-sql/pages.ts; pinned by test/engine-parity/pages.test.ts)',
@@ -647,6 +648,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFolderAccess': OOS.callerRawSql,
   'upsertSessionState': OOS.callerRawSql,
   'listFactProvenance': OOS.callerRawSql,
+  'recordDerivationEdges': OOS.callerRawSql,
   'listOntologyStreamSlugs': OOS.callerRawSql,
   'readOntologyRival': OOS.callerRawSql,
   'listFactIdsAtTrustRank': OOS.callerRawSql,
@@ -800,6 +802,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'removeWakeCron': OOS.minionJobs, 'hasWakeCron': OOS.minionJobs, 'recordWakeCronRun': OOS.minionJobs, 'hasWakeTermsAcceptance': OOS.minionJobs,
   'recordWakeTermsAcceptance': OOS.minionJobs, 'listDueWakeWatches': OOS.minionJobs, 'claimWakeWatch': OOS.minionJobs, 'settleWakeWatch': OOS.minionJobs,
   'queueWakeForget': OOS.minionJobs, 'claimWakeForgets': OOS.minionJobs, 'settleWakeForget': OOS.minionJobs,
+  'listFactsFromQuotedPages': OOS.factsQuotedReads,
+  'listFactIdsAtTrustFloor': OOS.factsQuotedReads,
+  'readPageTypesByIds': OOS.factsQuotedReads,
+  'listReadablePageSlugs': OOS.factsQuotedReads,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */
@@ -1549,6 +1555,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readDeltaSessionRow', [['default', (e) => e.readDeltaSessionRow('default', 'local', 's')]]),
   ...variants('readCheckpointManifestRow', [['default', (e) => e.readCheckpointManifestRow('default', 'local', 's')]]),
   ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] })]]),
+  ...variants('recordDerivationEdges', [['default', (e) => e.recordDerivationEdges({ table: 'facts', id: '7' }, 's1', [{ table: 'pages', id: '3' }, { table: 'facts', id: '2' }])]]),
   ...variants('listOntologyStreamSlugs', [['default', (e) => e.listOntologyStreamSlugs('default', 'people/a', 'role')]]),
   ...variants('readOntologyRival', [['default', (e) => e.readOntologyRival('default', 'people/a', 'role', 1)]]),
   ...variants('listFactIdsAtTrustRank', [['default', (e) => e.listFactIdsAtTrustRank([1, 2], 5)]]),

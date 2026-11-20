@@ -47,6 +47,7 @@ pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;
 pub mod purge_ledger;
+pub mod quoted;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;

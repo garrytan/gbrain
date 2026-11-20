@@ -370,6 +370,23 @@ deliver as `provenance` (`ops/facts.ts` `withProvenance`, a fail-soft read).
 |---|---|---|---|
 | `listFactProvenance` | `ops/facts.ts` `withProvenance` | yes | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row of the source has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses an id that is not a safe integer. |
 
+## Quote and slot-history reads (`facts/quoted.rs`)
+
+Four `facts-recall.ts` members serve the reads that decide how a fact or a page reaches a model (`search/transcript-quote.ts`)
+and the bare-name page lookup of a slot-history question (`search/slot-history.ts` `entityKeys`). The TypeScript members are
+`rust-engine/store-members/facts-quoted.ts`; the napi family is `families/facts_quoted.rs`.
+
+| Member | What the store does |
+| --- | --- |
+| `listFactsFromQuotedPages(ids, pageTypes, backstopSessions)` | Of `ids`, the facts taken from a page of one of `pageTypes` in the fact's own source: the page `source_markdown_slug` names, or the page a backstop fact's `source_session` names (the first `(source, prefix)` pair whose source is the fact's and whose prefix starts the session; the slug is the rest). A soft-deleted page counts. Ascending ids. The SQL also follows `derivation_inputs` edges to a page; the store keeps no derivation inputs (`recordDerivationEdges` is refused), so that clause finds nothing. |
+| `listFactIdsAtTrustFloor(ids, floor)` | Of `ids`, the facts whose stored tier ranks at or above `floor` (`trustRankSql`: a name that is no tier ranks 0; an empty name, a record from before the store kept the column, is `unknown`). A floor that names no tier is refused. |
+| `readPageTypesByIds(ids)` | `{ id, type }` of each page id, soft-deleted pages included; an id with no page is absent. |
+| `listReadablePageSlugs(sourceId, slugs, scope, limit)` | Of `slugs` in `sourceId`, the pages `pageReadFilter(.., live = true)` admits under `scope` (the chunk reads' page policy: privacy, trust floor and flag suppression, not soft-deleted, not quarantined, a live source), at most `limit`. The scope's own `sourceId` / `sourceIds` do not narrow the read. The SQL has no `ORDER BY`; the store keeps the asked order. |
+
+The TypeScript member of `listReadablePageSlugs` resolves the privacy policy as the chunk reads do (a caller's readers are
+allowed) and ignores `requireSafeChunks`, which `pageReadFilter` does not read.
+Parity: `test/engine-parity/facts-quoted.test.ts`.
+
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 
 | Member | Site | Served | Notes |

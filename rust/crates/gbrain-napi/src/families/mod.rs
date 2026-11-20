@@ -57,6 +57,7 @@ mod facts_doctor;
 mod facts_loops;
 mod facts_provenance;
 mod facts_purge;
+mod facts_quoted;
 mod facts_repair;
 mod facts_trust;
 mod facts_trust_reads;

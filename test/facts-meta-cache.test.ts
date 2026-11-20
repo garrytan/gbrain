@@ -288,6 +288,11 @@ describe('meta-hook cache hygiene (bounded, expired-entry eviction)', () => {
         readTrustGeneration: stubGeneration,
         listFactsBySession: async () => [],
         listFactsSince: async () => { n++; return [factRow(validUntil)]; },
+        // Quoting reads (#8042): no fact comes from a quoted page, none is owner tier.
+        listFactsFromQuotedPages: async () => [],
+        listFactIdsAtTrustRank: async () => [],
+        // Activation verdicts (eligibility/activation.ts): every row agent-unknown and unflagged, as stubRaw answered.
+        listActivationVerdictRows: async (_table: string, ids: number[]) => ids.map(id => ({ id, trust_tier: 'unknown', flagged: false })),
       } as unknown as BrainEngine;
       return { engine, calls: () => n };
     }

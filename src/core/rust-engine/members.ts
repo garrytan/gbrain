@@ -472,6 +472,11 @@ export const RUST_ENGINE_MEMBERS = {
   listRestatedPrivateCopies: 'facts',
   countDerivedFactTaint: 'facts',
   listFactProvenance: 'facts',
+  recordDerivationEdges: 'facts',
+  listFactsFromQuotedPages: 'facts',
+  listFactIdsAtTrustFloor: 'facts',
+  readPageTypesByIds: 'facts',
+  listReadablePageSlugs: 'facts',
 
   // takes
   addTakesBatch: 'takes',

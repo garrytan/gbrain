@@ -5460,6 +5460,17 @@
         ],
         "flagOnScopes": []
       },
+      "recordDerivationEdges#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "recordHeldGenerationRow#new": {
         "flagOffLanes": [
           "tx"
@@ -7236,6 +7247,7 @@
         "listExactRescanChunks": "none",
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
+        "listFactIdsAtTrustFloor": "none",
         "listFactIdsAtTrustRank": "none",
         "listFactProvenance": "none",
         "listFactRelinkOutcomes": "none",
@@ -7247,6 +7259,7 @@
         "listFactsBySession": "none",
         "listFactsForPage": "none",
         "listFactsForRelevance": "none",
+        "listFactsFromQuotedPages": "none",
         "listFactsKeyset": "none",
         "listFactsReconcileBacklog": "none",
         "listFactsSince": "none",
@@ -7299,6 +7312,7 @@
         "listPrivateQueueHealth": "none",
         "listQualifiedSymbolNames": "none",
         "listQueueWedgeCounts": "none",
+        "listReadablePageSlugs": "none",
         "listRecentFailedJobErrors": "none",
         "listRecentLeasePressure": "none",
         "listRecentSynthesisCompletions": "none",
@@ -7589,6 +7603,7 @@
         "readPageSynopses": "none",
         "readPageTitle": "none",
         "readPageTrustRows": "none",
+        "readPageTypesByIds": "none",
         "readPageVersionEdition": "none",
         "readPendingProposalSummary": "none",
         "readPersistenceBrainId": "none",
@@ -7665,6 +7680,7 @@
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordAccessMigrationPhase": "none",
+        "recordDerivationEdges": "none",
         "recordHeldGenerationRow": "none",
         "recordNotifierSyncerHost": "none",
         "recordPageEmbeddingHold": "none",
