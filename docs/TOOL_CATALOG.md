@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 187 tools across 30 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 187 tools across 29 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -73,8 +73,13 @@ Every non-localOnly operation on the MCP surface: 187 tools across 30 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `file_list` | List files stored in the brain's file storage, optionally for one page. | admin |  |  |
-| `file_url` | Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. | admin |  |  |
+| `file_get` | Return a stored file's bytes: png/jpeg/gif/webp images as an image you can see, any other file as data_base64. | files |  |  |
+| `file_list` | List files stored in the brain's file storage, optionally for one page. | files |  |  |
+| `file_upload_abort` | Drop a pending upload begun with file_upload_begin and every byte staged for it. | files |  |  |
+| `file_upload_begin` | Start uploading a file (image, PDF, any binary) into the brain's file storage from anywhere, remote callers included. | files |  |  |
+| `file_upload_commit` | Finish an upload begun with file_upload_begin: checks the received bytes against the declared size and SHA-256, stores the file (<page_slug>/<filename>, or unsorted/<hash>-<filename>) and records it, and with import: true turns an image into a searchable image page. | files |  |  |
+| `file_upload_part` | Send one part of an upload begun with file_upload_begin in mode "parts": the base64 of bytes [(part-1)*part_max_bytes, part*part_max_bytes). | files |  |  |
+| `file_url` | Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. | files |  |  |
 
 ## identity
 
@@ -189,16 +194,6 @@ Every non-localOnly operation on the MCP surface: 187 tools across 30 areas. **S
 | `ontology_dimensions` | Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with entity + observation counts. | read |  |  |
 | `ontology_get` | Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` (default now), with provenance + confidence + validity. | read |  |  |
 | `ontology_propose` | Life Chronicle: record one ontology observation (entity has dimension=value), sourced + confidence-weighted + bi-temporal. | write |  |  |
-
-## other
-
-| Tool | Description | Scope | Starter | Gate |
-|---|---|---|---|---|
-| `file_get` | Return a stored file's bytes: png/jpeg/gif/webp images as an image you can see, any other file as data_base64. | admin |  |  |
-| `file_upload_abort` | Drop a pending upload begun with file_upload_begin and every byte staged for it. | admin |  |  |
-| `file_upload_begin` | Start uploading a file (image, PDF, any binary) into the brain's file storage from anywhere, remote callers included. | admin |  |  |
-| `file_upload_commit` | Finish an upload begun with file_upload_begin: checks the received bytes against the declared size and SHA-256, stores the file (<page_slug>/<filename>, or unsorted/<hash>-<filename>) and records it, and with import: true turns an image into a searchable image page. | admin |  |  |
-| `file_upload_part` | Send one part of an upload begun with file_upload_begin in mode "parts": the base64 of bytes [(part-1)*part_max_bytes, part*part_max_bytes). | admin |  |  |
 
 ## pages
 

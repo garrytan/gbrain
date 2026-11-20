@@ -18,6 +18,7 @@ import { LocalStorage } from '../src/core/storage/local.ts';
 import { S3Storage } from '../src/core/storage/s3.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { sniffMime } from '../src/core/ops/file-transfer.ts';
+import { hasScope } from '../src/core/scope.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -80,12 +81,19 @@ const stagingLeft = () => existsSync(join(storageDir, '_incoming'))
   : [];
 
 describe('operation surface', () => {
-  test('byte-based ops are remote-callable admin ops; path-based file_upload stays localOnly', () => {
+  test('byte-based ops are remote-callable under the files scope; path-based file_upload stays localOnly', () => {
     for (const name of ['file_upload_begin', 'file_upload_part', 'file_upload_commit', 'file_upload_abort', 'file_get', 'file_list', 'file_url']) {
       expect(operationsByName[name].localOnly).toBeUndefined();
-      expect(operationsByName[name].scope).toBe('admin');
+      expect(operationsByName[name].scope).toBe('files');
     }
     expect(operationsByName.file_upload.localOnly).toBe(true);
+  });
+
+  test('files is its own scope: admin implies it, read/write do not, and it implies nothing else', () => {
+    expect(hasScope(['admin'], 'files')).toBe(true);
+    expect(hasScope(['read', 'write'], 'files')).toBe(false);
+    expect(hasScope(['files'], 'files')).toBe(true);
+    for (const other of ['read', 'write', 'admin', 'sources_admin']) expect(hasScope(['files'], other)).toBe(false);
   });
 
   test('sniffMime reads the real type, not the name', () => {

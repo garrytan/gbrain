@@ -1,6 +1,6 @@
 # Remote file transfer: upload, import and download over MCP
 
-Status: in progress (fork branch `feat/remote-file-storage`).
+Status: implemented (fork branch `feat/remote-file-storage`).
 
 ## Problem
 
@@ -65,7 +65,7 @@ The signed URL covers only `.../data`, so a caller can never write the
 manifest. Commit re-reads everything from the backend and trusts nothing the
 client claims without checking it.
 
-### New and changed ops (all `scope: 'admin'`, remote-callable)
+### New and changed ops (all `scope: 'files'`, remote-callable)
 
 | Op | Params | Result |
 |---|---|---|
@@ -101,7 +101,10 @@ stay `localOnly` / CLI.
 ### Security
 
 - Byte-based input only; remote callers still cannot name server paths.
-- `admin` scope, as the existing file ops.
+- A dedicated `files` scope (implied by `admin`, so admin clients keep the file ops they
+  had). A gateway or client that should move files gets `read,write,files`, not `admin`,
+  which would also open job control, schema mutation and search tuning.
+- Local stdio callers are not scope-checked, exactly as before.
 - A signed PUT URL is a bearer capability for one staging key, for 15 minutes.
   Commit re-verifies size, hash and type, so a tampered upload is refused.
 - `file_list`, `file_url`, `file_get` keep the private-page filter

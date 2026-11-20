@@ -34,11 +34,11 @@ const file_list: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs admin scope.',
+  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_get or file_url. Needs files (or admin) scope.',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
-  scope: 'admin',
+  scope: 'files',
   handler: async (ctx, p) => {
     const slug = p.slug as string | undefined;
     const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
@@ -221,11 +221,11 @@ const file_url: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs admin scope. On storage_error: list the files again with file_list.',
+  description: 'Return a URL for a stored file: on S3-compatible and Supabase storage a signed download link valid for one hour. Use when a user needs to open or download an attachment listed by file_list. Needs files (or admin) scope. On storage_error: list the files again with file_list.',
   params: {
-    storage_path: { type: 'string', required: true },
+    storage_path: { type: 'string', required: true, description: 'Stored path of the file, as file_list lists it' },
   },
-  scope: 'admin',
+  scope: 'files',
   handler: async (ctx, p) => {
     const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT storage_path, mime_type, size_bytes FROM files f
       WHERE storage_path = $1 AND ${await fileReadableSql(ctx)}`, [p.storage_path as string]);

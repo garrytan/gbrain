@@ -895,7 +895,7 @@ export interface Operation {
    * Local CLI callers (ctx.remote === false) bypass scope enforcement
    * because the trust boundary there is the OS, not OAuth scopes.
    */
-  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'files';
   requiredScopes?: readonly string[];
   localOnly?: boolean;
   /**

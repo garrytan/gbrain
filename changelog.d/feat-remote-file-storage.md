@@ -7,5 +7,7 @@
 - `file_get`: a stored file's bytes, returned as an MCP image block for png/jpeg/gif/webp so the model sees the image.
 - `StorageBackend.createUploadUrl` (optional; S3 implements it).
 
+- `files` OAuth scope for these ops (implied by `admin`): a client can move files without being admin (`gbrain auth create <name> --scopes read,write,files`).
+
 ### Changed
-- `file_list` and `file_url` are callable by remote admin clients, not only over local stdio. `file_upload` (server-side path) stays local-only.
+- `file_list` and `file_url` are callable by remote clients with the `files` (or `admin`) scope, not only over local stdio. `file_upload` (server-side path) stays local-only.

@@ -7019,7 +7019,7 @@
           "params: Record<string, ParamDef>",
           "publishGateKey?: \"mcp.publish_skills\" | \"mcp.publish_advisor\" | \"mcp.publish_memory_settings\" | \"mcp.publish_wakeshift\" | undefined",
           "requiredScopes?: readonly string[] | undefined",
-          "scope?: \"agent\" | \"read\" | \"write\" | \"admin\" | \"sources_admin\" | \"users_admin\" | undefined",
+          "scope?: \"agent\" | \"files\" | \"read\" | \"write\" | \"admin\" | \"sources_admin\" | \"users_admin\" | undefined",
           "verb?: boolean | undefined",
           "writeInference?: WriteInference | undefined"
         ],

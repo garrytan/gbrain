@@ -22,7 +22,7 @@
  * vs user-account-mgmt — neither implies the other).
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm' | 'files';
 
 export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'read',
@@ -35,6 +35,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'skill_publisher',
   'skills_member_self',
   'memory_confirm',
+  'files',
 ]);
 
 /**
@@ -44,6 +45,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
   'admin',
   'agent',
+  'files',
   'memory_confirm',
   'read',
   'skill_editor',
@@ -160,7 +162,7 @@ export function scopesSupportedForDiscovery(opts: { enableDcr: boolean }): Scope
  * clients cannot raise a trust tier.
  */
 const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
-  admin: new Set(['admin', 'sources_admin', 'users_admin', 'write', 'read']),
+  admin: new Set(['admin', 'sources_admin', 'users_admin', 'write', 'read', 'files']),
   write: new Set(['write', 'read']),
   sources_admin: new Set(['sources_admin']),
   users_admin: new Set(['users_admin']),
@@ -170,6 +172,9 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   skill_publisher: new Set(['skill_publisher']),
   skills_member_self: new Set(['skills_member_self']),
   memory_confirm: new Set(['memory_confirm']),
+  // Remote file transfer (ops/file-transfer.ts, file_list, file_url): moving file bytes in and out of storage, without
+  // the rest of admin. Implied by admin, so admin clients keep the file ops they had.
+  files: new Set(['files']),
 };
 
 /**
