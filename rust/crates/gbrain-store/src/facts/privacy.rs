@@ -267,7 +267,7 @@ pub(crate) fn caller_version_hidden(
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
-fn holding_slug(slug: &str) -> bool {
+pub(super) fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
 }
 

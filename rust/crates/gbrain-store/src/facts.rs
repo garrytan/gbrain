@@ -52,6 +52,7 @@ mod fence_overlay;
 pub mod forget;
 pub mod generations;
 mod held_cells;
+pub mod held_moves;
 pub mod holding_purges;
 pub mod loops;
 pub mod ontology_repair;
