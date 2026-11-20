@@ -325,3 +325,30 @@ describe('computeFounderScorecard — lower-is-better metrics', () => {
     ]);
   });
 });
+
+// Savings and recovery metrics hold a lower-is-better word but are good news going up.
+describe('computeFounderScorecard — savings and recovery metrics', () => {
+  function card(metric: string, a: number, b: number) {
+    return computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],
+      points: [
+        pt({ id: 1, metric, value: a, date: '2026-01-01' }),
+        pt({ id: 2, metric, value: b, date: '2026-02-01' }),
+      ],
+    });
+  }
+
+  test('a rise in cost_savings raises no red flag', () => {
+    expect(card('cost_savings', 100000, 150000).red_flags).toEqual([]);
+  });
+
+  test('a rise in revenue_loss_recovered raises no red flag', () => {
+    expect(card('revenue_loss_recovered', 40000, 60000).red_flags).toEqual([]);
+  });
+
+  test('a falling cost_savings is a regression red flag that says it fell', () => {
+    expect(card('cost_savings', 150000, 100000).red_flags).toEqual([
+      { kind: 'regression', metric: 'cost_savings', text: 'cost_savings fell 33.3% (2026-01-01 → 2026-02-01)' },
+    ]);
+  });
+});

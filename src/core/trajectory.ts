@@ -34,24 +34,30 @@ export const TRAJECTORY_SCHEMA_VERSION = 1;
 /**
  * The lower-is-better rule, in one place: for these metrics a rise is the regression and a drop is an improvement.
  * `metrics` are exact names; `words` make any metric lower-is-better when one of its parts is that whole word
- * (`lossless`, `costco`, `debtor` do not match). Change the list here and nowhere else.
+ * (`lossless`, `costco`, `debtor` do not match); `exceptWords` take that back for a name that also holds one of
+ * them, because it counts the good thing (`cost_savings`, `revenue_loss_recovered`), which is good news going up.
+ * Change the list here and nowhere else.
  */
 export const LOWER_IS_BETTER = {
   metrics: ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn'],
   words: ['cost', 'costs', 'expense', 'expenses', 'loss', 'losses', 'latency', 'payback', 'debt', 'debts'],
+  exceptWords: ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided'],
 } as const;
 
 /**
  * True when a lower value of this metric is the good direction. The name is split on every run of
  * non-alphanumeric characters (`_`, `-`, spaces, ...) and each part lowercased; it matches when the
- * parts joined with `_` equal a LOWER_IS_BETTER.metrics name, or any one part is a LOWER_IS_BETTER.words word.
+ * parts joined with `_` equal a LOWER_IS_BETTER.metrics name, or when any one part is a LOWER_IS_BETTER.words
+ * word and no part is a LOWER_IS_BETTER.exceptWords word.
  */
 export function isLowerIsBetter(metric: string): boolean {
   const parts = metric.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   if (parts.length === 0) return false;
   const metrics: readonly string[] = LOWER_IS_BETTER.metrics;
   const words: readonly string[] = LOWER_IS_BETTER.words;
-  return metrics.includes(parts.join('_')) || parts.some(p => words.includes(p));
+  const exceptWords: readonly string[] = LOWER_IS_BETTER.exceptWords;
+  if (metrics.includes(parts.join('_'))) return true;
+  return parts.some(p => words.includes(p)) && !parts.some(p => exceptWords.includes(p));
 }
 
 export interface TrajectoryRegression {

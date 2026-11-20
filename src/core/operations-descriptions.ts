@@ -83,7 +83,8 @@ export const FIND_TRAJECTORY_DESCRIPTION =
   "`{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], " +
   "regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct, direction: 'down'|'up'}], " +
   "drift_score: number|null, schema_version: 1}`. A regression is a 10% drop, or a 10% rise for a " +
-  "lower-is-better metric (burn, churn, cac, cost, expense, loss, latency, payback, debt). " +
+  "lower-is-better metric (burn, churn, cac, cost, expense, loss, latency, payback, debt; not a name that also " +
+  "says savings, recovered, reduction or avoided). " +
   "Drift score 0 = stable narrative, " +
   "1 = every consecutive claim is unrelated; null when fewer than 3 typed points " +
   "exist. Visibility-filtered for remote callers (world-only); source-scoped by " +

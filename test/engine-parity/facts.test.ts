@@ -829,7 +829,7 @@ describe('engine parity: facts', () => {
 
   // The trajectory math (regressions, red flags, growth) is pure TS above the engine, so the Rust arm serves the
   // same output from its findTrajectory points; this holds every arm to it: a falling lower-is-better metric (churn)
-  // is no regression, a rising one (burn) is, and a falling ordinary metric (arr) still is.
+  // is no regression, a rising one (burn) is, and a falling ordinary metric (arr) still is, and a rising savings or recovery metric (cost_savings, revenue_loss_recovered) is not.
   parityTest(
     'trajectory regressions and scorecard red flags read the metric direction: churn down is fine, burn up and arr down regress',
     { methods: ['insertFact', 'findTrajectory'] },
@@ -844,6 +844,10 @@ describe('engine parity: facts', () => {
         row('burn 200k', 'burn', 200000, 'USD', '2026-02-01T00:00:00Z'),
         row('arr 200k', 'arr', 200000, 'USD', '2026-01-01T00:00:00Z'),
         row('arr 150k', 'arr', 150000, 'USD', '2026-02-01T00:00:00Z'),
+        row('savings 100k', 'cost_savings', 100000, 'USD', '2026-01-01T00:00:00Z'),
+        row('savings 150k', 'cost_savings', 150000, 'USD', '2026-02-01T00:00:00Z'),
+        row('recovered 40k', 'revenue_loss_recovered', 40000, 'USD', '2026-01-01T00:00:00Z'),
+        row('recovered 60k', 'revenue_loss_recovered', 60000, 'USD', '2026-02-01T00:00:00Z'),
       ]);
       const points = await engine.findTrajectory({ entitySlug: ent, remote: false });
       const { regressions } = computeTrajectoryStats(points);

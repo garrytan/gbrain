@@ -188,6 +188,37 @@ describe('detectRegressions — lower-is-better metrics', () => {
   });
 });
 
+// A name that holds a lower-is-better word AND a good-news word (saving, recovered, reduction ...) is about
+// the good thing going up, so it follows the ordinary rule: a drop is the regression, a rise is not.
+describe('detectRegressions — savings and recovery metrics are not lower-is-better', () => {
+  function series(metric: string, a: number, b: number): TrajectoryPoint[] {
+    return [
+      point({ id: 1, metric, value: a, date: '2026-01-01' }),
+      point({ id: 2, metric, value: b, date: '2026-02-01' }),
+    ];
+  }
+
+  test('a rise in cost_savings is not a regression', () => {
+    expect(detectRegressions(series('cost_savings', 100000, 150000))).toEqual([]);
+  });
+
+  test('a rise in revenue_loss_recovered is not a regression', () => {
+    expect(detectRegressions(series('revenue_loss_recovered', 40000, 60000))).toEqual([]);
+  });
+
+  test('a falling cost_savings IS a regression under the ordinary rule, direction down', () => {
+    const regs = detectRegressions(series('cost_savings', 150000, 100000));
+    expect(regs).toHaveLength(1);
+    expect(regs[0]).toMatchObject({ metric: 'cost_savings', from_value: 150000, to_value: 100000, direction: 'down' });
+    expect(regs[0].delta_pct).toBeCloseTo(-1 / 3, 6);
+  });
+
+  test('a plain cost still regresses on a rise, so only the exception words narrow the rule', () => {
+    expect(detectRegressions(series('cost', 100000, 150000))).toHaveLength(1);
+    expect(detectRegressions(series('revenue_loss', 40000, 60000))).toHaveLength(1);
+  });
+});
+
 describe('isLowerIsBetter', () => {
   const yes = (m: string) => expect(trajectory.isLowerIsBetter(m), m).toBe(true);
   const no = (m: string) => expect(trajectory.isLowerIsBetter(m), m).toBe(false);
@@ -216,6 +247,18 @@ describe('isLowerIsBetter', () => {
   test('a word that only contains a candidate is not lower-is-better (lossless, costco, debtor ...)', () => {
     for (const m of ['lossless', 'costco', 'debtor', 'costly', 'glossary', 'accost', 'burnout', 'burn_out_score', 'churned',
       'churn_rate_target', 'latencyz', 'paybacks']) no(m);
+  });
+
+  test('a name that also holds saving, savings, saved, recovered, recovery, reduction, reduced or avoided is not lower-is-better', () => {
+    for (const m of ['cost_savings', 'revenue_loss_recovered', 'cost_saving', 'costs_saved', 'loss_recovery', 'cost_reduction',
+      'expense_reduced', 'losses_avoided', 'debt_reduction', 'Cost-Savings', 'cloud cost recovered', 'latency_reduction_ms']) no(m);
+    expect(trajectory.LOWER_IS_BETTER.exceptWords).toEqual(
+      ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided']);
+  });
+
+  test('the exception words do not touch the exact names or a name with no lower-is-better word', () => {
+    for (const m of ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn']) yes(m);
+    for (const m of ['savings', 'recovered', 'reduction']) no(m);
   });
 
   test('every other metric keeps the old rule', () => {
