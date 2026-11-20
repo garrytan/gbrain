@@ -3632,6 +3632,8 @@ export interface BrainEngine {
 
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+  /** Revokes a local writer registration, keeping an earlier revocation time; true when the registration exists. */
+  revokeLocalWriterRow(id: string): Promise<boolean>;
   /** An OAuth client's receipt grant row, deleted or not, or undefined; `lock` reads it `FOR SHARE` (engine-sql/access-grants.ts). */
   readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptClientGrant | undefined>;
   /** An access token's receipt grant row, revoked or not, or undefined; `lock` reads it `FOR SHARE`. */

@@ -7581,6 +7581,7 @@
         "revokeAccessToken": "none",
         "revokeAccessTokenById": "none",
         "revokeAccessTokensNamed": "none",
+        "revokeLocalWriterRow": "none",
         "rewriteLinks": "none",
         "rlsScopeBindingEnabled": "none",
         "runMigration": "none",

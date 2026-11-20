@@ -612,6 +612,7 @@ export const RUST_ENGINE_MEMBERS = {
   readLocalWriterRow: 'persistence_journal',
   readWriterSlugFence: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',
+  revokeLocalWriterRow: 'persistence_journal',
   readOAuthClientReceiptGrant: 'persistence_journal',
   readAccessTokenReceiptGrant: 'persistence_journal',
   readOAuthClientMemberGrant: 'persistence_journal',
