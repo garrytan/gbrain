@@ -140,7 +140,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
     // The threshold is applied before the cut: a fact matching every word is never crowded
     // out by newer facts that match fewer.
     // Cue rows below the threshold rank in a pool of their own, so full matches never push a correction past the cut.
-    const rows = await ctx.engine.executeRaw<SavedFactMatch & CollapseColumns & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown }>(
+    const rows = await ctx.engine.executeRaw<SavedFactMatch & CollapseColumns & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown; dimension: string | null }>(
       `WITH w AS (
          SELECT t.i, t.pat, plainto_tsquery('${lang}'::regconfig, t.term) AS tq
          FROM unnest($3::text[], $4::text[]) WITH ORDINALITY AS t(term, pat, i)
@@ -152,7 +152,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
          FROM w
        )
        SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, ${SAVED_FACT_COLLAPSE_COLUMNS},
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, f.dimension, ${SAVED_FACT_COLLAPSE_COLUMNS},
            ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
              ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
            LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,
@@ -168,7 +168,11 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
        ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`,
       [sources, [...AUDIT_ROW_SOURCES], terms, pats, CORRECTION_CUE, supersede],
     );
-    const found = rows.map(({ at, matched, need, cue, trust_rank, pool_rank: _p, ...fact }) => ({ fact: { ...fact, id: Number(fact.id) } as SavedFactMatch & CollapseColumns,
+    // GST-3170: a slot value a later one ended at read time is no longer current, like a lapsed valid_until (slot-ends.ts).
+    const { applySlotEnds } = await import('./slot-ends.ts');
+    const current = await applySlotEnds(ctx.engine, { sourceIds: sources, worldOnly: worldOnlyFacts(ctx.remote), excludePrivate, minTrust: scope.minTrust },
+      rows.map(r => ({ ...r, id: Number(r.id) })), { activeOnly: true });
+    const found = current.map(({ at, matched, need, cue, trust_rank, pool_rank: _p, dimension: _d, ...fact }) => ({ fact: fact as SavedFactMatch & CollapseColumns,
       at: new Date(at as string).getTime(), words: new Set(matched.map(Number)), need: Number(need), cue, trust: Number(trust_rank), figures: figures(fact.fact) }));
     const admitted = found.filter(r => r.words.size >= r.need);
     const correcting = new Set<number>();
