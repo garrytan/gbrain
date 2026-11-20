@@ -3,18 +3,31 @@
  *
  * Every function below is the call master made, at the commit the N3 branch's move check compares against
  * (5763c09b5c): the statement text copied byte for byte from the path:line named in its doc comment, the run-time
- * text building reproduced with master's local names, and master's parameters. Each runs through `executeRaw`, as
+ * text building (`where`, `trustCols`, `tierList`, `alias`, `live`, `ceiling`, `shortlist`, `slotText`, the privacy
+ * fragments) reproduced with master's local names, and master's parameters. Each runs through `executeRaw`, as
  * master's caller did, and answers master's raw rows; the test applies one canonical view to both sides.
  *
  * Do not edit a statement here to make a test pass: the text is the evidence. test/n3-sql-move-parity.test.ts fails
  * when a member's statement or mapping answers differently from it.
  */
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { privatePagesFilterForCaller, remoteReadFloorSql } from '../../src/core/search/private-visibility.ts';
+import { quarantineFilterFragment } from '../../src/core/quarantine.ts';
+import { activationSuppressedSql, pageEligibleSql, rederiveHiddenSql } from '../../src/core/eligibility/sql.ts';
+import { onOwnedMemoryPageSql } from '../../src/core/access/member-facts.ts';
+import { CORE_MAX_PAGES } from '../../src/core/core-memory.ts';
+import type { ReadEligibility } from '../../src/core/eligibility/policy.ts';
 
 export type Raw = Pick<BrainEngine, 'executeRaw'>;
 type Rows = Promise<Array<Record<string, unknown>>>;
 
 // ---------------------------------------------------------------- alias fan-out
+
+/** master 5763c09b5c src/core/search/alias-fanout.ts:110 (titleRead). */
+export const titleRead = (exec: Raw, norms: string[], sources: string[], types: string[], scope: { excludePrivate?: boolean }): Rows => exec.executeRaw(
+  `SELECT slug, source_id, lower(title) AS t FROM pages
+        WHERE lower(title) = ANY($1::text[]) AND source_id = ANY($2::text[]) AND type = ANY($3::text[]) AND deleted_at IS NULL
+        ${scope.excludePrivate ? `AND ${privatePagesFilterForCaller('pages')}` : ''}`, [norms, sources, types]);
 
 /** master 5763c09b5c src/core/search/alias-fanout.ts:118 (case-sensitive alias read). */
 export const caseAliasRead = (exec: Raw, norms: string[], sources: string[]): Rows => exec.executeRaw(
@@ -130,6 +143,98 @@ export const versionBodyBytes = (exec: Raw, pageId: number, generation: number):
 
 // ---------------------------------------------------------------- trust tiers
 
+export interface CoreOpts {
+  sourceIds?: readonly string[];
+  excludePrivate?: boolean;
+  forCaller?: boolean;
+  exclude?: { sourceId: string; slug: string };
+  eligibility?: ReadEligibility;
+}
+
+/** master 5763c09b5c src/core/core-memory.ts:251-268 (listCorePages): the `where`, `params` and `trustCols` master built, then its statement. */
+export function corePages(exec: Raw, opts: CoreOpts = {}): Rows {
+  const params: unknown[] = [];
+  const where = [`p.deleted_at IS NULL`, `p.frontmatter @> '{"always_load": true}'::jsonb`];
+  if (opts.sourceIds) {
+    params.push([...opts.sourceIds]);
+    where.push(`p.source_id = ANY($${params.length}::text[])`);
+  }
+  if (opts.exclude) {
+    params.push(opts.exclude.sourceId, opts.exclude.slug);
+    where.push(`NOT (p.source_id = $${params.length - 1} AND p.slug = $${params.length})`);
+  }
+  if (opts.excludePrivate) where.push(opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p'));
+  const policy = opts.eligibility;
+  if (policy) where.push(quarantineFilterFragment('p'), pageEligibleSql('p', { floor: policy.floor }));
+  const trustCols = policy
+    ? `p.trust_tier, p.write_origin, ${policy.suppressFlagged ? activationSuppressedSql('pages', 'p') : 'false'} AS suppressed,` : '';
+  return exec.executeRaw(
+    `SELECT p.id, p.source_id, p.slug, p.title, p.compiled_truth, p.frontmatter, p.body_storage, p.body_bytes, ${trustCols}
+        EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = p.source_id AND (w.subject = '*' OR w.subject = p.slug)) AS withdrawn
+      FROM pages p WHERE ${where.join(' AND ')} ORDER BY p.source_id, p.slug LIMIT ${CORE_MAX_PAGES * 4}`, params);
+}
+
+export type ScanTable = 'pages' | 'facts' | 'takes' | 'timeline_entries';
+
+/** master 5763c09b5c src/core/eligibility/scan.ts:95-101 (the SELECT map); `tierList` is scan.ts:49 over the tiers the caller passes. */
+export function scanRows(exec: Raw, table: ScanTable, tiers: readonly string[], afterId: number, limit: number): Rows {
+  const tierList = tiers.map(t => `'${t}'`).join(',');
+  const SELECT: Readonly<Record<ScanTable, string>> = {
+    pages: `SELECT p.id, p.source_id, p.trust_tier, p.write_origin, p.title, p.compiled_truth, p.timeline, p.frontmatter FROM pages p
+    WHERE p.id > $1 AND p.deleted_at IS NULL AND p.trust_tier IN (${tierList}) ORDER BY p.id LIMIT $2`,
+    facts: `SELECT f.id, f.source_id, f.trust_tier, f.write_origin, f.fact, f.context, f.value, f.source FROM facts f
+    WHERE f.id > $1 AND f.trust_tier IN (${tierList}) ORDER BY f.id LIMIT $2`,
+    takes: `SELECT t.id, p.source_id, t.trust_tier, t.write_origin, t.claim, t.source FROM takes t JOIN pages p ON p.id = t.page_id
+    WHERE t.id > $1 AND t.trust_tier IN (${tierList}) ORDER BY t.id LIMIT $2`,
+    timeline_entries: `SELECT te.id, p.source_id, te.trust_tier, te.write_origin, te.summary, te.detail, te.source FROM timeline_entries te
+    JOIN pages p ON p.id = te.page_id WHERE te.id > $1 AND te.trust_tier IN (${tierList}) ORDER BY te.id LIMIT $2`,
+  };
+  return exec.executeRaw(SELECT[table], [afterId, limit]);
+}
+
+/** master 5763c09b5c src/core/eligibility/scan.ts:200-207 (readTrustScanState): `alias`, `live` and `ceiling` as master built them. */
+export function unscannedCount(exec: Raw, table: ScanTable, tiers: readonly string[], afterId: number, until: number | null): Rows {
+  const tierList = tiers.map(t => `'${t}'`).join(',');
+  const alias = { pages: 'pages', facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries' }[table];
+  const live = table === 'pages' ? ' AND deleted_at IS NULL' : '';
+  const ceiling = until !== null ? ` AND id <= ${Number(until)}` : '';
+  return exec.executeRaw(
+    `SELECT count(*)::int AS n FROM ${alias} WHERE id > $1 AND trust_tier IN (${tierList})${live}${ceiling}`, [afterId]);
+}
+
+export interface HistoryQuery {
+  sourceId: string; slug: string | null; subjectKey: string | null; afterId: number; limit: number; recordedAfter: string | null;
+  recordedUntil: string | null; subjectKeys: readonly string[] | null; beforeId: number | null; descending: boolean;
+}
+
+/** master 5763c09b5c src/core/belief/history.ts:61 (the page of events); the parameters master passed, in its order. */
+export const historyRows = (exec: Raw, q: HistoryQuery): Rows => exec.executeRaw(
+  `SELECT e.id, e.slug, e.page_lifetime::text AS page_lifetime,
+      e.subject_kind, e.subject_key, e.event_type, e.origin, e.trust_tier, e.writer_tier, e.tier_basis, e.visibility, e.recorded_at, e.source_time,
+      e.value, e.value_hash, e.prior_hash, e.state_hash, e.cause, e.purged, e.redacted_fields,
+      (SELECT ${remoteReadFloorSql('p')} AND (e.subject_kind NOT IN ('fact', 'take') OR ${quarantineFilterFragment('p')}) FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug
+        AND p.deleted_at IS NULL AND (l.page_id IS NULL OR p.id = l.page_id)
+        WHERE l.page_lifetime = e.page_lifetime AND l.ended_at IS NULL) AS stream_visible,
+      (e.claim_fp IS NOT NULL AND EXISTS (SELECT 1 FROM belief_events v WHERE v.source_id = e.source_id AND v.source_incarnation = e.source_incarnation
+        AND v.claim_fp = e.claim_fp AND v.subject_kind = e.subject_kind AND v.visibility = 'private' AND v.id > e.id)) AS later_private,
+      CASE WHEN e.subject_kind = 'take' THEN COALESCE(e.value->>'holder', (SELECT t.value->>'holder' FROM belief_events t WHERE t.source_id = e.source_id
+        AND t.source_incarnation = e.source_incarnation AND t.subject_kind = 'take' AND t.subject_key = e.subject_key AND t.id < e.id AND t.value->>'holder' IS NOT NULL
+        ORDER BY t.id DESC LIMIT 1)) END AS take_holder
+    FROM belief_events e
+    WHERE e.source_id = $1 AND e.source_incarnation = (SELECT s.incarnation FROM sources s WHERE s.id = $1) AND ($2::text IS NULL OR e.slug = $2) AND ($3::text IS NULL OR e.subject_key = $3) AND e.id > $4
+      AND ($6::timestamptz IS NULL OR e.recorded_at > $6::timestamptz) AND ($7::timestamptz IS NULL OR e.recorded_at <= $7::timestamptz)
+      AND ($8::text[] IS NULL OR e.subject_key = ANY($8::text[])) AND ($9::bigint IS NULL OR e.id < $9::bigint)
+      AND NOT EXISTS (SELECT 1 FROM belief_events h WHERE h.source_id = e.source_id AND h.subject_kind = e.subject_kind AND h.subject_key = e.subject_key
+        AND h.event_type = 'derived.hidden' AND h.id <> e.id AND (h.id > e.id OR e.origin = 'backfill'))
+    ORDER BY e.id ${q.descending ? 'DESC' : 'ASC'} LIMIT $5`, [q.sourceId, q.slug, q.subjectKey, q.afterId, q.limit,
+    q.recordedAfter, q.recordedUntil, q.subjectKeys ? [...q.subjectKeys] : null, q.beforeId]);
+
+/** master 5763c09b5c src/core/belief/history.ts:85 (the visible lifetimes). */
+export const visibleLifetimes = (exec: Raw, linkIds: string[]): Rows => exec.executeRaw(
+  `SELECT l.page_lifetime::text AS page_lifetime
+    FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug AND p.deleted_at IS NULL AND (l.page_id IS NULL OR p.id = l.page_id)
+    WHERE l.page_lifetime = ANY($1::uuid[]) AND l.ended_at IS NULL AND ${remoteReadFloorSql('p')}`, [linkIds]);
+
 /** master 5763c09b5c src/core/ops/admin.ts:266 (the snapshot tiers). */
 export const versionTiers = (exec: Raw, ids: number[]): Rows =>
   exec.executeRaw('SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [ids]);
@@ -144,6 +249,10 @@ export const versionWriters = (exec: Raw, ids: number[]): Rows => exec.executeRa
 /** master 5763c09b5c src/core/search/transcript-quote.ts:111 (pageTypesById). */
 export const pageTypes = (exec: Raw, ids: number[]): Rows =>
   exec.executeRaw('SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(ids.map(Number))]]);
+
+/** master 5763c09b5c src/core/ops/get-page-projection.ts:218 (awaits a rederive). */
+export const awaitsRederive = (exec: Raw, pageId: number): Rows => exec.executeRaw(
+  `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT ${rederiveHiddenSql('pages', 'p')}`, [pageId]);
 
 // ---------------------------------------------------------------- withdrawal discovery (src/core/facts/withdrawal-discovery.ts)
 
@@ -169,6 +278,15 @@ export const claimKeys = (exec: Raw, sourceId: string, claimsJson: string): Rows
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
     ) SELECT * FROM w`, [sourceId, claimsJson]);
 
+/** master 5763c09b5c src/core/facts/withdrawal-discovery.ts:129 (provenance pages); `onOwnedMemoryPageSql` is imported as in master. */
+export const provenancePages = (exec: Raw, sourceId: string, keysJson: string): Rows => exec.executeRaw(
+  `SELECT DISTINCT p.id
+    FROM jsonb_to_recordset($2::text::jsonb) k(visibility text,fact_hash text,subject text,norm text)
+    JOIN facts f ON f.source_id=$1 AND f.visibility=k.visibility
+      AND gbrain_fact_fingerprint(f.fact)=COALESCE(encode(sha256(convert_to(k.norm,'UTF8')),'hex'),k.fact_hash)
+      AND (k.subject='*' OR f.entity_slug=k.subject OR (${onOwnedMemoryPageSql('f')} AND f.source_markdown_slug=k.subject))
+    JOIN pages p ON p.source_id=f.source_id AND p.slug=COALESCE(f.source_markdown_slug,f.entity_slug)`, [sourceId, keysJson]);
+
 /** master 5763c09b5c src/core/facts/withdrawal-discovery.ts:144 (claim matches). */
 export const claimMatches = (exec: Raw, incomingJson: string, keysJson: string): Rows => exec.executeRaw(
   `SELECT DISTINCT i.id,i.ambiguous
@@ -176,6 +294,29 @@ export const claimMatches = (exec: Raw, incomingJson: string, keysJson: string):
       JOIN jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text)
         ON (i.visibility IS NULL OR i.visibility=w.visibility) AND (w.subject='*' OR w.subject=i.slug)
           AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v1(i.claim))`, [incomingJson, keysJson]);
+
+const shortlist = (text: string) => `lower(${text}) LIKE ALL(k.patterns)`;
+const slotText = `convert_from(substring(t.body from (s->>'start')::int + 1 for (s->>'end')::int - (s->>'start')::int),'UTF8')`;
+
+/** master 5763c09b5c src/core/facts/withdrawal-discovery.ts:156 (inline fence pages); `shortlist` as master defined it. */
+export const inlineFencePages = (exec: Raw, sourceId: string, keysJson: string, after: number, batch: number, subjects: string[] | null): Rows => exec.executeRaw(
+  `SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p
+      WHERE p.source_id=$1 AND p.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
+        AND (strpos(p.compiled_truth,'gbrain:facts:')>0 OR strpos(p.timeline,'gbrain:facts:')>0)
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[])
+          WHERE (k.subject='*' OR k.subject=p.slug) AND ((${shortlist('p.compiled_truth')}) OR (${shortlist('p.timeline')})))
+      ORDER BY p.id LIMIT $4`, [sourceId, keysJson, after, batch, subjects]);
+
+/** master 5763c09b5c src/core/facts/withdrawal-discovery.ts:171 (segment fence rows); `slotText` as master defined it. */
+export const segmentFenceRows = (exec: Raw, sourceId: string, keysJson: string, after: [number, number], batch: number, subjects: string[] | null): Rows => exec.executeRaw(
+  `SELECT p.id,m.occurrence_id::text AS occurrence_id,p.slug,
+        ARRAY(SELECT ${slotText} FROM jsonb_array_elements(m.facts_slots) s WHERE NOT s ? 'open_start') AS fences
+      FROM page_body_manifest m JOIN pages p ON p.id=m.page_id JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
+      WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb
+        AND (m.page_id,m.occurrence_id)>($3::int,$6::bigint) AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[]), jsonb_array_elements(m.facts_slots) s
+          WHERE (k.subject='*' OR k.subject=p.slug) AND NOT s ? 'open_start' AND ${shortlist(slotText)})
+      ORDER BY m.page_id,m.occurrence_id LIMIT $4`, [sourceId, keysJson, after[0], batch, subjects, after[1]]);
 
 /** master 5763c09b5c src/core/facts/withdrawal-discovery.ts:205 (target pages). */
 export const targetPages = (exec: Raw, sourceId: string, ids: number[]): Rows =>

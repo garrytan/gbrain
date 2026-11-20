@@ -1,21 +1,23 @@
 /**
- * BrainEngine parity: the alias fan-out reads of engine-sql/alias-fanout-reads.ts (resolveCaseSensitiveAliases,
- * readPageTitle, readPageAliasRows), which search's alias fan-out
+ * BrainEngine parity: the alias fan-out reads of engine-sql/alias-fanout-reads.ts (findPagesByTitles,
+ * resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows), which search's alias fan-out
  * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`, and readEntityAliasRows, the entity
  * card's alias read (verbs/entity-card.ts, entity-card-identity.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member returns the same rows in the same order on every engine arm (PGLite always; Postgres with
- *    DATABASE_URL; the Rust arm through test/engine-parity/harness.ts): the case-sensitive alias rows, by source, slug, alias; a page's title,
- *    soft-deleted pages included; and a page set's alias rows, by source, slug, alias, origin. Each case asserts the exact answer, so
+ *    DATABASE_URL; the Rust arm through test/engine-parity/harness.ts): the live pages of the listed sources and types
+ *    whose lower-cased title is asked, by source then slug, less the pages the page policy hides under
+ *    `excludePrivate`; the case-sensitive alias rows, by source, slug, alias; a page's title, soft-deleted pages
+ *    included; and a page set's alias rows, by source, slug, alias, origin. Each case asserts the exact answer, so
  *    one arm alone also checks it.
- *  - Regression: an engine that drops the deleted or source filter names the wrong entity for a query; an engine
- *    whose order drifts picks another alias of equal rank; a Rust store that reads a foreign alias row as clean, or invents
+ *  - Regression: an engine that drops the deleted, type, source or privacy filter names the wrong entity for a query
+ *    (or a private one to an untrusted caller); an engine whose order drifts picks another lead page for a title
+ *    group or another alias of equal rank; a Rust store that reads a foreign alias row as clean, or invents
  *    alias text, fans out over names the brain never stored. Refusals stay what they were: the caller's
  *    `.catch(() => [])` reads a refused member as no rows, as it read a refused raw statement before.
  *  - Why existing coverage misses it: test/search-alias-fanout.test.ts runs the fan-out on PGLite only and checks what
  *    the search finds, not the rows each read returns or their order.
- *  - The exact-title lookup (findPagesByTitles) carries the page-visibility filter and stays at its call site in this slice.
  *  - Seam: none (typed methods only). The Rust arm holds these members as raw_sql and ends each case on the typed refusal.
  */
 import { describe, expect } from 'bun:test';
@@ -23,6 +25,10 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { createSource, parityArms } from './harness.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -48,7 +54,94 @@ async function titled(engine: BrainEngine, backend: Parameters<typeof createSour
   await engine.putPage('companies/acme-inc', page('company', 'Acme Example Inc'));
 }
 
+const hit = (source_id: string, slug: string, t: string) => ({ slug, source_id, t });
+
 describe('engine parity: alias fan-out reads', () => {
+  parityTest(
+    'findPagesByTitles matches the lower-cased title of live pages of the listed sources and types, by source then slug',
+    { methods: ['putPage', 'softDeletePage', 'findPagesByTitles'] },
+    async (engine, backend) => {
+      await titled(engine, backend);
+      const both = await engine.findPagesByTitles(['acme example', 'widget co'], ['other', 'default'], ['person', 'company']);
+      expect(both).toEqual([
+        hit('default', 'companies/widget-co', 'widget co'),
+        hit('default', 'people/acme-a', 'acme example'),
+        hit('default', 'people/acme-b', 'acme example'),
+        hit('default', 'people/acme-private', 'acme example'),
+        hit('default', 'people/acme-readers', 'acme example'),
+        hit('other', 'people/acme-b', 'acme example'),
+      ]);
+      const other = await engine.findPagesByTitles(['acme example'], ['other'], ['person']);
+      const notes = await engine.findPagesByTitles(['acme example'], ['default'], ['note']);
+      // An exact title only: neither a prefix nor an unlisted case of the asked text matches.
+      const exact = await engine.findPagesByTitles(['acme', 'Acme Example'], ['default'], ['person', 'company']);
+      const empty = [
+        await engine.findPagesByTitles([], ['default'], ['person']),
+        await engine.findPagesByTitles(['acme example'], [], ['person']),
+        await engine.findPagesByTitles(['acme example'], ['default'], []),
+      ];
+      expect(other).toEqual([hit('other', 'people/acme-b', 'acme example')]);
+      expect(notes).toEqual([hit('default', 'notes/acme', 'acme example')]);
+      expect({ exact, empty }).toEqual({ exact: [], empty: [[], [], []] });
+      return { both, other, notes, exact, empty };
+    },
+  );
+
+  parityTest(
+    'findPagesByTitles under excludePrivate drops the pages the page policy hides; without it they come back',
+    { methods: ['putPage', 'softDeletePage', 'findPagesByTitles'] },
+    async (engine, backend) => {
+      await titled(engine, backend);
+      const open = await engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate: false });
+      const hidden = await engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate: true });
+      expect(open.map((r) => r.slug)).toEqual(['people/acme-a', 'people/acme-b', 'people/acme-private', 'people/acme-readers']);
+      expect(hidden.map((r) => r.slug)).toEqual(['people/acme-a', 'people/acme-b']);
+      return { open, hidden };
+    },
+  );
+
+  parityTest(
+    'findPagesByTitles under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'softDeletePage', 'findPagesByTitles'] },
+    async (engine, backend) => {
+      await titled(engine, backend);
+      const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () =>
+        (await engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate: true })).map((r) => r.slug));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      expect(member).toEqual(['people/acme-a', 'people/acme-b', 'people/acme-readers']);
+      expect(granted).toEqual(['people/acme-a', 'people/acme-b', 'people/acme-private', 'people/acme-readers']);
+      expect(stranger).toEqual(['people/acme-a', 'people/acme-b']);
+      return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'findPagesByTitles under excludePrivate hides an owner-only source\'s pages, and under the closed form every page while one exists',
+    { methods: ['putPage', 'addLink', 'findPagesByTitles'] },
+    async (engine, backend) => {
+      await engine.putPage('people/acme-open', page('person', 'Acme Example'));
+      await engine.putPage('concepts/acme-synthesis', page('concept', 'Acme Example'));
+      const read = async (excludePrivate: boolean) => (await engine.findPagesByTitles(['acme example'], ['default', 'chat'], ['person', 'concept'], { excludePrivate }))
+        .map((r) => `${r.source_id}:${r.slug}`);
+      const before = await read(true);
+      // An owner-only source: a page with the same title, and the lineage input of the default-source concept.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await engine.putPage('people/acme-chat', page('person', 'Acme Example'), { sourceId: 'chat' });
+      await engine.addLink('concepts/acme-synthesis', 'people/acme-chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const unfiltered = await read(false);
+      const closed = await read(true);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => read(true));
+      expect(before).toEqual(['default:concepts/acme-synthesis', 'default:people/acme-open']);
+      expect(unfiltered).toEqual(['chat:people/acme-chat', 'default:concepts/acme-synthesis', 'default:people/acme-open']);
+      expect(closed).toEqual([]);
+      expect(fn).toEqual(['default:people/acme-open']);
+      return { before, unfiltered, closed, fn };
+    },
+  );
+
   parityTest(
     'resolveCaseSensitiveAliases finds no row for frontmatter aliases, which are never case-sensitive',
     { methods: ['putPage', 'setPageAliases', 'resolveCaseSensitiveAliases'] },

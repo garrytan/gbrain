@@ -67,6 +67,7 @@ const OOS = {
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'findPagesByTitles': OOS.aliasFanoutReads,
   'resolveCaseSensitiveAliases': OOS.aliasFanoutReads,
   'readPageTitle': OOS.aliasFanoutReads,
   'readPageAliasRows': OOS.aliasFanoutReads,
@@ -93,9 +94,15 @@ export const DOMAIN_OF: Record<string, string> = {
   'readWedgeSignals': OOS.minionJobsHealth,
   'readOldestWaitingAge': OOS.minionJobsHealth,
   'listStuckActiveJobsByName': OOS.minionJobsHealth,
+  'listCorePageRows': OOS.trustTierReads,
+  'listTrustScanRows': OOS.trustTierReads,
+  'countUnscannedTrustRows': OOS.trustTierReads,
+  'readBeliefHistoryRows': OOS.trustTierReads,
+  'listVisibleBeliefLifetimes': OOS.trustTierReads,
   'listVersionTrustTiers': OOS.trustTierReads,
   'listVersionReasonWriters': OOS.trustTierReads,
   'listPageTypesByIds': OOS.trustTierReads,
+  'pageAwaitsRederive': OOS.trustTierReads,
   'readWithdrawalDiscovery': OOS.withdrawalDiscovery,
   'applyDecideReviewQueue': OOS.decideProposals,
   'applyDecideSweepDeferred': OOS.decideProposals,
@@ -138,6 +145,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSegmentedPages': OOS.withdrawalPages,
   'searchRead': OOS.helper,
   'aliasFanoutRead': OOS.helper,
+  'ownRawRead': OOS.helper,
   'decideRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
   'readFieldUsageSamples': OOS.fieldUsage,

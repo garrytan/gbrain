@@ -5,11 +5,13 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `claim_keys` keys each claim with its subject ('*' for none) and normalized text (its own, else a source
- *    fact's of its visibility by fingerprint, then v1 fingerprint, else null); `claim_matches` the candidates a key
- *    matches by visibility, subject and either fingerprint; `split_fence_slots` the open slots grouped by page,
- *    region and open start with their bytes; `target_pages` and `sample_slugs` the slug, id and revision of given
- *    page ids. The provenance, inline-fence and segment-fence shortlists carry the page-visibility filter and stay
- *    at their call site in this slice.
+ *    fact's of its visibility by fingerprint, then v1 fingerprint, else null); `provenance_pages` answers the pages of
+ *    the facts a key names (provenance page, else entity page) by visibility, fingerprint and subject (any, the entity,
+ *    or an owned memory page); `claim_matches` the candidates a key matches by visibility, subject and either
+ *    fingerprint; `inline_fence_pages` the pages after a cursor whose fenced truth or timeline holds every token of a
+ *    key; `segment_fence_rows` the live manifest rows of segmented pages whose whole facts slots hold every token, with
+ *    the slot texts; `split_fence_slots` the open slots grouped by page, region and open start with their bytes;
+ *    `target_pages` and `sample_slugs` the slug, id and revision of given page ids.
  *  - Regression: `gbrain forget` withdraws a claim from every page that carries it; an engine that drops a clause
  *    leaves a stale copy on a page, or rewrites a page the claim never reached.
  *  - Why existing coverage misses it: the reads were raw SQL inside withdrawal-discovery.ts, so no engine arm ran them.
@@ -71,11 +73,18 @@ async function segmented(engine: BrainEngine, slug: string, segments: Array<{ te
   return { pageId, occurrences };
 }
 
+/** The slugs of `ids` through target_pages, sorted. */
+async function slugsOf(engine: BrainEngine, ids: number[], sourceId = 'default') {
+  return (await engine.readWithdrawalDiscovery({ kind: 'target_pages', sourceId, ids })).map(r => r.slug).sort();
+}
+
 describe('engine parity: withdrawal discovery reads', () => {
-  parityTest('claim_keys keys each claim with its subject and normalized text, from the claim or from a source fact by fingerprint',
-    { methods: ['transaction', 'applyTransactionSettings', 'insertFacts', 'readWithdrawalDiscovery'] },
+  parityTest('claim_keys and provenance_pages key each claim and find the pages of the facts that carry it',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'readWithdrawalDiscovery'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'other');
+      for (const slug of ['notes/open', 'notes/second', 'people/e-example', 'memory/members/alice-example']) await engine.putPage(slug, note(slug));
+      await engine.putPage('notes/other', note('other'), { sourceId: 'other' });
       await insert(engine, [
         { fact: 'Alice keeps bees!', entity: null, page: 'notes/open' },
         { fact: 'Alice keeps bees', entity: 'people/e-example', page: null },
@@ -98,7 +107,29 @@ describe('engine parity: withdrawal discovery reads', () => {
         { visibility: 'private', fact_hash: sha('alice keeps bees'), subject: '*', norm: 'alice keeps bees' },
         { visibility: 'world', fact_hash: sha('nobody'), subject: '*', norm: null },
       ]);
-      return { keys };
+      const pages = async (k: WithdrawalDiscoveryKey[], sourceId = 'default') =>
+        slugsOf(engine, (await engine.readWithdrawalDiscovery({ kind: 'provenance_pages', sourceId, keys: k })).map(r => r.id), sourceId);
+      const out = {
+        any: await pages([key('alice keeps bees')]),
+        entity: await pages([key('alice keeps bees', 'people/e-example')]),
+        memberPage: await pages([key('alice keeps bees', 'memory/members/alice-example')]),
+        otherEntity: await pages([key('alice keeps bees', 'people/z-example')]),
+        private: await pages([key('alice keeps bees', '*', 'private')]),
+        byHash: await pages([{ ...key(null), fact_hash: sha('bob bakes bread') }]),
+        otherSource: await pages([key('alice keeps bees')], 'other'),
+        none: await pages([]),
+      };
+      expect(out).toEqual({
+        any: ['memory/members/alice-example', 'notes/open', 'people/e-example'],
+        entity: ['people/e-example'],
+        memberPage: ['memory/members/alice-example'],
+        otherEntity: ['memory/members/alice-example'],
+        private: ['notes/second'],
+        byHash: [],
+        otherSource: ['notes/other'],
+        none: [],
+      });
+      return { keys, out };
     });
 
   parityTest('claim_matches answers the candidates a key matches by visibility, subject and either fingerprint',
@@ -131,7 +162,48 @@ describe('engine parity: withdrawal discovery reads', () => {
       return out;
     });
 
-  parityTest('split_fence_slots scans the open facts slots of live segmented rows, grouped by page, region and open start',
+  parityTest('inline_fence_pages answers fenced pages after a cursor whose truth or timeline holds every token of a key',
+    { methods: ['putPage', 'readWithdrawalDiscovery'] },
+    async (engine) => {
+      await engine.putPage('notes/truth', note('t', `Intro\n\n${fence('Alice keeps bees')}`));
+      await engine.putPage('notes/timeline', note('tl', 'Intro', fence('ALICE KEEPS BEES')));
+      await engine.putPage('notes/unfenced', note('u', 'Alice keeps bees'));
+      await engine.putPage('notes/other-claim', note('o', fence('Bob bakes bread')));
+      await engine.putPage('notes/literal', note('l', fence('50% of C_plus keeps')));
+      await engine.putPage('notes/near', note('n', fence('50 of C plus keeps')));
+      const read = async (keys: WithdrawalDiscoveryKey[], opts: { after?: number; limit?: number; subjects?: string[] | null } = {}) =>
+        engine.readWithdrawalDiscovery({ kind: 'inline_fence_pages', sourceId: 'default', keys, after: opts.after ?? 0, limit: opts.limit ?? 128, subjects: opts.subjects ?? null });
+      const slugs = async (...args: Parameters<typeof read>) => (await read(...args)).map(r => r.slug);
+      const bees = key('alice keeps bees');
+      const [first] = await read([bees], { limit: 1 });
+      const out = {
+        bees: await slugs([bees]),
+        first: first!.slug,
+        firstBody: first!.compiled_truth.includes('gbrain:facts:'),
+        afterFirst: await slugs([bees], { after: first!.id }),
+        subjects: await slugs([bees], { subjects: ['notes/timeline'] }),
+        keySubject: await slugs([key('alice keeps bees', 'notes/truth')]),
+        empty: await slugs([key(null)]),
+        literal: await slugs([key('50% of c_plus keeps')]),
+        none: await slugs([]),
+        otherSource: (await engine.readWithdrawalDiscovery({ kind: 'inline_fence_pages', sourceId: 'nope', keys: [bees], after: 0, limit: 128, subjects: null })).length,
+      };
+      expect(out).toEqual({
+        bees: ['notes/truth', 'notes/timeline'],
+        first: 'notes/truth',
+        firstBody: true,
+        afterFirst: ['notes/timeline'],
+        subjects: ['notes/timeline'],
+        keySubject: ['notes/truth'],
+        empty: ['notes/truth', 'notes/timeline', 'notes/other-claim', 'notes/literal', 'notes/near'],
+        literal: ['notes/literal'],
+        none: [],
+        otherSource: 0,
+      });
+      return out;
+    });
+
+  parityTest('segment_fence_rows and split_fence_slots scan the facts slots of live segmented rows',
     { methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts',
       'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'readWithdrawalDiscovery'] },
     async (engine) => {
@@ -147,16 +219,38 @@ describe('engine parity: withdrawal discovery reads', () => {
       const b = await segmented(engine, 'notes/seg-b', [
         { text: `${bees}`, slots: [{ start: 0, end: Buffer.byteLength(bees) }, { start: 2, end: 5, open_start: 0 }] },
       ]);
+      const ordinal = (id: number, occurrence: string) => {
+        const list = id === a.pageId ? a.occurrences : b.occurrences;
+        return `${id === a.pageId ? 'a' : 'b'}${list.indexOf(Number(occurrence))}`;
+      };
+      const rows = async (keys: WithdrawalDiscoveryKey[], opts: { after?: [number, number]; limit?: number; subjects?: string[] | null } = {}) =>
+        (await engine.readWithdrawalDiscovery({ kind: 'segment_fence_rows', sourceId: 'default', keys, after: opts.after ?? [0, 0], limit: opts.limit ?? 128,
+          subjects: opts.subjects ?? null })).map(r => ({ row: ordinal(r.id, r.occurrence_id), slug: r.slug, fences: r.fences }));
       const split = async (opts: { after?: [number, string, number]; limit?: number; subjects?: string[] | null } = {}) =>
         (await engine.readWithdrawalDiscovery({ kind: 'split_fence_slots', sourceId: 'default', subjects: opts.subjects ?? null,
           after: opts.after ?? [0, '', -1], limit: opts.limit ?? 128 }))
           .map(r => ({ page: r.page_id === a.pageId ? 'a' : 'b', slug: r.slug, region: r.region, open_start: r.open_start, bytes: r.bytes }));
       const out = {
+        bees: await rows([key('alice keeps bees')]),
+        bread: await rows([key('bob bakes bread')]),
+        afterFirst: await rows([key('alice keeps bees')], { after: [a.pageId, a.occurrences[0]!] }),
+        limited: await rows([key(null)], { limit: 1 }),
+        subjects: await rows([key('alice keeps bees')], { subjects: ['notes/seg-b'] }),
+        keySubject: await rows([key('alice keeps bees', 'notes/seg-a')]),
         splitAll: await split(),
         splitAfter: await split({ after: [a.pageId, 'timeline', 4] }),
         splitLimited: await split({ limit: 1 }),
         splitSubjects: await split({ subjects: ['notes/seg-b'] }),
       };
+      expect(out.bees).toEqual([
+        { row: 'a0', slug: 'notes/seg-a', fences: [bees] },
+        { row: 'b0', slug: 'notes/seg-b', fences: [bees] },
+      ]);
+      expect(out.bread).toEqual([{ row: 'a2', slug: 'notes/seg-a', fences: [bread] }]);
+      expect(out.afterFirst).toEqual([{ row: 'b0', slug: 'notes/seg-b', fences: [bees] }]);
+      expect(out.limited).toEqual([{ row: 'a0', slug: 'notes/seg-a', fences: [bees] }]);
+      expect(out.subjects).toEqual([{ row: 'b0', slug: 'notes/seg-b', fences: [bees] }]);
+      expect(out.keySubject).toEqual([{ row: 'a0', slug: 'notes/seg-a', fences: [bees] }]);
       expect(out.splitAll).toEqual([
         { page: 'a', slug: 'notes/seg-a', region: 'timeline', open_start: '4', bytes: '7' },
         { page: 'a', slug: 'notes/seg-a', region: 'truth', open_start: '4', bytes: '10' },

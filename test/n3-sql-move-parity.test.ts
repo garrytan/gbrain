@@ -1,7 +1,7 @@
 /**
  * Before/after parity for the SELECTs that moved behind BrainEngine members in N3 (alias fan-out, belief coverage,
- * search-vector counts, export and page-body reads, jobs health, version trust tiers, withdrawal discovery): the
- * callers' `executeRaw` statements at master (5763c09b5c, test/helpers/n3-master-sql.ts) against the members in
+ * search-vector counts, export and page-body reads, jobs health, trust-tier reads, withdrawal discovery): the callers'
+ * `executeRaw` statements at master (5763c09b5c, test/helpers/n3-master-sql.ts) against the members in
  * src/core/engine-sql/*.ts.
  *
  * Each case seeds two identical fresh brains, runs master's exact text (with master's own run-time text building and
@@ -9,24 +9,25 @@
  * move check lists as a removed caller statement is named once below by its master path:line; the last case fails when
  * a site has no case.
  *
- * 1. Protects: the 38 moved read sites answer the same rows on the same data: the filters (deleted pages, source and
- *    type lists, cursors, windows, tier lists), the joins, the casts (bigint to number, text to number), the ordering
- *    the caller relied on, and the empty-input answers.
+ * 1. Protects: the 52 moved read sites answer the same rows on the same data: the filters (deleted pages, source and
+ *    type lists, cursors, windows, tier lists, visibility), the joins, the casts (bigint to number, text to number),
+ *    the ordering the caller relied on, and the empty-input answers.
  * 2. Fails when: a member's text or mapping changes a predicate, a join, a cast, a window, an ORDER BY or a sort the
- *    caller read in.
+ *    caller read in. The private-row cases fail when a member stops applying the page-visibility filter, the quarantine
+ *    or eligibility fragments or the owned-memory-page rule that master applied (the fragments themselves are imported
+ *    unchanged from src/core/search/private-visibility.ts, quarantine.ts and eligibility/sql.ts).
  * 3. Existing coverage: test/engine-parity/{alias-fanout-reads,cli-reads-export,jobs-health,trust-tier-reads,
  *    withdrawal-discovery-reads}.test.ts compare the engines with each other through the members; none compares a
  *    member with the statement master ran, and the Rust engine has no raw SQL to run master's text.
  * 4. Seam: none. Real engines; rows are written through typed members where one exists, and by plain INSERT for the
- *    tables no member writes (belief ledger, withdrawal ledger, access policy, jobs). Seeds that stamp a time use a
- *    fixed instant, so the two brains hold the same rows; an age or "minutes since" read from the clock is compared
- *    in 10-minute buckets (the seeds sit on whole hours), and a brain's own epoch to within two minutes.
+ *    tables no member writes (belief ledger, withdrawal ledger, needs_rederive, access policy, jobs). Seeds that stamp a
+ *    time use a fixed instant, so the two brains hold the same rows; an age or "minutes since" read from the clock is
+ *    compared in 10-minute buckets (the seeds sit on whole hours), and a brain's own epoch to within two minutes.
  *
  * Engines: PGLite always; Postgres too when DATABASE_URL is set (listed in test/postgres-unit-arms.txt). The Rust arm
  * does not apply: master's text is SQL. Rust serves only the jobs-health members, which carry no visibility filter, and
- * test/engine-parity/jobs-health.test.ts proves their empty-queue answers on all three arms. No read left in this slice
- * carries a page-visibility filter (the filtered reads stay at their call sites), so no private-row or world-only-caller
- * case applies.
+ * test/engine-parity/jobs-health.test.ts proves their empty-queue answers on all three arms; every read that carries a
+ * visibility filter is held as raw_sql on the Rust arm, so a private-row case there would only end on the typed refusal.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -34,6 +35,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput } from '../src/core/types.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { rowToPage } from '../src/core/utils.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { SCAN_TIERS } from '../src/core/eligibility/scan.ts';
 import { COVERAGE_KEY } from '../src/core/belief/keys.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import type { WithdrawalDiscoveryKey } from '../src/core/engine-sql/withdrawal-discovery.ts';
@@ -46,13 +49,17 @@ import * as M from './helpers/n3-master-sql.ts';
 
 /** Every removed caller statement the move check lists for N3, by master path:line (5763c09b5c). */
 const ALL_SITES = [
-  'src/core/search/alias-fanout.ts:118', 'src/core/search/alias-fanout.ts:146', 'src/core/search/alias-fanout.ts:161',
+  'src/core/search/alias-fanout.ts:110', 'src/core/search/alias-fanout.ts:118', 'src/core/search/alias-fanout.ts:146', 'src/core/search/alias-fanout.ts:161',
   'src/core/verbs/entity-card-identity.ts:141', 'src/core/belief/coverage-report.ts:347', 'src/commands/reindex-search-vector.ts:102',
   'src/commands/export.ts:125', 'src/core/export-snapshot.ts:18', 'src/core/export-snapshot.ts:23', 'src/core/export-snapshot.ts:44', 'src/core/export-snapshot.ts:62',
   'src/core/page-body/read-range.ts:199', 'src/core/page-body/read-range.ts:177', 'src/core/page-body/read-range.ts:253', 'src/core/page-body/read-range.ts:631',
   'src/core/page-body/segment-blocks.ts:166', 'src/core/page-body/body-tiling.ts:35', 'src/commands/doctor/checks/folder-access.ts:30',
-  'src/core/ops/admin.ts:266', 'src/core/ops/admin.ts:313', 'src/core/search/transcript-quote.ts:111', 'src/core/facts/withdrawal-discovery.ts:26', 'src/core/facts/withdrawal-discovery.ts:81', 'src/core/facts/withdrawal-discovery.ts:117',
-  'src/core/facts/withdrawal-discovery.ts:144', 'src/core/facts/withdrawal-discovery.ts:205',
+  'src/core/core-memory.ts:268', 'src/core/eligibility/scan.ts:95', 'src/core/eligibility/scan.ts:97', 'src/core/eligibility/scan.ts:99',
+  'src/core/eligibility/scan.ts:101', 'src/core/eligibility/scan.ts:207', 'src/core/belief/history.ts:61', 'src/core/belief/history.ts:85',
+  'src/core/ops/admin.ts:266', 'src/core/ops/admin.ts:313', 'src/core/search/transcript-quote.ts:111', 'src/core/ops/get-page-projection.ts:218',
+  'src/core/facts/withdrawal-discovery.ts:26', 'src/core/facts/withdrawal-discovery.ts:81', 'src/core/facts/withdrawal-discovery.ts:117',
+  'src/core/facts/withdrawal-discovery.ts:129', 'src/core/facts/withdrawal-discovery.ts:144', 'src/core/facts/withdrawal-discovery.ts:156',
+  'src/core/facts/withdrawal-discovery.ts:171', 'src/core/facts/withdrawal-discovery.ts:205',
   'src/commands/doctor/checks/queue-jobs.ts:79', 'src/commands/doctor/checks/queue-jobs.ts:92', 'src/commands/doctor/checks/queue-jobs.ts:103',
   'src/commands/doctor/checks/queue-jobs.ts:112', 'src/commands/doctor/checks/queue-jobs.ts:134', 'src/commands/doctor/checks/queue-jobs.ts:175',
   'src/commands/doctor/checks/queue-jobs.ts:251', 'src/commands/doctor/checks/queue-jobs.ts:281', 'src/commands/doctor/checks/queue-jobs.ts:406',
@@ -62,8 +69,9 @@ const ALL_SITES = [
 
 // ---------------------------------------------------------------- comparison
 
+type Access = Parameters<typeof withCallerAccess>[0];
 interface Fixture { before: BrainEngine; after: BrainEngine; world: World; backend: 'pglite' | 'postgres' }
-interface Opts { ordered?: boolean; nonEmpty?: boolean }
+interface Opts { ordered?: boolean; nonEmpty?: boolean; access?: Access }
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -98,6 +106,8 @@ function hasData(v: unknown): boolean {
   return true;
 }
 
+const asCaller = <T>(access: Access | undefined, fn: () => Promise<T>): Promise<T> => (access ? withCallerAccess(access, fn) : fn());
+
 /** Whole 10-minute buckets of an age in seconds (the clock-derived reads; seeds sit on whole hours). */
 const bucket = (seconds: unknown) => (seconds === null || seconds === undefined ? null : Math.round(Number(seconds) / 600));
 const bucketMinutes = (minutes: unknown) => (minutes === null || minutes === undefined ? null : Math.round(Number(minutes) / 10));
@@ -106,10 +116,9 @@ const bucketDate = (d: Date | null) => (d === null ? null : Math.round((Date.now
 /** The sites each describe has proved; the last case compares it with ALL_SITES. */
 let covered: Set<string>;
 
-/** Run master's text on the before brain and the member on the after brain; require the same rows. */
+/** Run master's text on the before brain and the member on the after brain, under the same caller; require the same rows. */
 async function site(f: Fixture, keys: string | string[], before: (e: BrainEngine) => Promise<unknown>, after: (e: BrainEngine) => Promise<unknown>, o: Opts = {}): Promise<unknown> {
-  const b = await before(f.before);
-  const a = await after(f.after);
+  const [b, a] = await asCaller(o.access, async () => [await before(f.before), await after(f.after)] as const);
   expect(canon(a, o.ordered ?? false)).toEqual(canon(b, o.ordered ?? false));
   if (o.nonEmpty !== false) expect(hasData(b)).toBe(true);
   for (const k of Array.isArray(keys) ? keys : [keys]) covered.add(k);
@@ -214,15 +223,18 @@ interface World {
   ids: Record<string, number>;
   seg: { big: { pageId: number; occurrences: number[] }; a: { pageId: number; occurrences: number[] }; b: { pageId: number; occurrences: number[] } };
   versions: number[];
+  rederivePage: number;
 }
 
 async function seedWorld(e: BrainEngine, backend: 'pglite' | 'postgres'): Promise<World> {
   await createSource(e, backend, 'other');
   await createSource(e, backend, 'reborn');
-  // Titles and aliases: out of byte order, with a deleted page and a second source.
+  // Titles and aliases: out of byte order, with a private page, a readers-only page, a deleted page and a second source.
   await e.putPage('people/acme-b', page('person', 'Acme Example'), { sourceId: 'other' });
   await e.putPage('people/acme-b', page('person', 'Acme Example'));
   await e.putPage('people/acme-a', page('person', 'ACME example'));
+  await e.putPage('people/acme-private', page('person', 'Acme Example', { visibility: 'private' }));
+  await e.putPage('people/acme-readers', page('person', 'Acme example', { readable_by: ['alice-example'] }));
   await e.putPage('people/acme-gone', page('person', 'Acme Example'));
   await e.softDeletePage('people/acme-gone');
   await e.putPage('notes/acme', page('note', 'Acme Example'));
@@ -236,6 +248,12 @@ async function seedWorld(e: BrainEngine, backend: 'pglite' | 'postgres'): Promis
   ]);
   await e.replaceDerivedAliases('people/a-founder', 'default', [{ alias_norm: 'ae', origin: 'declared', case_sensitive: true, alias_text: 'aE' }]);
   await e.replaceDerivedAliases('people/alice-example', 'other', [{ alias_norm: 'ae', origin: 'declared', case_sensitive: true, alias_text: 'A.E.' }]);
+
+  // Core memory: always_load pages, one private, one readers-only, one in the other source.
+  await e.putPage('core/open', page('note', 'Core open', { always_load: true }));
+  await e.putPage('core/private', page('note', 'Core private', { always_load: true, visibility: 'private' }));
+  await e.putPage('core/readers', page('note', 'Core readers', { always_load: true, readable_by: ['alice-example'] }));
+  await e.putPage('core/work', page('note', 'Core work', { always_load: true }), { sourceId: 'other' });
 
   // Export: payloads, tags, a timeline, versions, a segmented page with a forced cut, folder rules.
   await e.putPage('export/a', page('note', 'A', { status: 'v', nested: { bb: 1, a: 2 }, n: 2 }, 'alpha body', '- 2026: one'));
@@ -272,7 +290,14 @@ async function seedWorld(e: BrainEngine, backend: 'pglite' | 'postgres'): Promis
     { fact: 'Alice keeps bees', entity: 'people/z-example', page: 'memory/members/alice-example' },
     { fact: 'Bob bakes bread', entity: 'people/e-example', page: 'notes/never-written' },
   ]);
-  await insertFacts(e, [{ fact: 'Alice keeps bees', entity: null, page: 'notes/other' }, { fact: 'Carol cooks rice', entity: null, page: 'notes/other' }], 'other');
+  await insertFacts(e, [{ fact: 'Alice keeps bees', entity: null, page: 'notes/other' }], 'other');
+  // A fact stamped at the default tier (no write-trust settings): the trust scan reads only the tiers at or below the activation ceiling.
+  await e.insertFacts([{ fact: 'Dora draws maps', entity_slug: null, source_markdown_slug: 'notes/dora', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence',
+    valid_from: new Date(Date.UTC(2026, 6, 1)) }] as never, { source_id: 'default' });
+  await e.putPage('notes/truth', page('note', 't', {}, `Intro\n\n${fence('Alice keeps bees')}`));
+  await e.putPage('notes/timeline', page('note', 'tl', {}, 'Intro', fence('ALICE KEEPS BEES')));
+  await e.putPage('notes/other-claim', page('note', 'o', {}, fence('Bob bakes bread')));
+  await e.putPage('notes/literal', page('note', 'l', {}, fence('50% of C_plus keeps')));
   const lead = 'Intro line\n';
   const bees = fence('Alice keeps bees');
   const bread = fence('Bob bakes bread');
@@ -291,28 +316,58 @@ async function seedWorld(e: BrainEngine, backend: 'pglite' | 'postgres'): Promis
 
   const ids: Record<string, number> = {};
   for (const [slug, source] of [['export/a', 'default'], ['export/b', 'default'], ['export/gone', 'default'], ['other/c', 'default'], ['notes/open', 'default'],
-    ['notes/second', 'default'], ['memory/members/alice-example', 'default'],
+    ['notes/second', 'default'], ['notes/truth', 'default'], ['memory/members/alice-example', 'default'], ['core/open', 'default'], ['core/private', 'default'], ['core/readers', 'default'], ['core/work', 'other'],
     ['people/alice-example', 'default'], ['people/acme-a', 'default'], ['people/acme-gone', 'default'], ['notes/other', 'other']] as const) {
     ids[`${source}:${slug}`] = Number((await e.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [source, slug]))[0]!.id);
   }
 
-  // Belief ledger: coverage in two sources (the page streams and their visibility reads stay at their call sites in this slice).
-  await beliefEvent(e, { n: 1, slug: '', kind: 'coverage', subject: COVERAGE_KEY, type: 'coverage.started', at: '2026-01-01T00:00:01Z' });
+  // The scan tables: a take and a timeline entry on a page, and the facts above.
+  await e.addTakesBatch([{ page_id: ids['default:export/a']!, row_num: 1, claim: 'a claim', kind: 'take', holder: 'people/alice-example', weight: 0.5 }]);
+  await e.addTimelineEntry('export/a', { date: '2026-01-02', summary: 'met', detail: 'd' });
+
+  // Belief ledger: coverage in two sources, a page stream with a fact that a later private event shadows, takes with and without a holder,
+  // a hidden claim, and a private page's stream; page lifetimes for the two pages.
+  const L1 = UUID(1);
+  const L2 = UUID(2);
+  await e.executeRaw(`INSERT INTO belief_page_lifetimes (page_lifetime, source_id, source_incarnation, slug, page_id, started_at)
+    SELECT $1::uuid, 'default', s.incarnation, 'core/open', $2, '2026-01-01T00:00:00Z' FROM sources s WHERE s.id = 'default'`, [L1, ids['default:core/open']]);
+  await e.executeRaw(`INSERT INTO belief_page_lifetimes (page_lifetime, source_id, source_incarnation, slug, page_id, started_at)
+    SELECT $1::uuid, 'default', s.incarnation, 'core/private', $2, '2026-01-01T00:00:00Z' FROM sources s WHERE s.id = 'default'`, [L2, ids['default:core/private']]);
+  const events = [
+    { n: 1, slug: '', kind: 'coverage', subject: COVERAGE_KEY, type: 'coverage.started', at: '2026-01-01T00:00:01Z' },
+    { n: 2, slug: 'core/open', lifetime: L1, kind: 'page', subject: 'page', type: 'page.created', at: '2026-01-01T00:00:02Z' },
+    { n: 3, slug: 'core/open', lifetime: L1, kind: 'fact', subject: 'f1', type: 'fact.added', claimFp: 'fp1', at: '2026-01-01T00:00:03Z' },
+    { n: 4, slug: 'core/open', lifetime: L1, kind: 'fact', subject: 'f1b', type: 'fact.added', claimFp: 'fp1', visibility: 'private', at: '2026-01-01T00:00:04Z' },
+    { n: 5, slug: 'core/open', lifetime: L1, kind: 'take', subject: 't1', type: 'take.added', value: { holder: 'alice', claim: 'c' }, at: '2026-01-01T00:00:05Z' },
+    { n: 6, slug: 'core/open', lifetime: L1, kind: 'take', subject: 't1', type: 'take.changed', value: { claim: 'c2' }, at: '2026-01-01T00:00:06Z' },
+    { n: 7, slug: 'core/open', lifetime: L1, kind: 'fact', subject: 'f9', type: 'fact.added', claimFp: 'fp9', at: '2026-01-01T00:00:07Z' },
+    { n: 8, slug: 'core/open', lifetime: L1, kind: 'fact', subject: 'f9', type: 'derived.hidden', at: '2026-01-01T00:00:08Z' },
+    { n: 9, slug: 'core/private', lifetime: L2, kind: 'page', subject: 'page', type: 'page.created', at: '2026-01-01T00:00:09Z' },
+    { n: 10, slug: 'core/private', lifetime: L2, kind: 'fact', subject: 'pf1', type: 'fact.added', claimFp: 'fp-private', at: '2026-01-01T00:00:10Z' },
+    { n: 11, slug: 'core/open', lifetime: L1, kind: 'fact', subject: 'f2', type: 'fact.added', claimFp: 'fp2', at: '2026-02-01T00:00:00Z' },
+  ];
+  for (const ev of events) await beliefEvent(e, ev);
   await beliefEvent(e, { n: 12, source: 'other', slug: '', kind: 'coverage', subject: COVERAGE_KEY, type: 'coverage.started', at: '2026-01-01T00:00:11Z' });
 
   // A source whose coverage event belongs to an earlier incarnation: it is not covered now.
   await beliefEvent(e, { n: 13, source: 'reborn', slug: '', kind: 'coverage', subject: COVERAGE_KEY, type: 'coverage.started', at: '2026-01-01T00:00:12Z' });
   await e.executeRaw(`UPDATE sources SET incarnation = gen_random_uuid() WHERE id = 'reborn'`);
-
-  // A version whose tier is stamped.
+  // A page a purge marked for re-derivation, and a version whose tier is stamped.
+  await e.executeRaw(`INSERT INTO needs_rederive (derived_table, derived_id, reason) VALUES ('pages', $1, 'purge'), ('pages', $2, 'purge')`,
+    [String(ids['default:notes/second']), String(ids['default:core/private'])]);
   const versions = (await e.getVersions('export/a')).map(v => Number(v.id));
   versions.push(...(await e.getVersions('notes/big')).map(v => Number(v.id)));
   await e.executeRaw(`UPDATE page_versions SET trust_tier = 'operator_curated' WHERE id = $1`, [versions[0]]);
   await seedJobs(e, JOBS);
-  return { ids, seg: { big, a, b }, versions };
+  return { ids, seg: { big, a, b }, versions, rederivePage: ids['default:notes/second']! };
 }
 
 // ---------------------------------------------------------------- cases
+
+const WORLD_ONLY: Access = { identity: ['member:world-only'], hidePrivate: true };
+const READER: Access = { identity: ['member:alice-example', 'group:team-a'], hidePrivate: true };
+const GRANTED: Access = { identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true };
+const has = (v: unknown, text: string) => JSON.stringify(v).includes(text);
 
 /** The fields a page row carries that differ between two brains by construction (stamps, the revision uuid). */
 const stripStamps = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([k]) => !/(_at|revision)$/.test(k)));
@@ -345,8 +400,27 @@ for (const kind of testBackends()) {
     }, 240_000);
     afterAll(async () => { for (const close of closers) await close(); });
 
-    // -------- alias-fanout.ts:118, :146, :161 and entity-card-identity.ts:141
-    test('alias fan-out reads: case-sensitive aliases, a title, alias names, sibling aliases', async () => {
+    // -------- alias-fanout.ts:110, :118, :146, :161 and entity-card-identity.ts:141
+    test('alias fan-out reads: titles (with the page-visibility filter), case-sensitive aliases, a title, alias names, sibling aliases', async () => {
+      const norms = ['acme example', 'widget co'];
+      const sources = ['other', 'default'];
+      const types = ['person', 'company'];
+      const titles = (access: Access | undefined, excludePrivate: boolean) => site(f, 'src/core/search/alias-fanout.ts:110',
+        e => M.titleRead(e, norms, sources, types, { excludePrivate }), e => e.findPagesByTitles(norms, sources, types, { excludePrivate }), { access, ordered: false });
+      const open = await titles(undefined, false);
+      const world = await titles(WORLD_ONLY, true);
+      const reader = await titles(READER, true);
+      const granted = await titles(GRANTED, true);
+      // The private row and the readers-only row are in the unfiltered answer; a world-only caller loses both, a reader keeps its own, a grant keeps the private one.
+      expect([has(open, 'people/acme-private'), has(open, 'people/acme-readers')]).toEqual([true, true]);
+      expect([has(world, 'people/acme-private'), has(world, 'people/acme-readers'), has(world, 'people/acme-a')]).toEqual([false, false, true]);
+      expect([has(reader, 'people/acme-private'), has(reader, 'people/acme-readers')]).toEqual([false, true]);
+      expect([has(granted, 'people/acme-private'), has(granted, 'people/acme-readers')]).toEqual([true, true]);
+      // Empty inputs: master's statement answers nothing; the member returns early.
+      for (const [n, s, t] of [[[], sources, types], [norms, [], types], [norms, sources, []]] as const) {
+        await site(f, 'src/core/search/alias-fanout.ts:110', e => M.titleRead(e, [...n], [...s], [...t], {}), e => e.findPagesByTitles(n, s, t), { nonEmpty: false });
+      }
+
       await site(f, 'src/core/search/alias-fanout.ts:118', e => M.caseAliasRead(e, ['ae', 'alice'], ['default', 'other']), e => e.resolveCaseSensitiveAliases(['ae', 'alice'], ['default', 'other']));
       await site(f, 'src/core/search/alias-fanout.ts:118', e => M.caseAliasRead(e, [], ['default']), e => e.resolveCaseSensitiveAliases([], ['default']), { nonEmpty: false });
 
@@ -357,7 +431,6 @@ for (const kind of testBackends()) {
       const cased = await f.after.resolveCaseSensitiveAliases(['ae', 'alice'], ['default', 'other']);
       expect(cased.length).toBeGreaterThan(2);
       byteSorted(cased, 'slug', 'alias_norm', 'alias_text');
-
       for (const [source, slug] of [['default', 'people/acme-a'], ['default', 'people/acme-gone'], ['other', 'people/acme-b']] as const) {
         const title = await site(f, 'src/core/search/alias-fanout.ts:146', async e => (await M.titleOf(e, source, slug))[0]?.title ?? null, e => e.readPageTitle(source, slug));
         expect(typeof title).toBe('string');
@@ -447,8 +520,81 @@ for (const kind of testBackends()) {
       expect(await site(f, 'src/commands/doctor/checks/folder-access.ts:30', async e => rowsOf(await M.accessPolicySources(e)).map(r => r.source_id), e => e.listAccessPolicySourceIds(), { ordered: true })).toEqual(['default', 'other']);
     });
 
-    // -------- admin.ts:266, :313, transcript-quote.ts:111
-    test('version tiers, replacing writers and page types', async () => {
+    // -------- core-memory.ts:268
+    test('core memory pages: every option, with the private row hidden from a world-only caller', async () => {
+      const coreView = (rows: unknown) => rowsOf(rows).map(r => {
+        const { body_storage, body_bytes, ...rest } = r;
+        const segmented = body_storage === 'segmented';
+        return { ...rest, segmented, body_bytes: segmented && body_bytes != null ? Number(body_bytes) : null, withdrawn: r.withdrawn === true, ...(r.suppressed === undefined ? {} : { suppressed: r.suppressed === true }) };
+      });
+      const read = (opts: M.CoreOpts, access?: Access, nonEmpty = true) => site(f, 'src/core/core-memory.ts:268', async e => coreView(await M.corePages(e, opts)), e => e.listCorePageRows(opts), { ordered: true, access, nonEmpty });
+      const open = await read({});
+      expect(rowsOf(open).map(r => r.slug)).toEqual(['core/open', 'core/private', 'core/readers', 'core/work']);
+      expect(rowsOf(open).map(r => r.withdrawn)).toEqual([true, false, false, true]);
+      const floor = await read({ excludePrivate: true }, WORLD_ONLY);
+      const caller = await read({ excludePrivate: true, forCaller: true }, WORLD_ONLY);
+      const readers = await read({ excludePrivate: true, forCaller: true }, READER);
+      expect(has(floor, 'core/private')).toBe(false);
+      expect(has(caller, 'core/private')).toBe(false);
+      expect([has(caller, 'core/readers'), has(readers, 'core/readers'), has(readers, 'core/private')]).toEqual([false, true, false]);
+      await read({ sourceIds: ['other'] });
+      await read({ exclude: { sourceId: 'default', slug: 'core/open' } });
+      const policy = await read({ eligibility: { suppressFlagged: true } });
+      expect(rowsOf(policy)[0]).toMatchObject({ suppressed: false });
+      await read({ eligibility: { floor: 'unknown' }, excludePrivate: true }, WORLD_ONLY);
+      await read({ eligibility: { floor: 'user_confirmed' } }, undefined, false);
+      await read({ sourceIds: ['nowhere'] }, undefined, false);
+    });
+
+    // -------- eligibility/scan.ts:95, :97, :99, :101, :207
+    test('trust scan rows and unscanned counts: every table, cursor, limit, ceiling and tier list', async () => {
+      const tables = [['pages', 95], ['facts', 97], ['takes', 99], ['timeline_entries', 101]] as const;
+      for (const [table, line] of tables) {
+        const rows = await site(f, `src/core/eligibility/scan.ts:${line}`, e => M.scanRows(e, table, SCAN_TIERS, 0, 50), e => e.listTrustScanRows({ table, afterId: 0, limit: 50, tiers: SCAN_TIERS }), { ordered: true });
+        const first = Number(rowsOf(rows)[0]!.id);
+        await site(f, `src/core/eligibility/scan.ts:${line}`, e => M.scanRows(e, table, SCAN_TIERS, first, 1), e => e.listTrustScanRows({ table, afterId: first, limit: 1, tiers: SCAN_TIERS }), { ordered: true, nonEmpty: table === 'pages' });
+        await site(f, `src/core/eligibility/scan.ts:${line}`, e => M.scanRows(e, table, ['user_confirmed'], 0, 50), e => e.listTrustScanRows({ table, afterId: 0, limit: 50, tiers: ['user_confirmed'] }), { nonEmpty: false });
+        for (const [afterId, until] of [[0, null], [0, 2], [first, null]] as const) {
+          await site(f, 'src/core/eligibility/scan.ts:207', async e => Number(rowsOf(await M.unscannedCount(e, table, SCAN_TIERS, afterId, until))[0]!.n),
+            e => e.countUnscannedTrustRows({ table, afterId, until, tiers: SCAN_TIERS }), { nonEmpty: false });
+        }
+        const total = await site(f, 'src/core/eligibility/scan.ts:207', async e => Number(rowsOf(await M.unscannedCount(e, table, SCAN_TIERS, 0, null))[0]!.n),
+          e => e.countUnscannedTrustRows({ table, afterId: 0, until: null, tiers: SCAN_TIERS }));
+        expect(total).toBe(rowsOf(rows).length);
+      }
+    });
+
+    // -------- belief/history.ts:61 and :85
+    test('belief history rows and visible lifetimes: every filter and direction, the private stream hidden from a world-only caller', async () => {
+      const base: M.HistoryQuery = { sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 50, recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null, descending: false };
+      const variants: Array<Partial<M.HistoryQuery>> = [{}, { slug: 'core/open' }, { subjectKey: 't1' }, { afterId: 3 }, { descending: true, limit: 4 }, { recordedAfter: '2026-01-15T00:00:00Z' },
+        { recordedUntil: '2026-01-01T00:00:05Z' }, { subjectKeys: ['f1', 't1'] }, { beforeId: 6, descending: true }, { sourceId: 'other' }];
+      const read = (o: Partial<M.HistoryQuery>, access?: Access) => site(f, 'src/core/belief/history.ts:61', async e => rowsOf(await M.historyRows(e, { ...base, ...o })).map(r => ({ ...r, id: Number(r.id) })),
+        e => e.readBeliefHistoryRows({ ...base, ...o }), { ordered: true, access, nonEmpty: o.sourceId !== 'other' || false });
+      for (const o of variants.filter(v => v.sourceId === undefined)) { await read(o); await read(o, WORLD_ONLY); }
+      await site(f, 'src/core/belief/history.ts:61', async e => rowsOf(await M.historyRows(e, { ...base, sourceId: 'other' })), e => e.readBeliefHistoryRows({ ...base, sourceId: 'other' }), { nonEmpty: false });
+      const open = rowsOf(await read({}));
+      const world = rowsOf(await read({}, WORLD_ONLY));
+      const streamOf = (rows: Array<Record<string, unknown>>, slug: string) => rows.filter(r => r.slug === slug).map(r => r.stream_visible);
+      // The remote read floor hides the private page's stream whoever asks (it has no caller-specific arm); the open page's stays visible.
+      expect(streamOf(open, 'core/private')).toEqual([false, false]);
+      expect(streamOf(world, 'core/private')).toEqual([false, false]);
+      expect(streamOf(open, 'core/open').every(v => v === true)).toBe(true);
+      expect(streamOf(world, 'core/open').every(v => v === true)).toBe(true);
+      expect(open.find(r => r.subject_key === 'f1')!.later_private).toBe(true);
+      expect(open.find(r => r.event_type === 'take.changed')!.take_holder).toBe('alice');
+      expect(open.some(r => r.subject_key === 'f9' && r.event_type === 'fact.added')).toBe(false); // a hidden claim stays hidden
+
+      const lifetimes = [UUID(1), UUID(2)];
+      const read2 = (access?: Access) => site(f, 'src/core/belief/history.ts:85', async e => rowsOf(await M.visibleLifetimes(e, lifetimes)).map(r => r.page_lifetime), e => e.listVisibleBeliefLifetimes(lifetimes), { access });
+      // The private page's lifetime is not visible past the remote read floor, to any caller; the open page's is.
+      expect(await read2()).toEqual([UUID(1)]);
+      expect(await read2(WORLD_ONLY)).toEqual([UUID(1)]);
+      await site(f, 'src/core/belief/history.ts:85', async e => rowsOf(await M.visibleLifetimes(e, [])).map(r => r.page_lifetime), e => e.listVisibleBeliefLifetimes([]), { nonEmpty: false });
+    });
+
+    // -------- admin.ts:266, :313, transcript-quote.ts:111, get-page-projection.ts:218
+    test('version tiers, replacing writers, page types and the re-derivation flag', async () => {
       const versions = f.world.versions;
       const tiers = rowsOf(await site(f, 'src/core/ops/admin.ts:266', e => M.versionTiers(e, versions), e => e.listVersionTrustTiers(versions)));
       expect(tiers.some(r => r.trust_tier === 'operator_curated')).toBe(true);
@@ -458,10 +604,16 @@ for (const kind of testBackends()) {
       const typed = ['default:export/a', 'default:export/b', 'default:export/gone', 'default:people/alice-example'].map(k => f.world.ids[k]!);
       await site(f, 'src/core/search/transcript-quote.ts:111', e => M.pageTypes(e, [...typed, typed[0]!, 999_999]), e => e.listPageTypesByIds([...typed, typed[0]!, 999_999]));
       await site(f, 'src/core/search/transcript-quote.ts:111', async e => rowsOf(await M.pageTypes(e, [])), async e => e.listPageTypesByIds([]), { nonEmpty: false });
+      expect(await site(f, 'src/core/ops/get-page-projection.ts:218', async e => Number(rowsOf(await M.awaitsRederive(e, f.world.rederivePage))[0]!.n) > 0, e => e.pageAwaitsRederive(f.world.rederivePage))).toBe(true);
+      // A private page a purge hid: a world-only caller reads the same flag (the statement has no caller arm, so the answer is the caller's own business).
+      const privatePage = f.world.ids['default:core/private']!;
+      expect(await site(f, 'src/core/ops/get-page-projection.ts:218', async e => Number(rowsOf(await M.awaitsRederive(e, privatePage))[0]!.n) > 0, e => e.pageAwaitsRederive(privatePage), { access: WORLD_ONLY })).toBe(true);
+      const other = f.world.ids['default:export/a']!;
+      expect(await site(f, 'src/core/ops/get-page-projection.ts:218', async e => Number(rowsOf(await M.awaitsRederive(e, other))[0]!.n) > 0, e => e.pageAwaitsRederive(other), { nonEmpty: false })).toBe(false);
     });
 
-    // -------- withdrawal-discovery.ts:26, :81, :117, :144, :205
-    test('withdrawal discovery: the five reads that moved', async () => {
+    // -------- withdrawal-discovery.ts:26, :81, :117, :129, :144, :156, :171, :205
+    test('withdrawal discovery: the eight reads, the private facts and the owned memory page', async () => {
       const W = f.world;
       const ids = [...Object.values(W.ids), 999_999];
       await site(f, 'src/core/facts/withdrawal-discovery.ts:26', e => M.sampleSlugs(e, 'default', ids), e => e.readWithdrawalDiscovery({ kind: 'sample_slugs', sourceId: 'default', ids }), { ordered: true });
@@ -480,6 +632,21 @@ for (const kind of testBackends()) {
       ];
       await site(f, 'src/core/facts/withdrawal-discovery.ts:117', e => M.claimKeys(e, 'default', JSON.stringify(claims)), e => e.readWithdrawalDiscovery({ kind: 'claim_keys', sourceId: 'default', claims }));
 
+      const provenance = (keys: WithdrawalDiscoveryKey[], sourceId = 'default', nonEmpty = true) => site(f, 'src/core/facts/withdrawal-discovery.ts:129',
+        e => M.provenancePages(e, sourceId, JSON.stringify(keys)), e => e.readWithdrawalDiscovery({ kind: 'provenance_pages', sourceId, keys }), { nonEmpty });
+      const worldKey = rowsOf(await provenance([key('alice keeps bees')])).map(r => Number(r.id));
+      const privateKey = rowsOf(await provenance([key('alice keeps bees', '*', 'private')])).map(r => Number(r.id));
+      // A world key reaches the world facts' pages and never the page of a private fact; a private key reaches that page.
+      expect(worldKey).not.toContain(W.ids['default:notes/second']!);
+      expect(privateKey).toContain(W.ids['default:notes/second']!);
+      const owned = rowsOf(await provenance([key('alice keeps bees', 'memory/members/alice-example')])).map(r => Number(r.id));
+      expect(owned).toEqual([W.ids['default:memory/members/alice-example']!]);
+      await provenance([key('alice keeps bees', 'people/e-example')]);
+      await provenance([key('alice keeps bees', 'people/z-example')]);
+      await provenance([key('alice keeps bees')], 'other');
+      await provenance([{ ...key(null), fact_hash: sha('bob bakes bread') }], 'default', false);
+      await provenance([], 'default', false);
+
       const incoming = [
         { id: 1, slug: 'notes/a', claim: 'Alice keeps bees', visibility: 'world', ambiguous: false },
         { id: 2, slug: 'notes/b', claim: 'ALICE keeps bees!', visibility: null, ambiguous: true },
@@ -491,6 +658,31 @@ for (const kind of testBackends()) {
         await site(f, 'src/core/facts/withdrawal-discovery.ts:144', e => M.claimMatches(e, JSON.stringify(incoming), JSON.stringify(keys)), e => e.readWithdrawalDiscovery({ kind: 'claim_matches', incoming, keys }));
       }
       await site(f, 'src/core/facts/withdrawal-discovery.ts:144', e => M.claimMatches(e, '[]', JSON.stringify([key('alice keeps bees')])), e => e.readWithdrawalDiscovery({ kind: 'claim_matches', incoming: [], keys: [key('alice keeps bees')] }), { nonEmpty: false });
+
+      const inline = (keys: WithdrawalDiscoveryKey[], o: { after?: number; limit?: number; subjects?: string[] | null } = {}, sourceId = 'default', nonEmpty = true) => site(f, 'src/core/facts/withdrawal-discovery.ts:156',
+        e => M.inlineFencePages(e, sourceId, JSON.stringify(keys), o.after ?? 0, o.limit ?? 128, o.subjects ?? null),
+        e => e.readWithdrawalDiscovery({ kind: 'inline_fence_pages', sourceId, keys, after: o.after ?? 0, limit: o.limit ?? 128, subjects: o.subjects ?? null }), { ordered: true, nonEmpty });
+      const bees = key('alice keeps bees');
+      const first = rowsOf(await inline([bees]));
+      await inline([bees], { after: Number(first[0]!.id) });
+      await inline([bees], { limit: 1 });
+      await inline([bees], { subjects: ['notes/timeline'] });
+      await inline([key('alice keeps bees', 'notes/truth')]);
+      await inline([key(null)]);
+      await inline([key('50% of c_plus keeps')]);
+      await inline([], {}, 'default', false);
+      await inline([bees], {}, 'nope', false);
+
+      const segRows = (keys: WithdrawalDiscoveryKey[], o: { after?: [number, number]; limit?: number; subjects?: string[] | null } = {}, nonEmpty = true) => site(f, 'src/core/facts/withdrawal-discovery.ts:171',
+        e => M.segmentFenceRows(e, 'default', JSON.stringify(keys), o.after ?? [0, 0], o.limit ?? 128, o.subjects ?? null),
+        e => e.readWithdrawalDiscovery({ kind: 'segment_fence_rows', sourceId: 'default', keys, after: o.after ?? [0, 0], limit: o.limit ?? 128, subjects: o.subjects ?? null }), { ordered: true, nonEmpty });
+      await segRows([bees]);
+      await segRows([key('bob bakes bread')]);
+      await segRows([bees], { after: [W.seg.a.pageId, W.seg.a.occurrences[0]!] });
+      await segRows([key(null)], { limit: 1 });
+      await segRows([bees], { subjects: ['notes/seg-b'] });
+      await segRows([key('alice keeps bees', 'notes/seg-a')]);
+      await segRows([key('nothing here')], {}, false);
 
       const split = (o: { after?: [number, string, number]; limit?: number; subjects?: string[] | null } = {}, nonEmpty = true) => site(f, 'src/core/facts/withdrawal-discovery.ts:81',
         e => M.splitFenceSlots(e, 'default', o.subjects ?? null, o.after ?? [0, '', -1], o.limit ?? 128),
@@ -557,6 +749,19 @@ for (const kind of testBackends()) {
         .toEqual(expect.arrayContaining([{ name: 'lapsed', n: 2 }, { name: 'twice', n: 1 }]));
       // Most first (the member sorts what the statement leaves to `ORDER BY n DESC`).
       expect((await f.after.listStuckActiveJobsByName()).map(r => r.name)).toEqual(['lapsed', 'twice']);
+    });
+
+    // -------- an owner-only source: the closed policy hides every core page from a non-owner reader
+    test('core memory pages with an owner-only source present: the filtered read is closed, the unfiltered read lists the page', async () => {
+      for (const e of [f.before, f.after]) {
+        await createSource(e, f.backend, 'vault', { owner_only: true });
+        await e.putPage('core/vault', page('note', 'Core vault', { always_load: true }), { sourceId: 'vault' });
+      }
+      const read = (opts: M.CoreOpts, nonEmpty: boolean) => site(f, 'src/core/core-memory.ts:268', async e => rowsOf(await M.corePages(e, opts)).map(r => ({ source: r.source_id, slug: r.slug })),
+        async e => (await e.listCorePageRows(opts)).map(r => ({ source: r.source_id, slug: r.slug })), { ordered: true, nonEmpty });
+      expect(has(await read({}, true), 'core/vault')).toBe(true);
+      expect(await read({ excludePrivate: true }, false)).toEqual([]);
+      expect(await read({ excludePrivate: true, forCaller: true }, false)).toEqual([]);
     });
 
     test('every moved read site has a case', () => {

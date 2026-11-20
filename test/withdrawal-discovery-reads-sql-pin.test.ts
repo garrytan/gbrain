@@ -3,13 +3,19 @@
  * and binds discoverWithdrawalTargets (src/core/facts/withdrawal-discovery.ts) sent through `executeRaw` before the
  * reads had one member. A drift here changes a query plan or a result on Postgres alone, which PGLite parity cannot see.
  *
- * Protects: each kind's recorded text and params equal the old raw statement byte for byte. The keys and claims bind as
- * the same JSON text, the cursors and subjects in the old order. The provenance and fence shortlists stay at their call site in this slice.
+ * Protects: each kind's recorded text and params. `claim_keys`, `claim_matches`, `split_fence_slots`, `target_pages` and
+ * `sample_slugs` equal the old raw statement byte for byte. `provenance_pages`, `inline_fence_pages` and
+ * `segment_fence_rows` spliced text and hand-numbered placeholders at the call site; they are composed with sqlFragment
+ * now, so their text differs from the old one in the placeholders only (each value is bound where it is used, so a value
+ * that was $5 twice binds twice). The owned-memory-page clause and the LIKE shortlists are rebuilt from their builders
+ * here, so a constant copy of them fails when the builder changes. test/n3-sql-move-parity.test.ts proves the new text
+ * answers the old statement's rows on PGLite and Postgres.
  * Fails when a kind reorders a clause, renumbers a placeholder or binds a value differently.
  * No database: the engine runs on the recording fake.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
+import { onOwnedMemoryPageSql } from '../src/core/access/member-facts.ts';
 import type { WithdrawalDiscoveryKey } from '../src/core/engine-sql/withdrawal-discovery.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
@@ -28,8 +34,10 @@ const keys: WithdrawalDiscoveryKey[] = [
   { visibility: 'world', fact_hash: 'h1', subject: '*', norm: 'alice keeps bees', patterns: ['%alice%', '%keeps%', '%bees%'] },
   { visibility: 'private', fact_hash: 'h2', subject: 'people/e-example', norm: null, patterns: [] },
 ];
+const shortlist = (text: string) => `lower(${text}) LIKE ALL(k.patterns)`;
+const slotText = `convert_from(substring(t.body from (s->>'start')::int + 1 for (s->>'end')::int - (s->>'start')::int),'UTF8')`;
 
-test('claim_keys sends the old keying statement', async () => {
+test('claim_keys and provenance_pages send the old keying and provenance statements', async () => {
   const { engine, last } = recordingEngine();
   const claims = [{ visibility: 'world', fact_hash: 'h1', subject: '*', claim: 'Alice keeps bees' }, { visibility: 'private', fact_hash: 'h2', subject: 'people/e-example', claim: null }];
   await engine.readWithdrawalDiscovery({ kind: 'claim_keys', sourceId: 'src-a', claims });
@@ -41,6 +49,16 @@ test('claim_keys sends the old keying statement', async () => {
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
     ) SELECT * FROM w`,
     params: ['src-a', JSON.stringify(claims)],
+  });
+  await engine.readWithdrawalDiscovery({ kind: 'provenance_pages', sourceId: 'src-a', keys });
+  expect(last()).toEqual({
+    text: `SELECT DISTINCT p.id
+    FROM jsonb_to_recordset($1::text::jsonb) k(visibility text,fact_hash text,subject text,norm text)
+    JOIN facts f ON f.source_id=$2 AND f.visibility=k.visibility
+      AND gbrain_fact_fingerprint(f.fact)=COALESCE(encode(sha256(convert_to(k.norm,'UTF8')),'hex'),k.fact_hash)
+      AND (k.subject='*' OR f.entity_slug=k.subject OR (${onOwnedMemoryPageSql('f')} AND f.source_markdown_slug=k.subject))
+    JOIN pages p ON p.source_id=f.source_id AND p.slug=COALESCE(f.source_markdown_slug,f.entity_slug)`,
+    params: [JSON.stringify(keys), 'src-a'],
   });
 });
 
@@ -55,6 +73,32 @@ test('claim_matches sends the old fingerprint match statement', async () => {
         ON (i.visibility IS NULL OR i.visibility=w.visibility) AND (w.subject='*' OR w.subject=i.slug)
           AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v1(i.claim))`,
     params: [JSON.stringify(incoming), JSON.stringify(keys)],
+  });
+});
+
+test('inline_fence_pages and segment_fence_rows send the composed shortlist statements with every value bound where it is used', async () => {
+  const { engine, last } = recordingEngine();
+  await engine.readWithdrawalDiscovery({ kind: 'inline_fence_pages', sourceId: 'src-a', keys, after: 5, limit: 128, subjects: ['notes/a'] });
+  expect(last()).toEqual({
+    text: `SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p
+      WHERE p.source_id=$1 AND p.id>$2 AND ($3::text[] IS NULL OR p.slug=ANY($4::text[]))
+        AND (strpos(p.compiled_truth,'gbrain:facts:')>0 OR strpos(p.timeline,'gbrain:facts:')>0)
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($5::text::jsonb) k(subject text,patterns text[])
+          WHERE (k.subject='*' OR k.subject=p.slug) AND ((${shortlist('p.compiled_truth')}) OR (${shortlist('p.timeline')})))
+      ORDER BY p.id LIMIT $6`,
+    params: ['src-a', 5, ['notes/a'], ['notes/a'], JSON.stringify(keys), 128],
+  });
+  await engine.readWithdrawalDiscovery({ kind: 'segment_fence_rows', sourceId: 'src-a', keys, after: [5, 9], limit: 128, subjects: null });
+  expect(last()).toEqual({
+    text: `SELECT p.id,m.occurrence_id::text AS occurrence_id,p.slug,
+        ARRAY(SELECT ${slotText} FROM jsonb_array_elements(m.facts_slots) s WHERE NOT s ? 'open_start') AS fences
+      FROM page_body_manifest m JOIN pages p ON p.id=m.page_id JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
+      WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb
+        AND (m.page_id,m.occurrence_id)>($2::int,$3::bigint) AND ($4::text[] IS NULL OR p.slug=ANY($5::text[]))
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($6::text::jsonb) k(subject text,patterns text[]), jsonb_array_elements(m.facts_slots) s
+          WHERE (k.subject='*' OR k.subject=p.slug) AND NOT s ? 'open_start' AND ${shortlist(slotText)})
+      ORDER BY m.page_id,m.occurrence_id LIMIT $7`,
+    params: ['src-a', 5, 9, null, null, JSON.stringify(keys), 128],
   });
 });
 

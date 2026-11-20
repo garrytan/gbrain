@@ -50,7 +50,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
-  'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows',
+  'findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows',
   // CLI export and segmented-body reads (engine-sql/export-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
   'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines', 'readSegmentedPageHead',
   'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listForcedCutSeqs', 'readSegmentedVersionBodyBytes', 'listAccessPolicySourceIds',
@@ -60,7 +60,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
   'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
   // Trust-tier reads (engine-sql/trust-tier-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
-  'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageTypesByIds',
+  'listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
+  'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageTypesByIds', 'pageAwaitsRederive',
   // Withdrawal discovery (engine-sql/withdrawal-discovery.ts)
   'readWithdrawalDiscovery',
   // Lifecycle
