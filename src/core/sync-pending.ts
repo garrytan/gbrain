@@ -94,30 +94,24 @@ export async function readGitPendingEvidence(root: string, synced: string): Prom
   return { head: checkout.head, behind: true, departedAt: null, reason };
 }
 
-interface DueRow { source_id: string; first_due_at: unknown; observed_head: string | null }
 export interface PersistedDue { firstDueAt: number | null; observedHead: string | null }
 
-/** The notifier's persisted first_due_at per source (state not idle, or a due freshness marker), current incarnation only. */
-export async function readFirstDue(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds: string[]): Promise<Map<string, PersistedDue>> {
+/**
+ * The notifier's persisted first_due_at per source (state not idle, or a due freshness marker), current incarnation
+ * only. A brain from before the notifier tables reads empty; any other database error reaches the caller.
+ */
+export async function readFirstDue(engine: Pick<BrainEngine, 'readNotifierFirstDue'>, sourceIds: string[]): Promise<Map<string, PersistedDue>> {
   const out = new Map<string, PersistedDue>();
   if (!sourceIds.length) return out;
-  let rows: DueRow[];
+  let rows: Awaited<ReturnType<BrainEngine['readNotifierFirstDue']>>;
   try {
-    rows = await engine.executeRaw<DueRow>(
-      `SELECT s.id AS source_id, n.observed_head,
-              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
-                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
-                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
-                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
-         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
-        WHERE s.id = ANY($1::text[])`, [sourceIds]);
+    rows = await engine.readNotifierFirstDue(sourceIds);
   } catch (error) {
     if (missingTable(error)) return out;
     throw error;
   }
   for (const row of rows) {
-    const raw = row.first_due_at;
-    const at = raw === null || raw === undefined ? NaN : (raw instanceof Date ? raw : new Date(String(raw))).getTime();
+    const at = row.first_due_at === null ? NaN : Date.parse(row.first_due_at);
     out.set(row.source_id, { firstDueAt: Number.isFinite(at) ? at : null, observedHead: row.observed_head });
   }
   return out;
@@ -128,7 +122,7 @@ export async function readFirstDue(engine: Pick<BrainEngine, 'executeRaw'>, sour
  * source costs one `rev-parse HEAD`, a file read of its reflog and, only when no reflog entry reaches
  * `last_commit`, one `merge-base --is-ancestor`.
  */
-export async function readPendingCommits(engine: Pick<BrainEngine, 'executeRaw'>, sources: PendingSource[], opts: { git: boolean; nowMs?: number }): Promise<PendingCommit[]> {
+export async function readPendingCommits(engine: Pick<BrainEngine, 'executeRaw' | 'readNotifierFirstDue'>, sources: PendingSource[], opts: { git: boolean; nowMs?: number }): Promise<PendingCommit[]> {
   const nowMs = opts.nowMs ?? Date.now();
   const due = await readFirstDue(engine, sources.map(s => s.id));
   const iso = (ms: number) => new Date(ms).toISOString();

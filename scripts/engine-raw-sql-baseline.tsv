@@ -524,8 +524,6 @@ src/core/minions/terminal-hook.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
-src/core/notifier/nudge.ts	execute_raw	1
-src/core/notifier/resident.ts	execute_raw	2
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
@@ -755,7 +753,6 @@ src/core/persistence/sync-holds-carried.ts	execute_raw	1
 src/core/persistence/sync-holds.ts	execute_raw	27
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
-src/core/persistence/sync-lease.ts	execute_raw	5
 src/core/persistence/sync-markers.ts	execute_raw	9
 src/core/persistence/sync-movement.ts	execute_raw	5
 src/core/persistence/sync-origin.ts	execute_raw	1
@@ -967,12 +964,12 @@ src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
 src/core/sweep.ts	execute_raw	3
-src/core/sync-anchor.ts	execute_raw	5
+src/core/sync-anchor.ts	execute_raw	3
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
 src/core/sync-identity-downgrades.ts	execute_raw	8
-src/core/sync-pending.ts	execute_raw	3
+src/core/sync-pending.ts	execute_raw	2
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	4
 src/core/sync-status-report.ts	execute_raw	1

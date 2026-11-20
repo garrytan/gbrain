@@ -13,6 +13,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
+import { MANAGED_SYNC_PASS_OP } from '../persistence/sync-pass-row.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
@@ -459,4 +460,24 @@ export function withdrawalEffectsParams(spec: WithdrawalEffectsSpec): unknown[] 
 /** Queues a withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (see `WITHDRAWAL_EFFECTS_SQL`). */
 export async function insertWithdrawalEffects(exec: SqlExecutor, spec: WithdrawalEffectsSpec): Promise<void> {
   await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
+}
+
+/** The raw progress row of a drain lease's holder (`readDrainHolderProgress`). */
+export interface DrainHolderProgressRow { committed: number | string; last_committed_at: Date | string | null; last_saved_at: Date | string | null }
+
+/**
+ * The source's managed-sync commits since `since` (ISO), its last managed-sync commit, and its last cursor save, pass
+ * row write or hold summary write, through the source's writer binding; null when no binding exists.
+ */
+export async function readDrainHolderProgress(exec: LegacyUnscopedRead, sourceId: string, since: string): Promise<DrainHolderProgressRow | null> {
+  const [row] = await exec.executeRaw<DrainHolderProgressRow>(`
+    SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
+        AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
+      (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op='sync-hold-summary' AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`, [sourceId, since, MANAGED_SYNC_PASS_OP]);
+  return row ?? null;
 }

@@ -1,7 +1,8 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState, the scope-source read readScopeSourceConfigs (SQL in engine-sql/access-credentials.ts) through
  * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, listOwnerProposalRows, attachSourcePath and
- * getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
+ * getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts; readDrainHolderProgress, SQL in
+ * engine-sql/persistence-journal.ts), and the folder access read beside the
  * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readJobPrincipal, readAccessCredentials, hasLabelledOnlyMember and listPagesNamingReader;
  * SQL in engine-sql/access-control.ts and engine-sql/write-misc.ts; the member and group reads are in access-members.ts). The credential revokes and the token list are
  * served by the jobs credential members (store-members/jobs-access-tokens.ts and jobs-oauth-clients.ts). The source read, the path attach and the pages naming a reader are served by
@@ -15,6 +16,7 @@ import { readAccessMembers } from './access-members.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AppliedPolicyRevision, FolderAccessRows, JobPrincipalKind, MayActForVia, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
 import { PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
+import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journal.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -78,6 +80,12 @@ export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkill
  * writers (claimWorktree's raw SQL) refuse on it, so no source is bound on any host.
  */
 export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = async () => null;
+
+/**
+ * No source is bound on this engine (see getWorktreeBinding), so a drain lease's holder has no progress row; the lease
+ * reading counts it as no commits and no save, as PGLite and Postgres read an unbound source.
+ */
+export const readDrainHolderProgress: StoreMember<[sourceId: string, since: string], DrainHolderProgressRow | null> = async () => null;
 
 /** No binding claims a source on this engine (see getWorktreeBinding), so classic sync never meets a claim. */
 export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async () => false;

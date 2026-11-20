@@ -4,7 +4,8 @@
  * listStaleSyncSourceIds (the advisor's stale-sync read), listSourceIds (every source id), readSoleSourceId, readFirstSourceId, lockAllSourceRows
  * (takes no lock) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
- * (store side: the same cli_reads/sources.rs).
+ * (store side: the same cli_reads/sources.rs). advanceSourceCommit moves the sync anchor and readSourceLastCommit
+ * reads it (store side: sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -94,3 +95,14 @@ export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDe
 export const insertSource: StoreMember<[row: SourceInsert], void> = async (brain, row) => {
   await storeCall({ member: 'insertSource', sourceId: row.id }, () => brain.insertSource(row.id, row.name, row.local_path, row.config));
 };
+
+/** The sync anchor's advance: an absent `newestContentAt` keeps the stored one, null clears it. */
+export const advanceSourceCommit: StoreMember<[sourceId: string, commit: string, newestContentAt?: string | null], void> =
+  async (brain, sourceId, commit, newestContentAt) => {
+    await storeCall({ member: 'advanceSourceCommit', sourceId },
+      () => brain.advanceSourceCommit(sourceId, commit, newestContentAt !== undefined, newestContentAt ?? null));
+  };
+
+/** The commit the source's last sync advanced to, or null. */
+export const readSourceLastCommit: StoreMember<[sourceId: string], string | null> = async (brain, sourceId) =>
+  await storeCall({ member: 'readSourceLastCommit', sourceId }, () => brain.readSourceLastCommit(sourceId)) as string | null;

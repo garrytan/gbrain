@@ -1,10 +1,13 @@
 /**
  * Minion queue members (BrainEngine admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob, failJob,
- * reclaimStalledJobs), the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert) and the page
- * embedding leases (take, renew, release). The store keeps the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
+ * reclaimStalledJobs, readLiveJobIds), the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert)
+ * with the drain lease's holder record (readDrainLeaseBeacon, writeDrainLeaseHolder, refreshDrainLeaseHolder,
+ * releaseDrainLeaseHolder), and the page embedding leases (take, renew, release). The store keeps the `minion_jobs`,
+ * `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
  * the binding as ISO strings and come back as `Date`s, as PGLite returns them.
  */
 import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../../engine.ts';
+import type { DrainLeaseHolderRecord } from '../../engine-sql/cycle-locks.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../../engine-sql/jobs.ts';
 import { QueueQuotaExceededError } from '../../minions/admission.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
@@ -170,3 +173,24 @@ export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: { ac
 
 export const assertCycleLease: StoreMember<[lockId: string, acquisitionToken: string], boolean> = (brain, lockId, acquisitionToken) =>
   storeCall({ member: 'assertCycleLease' }, () => brain.assertCycleLease(lockId, acquisitionToken));
+
+/** `readLiveJobIds`: the given ids whose job is still live, ascending (the store reads each id's row). */
+export const readLiveJobIds: StoreMember<[ids: number[]], number[]> = async (brain, ids) =>
+  await storeCall({ member: 'readLiveJobIds' }, () => brain.readLiveJobIds(ids)) as number[];
+
+/** The drain lease's holder record (engine-sql/cycle-locks.ts): its beacon read, write, renewal and release. */
+export const readDrainLeaseBeacon: StoreMember<[lockToken: string], Record<string, unknown> | null> = async (brain, lockToken) =>
+  await storeCall({ member: 'readDrainLeaseBeacon' }, () => brain.readDrainLeaseBeacon(lockToken)) as Record<string, unknown> | null;
+
+export const writeDrainLeaseHolder: StoreMember<[record: DrainLeaseHolderRecord], void> = async (brain, record) => {
+  await storeCall({ member: 'writeDrainLeaseHolder', sourceId: record.sourceId }, () => brain.writeDrainLeaseHolder(record.sourceId, record.lockToken,
+    { sourceId: record.sourceId, drain_lease_beacon: record.beacon }, record.ttlMinutes));
+};
+
+export const refreshDrainLeaseHolder: StoreMember<[lockToken: string, ttlMinutes: number], void> = async (brain, lockToken, ttlMinutes) => {
+  await storeCall({ member: 'refreshDrainLeaseHolder' }, () => brain.refreshDrainLeaseHolder(lockToken, ttlMinutes));
+};
+
+export const releaseDrainLeaseHolder: StoreMember<[lockToken: string], void> = async (brain, lockToken) => {
+  await storeCall({ member: 'releaseDrainLeaseHolder' }, () => brain.releaseDrainLeaseHolder(lockToken));
+};

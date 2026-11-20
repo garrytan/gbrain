@@ -122,6 +122,30 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
+/** The commit the source's last sync advanced to (`last_commit`), or null before the first sync and for an unknown source. */
+export async function readSourceLastCommit(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  return row?.last_commit ?? null;
+}
+
+/**
+ * Advances the source's sync anchor: stamps last_commit and last_sync_at (the database clock), and newest_content_at
+ * too when `newestContentAt` is given (null clears it; undefined keeps it). An unknown source changes nothing.
+ */
+export async function advanceSourceCommit(exec: SqlExecutor, sourceId: string, commit: string, newestContentAt?: string | null): Promise<void> {
+  if (newestContentAt !== undefined) {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+      [commit, sourceId, newestContentAt],
+    );
+  } else {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+      [commit, sourceId],
+    );
+  }
+}
+
 /**
  * Every source id, archived sources included, in byte order of the id: the read scope of a caller with no source
  * (ops/backlinks-paged.ts). `COLLATE "C"` keeps a Postgres server with a linguistic locale (en_US.utf8) in the order

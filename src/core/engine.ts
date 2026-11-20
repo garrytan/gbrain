@@ -47,7 +47,8 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, DrainHolderProgressRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
@@ -77,7 +78,7 @@ import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-read
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
-  PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
+  NotifierFirstDueRow, PendingWantedMarker, SourceSyncShapeRow, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
 } from './engine-sql/notifier.ts';
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -1462,6 +1463,14 @@ export interface BrainEngine {
   /** The source's wanted markers as the sync status notifier block lists them, oldest first. notifier/status.ts readNotifierBlock. */
   listSourceWantedMarkers(sourceId: string): Promise<PendingWantedMarker[]>;
 
+  /** A live source as a sync request sees it (local path, managed checkout root, bound to a worktree), or null when it is missing or archived. notifier/nudge.ts sourceSyncShape. */
+  readSourceSyncShape(sourceId: string): Promise<SourceSyncShapeRow | null>;
+
+  /** Each existing source's persisted first-due clock: the earlier of its notifier row's first_due_at (not idle) and its oldest due freshness marker, with the observed head. sync-pending.ts readFirstDue. */
+  readNotifierFirstDue(sourceIds: string[]): Promise<NotifierFirstDueRow[]>;
+  /** The raw progress row of a drain lease's holder: managed commits since `since` (ISO), the last commit and save, through the source's writer binding; null when unbound (engine-sql/persistence-journal.ts). */
+  readDrainHolderProgress(sourceId: string, since: string): Promise<DrainHolderProgressRow | null>;
+
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
   /** The registered path, last commit and config of a source that is not archived, or null (plain-directory sync). */
@@ -1490,6 +1499,10 @@ export interface BrainEngine {
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
   /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
+  /** Advances the sync anchor: last_commit, last_sync_at and, when given, newest_content_at (null clears it); an unknown source changes nothing (engine-sql/sources.ts). */
+  advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null): Promise<void>;
+  /** The commit the source's last sync advanced to, or null before the first sync and for an unknown source (engine-sql/sources.ts). */
+  readSourceLastCommit(sourceId: string): Promise<string | null>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -4218,6 +4231,14 @@ export interface BrainEngine {
 
   /** Read lease rows (see `CycleLockFilter`). A read: no side effects, no acquire. */
   readCycleLocks(filter: CycleLockFilter): Promise<CycleLockRow[]>;
+  /** The beacon of the drain-lease holder record carrying `lockToken`, or null (engine-sql/cycle-locks.ts). */
+  readDrainLeaseBeacon(lockToken: string): Promise<Record<string, unknown> | null>;
+  /** Writes a drain lease's holder record, replacing the source's former one, in one statement (engine-sql/cycle-locks.ts). */
+  writeDrainLeaseHolder(record: DrainLeaseHolderRecord): Promise<void>;
+  /** Renews the drain-lease holder record carrying `lockToken` by `ttlMinutes` (engine-sql/cycle-locks.ts). */
+  refreshDrainLeaseHolder(lockToken: string, ttlMinutes: number): Promise<void>;
+  /** Deletes the drain-lease holder record carrying `lockToken` (engine-sql/cycle-locks.ts). */
+  releaseDrainLeaseHolder(lockToken: string): Promise<void>;
 
   /**
    * Snapshot-matched delete (`gbrain sync --break-lock`, the dead-holder reaper, takeover): one DELETE matching the
@@ -4264,6 +4285,8 @@ export interface BrainEngine {
 
   /** One job row by id, or null. */
   getJob(id: number): Promise<JobRow | null>;
+  /** The given ids whose job is waiting, active, delayed, waiting-children or paused (engine-sql/jobs.ts). */
+  readLiveJobIds(ids: number[]): Promise<number[]>;
 
   /** Job rows matching every given filter, newest first (default 50 from offset 0). */
   listJobs(filter?: ListJobsFilter): Promise<JobRow[]>;
