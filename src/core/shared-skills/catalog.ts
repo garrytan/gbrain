@@ -58,7 +58,7 @@ async function readSnapshot(ctx: OperationContext, selector: SharedSkillSelector
     AND ($3::text IS NULL OR h.source_id=$3) AND ($4::text IS NULL OR h.source_incarnation::text=$4)
     AND ($5::text IS NULL OR h.pack_id=$5) AND ($6::text IS NULL OR h.name=$6)
     AND ($7::boolean=false OR COALESCE((h.metadata->>'private')::boolean,false)=false)
-    ORDER BY h.source_id,h.source_incarnation,h.pack_id,h.name LIMIT $2`,
+    ORDER BY h.source_id COLLATE "C",h.source_incarnation,h.pack_id COLLATE "C",h.name COLLATE "C" LIMIT $2`,
   [sourceIds, SHARED_SKILL_LIMITS.catalogSkills + 1, selector.source_id ?? null, selector.source_incarnation ?? null, selector.pack_id ?? null, selector.name ?? null, ctx.remote !== false]);
   if (rows.length > SHARED_SKILL_LIMITS.catalogSkills) {
     throw opError('catalog_unavailable', 'The authorized catalog exceeds its bounded snapshot limit.',

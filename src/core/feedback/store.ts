@@ -112,7 +112,7 @@ export async function getRetrievalEvent(engine: BrainEngine, id: string): Promis
     [id],
   );
   const links = await engine.executeRaw<EventLink>(
-    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id, edge_key, to_slug`,
+    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id COLLATE "C", edge_key COLLATE "C", to_slug COLLATE "C"`,
     [id],
   );
   return {
@@ -409,12 +409,12 @@ export async function feedbackStatus(engine: BrainEngine): Promise<FeedbackStatu
                 AND f.element_key = w.element_key AND f.rating <= 2)::int AS low_ratings
        FROM retrieval_weights w
       WHERE w.element_kind = 'page' AND w.weight < ${NEUTRAL_WEIGHT}
-      ORDER BY w.weight ASC, w.source_id, w.element_key LIMIT 10`,
+      ORDER BY w.weight ASC, w.source_id COLLATE "C", w.element_key COLLATE "C" LIMIT 10`,
   );
   const highest = await engine.executeRaw<{ source_id: string; slug: string; weight: number | string }>(
     `SELECT source_id, element_key AS slug, weight FROM retrieval_weights
       WHERE element_kind = 'page' AND weight > ${NEUTRAL_WEIGHT}
-      ORDER BY weight DESC, source_id, element_key LIMIT 10`,
+      ORDER BY weight DESC, source_id COLLATE "C", element_key COLLATE "C" LIMIT 10`,
   );
   return {
     events: Number(counts?.events ?? 0),

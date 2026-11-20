@@ -61,7 +61,7 @@ export async function readBudgetLimited(engine: BrainEngine, opts: { sourceId?: 
        CROSS JOIN LATERAL (SELECT count(*)::int AS chunks, COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
          FROM content_chunks cc WHERE cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc')} AND ${pending}) w
       WHERE ${budgetRowAppliesFilter('b', 'p')} AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND w.chunks > 0${bySource}
-      GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`, params);
+      GROUP BY 1, 2, 3 ORDER BY p.source_id COLLATE "C", b.state COLLATE "C", COALESCE(b.reason, 'awaiting_approval') COLLATE "C"`, params);
   const out: BudgetLimited = { held: 0, capped: 0, held_reasons: {}, pending_chunks: 0, by_source: [] };
   const sources = new Map<string, BudgetLimitedSource>();
   for (const row of rows) {
