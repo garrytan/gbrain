@@ -121,3 +121,27 @@ fn a_floor_is_set_cleared_and_refused_without_touching_the_row() {
             .unwrap()
     );
 }
+
+#[test]
+fn the_name_read_answers_each_asked_token_once_by_id_a_revoked_one_included() {
+    let b = brain("tokens-names");
+    let live = insert(&b, token("live", "h1", json!({}))).unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "gone",
+            "h2",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("unasked", "h3", json!({}))).unwrap();
+    let ids = [&live, &gone, &live, &"not-a-token".to_string()].map(|s| s.to_string());
+    let mut want = vec![
+        json!({ "id": live, "name": "live" }),
+        json!({ "id": gone, "name": "gone" }),
+    ];
+    want.sort_by(|a, c| a["id"].as_str().cmp(&c["id"].as_str()));
+    assert_eq!(b.read_access_token_names(&ids).unwrap(), Value::Array(want));
+    assert_eq!(b.read_access_token_names(&[]).unwrap(), json!([]));
+}

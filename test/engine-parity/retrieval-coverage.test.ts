@@ -11,8 +11,8 @@
  *    for the same pages and the same read scope: sources, privacy, kind, types,
  *    excluded slug prefixes, the trust floor, the flagged-page filter,
  *    soft-deleted, quarantined and archived pages. A
- *    count that reaches the cap refuses on Rust, and the probe's cached
- *    answer lasts until the next write on every arm.
+ *    count that reaches the cap reads the lowest page ids on every arm, and
+ *    the probe's cached answer lasts until the next write on every arm.
  *  - Regression: an engine whose count drifts tells a search caller that a
  *    complete answer is incomplete (or the reverse), and an engine whose probe
  *    drifts reports `ready` while pages wait for indexing. Before this lane the
@@ -264,16 +264,18 @@ describe('engine parity: retrieval coverage', () => {
   );
 
   parityTest(
-    'search/retrieval-coverage: a count that reaches the cap reports the same could-affect, or refuses',
+    'search/retrieval-coverage: a count that reaches the cap counts the lowest page ids, so every engine reports the same could-affect',
     { methods: ['putPage', 'countPendingProjectionPages'] },
     async (engine) => {
-      // Five matching pages written first, then a cap of pages that sort before them by slug. The SQL engines read the
-      // capped subset in their own scan order (PGLite and Postgres can disagree), so the store refuses a capped count.
+      // Five matching pages written first (the lowest ids), then a cap of pages that sort before them by slug. Writing
+      // the five again moves their rows behind the others in a SQL table scan, so a count that read in scan order (or
+      // the store's slug order) would see none of them under the cap. The count reads the cap in page-id order.
       for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`));
       for (let i = 0; i < 1000; i++) await engine.putPage(`alpha/other-${String(i).padStart(4, '0')}`, page('Other'));
+      for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`, { compiled_truth: `Widget ${i} body, revised` }));
       const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
       const capped = await countPendingProjections(engine, {}, words);
-      expect(capped?.capped).toBe(true);
+      expect(capped).toEqual({ total: 1000, could_affect: 5, capped: true, could_affect_images: 0 });
       return capped;
     },
   );

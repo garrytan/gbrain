@@ -612,11 +612,12 @@ describe('engine parity: chunks', () => {
       const texts = async (opts?: { sourceId?: string; sourceIds?: string[] }) => (await engine.getChunks('notes/shared', opts)).map((c) => c.chunk_text);
       const implicitDefault = await texts();
       const work = await texts({ sourceId: 'work' });
-      const federated = sorted(await texts({ sourceIds: ['default', 'work'] }));
+      const federated = await texts({ sourceIds: ['default', 'work'] });
       const workPage = await engine.getChunkPage('notes/shared', { sourceId: 'work', fromIndex: 0, limit: 10 });
       expect(implicitDefault).toEqual(['default zero', 'default one']);
       expect(work).toEqual(['work zero']);
-      expect(federated).toEqual(['default one', 'default zero', 'work zero']);
+      // The two pages' chunk 0 tie on document order; the source id breaks the tie.
+      expect(federated).toEqual(['default zero', 'work zero', 'default one']);
       expect(workPage.total_chunks).toBe(1);
 
       const staleDefault = await engine.countStaleChunks({ sourceId: 'default' });
@@ -632,6 +633,27 @@ describe('engine parity: chunks', () => {
       const chunklessDefault = await engine.countChunklessPagesWithContent({ sourceId: 'default' });
       expect({ workAfter, defaultAfter, chunklessWork, chunklessDefault }).toEqual({ workAfter: [], defaultAfter: ['default zero', 'default one'], chunklessWork: 1, chunklessDefault: 0 });
       return { implicitDefault, work, federated, staleDefault, staleWork, staleAll, staleRows, workAfter, defaultAfter, chunklessWork, chunklessDefault };
+    },
+  );
+
+  // MCP get_chunks under a token that reads several sources (getChunkPage), and getChunks over several sources, merge
+  // the pages in document order, and the source id breaks a tie in byte order whatever the database collation: en_US
+  // ignores the hyphen and puts `cob` before `co-op`, byte order puts `co-op` first.
+  parityTest(
+    'getChunks and getChunkPage over several sources break a document-order tie by source id in byte order',
+    { methods: ['getChunks', 'getChunkPage'] },
+    async (engine, backend) => {
+      for (const id of ['cob', 'co-op']) await createSource(engine, backend, id);
+      await seedPage(engine, { slug: 'notes/tie', input: PAGE('Tie cob', 'cob body'), chunks: [chunk(0, 'cob 0'), chunk(1, 'cob 1'), chunk(2, 'cob 2')] }, { sourceId: 'cob' });
+      await seedPage(engine, { slug: 'notes/tie', input: PAGE('Tie co-op', 'co-op body'), chunks: [chunk(0, 'co-op 0'), chunk(1, 'co-op 1')] }, { sourceId: 'co-op' });
+      const all = (await engine.getChunks('notes/tie', { sourceIds: ['cob', 'co-op'] })).map((c) => c.chunk_text);
+      expect(all).toEqual(['co-op 0', 'cob 0', 'co-op 1', 'cob 1', 'cob 2']);
+      const page = await engine.getChunkPage('notes/tie', { sourceIds: ['cob', 'co-op', 'cob'], fromIndex: 1, limit: 5 });
+      const paged = { texts: page.chunks.map((c) => c.chunk_text), total: page.total_chunks, max: page.max_chunk_index };
+      expect(paged).toEqual({ texts: ['co-op 1', 'cob 1', 'cob 2'], total: 5, max: 2 });
+      const one = (await engine.getChunkPage('notes/tie', { sourceIds: ['co-op', 'missing'], fromIndex: 0, limit: 1 })).chunks.map((c) => c.chunk_text);
+      expect(one).toEqual(['co-op 0']);
+      return { all, paged, one };
     },
   );
 

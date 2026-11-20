@@ -1,7 +1,7 @@
 //! Chunk reads beyond the core chunks family.
 //!
 //! Store methods for getChunkPage, getChunkWindows, countChunklessPagesWithContent,
-//! listChunklessPagesWithContent, hasUnsealedPages and the chunk reads and deletes of
+//! listChunklessPagesWithContent, hasUnsealedPages, readSegmentRegions and the chunk reads and deletes of
 //! `src/core/engine-sql/chunk-reads.ts`.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -240,6 +240,21 @@ impl Brain {
             let input: gbrain_store::chunk_queries::FrozenHitsInput =
                 arg(input, "resolveFrozenHits input")?;
             s.resolve_frozen_hits(&input)
+        })
+    }
+
+    /// `readSegmentRegions(hits)`: `[{ chunk_id, byte_start }]` for the hits on served segmented
+    /// pages.
+    #[napi]
+    pub fn read_segment_regions<'env>(
+        &self,
+        env: &'env Env,
+        hits: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let hits: Vec<gbrain_store::chunk_queries::SegmentHit> =
+                arg(hits, "readSegmentRegions hits")?;
+            s.read_segment_regions(&hits)
         })
     }
 

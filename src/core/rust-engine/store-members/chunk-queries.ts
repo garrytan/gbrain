@@ -5,7 +5,7 @@
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
  * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
  * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
- * resolveFrozenHits).
+ * resolveFrozenHits), and search dedup's segmented-region read (readSegmentRegions).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -46,13 +46,12 @@ export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fr
       ['sourceId', 'sourceIds', 'fromIndex', 'limit', 'excludePrivate', 'requireSafeChunks'], UNREAD_SCOPE) as
       { sourceId?: unknown; sourceIds?: unknown[]; fromIndex?: number; limit?: number; excludePrivate?: unknown };
     // The scope resolves as getChunks resolves it: `sourceIds` when not empty, else `sourceId` (default `default`). A
-    // scope that names no source matches nothing, and a read over several sources is refused (the chunk order ties).
+    // scope that names no source matches nothing, and a read over several sources reads the page in each.
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return { chunks: [], total_chunks: 0, max_chunk_index: null };
-    if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
     const options = {
-      sourceId: named[0]!, fromIndex, limit,
+      sourceId: named[0]!, ...(named.length > 1 ? { sourceIds: named } : {}), fromIndex, limit,
       excludePrivate: storePagePolicy('getChunkPage', excludePrivate, { callerReaders: true }) ?? null,
       requireSafeChunks: requiresSafeChunks(opts),
     };
@@ -280,4 +279,18 @@ export const resolveFrozenHits: StoreMember<[hits: FrozenHitKey[], scope: PageRe
       page_id: Number(r.page_id),
       effective_date: r.effective_date === null || r.effective_date === undefined ? null : new Date(r.effective_date),
     }));
+  };
+
+/**
+ * Where each search hit on a served segmented page starts in its body (`segmentRegions`, search/dedup.ts), from the
+ * page's segment view instead of the SQL engines' manifest join. Rows are in chunk id order.
+ */
+export const readSegmentRegions: StoreMember<[hits: ReadonlyArray<{ pageId: number; chunkId: number }>], Array<{ chunk_id: number; byte_start: number }>> =
+  async (brain, hits) => {
+    if (hits.length === 0) return [];
+    // The SQL engines bind the chunk ids into int[]; a value outside int4 is refused there.
+    int32Ids('readSegmentRegions', hits.map(h => h.chunkId));
+    const rows: Array<{ chunk_id: number | string; byte_start: number | string }> = await storeCall({ member: 'readSegmentRegions' },
+      () => brain.readSegmentRegions(hits.map(h => ({ pageId: h.pageId, chunkId: h.chunkId }))));
+    return rows.map(r => ({ chunk_id: Number(r.chunk_id), byte_start: Number(r.byte_start) }));
   };

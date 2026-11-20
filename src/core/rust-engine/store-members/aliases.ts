@@ -9,7 +9,7 @@
  * `readAliases` does: the same policy on the page an alias names and on the page whose title shadows a derived alias.
  * Both also serve a caller whose record holds only a reader identity and a private-readable grant, which the store
  * reads from the policy; both refuse `excludePrivate` for any other caller whose policy differs. A rename of a
- * segmented page is refused (the SQL engines version it before the move, which the Rust store does not keep). A
+ * segmented page versions it by reference to its live body generation first, as the SQL engines do. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
@@ -49,11 +49,11 @@ export const updateSlug: StoreMember<[oldSlug: string, newSlug: string, opts?: {
   const slug = validateSlug(newSlug);
   const o = takeOptions('updateSlug', opts, ['sourceId']);
   const sourceId = o.sourceId as string | undefined;
-  // A segmented page is refused (the store answers `invalid_state` before it writes): the SQL engines version it as a
-  // reference to its live body generation before the move, which the Rust store does not keep (see createVersion).
+  // A segmented page is versioned by reference to its live body generation before the move, as the SQL engines do. A
+  // NULL body with no segmented generation (a row PGLite's CHECK forbids) answers `invalid_state` before any write.
   return storeCall({ member: 'updateSlug', slug: oldSlug, sourceId }, () => brain.updateSlug(oldSlug, slug, sourceId ?? null)
     .catch((error: unknown) => {
-      if (storeErrorCode(error) === 'invalid_state') refuseMember('updateSlug', 'a segmented page');
+      if (storeErrorCode(error) === 'invalid_state') refuseMember('updateSlug', 'a page whose NULL body no segmented generation holds');
       throw error;
     }));
 };

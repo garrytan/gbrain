@@ -87,10 +87,13 @@ export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
   storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
 
 /**
- * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
- * so no source selects the synopsis tier.
+ * The sources that are not archived and whose own contextual-retrieval mode (`sources set-cr-mode`, source_cr_mode.rs)
+ * is per_chunk_synopsis, by id in byte order: the source half of the synopsis tier read, with its page check skipped.
  */
-export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const tier = await storeCall({ member: 'listSynopsisSourceIds' }, () => brain.readSynopsisTierSources({ skipFrontmatter: true }));
+  return (tier as { sourceIds: string[] }).sourceIds;
+};
 
 /**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug

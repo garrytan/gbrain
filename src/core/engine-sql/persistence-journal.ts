@@ -101,6 +101,18 @@ export interface WriteRequestInsert {
   deferredRefreshId: string | null;
 }
 
+/** One page of a grouped admission (`insertWriteRequestGroup`). */
+export interface WriteRequestGroupItem {
+  requestId: string; pageId: number | null; slug: string | null; digest: string; intent: unknown; intentBytes: number;
+  terminalReservation: number; clientRequestId: string | null;
+}
+/** A grouped admission's shared columns and its pages in manifest order; every row is a queued page write, protocol 1. */
+export interface WriteRequestGroupInsert {
+  principalKind: string; principalId: string; operation: string; sourceId: string; sourceIncarnation: string; worktreeId: string | null;
+  topologyGeneration: number | string | null; authority: unknown; admitterVersion: string; admitterHostId: string | null; counterKeys: string[];
+  items: WriteRequestGroupItem[];
+}
+
 /** The terminal state of one request and the numbers its completion statement needs. */
 export interface WriteCompletion {
   id: string; state: 'committed' | 'conflict' | 'failed' | 'cancelled'; outcome: unknown; errorCode: string | null; errorMessage: string | null;
@@ -163,6 +175,19 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
     [principalKind, principalId, requestId]);
   return row ?? null;
+}
+
+/** The requests a principal admitted under any of `requestIds` (uuids), in no order. */
+export function readWriteRequestsByRequestIds(exec: LegacyUnscopedRead, principalKind: string, principalId: string, requestIds: readonly string[]): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
+    [principalKind, principalId, requestIds]);
+}
+
+/** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null when it has no owner or no binding. */
+export async function readOwnerHostBinding(exec: LegacyUnscopedRead, worktreeId: string): Promise<string | null> {
+  const [binding] = await exec.executeRaw<{ local_path: string | null }>(`SELECT h.local_path FROM persistence_host_bindings h
+      JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [worktreeId]);
+  return binding?.local_path ?? null;
 }
 
 /**
@@ -340,6 +365,32 @@ export async function insertWriteRequest(exec: SqlExecutor, row: WriteRequestIns
     JSON.stringify(row.authority), row.intentBytes, row.terminalReservation, row.targetKind, row.protocolVersion, row.admitterVersion,
     row.admitterHostId, row.counterKeys, row.clientRequestId, row.state, row.deferredRefreshId]);
   return inserted!;
+}
+
+/**
+ * The grouped admission's rows and their counter reservation in one statement; the counters are already locked. The
+ * rows are inserted in item order, so their sequences keep the manifest order.
+ */
+export const ADMIT_WRITE_GROUP_SQL = `WITH reserved AS (UPDATE persistence_counters SET outstanding_count=outstanding_count+$14,
+      intent_bytes=intent_bytes+$12,lifetime_ids=lifetime_ids+$14,terminal_bytes=terminal_bytes+$13 WHERE key=ANY($15::text[]))
+      INSERT INTO persistence_requests
+      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
+       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
+       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader)
+      SELECT $1,$2,(e->>'request_id')::uuid,$3,$4,$5::uuid,(e->>'page_id')::integer,e->>'slug',$6::uuid,$7,e->>'digest',e->'intent',$8::text::jsonb,
+        (e->>'intent_bytes')::bigint,(e->>'terminal_reservation')::bigint,'page',1,$9,$10::uuid,e->>'client_request_id',true
+      FROM jsonb_array_elements($11::text::jsonb) WITH ORDINALITY AS t(e,n) ORDER BY n
+      RETURNING *`;
+
+/** Inserts a grouped admission's rows in item order and charges their counters (already locked); returns the stored rows. */
+export async function insertWriteRequestGroup(exec: SqlExecutor, group: WriteRequestGroupInsert): Promise<WriteRequest[]> {
+  if (!group.items.length) return [];
+  const bytes = group.items.reduce((sum, item) => sum + item.intentBytes, 0), terminalBytes = group.items.reduce((sum, item) => sum + item.terminalReservation, 0);
+  return exec.executeRaw<WriteRequest>(ADMIT_WRITE_GROUP_SQL, [group.principalKind, group.principalId, group.operation, group.sourceId, group.sourceIncarnation,
+    group.worktreeId, group.topologyGeneration, JSON.stringify(group.authority), group.admitterVersion, group.admitterHostId,
+    JSON.stringify(group.items.map(item => ({ request_id: item.requestId, page_id: item.pageId, slug: item.slug, digest: item.digest, intent: item.intent,
+      intent_bytes: item.intentBytes, terminal_reservation: item.terminalReservation, client_request_id: item.clientRequestId }))),
+    bytes, terminalBytes, group.items.length, group.counterKeys]);
 }
 
 /** Stamps the claim on request `id` (running, its token, its lease and its first phase); null when the refresh barrier refused it. */

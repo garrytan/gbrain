@@ -1819,10 +1819,9 @@ impl Store {
         })
     }
 
-    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page (NULL body)
-    /// is refused with `invalid_state` before anything is written: PGLite versions it as a reference
-    /// to its live body generation, which pins that generation's manifest rows against the segment
-    /// sweep, and this store keeps no such reference.
+    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page's snapshot
+    /// references its live body generation (`snapshot_in`), as PGLite's `insertSegmentedVersion`
+    /// does, which pins that generation's manifest rows against the segment sweep.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
         self.create_version_with(slug, source_id, None)
     }
@@ -2460,15 +2459,16 @@ mod tests {
     }
 
     #[test]
-    fn update_slug_refuses_a_segmented_page_and_moves_nothing() {
+    fn update_slug_refuses_a_null_body_with_no_segmented_generation_and_moves_nothing() {
         let store = crate::test_support::store();
         put(&store, "big");
+        // A NULL body with no body state behind it: PGLite's CHECK makes this row impossible.
         make_shell(&store, "big");
         let err = store.update_slug("big", "big-2", None).unwrap_err();
         assert_eq!(err.code, crate::error::INVALID_STATE);
         assert_eq!(
             err.message,
-            "updateSlug refuses segmented page big (source=default)"
+            "updateSlug refuses page big (source=default): its body is NULL and no segmented body generation holds it"
         );
         let scope = ReadScope::default();
         assert!(store.read_page_snapshot("big", &scope).unwrap().is_some());

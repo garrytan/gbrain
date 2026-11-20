@@ -1663,6 +1663,23 @@ fn held_by(read: &dyn KvRead, key: &[u8], opts: &LockHolder) -> Result<Option<Lo
     }))
 }
 
+/// `CLAIM_HEAD_LEASE_HELD`'s lock test: lock `id` is live (`ttl_expires_at>now()`) and held by a
+/// process other than `pid` on `host` (`holder_host IS NOT DISTINCT FROM host`).
+pub(crate) fn lock_held_by_other(
+    read: &dyn KvRead,
+    id: &str,
+    pid: i64,
+    host: &str,
+    now: i64,
+) -> Result<bool> {
+    Ok(
+        get_json::<LockRecord>(read, &lock_key(id))?.is_some_and(|l| {
+            l.ttl_expires_at > now
+                && !(l.holder_pid == pid && l.holder_host.as_deref() == Some(host))
+        }),
+    )
+}
+
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
     let mut out = Vec::new();
     let mut bad = None;
