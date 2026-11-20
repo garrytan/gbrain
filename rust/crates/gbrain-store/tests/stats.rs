@@ -129,6 +129,15 @@ fn log_ingest_checks_not_null_columns_in_order() {
 }
 
 #[test]
+fn ping_store_answers_on_an_empty_and_a_written_store() {
+    let dir = TempDir::new("stats-ping");
+    let store = open(&dir);
+    store.ping_store().unwrap();
+    put_page(&store, "a", "note", "alpha", None);
+    store.ping_store().unwrap();
+}
+
+#[test]
 fn get_stats_counts_scope_and_empty_scope() {
     let dir = TempDir::new("stats-get");
     let store = open(&dir);

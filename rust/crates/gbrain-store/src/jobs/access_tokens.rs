@@ -449,6 +449,21 @@ impl Store {
 }
 
 impl Store {
+    /// `listAccessTokenRows()`: the whole row (`SELECT *`, no hash) of every token, revoked ones too, newest first
+    /// (`ORDER BY created_at DESC, id`), shaped as `read_live_access_token_rows` shapes it.
+    pub fn list_access_token_rows(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut tokens = all_tokens(&*read)?;
+        tokens.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(Value::Array(
+            tokens.iter().map(TokenRecord::whole_row).collect(),
+        ))
+    }
+
     /// `readCredentialBindingForUpdate({ kind: 'token', id })`: the token's binding columns, or None. The id is matched
     /// exactly (Postgres compares `id::text = $1`) and a revoked token is read too: a binding is kept past a revoke.
     pub fn read_access_token_binding(&self, id: &str) -> Result<Option<Value>> {

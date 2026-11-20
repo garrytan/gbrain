@@ -102,7 +102,8 @@ pub const ENTITY_IDENTITY: u8 = b'i';
 pub const SESSION_STATE: u8 = b'y';
 /// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
 pub const DERIVED_GENERATION: u8 = b'h';
-/// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03.
+/// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03, member links 0x04
+/// (access_member_links.rs).
 pub const ACCESS_MEMBERS: u8 = b'x';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
