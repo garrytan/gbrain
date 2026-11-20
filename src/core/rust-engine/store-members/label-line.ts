@@ -1,10 +1,12 @@
+import { FACT_SPACE_CLASS } from '../../facts/withdrawal-schema.ts';
+
 /**
  * The label line of `countLabelFacts` (repair/conversation-labels.ts), read into the literal labels the Rust store matches
  * (rust/crates/gbrain-store/src/facts/repair.rs `has_label_line`), so the store evaluates no regular expression.
  */
 /** The fixed head and tail of the label line `countLabelFacts` matches with `~*` (repair/conversation-labels.ts). */
 const LABEL_LINE_HEAD = '(^|\\n)\\*\\*(';
-const LABEL_LINE_TAIL = ')[[:space:]]*:\\*\\*';
+const LABEL_LINE_TAIL = `)${FACT_SPACE_CLASS}*:\\*\\*`;
 /** The most literal labels one label line may spell; a larger alternation refuses. */
 const MAX_LABELS = 4096;
 

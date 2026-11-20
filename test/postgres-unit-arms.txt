@@ -679,6 +679,7 @@ test/persistence-topology-recovery-unmanaged.test.ts
 test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
+test/pg-fold.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/physical-root-copied-brain-fix-7671.test.ts
 test/physical-root-moved-8625.test.ts

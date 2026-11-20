@@ -25,7 +25,7 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms, recordFenceRetirement, recordPagePurge } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
-import { METADATA_LABELS } from '../../src/core/conversation-parser/builtins.ts';
+import { LABEL_LINE_SQL } from '../../src/core/repair/conversation-labels.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -318,7 +318,7 @@ describe('engine parity: group 5 facts repair statements', () => {
     const at = '2026-03-01T10:00:00.000Z';
     await engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop', loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com',
       summary: 'loop', evidence: [], detector: 'manual', factId: looped, lastActivityAt: at, openedAt: at });
-    const labelLine = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+    const labelLine = LABEL_LINE_SQL;
     const args = { segmentSource: EXTRACTOR, contextLike: '%segment 1970-01-01%', labelLine, terminalSource: 'audit:terminal', nonExtractableSource: 'audit:non-extractable' };
     const counted = await engine.countLabelFacts(['default'], 100, args);
     const both = await engine.countLabelFacts(['other', 'default', 'other'], 100, args);
@@ -330,6 +330,24 @@ describe('engine parity: group 5 facts repair statements', () => {
       under: { count: 6, capped: true }, other: { count: 1, capped: false },
     });
     return { counted, both, atCap, under, other };
+  });
+
+  // #8433: the label line's whitespace is PGLite's class on every engine. A glibc Postgres reads U+0085 (NEXT LINE) as no
+  // space and U+1680 (OGHAM SPACE MARK) as one; PGLite and the Rust store read them the other way round.
+  parityTest('countLabelFacts reads the whitespace before the colon as PGLite does, on every server locale', {
+    methods: ['putPage', 'insertFacts', 'countLabelFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('chats/nel', note('Nel', 'intro\n**Date\u0085:** today'));
+    await engine.putPage('chats/ogham', { ...note('Ogham', 'intro\n**Date\u1680:** today') }, { sourceId: 'other' });
+    const ctx = 'segment 1970-01-01 x';
+    await fenced(engine, 'next line counted', { source: EXTRACTOR, visibility: 'private', source_markdown_slug: 'chats/nel', context: ctx });
+    await fenced(engine, 'ogham not counted', { source: EXTRACTOR, visibility: 'private', source_markdown_slug: 'chats/ogham', context: ctx }, 'other');
+    const args = { segmentSource: EXTRACTOR, contextLike: '%segment 1970-01-01%', labelLine: LABEL_LINE_SQL, terminalSource: 'audit:terminal', nonExtractableSource: 'audit:non-extractable' };
+    const counted = await engine.countLabelFacts(['default'], 100, args);
+    const other = await engine.countLabelFacts(['other'], 100, args);
+    expect({ counted, other }).toEqual({ counted: { count: 1, capped: false }, other: { count: 0, capped: false } });
+    return { counted, other };
   });
 
   parityTest('listExtractorFactsForClassification lists the expired fenceless extractor facts with their evidence', {
@@ -418,6 +436,20 @@ describe('engine parity: group 5 facts repair statements', () => {
       none: { evidenced: 0, ambiguous: 0, capped: false },
     });
     return { counted, both, atCap, under, zero, other, none };
+  });
+
+  // #8433: a head slug holding white space is no page slug, with PGLite's whitespace class on every engine: U+0085 is
+  // white space and U+1680 is not (a glibc Postgres reads both the other way round).
+  parityTest('countPurgedPageFacts reads white space in the head slug as PGLite does, on every server locale', {
+    methods: ['insertFact', 'countPurgedPageFacts'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await fact(engine, 'next line', { source: 'mcp:put_page', context: 'notes/a\u0085b \u2014 x' });
+    await fact(engine, 'ogham', { source: 'mcp:put_page', context: 'notes/a\u1680b \u2014 x' }, 'other');
+    const counted = await engine.countPurgedPageFacts(['default'], 100);
+    const other = await engine.countPurgedPageFacts(['other'], 100);
+    expect({ counted, other }).toEqual({ counted: { evidenced: 0, ambiguous: 0, capped: false }, other: { evidenced: 0, ambiguous: 1, capped: false } });
+    return { counted, other };
   });
 
   parityTest('countPurgedPageFacts takes a purge record of the head slug written after the fact as evidence', {

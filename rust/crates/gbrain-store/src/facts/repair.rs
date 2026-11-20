@@ -108,9 +108,9 @@ fn context_head(context: &str) -> &str {
 /// The literal prefix of `f.source LIKE 'cli:extract-conversation-facts%'`.
 const EXTRACTOR_PREFIX: &str = "cli:extract-conversation-facts";
 
-/// `[[:space:]]` as PGLite reads it: `iswspace` of its C library (musl) under `C.UTF-8`. Postgres
-/// on glibc also counts U+1680 (OGHAM SPACE MARK); the parity cases use none of the two
-/// characters on which the two disagree.
+/// `[[:space:]]` as PGLite reads it: `iswspace` of its C library (musl) under `C.UTF-8`. The SQL
+/// engines spell the same class (`FACT_SPACE_CLASS` in src/core/facts/withdrawal-schema.ts), so a Postgres server on
+/// any locale agrees, U+0085 and U+1680 included.
 fn posix_space(c: char) -> bool {
     matches!(
         c,

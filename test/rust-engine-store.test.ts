@@ -7,6 +7,7 @@
  * GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error (the Rust CI job sets it). The last describe needs
  * no addon.
  */
+import { FACT_SPACE_CLASS } from '../src/core/facts/withdrawal-schema.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -355,7 +356,7 @@ describe('Rust store members', () => {
   });
 
   test('countLabelFacts reads the label line into its literal labels, caps the store count, and refuses any other pattern', async () => {
-    const line = (alts: string) => `(^|\\n)\\*\\*(${alts})[[:space:]]*:\\*\\*`;
+    const line = (alts: string) => `(^|\\n)\\*\\*(${alts})${FACT_SPACE_CLASS}*:\\*\\*`;
     const labels = labelsOf(line(METADATA_LABELS.join('|')))!;
     expect(labels).toContain('organiser');
     expect(labels).toContain('organizer');

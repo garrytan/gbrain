@@ -35,6 +35,7 @@ import { authorizeStoredRequest, authorizeWrite } from '../persistence/authority
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { FACT_SPACE_CLASS } from '../facts/withdrawal-schema.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { PURGED_EXCLUDED_SQL, PURGED_HEAD_SQL, PURGED_PAGE_SQL, PURGED_SOURCES_SQL } from '../engine-sql/facts-repair.ts';
@@ -70,7 +71,7 @@ const SOURCES = PURGED_SOURCES_SQL;
 const PURGED_SQL = PURGED_PAGE_SQL;
 const EXCLUDED_SQL = PURGED_EXCLUDED_SQL;
 const CANDIDATE_WHERE = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${SOURCES})
-     AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
+     AND ${HEAD} <> '' AND ${HEAD} !~ '${FACT_SPACE_CLASS}' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
      AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD})`;
 
 interface CandidateRow {

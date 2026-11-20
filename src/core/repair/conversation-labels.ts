@@ -47,6 +47,7 @@ import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { FACT_SPACE_CLASS } from '../facts/withdrawal-schema.ts';
 import { digest } from '../persistence/digest.ts';
 import { isTerminal } from '../persistence/model.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -73,8 +74,11 @@ export const LABEL_BATCH_PAGES = 25;
 const SEGMENT_SOURCE = 'cli:extract-conversation-facts';
 /** The default context the pre-fix extractor wrote for an undated page's segment. */
 export const EPOCH_SEGMENT_MARKER = 'segment 1970-01-01';
-/** A bold metadata label line, as the pre-fix bold-name-no-time pattern read it (POSIX, case-insensitive). */
-const LABEL_LINE_SQL = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+/**
+ * A bold metadata label line, as the pre-fix bold-name-no-time pattern read it (POSIX, case-insensitive), with PGLite's
+ * whitespace class spelled out (FACT_SPACE_CLASS) so a Postgres server on any locale matches the same lines.
+ */
+export const LABEL_LINE_SQL = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})${FACT_SPACE_CLASS}*:\\*\\*`;
 const HANDOFF_SLUGS_PER_COMMAND = 50;
 const previewFix = (sourceId: string) => readFix('Previews the conversation-labels repair without changing anything; it makes no model calls.',
   { argv: ['gbrain', 'repair', 'conversation-labels', '--source', sourceId, '--json'] });
