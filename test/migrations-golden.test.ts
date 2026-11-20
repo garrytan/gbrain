@@ -33,7 +33,8 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    expect(golden.gaps).toEqual([17, 18, 19, 100]);
+    // 330 is master's v330-entity-identity-reviews-evidence (05d5c04981); this branch does not carry it yet. Drop it from this list when master is merged.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 330]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);
