@@ -27,7 +27,7 @@ const SOFT_DELETED = (alias: string, column: string) =>
 /** Alias rows (both tables) whose target page row is absent, per source; and those whose target is soft-deleted. */
 export const ORPHANED_ALIAS_COUNTS_SQL = `SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
     SELECT sa.source_id,1 AS slug_redirects,0 AS page_aliases FROM slug_aliases sa WHERE ${MISSING('sa', 'canonical_slug')}
-    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE ${MISSING('pa', 'slug')}) o GROUP BY source_id ORDER BY source_id`;
+    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE ${MISSING('pa', 'slug')}) o GROUP BY source_id ORDER BY source_id COLLATE "C"`;
 export const SOFT_DELETED_ALIAS_COUNT_SQL = `SELECT
     (SELECT count(*)::int FROM slug_aliases sa WHERE ${SOFT_DELETED('sa', 'canonical_slug')}) AS slug_redirects,
     (SELECT count(*)::int FROM page_aliases pa WHERE ${SOFT_DELETED('pa', 'slug')}) AS page_aliases`;
@@ -41,7 +41,7 @@ export const aliasesRepair: RepairHandler = {
       `SELECT source_id,slug,sum(page_aliases)::int AS page_aliases,sum(slug_redirects)::int AS slug_redirects FROM (
          SELECT pa.source_id,pa.slug,1 AS page_aliases,0 AS slug_redirects FROM page_aliases pa WHERE pa.source_id=ANY($1::text[]) AND ${MISSING('pa', 'slug')}
          UNION ALL SELECT sa.source_id,sa.canonical_slug,0,1 FROM slug_aliases sa WHERE sa.source_id=ANY($1::text[]) AND ${MISSING('sa', 'canonical_slug')}
-       ) o GROUP BY source_id,slug ORDER BY source_id,slug`, [scope.source_ids]);
+       ) o GROUP BY source_id,slug ORDER BY source_id COLLATE "C",slug COLLATE "C"`, [scope.source_ids]);
     const items: RepairItem[] = rows.map((row, index) => ({ cursor: { phase: 0, id: index + 1 }, source_id: row.source_id, slug: row.slug, chars: 0,
       action: 'delete_orphaned_aliases', change: { from: `${row.page_aliases} page alias(es), ${row.slug_redirects} slug redirect(s)`, to: 'deleted' } }));
     const [soft] = await engine.executeRaw<{ n: number }>(`SELECT

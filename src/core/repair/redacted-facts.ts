@@ -169,7 +169,7 @@ export async function classifyRedactedFacts(db: BrainEngine, sourceIds: string[]
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND f.fact LIKE '%[redacted%' AND ($2::bigint[] IS NULL OR f.id=ANY($2::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, opts.ids ?? null]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds, opts.ids ?? null]);
   const pages = new Map<string, PageTexts>();
   const sourceTexts = async (sourceId: string, slug: string) => {
     const key = `${sourceId}\u0000${slug}`;

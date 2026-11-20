@@ -130,7 +130,7 @@ export async function classifyLabelFacts(db: BrainEngine, sourceIds: string[], o
      WHERE f.source_id=ANY($1::text[]) AND f.source=$5 AND f.expired_at IS NULL
        AND ($2::text IS NULL OR f.source_markdown_slug=$2::text)
        AND (p.compiled_truth ~* $6 OR COALESCE(p.timeline,'') ~* $6)
-     ORDER BY f.source_id, f.source_markdown_slug, f.id`,
+     ORDER BY f.source_id COLLATE "C", f.source_markdown_slug COLLATE "C", f.id`,
   [sourceIds, opts.slug ?? null, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, SEGMENT_SOURCE, LABEL_LINE_SQL]);
   return rows.map(row => {
     const [klass, reason] = classify(row);

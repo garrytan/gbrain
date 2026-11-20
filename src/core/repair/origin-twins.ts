@@ -137,7 +137,7 @@ export async function scanOriginTwins(engine: BrainEngine, sourceId: string): Pr
   if (!context.ok) throw ownerRefusal(sourceId, context.reason);
   const byOrigin = new Map<string, Array<{ id: number; source_path: string }>>();
   const exact = await engine.executeRaw<{ source_path: string; ids: number[]; paths: string[] }>(`SELECT source_path, array_agg(id ORDER BY id) AS ids, array_agg(source_path ORDER BY id) AS paths
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_path HAVING count(*) > 1 ORDER BY source_path LIMIT ${ORIGIN_TWINS_LIMIT + 1}`, [sourceId]);
+    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_path HAVING count(*) > 1 ORDER BY source_path COLLATE "C" LIMIT ${ORIGIN_TWINS_LIMIT + 1}`, [sourceId]);
   for (const row of exact) byOrigin.set(row.source_path, row.ids.map((id, i) => ({ id: Number(id), source_path: row.paths[i]! })));
   const legacyPrefix = legacySyncOrigin(context.scope, 'x') ? `${context.scope.scope}/` : null;
   if (legacyPrefix) {

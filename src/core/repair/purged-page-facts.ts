@@ -86,7 +86,7 @@ export async function classifyPurgedPageFacts(db: BrainEngine, sourceIds: string
            ${EXCLUDED_SQL.open_loop} AS open_loop, ${PURGED_SQL} AS purged
       FROM facts f
      WHERE ${CANDIDATE_WHERE} AND ($2::bigint[] IS NULL OR f.id = ANY($2::bigint[]))
-     ORDER BY f.source_id, ${HEAD}, f.id`, [sourceIds, opts.ids ?? null]);
+     ORDER BY f.source_id COLLATE "C", ${HEAD} COLLATE "C", f.id`, [sourceIds, opts.ids ?? null]);
   return rows.map(row => {
     const [klass, reason]: [PurgedPageFactClass, string] = row.withdrawn ? ['excluded', 'withdrawn'] : row.superseded ? ['excluded', 'superseded']
       : row.referenced ? ['excluded', 'superseded_by_reference'] : row.open_loop ? ['excluded', 'open_loop_reference']
