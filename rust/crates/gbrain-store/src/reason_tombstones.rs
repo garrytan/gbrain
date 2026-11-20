@@ -60,6 +60,23 @@ fn source_pairs(
     Ok(out)
 }
 
+/// Whether the source holds the tombstone of (commit, path): a version snapshot never stamps that
+/// pair's reason. A NUL byte in any part matches nothing, as the read member answers.
+pub(crate) fn tombstoned(
+    read: &dyn crate::kv::KvRead,
+    source_id: &str,
+    commit_sha: &str,
+    path: &str,
+) -> Result<bool> {
+    if [source_id, commit_sha, path]
+        .iter()
+        .any(|v| v.contains('\0'))
+    {
+        return Ok(false);
+    }
+    Ok(read.get(&key(source_id, commit_sha, path))?.is_some())
+}
+
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for (k, _) in source_pairs(&*tx, source_id)? {
         tx.delete(&k)?;

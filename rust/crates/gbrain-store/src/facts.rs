@@ -56,7 +56,9 @@ pub use fence::{FenceContext, FenceTarget};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub(crate) use privacy::{caller_version_hidden, page_hidden, version_hidden};
+pub(crate) use privacy::{
+    caller_version_hidden, page_hidden, reason_successor_allows, version_hidden,
+};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;

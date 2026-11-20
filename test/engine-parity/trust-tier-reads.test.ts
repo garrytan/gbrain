@@ -341,6 +341,41 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
+    'pickValidTimeEdition reads each edition\'s change reason, the reason that introduced it and the page\'s history gap',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const write = (validFrom: string, frontmatter: Record<string, unknown> = {}) =>
+        engine.putPage('vt/why', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom, ...frontmatter } });
+      await write('2026-01-01');
+      await engine.createVersion('vt/why', { sourceId: 'default', reason: 'Open the note' });
+      await write('2026-04-01', { visibility: 'private' });
+      await engine.createVersion('vt/why', { sourceId: 'default', reason: 'Record a private term', historyGap: true });
+      await write('2026-08-01');
+      await engine.putPage('vt/no-gap', { type: 'note', title: 'VT', compiled_truth: 'body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      const pageId = (await engine.getPage('vt/why', { sourceId: 'default' }))!.id;
+      const plainId = (await engine.getPage('vt/no-gap', { sourceId: 'default' }))!.id;
+      const pick = async (asOf: string, excludePrivate = false, id = pageId) => {
+        const r = await engine.pickValidTimeEdition({ pageId: id, asOf, excludePrivate, pinOrd: null, inlineMaxBytes: 1_000_000 });
+        return r && { valid_from: r.valid_from, reason: r.reason ?? null, introduced_because: r.introduced_because ?? null, gap: r.gap_at instanceof Date };
+      };
+      const picks = {
+        first: await pick('2026-02-01'), second: await pick('2026-05-01'), current: await pick('2026-09-01'),
+        firstHidden: await pick('2026-02-01', true), currentHidden: await pick('2026-09-01', true), plain: await pick('2026-02-01', false, plainId),
+      };
+      expect(picks).toEqual({
+        first: { valid_from: '2026-01-01', reason: 'Open the note', introduced_because: null, gap: true },
+        second: { valid_from: '2026-04-01', reason: 'Record a private term', introduced_because: 'Open the note', gap: true },
+        current: { valid_from: '2026-08-01', reason: null, introduced_because: 'Record a private term', gap: true },
+        // A private successor hides the reason under excludePrivate, and a hidden edition introduces nothing.
+        firstHidden: { valid_from: '2026-01-01', reason: null, introduced_because: null, gap: true },
+        currentHidden: { valid_from: '2026-08-01', reason: null, introduced_because: null, gap: true },
+        plain: { valid_from: '2026-01-01', reason: null, introduced_because: null, gap: false },
+      });
+      return picks;
+    },
+  );
+
+  parityTest(
     'listValidTimeIdentities lists the live pages with a slug in the scope by source, with the checkout and world mark',
     { methods: ['putPage', 'softDeletePage', 'listValidTimeIdentities'] },
     async (engine, backend) => {

@@ -167,6 +167,37 @@ describe('engine parity: versions', () => {
     },
   );
 
+  parityTest(
+    'createVersion stores the import reason, drops one whose commit and path a purge tombstoned, and getVersions reads it as replaced_because',
+    { methods: ['putPage', 'createVersion', 'getVersions', 'writeReasonPurgeTombstones'] },
+    async (engine) => {
+      await engine.writeReasonPurgeTombstones('default', [{ commit_sha: 'b'.repeat(40), path: 'notes/why.md' }]);
+      const write = (title: string, frontmatter: Record<string, unknown> = {}) =>
+        engine.putPage('notes/why', { type: 'note', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+      const source = (commit: string) => ({ commit: commit.repeat(40), path: 'notes/why.md' });
+      await write('First');
+      const first = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Add the first note', reasonSource: source('a') });
+      await write('Second', { visibility: 'private' });
+      const purged = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Name a private deal', reasonSource: source('b') });
+      await write('Third');
+      const third = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Tidy the note', historyGap: true });
+      await write('Live');
+      await engine.putPage('notes/plain-why', { type: 'note', title: 'Plain', compiled_truth: 'Plain.', timeline: '' });
+      const empty = await engine.createVersion('notes/plain-why', { sourceId: 'default', reason: '' });
+      const none = await engine.createVersion('notes/plain-why', { sourceId: 'default', reason: null });
+      const created = [first, purged, third, empty, none].map((v) => (v as { change_reason?: string | null }).change_reason ?? null);
+      expect(created).toEqual(['Add the first note', null, 'Tidy the note', '', null]);
+      const reasons = async (excludePrivate: boolean) =>
+        (await engine.getVersions('notes/why', { excludePrivate })).map((v) => [v.title, v.replaced_because ?? null]);
+      const open = await reasons(false);
+      // Under excludePrivate the first reason reads null: the snapshot after it is private.
+      const hidden = await reasons(true);
+      expect(open).toEqual([['Third', 'Tidy the note'], ['Second', null], ['First', 'Add the first note']]);
+      expect(hidden).toEqual([['Third', 'Tidy the note'], ['First', null]]);
+      return { created, open, hidden };
+    },
+  );
+
   /** A page whose snapshots differ in privacy: private, named readers, world, pinned question, then a world live page. */
   async function privateHistory(engine: Parameters<Parameters<typeof parityTest>[2]>[0]): Promise<void> {
     const edits: Array<[string, Record<string, unknown>]> = [

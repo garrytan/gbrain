@@ -1,17 +1,20 @@
 /**
  * Page version members (BrainEngine createVersion, getVersions). A segmented page's snapshot references its body
- * generation and keeps content_hash, as insertSegmentedVersion does. `revertToVersion` is not served: it reads pages
- * through raw SQL.
+ * generation and keeps content_hash, as insertSegmentedVersion does. `createVersion` takes the import history
+ * (`reason`, `reasonSource`, `historyGap`): the store drops a reason whose (commit, path) a purge tombstoned, as
+ * stampableReason does, and stamps the page's history gap. `preimage` is refused: the store reads the page itself.
+ * `getVersions` returns each snapshot's `replaced_because`. `revertToVersion` is not served: it reads pages through raw SQL.
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
+import type { VersionHistory } from '../../page-state/versions.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { versionPrivacySql } from '../../engine-sql/pages.ts';
 import { withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { normalizeConceptInputs, storePagePolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
-export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string }], PageVersion> = async (brain, slug, opts) => {
-  const scope = takeOptions('createVersion', opts, ['sourceId']);
+export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string } & VersionHistory], PageVersion> = async (brain, slug, opts) => {
+  const scope = takeOptions('createVersion', opts, ['sourceId', 'reason', 'reasonSource', 'historyGap']);
   return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId: scope.sourceId as string | undefined },
     () => brain.createVersion(slug, scope)));
 };

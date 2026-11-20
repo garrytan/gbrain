@@ -1265,6 +1265,7 @@ impl Store {
                 trust_tier: None,
                 write_origin: None,
                 revision_receipt: Default::default(),
+                version_history_gap_at_us: None,
             };
             write_page(tx, &record)?;
             let state = BodyState {

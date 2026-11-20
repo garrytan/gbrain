@@ -311,14 +311,32 @@ pub(crate) fn caller_version_hidden(
     fm: &Map<String, Value>,
     policy: &PrivacyPolicy,
 ) -> bool {
-    let readers_allowed = !fm.contains_key("readable_by")
-        || access_readers(fm)
-            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
-    !readers_allowed
+    !snapshot_readers_allowed(fm, policy)
         || (policy.entity_privacy
             && (fm.contains_key("pinned_question")
                 || !(private_source_open(page, policy)
                     || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
+}
+
+/// `callerReadersAllowedSql(pv, 'snapshot')` under a policy of only an identity: the version names
+/// no readers, or names one of the policy's identities.
+fn snapshot_readers_allowed(fm: &Map<String, Value>, policy: &PrivacyPolicy) -> bool {
+    !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)))
+}
+
+/// Whether a reader held to world-visible pages may see the reason of the version a snapshot
+/// succeeds (`replacedBecauseSql` with `excludePrivate`): the successor snapshot's own fields are
+/// not private (`privateSnapshotFilterFragment`, whatever the privacy part of the page policy) and
+/// its readers admit the policy's identity. Only the successor's type and frontmatter count.
+pub(crate) fn reason_successor_allows(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    snapshot_fields_allow(page_type, fm, policy.honor_aliases)
+        && snapshot_readers_allowed(fm, policy)
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
