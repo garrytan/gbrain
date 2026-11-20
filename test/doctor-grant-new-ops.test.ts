@@ -61,6 +61,23 @@ describe('grant_new_ops_available', () => {
     expect(categorizeCheck('grant_new_ops_available')).toBe('ops');
   });
 
+  test('a missing actor-only operation is a snapshot gap only for a credential that can attest it', async () => {
+    const profile = writerProfile();
+    const ops = profile.allowedOperations!.filter(op => op !== 'memory_propose');
+    const client = await provider.registerClientManual('fixture-writer', ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
+      { ...profile, allowedOperations: ops });
+    const token = await mintLegacyToken(engine, { name: 'fixture-token', scopes: ['read', 'write'], takesHolders: ['world'], allowedOperations: ops });
+    const read = () => checkGrantNewOps(engine, { cfg });
+    expect((await read()).status).toBe('ok');
+    await engine.executeRaw("UPDATE oauth_clients SET attest_actor = 'qm', attest_ops = ARRAY['memory_propose'] WHERE client_id = $1", [client.clientId]);
+    await engine.executeRaw("UPDATE access_tokens SET attest_actor = 'qm', attest_ops = ARRAY['memory_propose'] WHERE id = $1", [token.id]);
+    const found = grants((await read()).details);
+    expect(found.map(item => item.kind).sort()).toEqual(['legacy_token', 'oauth_client']);
+    for (const item of found) expect(item.excluded_operations.operation_snapshot).toEqual(['memory_propose']);
+    await engine.executeRaw("UPDATE oauth_clients SET attest_ops = ARRAY['memory_write'] WHERE client_id = $1", [client.clientId]);
+    expect(grants((await read()).details).map(item => item.id)).toEqual([token.id]);
+  });
+
   test('an operator-pinned old client is reported with both blockers and intent unknown, and is not widened', async () => {
     const clientId = await legacyWriter('old-writer');
     const before = await readClientGrant(engine, clientId);

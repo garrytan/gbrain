@@ -23,7 +23,7 @@ import { memberByEmail, memberIdentity } from './members.ts';
 import { folderAccessFor, memberIdentityFor } from './caller.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { markedScopeSources, sourceNotAttested } from './attest-sources.ts';
-import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
+import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, clientAttestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
 export * from './actor-model.ts';
 
@@ -55,8 +55,7 @@ export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, cal
       const [row] = await engine.executeRaw<Record<string, unknown>>(
         `SELECT attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, to_jsonb(oauth_clients)->>'attest_read' AS attest_read, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
          WHERE client_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, [principal.id]);
-      const cc = Array.isArray(row?.grant_types) && (row!.grant_types as unknown[]).includes('client_credentials') && row!.confidential === true;
-      return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
+      return clientAttestRightFrom(row);
     }
   } catch (e) {
     // A schema before the attest columns has no right. Any other failure (a lock timeout, an aborted transaction) is

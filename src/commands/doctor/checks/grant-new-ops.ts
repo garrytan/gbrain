@@ -16,6 +16,7 @@
  *
  * Host-side only (not in the remote doctor): details name the operations.
  */
+import { attestRightFrom, clientAttestRightFrom } from '../../../core/access/actor-model.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { loadConfig, type GBrainConfig } from '../../../core/config.ts';
@@ -98,13 +99,13 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
     const dcrDefault = await resolveDefaultClientSurface(engine, cfg);
     const findings: GrantFinding[] = [];
 
-    const clients = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
+    const clients = await engine.executeRaw<Record<string, unknown>>('SELECT *, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
     for (const row of clients) {
       const grant = grantFromRow(row);
       const client = isMcpSurface(grant.surface) ? grant.surface : null;
       const server = client ? ceiling : minSurface(ceiling, dcrDefault ?? ceiling);
       const gaps = await grantOperationGaps({
-        scopes: grant.scopes, allowedOperations: grant.allowedOperations, boundSlugPrefixes: grant.boundSlugPrefixes ?? undefined,
+        attestedOperations: clientAttestRightFrom(row)?.ops, scopes: grant.scopes, allowedOperations: grant.allowedOperations, boundSlugPrefixes: grant.boundSlugPrefixes ?? undefined,
         clientSurface: client, serverSurface: server, disabled,
       });
       if (!gaps.snapshotExcluded.length && !gaps.pinExcluded.length) continue;
@@ -122,7 +123,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
       const grant = grantFromTokenRow(row);
       // A drifted or malformed operations axis denies everything; legacy_token_grant_drift owns that report.
       if (grant.permissionsMalformed || grant.drift.includes('operations') || grant.allowedOperations === null) continue;
-      const gaps = await grantOperationGaps({ scopes: grant.scopes, allowedOperations: grant.allowedOperations, clientSurface: null,
+      const gaps = await grantOperationGaps({ attestedOperations: attestRightFrom(row, 'legacy', row.member_id)?.ops, scopes: grant.scopes, allowedOperations: grant.allowedOperations, clientSurface: null,
         serverSurface: ceiling, disabled });
       if (!gaps.snapshotExcluded.length) continue;
       const name = String(row.name);

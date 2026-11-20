@@ -63,6 +63,14 @@ describe('#6621 confirm_memory needs memory_confirm, not just a snapshot', () =>
   });
 });
 
+test('an actor-only operation with no attest right is a prerequisite and has no snapshot repair', async () => {
+  const gaps = await gapsFor(['read', 'write'], ['get_page']);
+  for (const operation of ['memory_propose', 'memory_write']) {
+    expect(gaps.prerequisites).toContainEqual(expect.objectContaining({ operation, prerequisite: 'attested_actor' }));
+    expect(gaps.snapshotExcluded).not.toContain(operation);
+  }
+});
+
 describe('#6663 membership operations on a grant with no snapshot', () => {
   test('are unreachable, named, and get a refresh repair', async () => {
     const scopes = ['read', 'skills_member_self'];
