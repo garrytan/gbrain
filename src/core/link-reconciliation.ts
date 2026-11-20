@@ -218,7 +218,7 @@ export async function replacePageFileLinks(engine: BrainEngine, slug: string, so
 export async function fileLinkOwnership(engine: BrainEngine, sourceId: string, scope?: { slugs: readonly string[] }) {
   const pages = scope
     ? await engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...scope.slugs]])
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug COLLATE "C"`, [sourceId, [...scope.slugs]])
     : await loadLinkPageMetadata(engine);
   const metadata = new Map(pages.map(row => [`${row.source_id}\0${row.slug}`, row]));
   const resolver = makeIndexedLinkResolver(pages, sourceId);

@@ -104,7 +104,7 @@ export async function chatChannelCensus(engine: BrainEngine, sourceIds: readonly
        FROM pages p
       WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
         ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
-      GROUP BY p.source_id ORDER BY p.source_id`,
+      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`,
     [[...CHAT_PAGE_TYPES], [...sourceIds], [...DM_PAGE_TYPES]],
   );
   return rows.reduce((c, r) => ({ ...c, chat_pages: c.chat_pages + Number(r.chat_pages), channels: c.channels + Number(r.channels), chat_sources: [...c.chat_sources, r.source_id] }), empty);

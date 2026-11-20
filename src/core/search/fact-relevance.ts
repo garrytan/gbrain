@@ -291,9 +291,9 @@ export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope
   const { where, params } = poolPredicate(scope, undefined);
   const n = params.length;
   return engine.executeRaw<{ source_id: string; entity_slug: string }>(
-    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
+    `SELECT DISTINCT f.source_id COLLATE "C" AS source_id, f.entity_slug COLLATE "C" AS entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT $${n + 2}`, [...params, [...keys], limit]);
 }
 
 /** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */
@@ -353,7 +353,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
 export async function poolEntityPairs(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>> {
   const { where, params } = poolPredicate(scope, filters);
   return engine.executeRaw<{ source_id: string; entity_slug: string }>(
-    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug IS NOT NULL ORDER BY f.source_id, f.entity_slug`, params);
+    `SELECT DISTINCT f.source_id COLLATE "C" AS source_id, f.entity_slug COLLATE "C" AS entity_slug FROM facts f WHERE ${where} AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, params);
 }
 
 export interface ScoredFact {

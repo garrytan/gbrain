@@ -56,7 +56,7 @@ export async function findCards(engine: BrainEngine, query: string, opts: { limi
     CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
       || ' ' || p.slug || ' ' || ${boundedBodyPrefixSql('p')}) AS doc) d
     WHERE p.source_id = $1 AND p.type = $2 AND ${policy}${filters}
-    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug
+    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
     LIMIT 500`, params);
   const needed = Math.max(1, Math.ceil(terms.length / 2));
   const strip = ({ exact_id: _e, exact_alias: _a, exact_title: _t, matched: _m, rank: _r, similarity: _s, ...card }: (typeof rows)[number]): CardRow => ({ ...card, stores: card.stores ?? [] });
@@ -77,14 +77,14 @@ export async function listCards(engine: BrainEngine, opts: { limit: number; offs
   const where = `p.source_id = $1 AND p.type = $2 AND ${pageReadFilter('p', opts.policy, params, true)}${cardFilterSql('p', opts.filters, params)}`;
   const [{ n }] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p WHERE ${where}`, params);
   params.push(opts.limit, opts.offset);
-  const cards = await engine.executeRaw<CardRow>(`SELECT ${CARD_COLUMNS} FROM pages p WHERE ${where} ORDER BY p.slug LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  const cards = await engine.executeRaw<CardRow>(`SELECT ${CARD_COLUMNS} FROM pages p WHERE ${where} ORDER BY p.slug COLLATE "C" LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return { cards: cards.map((c) => ({ ...c, stores: c.stores ?? [] })), total: Number(n) };
 }
 
 /** Every live page on the shelf, sorted by id, with the card it stores (null when its page holds none) and the page's access labels. Trusted local readers only. */
 export async function readShelfCards(engine: BrainEngine): Promise<Array<{ id: string; card: Card | null; labels: AccessLabels }>> {
   const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; frontmatter: unknown }>(
-    'SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug', [STORAGE_SOURCE_ID]);
+    'SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug COLLATE "C"', [STORAGE_SOURCE_ID]);
   return rows.map((row) => {
     const frontmatter = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) as Record<string, unknown> : (row.frontmatter ?? {}) as Record<string, unknown>;
     return { id: row.slug, card: row.type === STORED_OBJECT_TYPE ? cardFromPage({ slug: row.slug, title: row.title, frontmatter }) : null, labels: accessLabels(frontmatter) };
