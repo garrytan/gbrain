@@ -10,6 +10,8 @@ final class FakeWriteStore: ContactsWriteStore {
     var allowed = ContactsAccess.allowed
     var saves: [CardEdit] = []
     var failNext = false
+    var saves = 0
+    var failAtSave: Int? = nil
     var lie = false
     var exports = 0
     var next = 0
@@ -28,6 +30,8 @@ final class FakeWriteStore: ContactsWriteStore {
     func groupExists(_ name: String) throws -> Bool { groups.contains(name) }
 
     func save(_ edit: CardEdit) throws -> String {
+        saves += 1
+        if saves == failAtSave { throw Problem.internalError }
         if failNext { failNext = false; throw Problem.internalError }
         saves.append(edit)
         if lie { return { switch edit { case .create: return "made-x"; case .setField(let id, _, _), .addValue(let id, _, _, _), .removeValue(let id, _, _, _), .addToGroup(let id, _, _), .removeFromGroup(let id, _), .delete(let id): return id } }() }
@@ -303,6 +307,16 @@ func statuses(_ reply: (Int, [String: Any])) -> [String] {
         _ = try h.writer.restore(batch: "batch-merge-1", dryRun: false)
         #expect(h.store.cards.count == 2)
         #expect(h.store.cards["a"]!.jobTitle == "" && h.store.cards["a"]!.phones.isEmpty)
+    }
+
+    @Test func aMergeRetriedAfterAFailedCopyStillCopiesEverythingBeforeTheDelete() throws {
+        let h = WriteHarness()
+        h.store.cards = ["a": card("a", "alice"), "b": card("b", "alice", title: "CEO", phone: "555-010-0199")]
+        h.store.failAtSave = 2
+        #expect(statuses(h.owner("batch-merge-2", [["key": "key-k-merge-retry", "op": "merge", "id": "a", "from": "b"]])) == ["failed:save_failed"])
+        #expect(h.store.cards["b"] != nil && h.store.cards["a"]!.jobTitle == "CEO" && h.store.cards["a"]!.phones.isEmpty)
+        #expect(statuses(h.owner("batch-merge-3", [["key": "key-k-merge-retry", "op": "merge", "id": "a", "from": "b"]])) == ["applied"])
+        #expect(h.store.cards["b"] == nil && h.store.cards["a"]!.phones.count == 1)
     }
 
     @Test func theKillSwitchAndTheDailyExportComeFirst() throws {

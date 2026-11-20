@@ -37,7 +37,7 @@ function verifies(s: Seen, batch: string): boolean {
   return verify(null, Buffer.from(canonical), publicKey, Buffer.from(m[4]!, 'base64url'));
 }
 
-const cfg = () => ({ helperHost: '127.0.0.1', helperPort: server.port as number, proxy: null as string | null });
+const cfg = () => ({ helperHost: '127.0.0.1', helperPort: server.port as number, proxy: undefined as string | undefined });
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'gbrain-acw-'));
@@ -121,7 +121,7 @@ describe('sendContactsBatch', () => {
   test('no answer at all is apple_contacts_unreachable and says some changes may have been applied', async () => {
     let err: { code?: string; message?: string } = {};
     try {
-      await sendContactsBatch({ sourceId: 's', cfg: { helperHost: '127.0.0.1', helperPort: 1, proxy: null }, batch: 'enr-batch-3', countryCode: '1', changes: [change],
+      await sendContactsBatch({ sourceId: 's', cfg: { helperHost: '127.0.0.1', helperPort: 1, proxy: undefined }, batch: 'enr-batch-3', countryCode: '1', changes: [change],
         sleep: async () => {}, retryDelaysMs: [], auth: { kind: 'enrich', token: TOKEN } });
     } catch (error) { err = error as typeof err; }
     expect(err.code).toBe('apple_contacts_unreachable');
@@ -205,7 +205,7 @@ describe('gbrain apple-contacts write', () => {
     const out = JSON.parse(await captured(() => runAppleContacts(fakeEngine({ 'apple_contacts.write': 'dry_run' }), fill)));
     expect(out.dry_run).toBe(true);
     expect(out.changes[0]).toMatchObject({ op: 'fill', id: 'card-a', field: 'job_title', value: 'Engineer' });
-    expect(out.changes[0].key).toBe(changeKey('fill', ['card-a', undefined, 'job_title', 'Engineer', undefined, undefined]));
+    expect(out.changes[0].key).toBe(changeKey('fill', [out.batch, 'card-a', undefined, 'job_title', 'Engineer', undefined, undefined, undefined]));
     expect(seen).toHaveLength(0);
   });
 
@@ -226,6 +226,18 @@ describe('gbrain apple-contacts write', () => {
     const sent = JSON.parse(seen[0]!.body);
     expect(sent.owner_instruction).toBe('add the title');
     expect(verifies(seen[0]!, sent.batch)).toBe(true);
+  });
+
+  test('running the same command again sends a new change key, so the helper applies it instead of answering replayed', async () => {
+    const engine = fakeEngine({ 'apple_contacts.write': 'dry_run', 'apple_contacts.destructive_writes': 'on' });
+    const first = JSON.parse(await captured(() => runAppleContacts(engine, fill)));
+    const again = JSON.parse(await captured(() => runAppleContacts(engine, fill)));
+    expect(first.batch).not.toBe(again.batch);
+    expect(first.changes[0].key).not.toBe(again.changes[0].key);
+    const set = (old: string) => ['write', 'set', '--card', 'card-a', '--field', 'job_title', '--value', 'new', '--expect', old, '--owner-instruction', 'x'];
+    const a = JSON.parse(await captured(() => runAppleContacts(engine, set('old'))));
+    expect(a.changes[0].key).toBe(changeKey('set', [a.batch, 'card-a', undefined, 'job_title', 'new', undefined, undefined, JSON.stringify({ job_title: 'old' })]));
+    expect(a.changes[0].key).not.toBe(changeKey('set', [a.batch, 'card-a', undefined, 'job_title', 'new', undefined, undefined, JSON.stringify({ job_title: 'older' })]));
   });
 
   test('change keys are deterministic, and differ when any part differs', () => {

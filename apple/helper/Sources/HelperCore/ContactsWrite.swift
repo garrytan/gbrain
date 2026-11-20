@@ -751,10 +751,10 @@ public final class ContactsWriter {
             case "merge":
                 guard let keep = try target(change.id), let gone = try target(change.from, image: true), keep.card.id != gone.card.id else { return skip(change, "card_missing") }
                 guard keep.writable, gone.writable else { return skip(change, "card_linked") }
-                var step = 0
                 func sub(_ op: String, _ edit: CardEdit, field: String? = nil, value: String? = nil, label: String? = nil, group: String? = nil, prior: String? = nil,
                          before: FullCard? = nil, check: @escaping (FullCard?) -> Bool) throws {
-                    step += 1
+                    let what = [op, field ?? "", value ?? "", group ?? ""].joined(separator: "\u{0}")
+                    let step = SHA256.hash(data: Data(what.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
                     let part = ChangeRequest(key: change.key + "." + String(step), op: op, id: nil, from: nil, field: field, value: value, label: label, group: group,
                                              fields: nil, expect: nil)
                     if index[part.key]?.phase == "done" { return }

@@ -118,12 +118,12 @@ export async function runAppleContacts(engine: BrainEngine, args: string[]): Pro
   if (op === 'merge') need(!!from, '--from <id>');
   if (op === 'delete') need(!!expect && Object.keys(expect).length > 0, '--expect-json with the card as the box last read it');
   if (op === 'set') { const old = flag(args, '--expect'); need(old !== undefined, '--expect <the value now>'); expect = { [field!]: old }; }
+  const batch = 'own-' + Date.now().toString(36) + '-' + randomBytes(6).toString('hex');
   const change: ContactsWriteChange = {
-    key: changeKey(op, [card, from, field, value, group, fields ? JSON.stringify(fields) : undefined]), op,
+    key: changeKey(op, [batch, card, from, field, value, group, fields ? JSON.stringify(fields) : undefined, expect ? JSON.stringify(expect) : undefined]), op,
     ...(card ? { id: card } : {}), ...(from ? { from } : {}), ...(field ? { field } : {}), ...(value !== undefined ? { value } : {}),
     ...(label ? { label } : {}), ...(group ? { group } : {}), ...(fields ? { fields } : {}), ...(expect ? { expect } : {}),
   };
-  const batch = 'own-' + Date.now().toString(36) + '-' + randomBytes(6).toString('hex');
   if (mode === 'dry_run') {
     console.log(JSON.stringify({ dry_run: true, batch, changes: [change] }));
     return;
