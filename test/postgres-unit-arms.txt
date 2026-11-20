@@ -179,6 +179,7 @@ test/engine-parity/family-tail-sites.test.ts
 test/engine-parity/fence-overlay.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/files-ops-sites.test.ts
+test/engine-parity/forget-fence-path.test.ts
 test/engine-parity/forget-members.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts

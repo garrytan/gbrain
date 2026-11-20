@@ -136,6 +136,19 @@ impl Brain {
         })
     }
 
+    /// `readLiveStoredBody({ sourceId, slug })`: resolves `{ compiled_truth, timeline }` of the live page, or null.
+    #[napi]
+    pub fn read_live_stored_body<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageCoordinate = required(args, "readLiveStoredBody args")?;
+            s.read_live_stored_body(&a)
+        })
+    }
+
     /// `readFenceRowOccupant({ sourceId, slug, rowNum })`: resolves the occupying row's id, or null.
     #[napi]
     pub fn read_fence_row_occupant<'env>(

@@ -881,7 +881,8 @@ of the keys, not the collation order a Postgres brain uses.
 
 `facts/file-body-guard.ts`
 - `readLiveStoredBody(sourceId, slug, lock)` (`readStoredBody`): the live page's `compiled_truth` and `timeline`; `lock` is the row
-  lock the engine's transaction holds. A segmented page reads null columns.
+  lock the engine's transaction holds. A segmented page reads null columns. Served from the page record (`facts/cycle.rs`
+  `read_live_stored_body`); the store's writer gate, held by a `transaction`, is the lock.
 - `listPageStates(sourceId, slug)` (`replaceableFile`): the page row's body, frontmatter, title, type and tags, then the 20 newest
   `page_versions` rows that hold a body, newest first.
 

@@ -89,7 +89,7 @@ transaction	lifecycle	yes	149	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	124	yes	yes	yes	serves
+getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	31	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
@@ -397,11 +397,11 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	110	yes	yes	yes	serves
-insertFacts	facts	yes	133	no	yes	yes	serves
+insertFact	facts	yes	111	yes	yes	yes	serves
+insertFacts	facts	yes	135	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	74	no	yes	yes	serves
-listFactsByEntity	facts	yes	36	yes	yes	yes	serves
+expireFact	facts	yes	75	no	yes	yes	serves
+listFactsByEntity	facts	yes	37	yes	yes	yes	serves
 listFactsSince	facts	yes	16	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
 listFactsBySession	facts	yes	5	yes	yes	yes	serves
@@ -790,7 +790,7 @@ listOwnLinkIds	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listActiveFactIdsOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listFactIdsStillOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listLinkIdsOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-readPageFileOrigin	facts_cycle_sites	yes	1	no	yes	yes	serves
+readPageFileOrigin	facts_cycle_sites	yes	3	no	yes	yes	serves
 listFenceRowClaims	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 adoptFactIntoFence	facts_cycle_sites	yes	2	no	yes	yes	refuses:facts
 listFenceRowSupersession	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
@@ -809,7 +809,7 @@ listHeldFactRows	facts_cycle_sites	yes	2	no	yes	yes	serves
 listFencedFactsOfMissingPages	facts_cycle_sites	yes	2	no	yes	yes	serves
 readFenceRowNumHint	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 readSourceCheckoutPath	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-readLiveStoredBody	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
+readLiveStoredBody	facts_cycle_sites	yes	1	no	yes	yes	serves
 listPageStates	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 countSegmentedVersionsOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 countFactFingerprintLeftovers	facts_purge	yes	1	no	yes	yes	serves
@@ -1106,7 +1106,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	2	no	yes	yes	serves
-readSourceState	write_misc	yes	2	no	yes	yes	serves
+readSourceState	write_misc	yes	4	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves

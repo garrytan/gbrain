@@ -522,3 +522,26 @@ fn page_file_origin_reads_a_live_page_and_a_deleted_one_only_when_asked() {
     let other: PageFileOriginQuery = args(json!({ "sourceId": "other", "slug": "has-origin" }));
     assert_eq!(b.read_page_file_origin(&other).unwrap(), Value::Null);
 }
+
+#[test]
+fn live_stored_body_reads_a_live_page_and_null_for_a_deleted_or_missing_one() {
+    let b = brain("cycle-live-body");
+    let input: PageInput = args(json!({
+        "type": "note", "title": "Live", "compiled_truth": "the body", "timeline": "the timeline",
+    }));
+    let options: PutPageOptions = args(json!({ "sourceId": "default" }));
+    b.put_page("guard/live", &input, &options).unwrap();
+    page(&b, "guard/gone", "default", json!({}));
+    b.soft_delete_page("guard/gone", Some("default")).unwrap();
+    let read = |source: &str, slug: &str| {
+        let q: PageCoordinate = args(json!({ "sourceId": source, "slug": slug }));
+        b.read_live_stored_body(&q).unwrap()
+    };
+    assert_eq!(
+        read("default", "guard/live"),
+        json!({ "compiled_truth": "the body", "timeline": "the timeline" })
+    );
+    assert_eq!(read("default", "guard/gone"), Value::Null);
+    assert_eq!(read("default", "guard/never"), Value::Null);
+    assert_eq!(read("other", "guard/live"), Value::Null);
+}

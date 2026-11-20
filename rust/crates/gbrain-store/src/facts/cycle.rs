@@ -509,6 +509,22 @@ impl Store {
             ))
     }
 
+    /// `readLiveStoredBody` (src/core/facts/file-body-guard.ts `readStoredBody`): `{ compiled_truth, timeline }` of
+    /// the live page, or null for a deleted or missing page. A segmented page reads null columns, as PGLite's do. The
+    /// caller's row lock is the store's writer gate, which a `transaction` already holds, so the read takes no lock.
+    pub fn read_live_stored_body(&self, q: &PageCoordinate) -> Result<Value> {
+        no_nul(
+            "readLiveStoredBody",
+            &[("sourceId", &q.source_id), ("slug", &q.slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, &q.source_id, &q.slug)?
+            .filter(|p| p.deleted_at_us.is_none())
+            .map_or(Value::Null, |p| {
+                json!({ "compiled_truth": p.compiled_truth.as_deref(), "timeline": p.timeline.as_deref() })
+            }))
+    }
+
     /// `readFenceRowOccupant` (src/core/facts/fence-fact-append.ts): the id of the row of a page
     /// coordinate that holds `rowNum`, the oldest when several do, or none.
     pub fn read_fence_row_occupant(&self, q: &FenceRowOccupantQuery) -> Result<Option<u64>> {

@@ -38,6 +38,10 @@ export const listFactsForPage: Member<'listFactsForPage'> = async (brain, source
 export const readPageFileOrigin: Member<'readPageFileOrigin'> = (brain, sourceId, slug, opts) =>
   storeCall({ member: 'readPageFileOrigin' }, () => brain.readPageFileOrigin({ sourceId, slug, includeDeleted: opts?.includeDeleted ?? false }));
 
+/** The store's writer gate is the row lock (a `transaction` holds it), so `lock` asks the store for nothing more. */
+export const readLiveStoredBody: Member<'readLiveStoredBody'> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readLiveStoredBody' }, () => brain.readLiveStoredBody({ sourceId, slug }));
+
 export const countLegacyFactsPending: Member<'countLegacyFactsPending'> = (brain, sourceId) =>
   storeCall({ member: 'countLegacyFactsPending' }, () => brain.countLegacyFactsPending(sourceId));
 
