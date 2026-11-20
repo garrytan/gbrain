@@ -4507,6 +4507,25 @@ export interface BrainEngine {
   listPageSecretOccurrences(pageIds: readonly number[]): Promise<Array<{ id: string; page_id: number }>>;
   /** Delete the write-gate holds of purged slugs (up to each page's `deletedAt` when given) and the holds' receipts. */
   deletePurgedSlugHolds(sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null }>): Promise<{ write_gate_holds: number; write_gate_receipts: number }>;
+  /**
+   * The held-concept rebuild's reads and link carry (SQL in engine-sql/concept-rebuild.ts). A held concept is a
+   * synthesized concept tombstone whose needs_rederive mark is open at its delete and on which no owner purge is owed.
+   * readHeldConcept returns its delete instant (epoch microseconds as text); isConceptStillHeld and lockHeldConcept
+   * (FOR UPDATE, on the purge transaction) check one delete instant.
+   */
+  readHeldConcept(pageId: number): Promise<{ deleted_us: string } | null>;
+  isConceptStillHeld(pageId: number, deletedUs: string): Promise<boolean>;
+  lockHeldConcept(pageId: number, sourceId: string, slug: string, deletedUs: string): Promise<boolean>;
+  /** How many of `members` are live at their named revision (FOR SHARE on the publication transaction). */
+  lockLiveConceptMembers(sourceId: string, members: ReadonlyArray<{ slug: string; revision: string }>): Promise<number>;
+  /** The live pages among `slugs`, with their revisions. */
+  listLiveConceptMemberRevisions(sourceId: string, slugs: readonly string[]): Promise<Array<{ slug: string; revision: string }>>;
+  /** Links into the page from other live pages, except concept provenance, as JSON rows of the carried columns. */
+  listConceptIncomingLinks(pageId: number): Promise<unknown[]>;
+  /** Point `incoming` (from listConceptIncomingLinks of `oldId`) at the live page at `slug`; null when no page is live there. */
+  carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number): Promise<{ id: number; carried: number } | null>;
+  /** When a tombstone's `hours` recovery window ends (ISO, UTC) and whether it has; null for a live or missing page. */
+  readTombstoneWindow(pageId: number, hours: number): Promise<{ until: string; past: boolean } | null>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

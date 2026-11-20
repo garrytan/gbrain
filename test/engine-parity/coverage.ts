@@ -192,6 +192,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'listDerivedRows',
     // the hard delete's slug-keyed stores and write-gate holds (engine-sql/purge-slug-stores.ts)
     'deletePurgedSlugStoreRows', 'listPageSecretOccurrences', 'deletePurgedSlugHolds',
+    // the held-concept rebuild's reads and link carry (engine-sql/concept-rebuild.ts)
+    'readHeldConcept', 'isConceptStillHeld', 'lockHeldConcept', 'lockLiveConceptMembers', 'listLiveConceptMemberRevisions', 'listConceptIncomingLinks', 'carryConceptIncomingLinks', 'readTombstoneWindow',
     // the purge receipt's reads (engine-sql/purge-verify.ts)
     'countPurgeProbe', 'listPurgeProbeItems', 'listBeliefEventValuesAfter', 'listLiveFactContextsAfter', 'listSegmentedProseBodies', 'listPurgeProseSlugs', 'countPagePurgeTombstones', 'readPagePurgeRequest', 'listPurgeEffectStates', 'countPurgeFingerprintRows'],
 

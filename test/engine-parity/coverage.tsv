@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 953/953
+# covered: 961/961
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -46,7 +46,7 @@
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 14/14
-# facts_purge: 31/31
+# facts_purge: 39/39
 # facts_repair: 10/10
 # facts_trust: 10/10
 # trust_tier_reads: 15/15
@@ -89,17 +89,17 @@ transaction	lifecycle	yes	118	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	126	yes	yes	yes	serves
+getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	558	yes	yes	yes	serves
+putPage	pages	yes	559	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	157	yes	yes	yes	serves
+softDeletePage	pages	yes	158	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -759,6 +759,14 @@ listDerivedRows	facts_purge	yes	1	no	yes	yes	serves
 deletePurgedSlugStoreRows	facts_purge	yes	2	no	yes	yes	refuses:pages
 listPageSecretOccurrences	facts_purge	yes	2	no	yes	yes	refuses:pages
 deletePurgedSlugHolds	facts_purge	yes	1	no	yes	yes	refuses:pages
+readHeldConcept	facts_purge	yes	1	no	yes	yes	refuses:pages
+isConceptStillHeld	facts_purge	yes	1	no	yes	yes	refuses:pages
+lockHeldConcept	facts_purge	yes	1	no	yes	yes	refuses:pages
+lockLiveConceptMembers	facts_purge	yes	1	no	yes	yes	refuses:pages
+listLiveConceptMemberRevisions	facts_purge	yes	1	no	yes	yes	refuses:pages
+listConceptIncomingLinks	facts_purge	yes	1	no	yes	yes	refuses:pages
+carryConceptIncomingLinks	facts_purge	yes	1	no	yes	yes	refuses:pages
+readTombstoneWindow	facts_purge	yes	1	no	yes	yes	refuses:pages
 loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -811,7 +819,7 @@ listSegmentedPages	withdrawal_pages	yes	1	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	1	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	4	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	5	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
