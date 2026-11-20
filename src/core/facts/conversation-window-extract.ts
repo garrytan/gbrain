@@ -16,6 +16,8 @@ import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVers
 import { CONVERSATION_ENTITY_HINTS_CAP } from './conversation-entity-hints.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './conversation-publication.ts';
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
+import { conversationOwner, guardOwnerFact } from './conversation-owner-guard.ts';
+import { isNullLikeEntity } from './write-single.ts';
 import type { ConversationSegment } from './conversation-types.ts';
 import { renderSegmentForExtraction, segmentOf } from './conversation-windows.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
@@ -106,8 +108,10 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   })));
   // GST-3170: a fact restating a claim its speaker asked to keep quiet is stored private, unless the claim was withdrawn
   // or purged at any visibility: the guards match the row's own visibility, so narrowing must never bring one back.
+  const owner = await conversationOwner(run.engine, run.sourceId, page);
+  const guarded = inferred.map((row, i) => guardOwnerFact(row, owner, seg, isNullLikeEntity(extracted[i]!.entity_slug)));
   const quiet = visibility === 'world' ? keepQuietClaims(seg.messages) : [];
-  const rows = await Promise.all(inferred.map(async row => keptQuiet(row.fact, quiet)
+  const rows = await Promise.all(guarded.map(async row => keptQuiet(row.fact, quiet)
     && !await isFactWithdrawn(run.engine, run.sourceId, null, row.fact, row.entity_slug ?? null) ? { ...row, visibility: 'private' as const } : row));
   // GBRA-574: slots come from a second call over facts whose person was named exactly: by identity evidence alone (an
   // exact slug, a unique basename or alias; never a prefix guess or a near name), by subject inference, which needs
