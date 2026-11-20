@@ -130,6 +130,7 @@ import type * as CollateRepairReads from './engine-sql/collate-repair-reads.ts';
 import type * as CollateTypePageReads from './engine-sql/collate-type-page-reads.ts';
 import type * as CollateFactsHomeReads from './engine-sql/collate-facts-home-reads.ts';
 import type * as CollateGuestSources from './engine-sql/collate-guest-sources.ts';
+import type * as CollateTargetProbe from './engine-sql/collate-target-probe.ts';
 import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
@@ -3496,6 +3497,10 @@ export interface BrainEngine {
   upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string): Promise<CollateGuestSources.GuestSourceRow>;
   /** The live page at `slug` in each guest source (only `guestSource` when given), by source id in byte order (guests/promote.ts). */
   listGuestNotes(slug: string, guestSource?: string): Promise<Array<{ id: number; source_id: string }>>;
+  /** Every readable live copy of `slug` under the policy with its visible chunk count, vectors, revision state and chunker version, by source id in byte order (explain_target's probe). */
+  probeTargetRows(slug: string, policy: PageReadPolicy, chunkManifest?: boolean): Promise<CollateTargetProbe.TargetProbeRow[]>;
+  /** The page id and source id of each live copy of `slug` the policy admits, by source id in byte order (the relational chain's anchors). */
+  listChainAnchors(slug: string, policy: PageReadPolicy): Promise<CollateTargetProbe.ChainAnchorRow[]>;
   /** The live pages of a type (in one source when given), by slug then id in byte order, up to `limit` (page-to-link phase, schema-pack/page-to-link.ts). */
   listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }): Promise<CollateTypePageReads.TypePageBody[]>;
   /** The live pages of a type in one source, by slug in byte order, up to `limit` (page-to-alias phase, schema-pack/page-to-alias.ts). */

@@ -48,7 +48,7 @@ void READ_POLICY_KEYS_COMPLETE;
  * detail, type...) as the scope; `pageReadFilter` reads only the policy keys, so only those are taken here, and the
  * other keys change nothing but the live filter, as on PGLite.
  */
-function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
+export function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
   const policy: Record<string, unknown> = {};
   for (const key of READ_POLICY_KEYS) policy[key] = (opts as PageReadPolicy)[key];

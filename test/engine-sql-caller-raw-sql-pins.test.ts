@@ -16,6 +16,7 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { holdingSlugSql } from '../src/core/facts-fence.ts';
@@ -1217,6 +1218,21 @@ SELECT source_id, type FROM pairs`],
     from: 'src/core/guests/promote.ts:50 guestNote (one source), at dded7edc51',
     case: { method: 'listGuestNotes', variant: 'one source', run: e => e.listGuestNotes('notes/a', 'default') },
     texts: ['SELECT p.id, p.source_id FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.slug = $1 AND p.deleted_at IS NULL AND p.source_id = $2 ORDER BY p.source_id COLLATE "C"'],
+  },
+  ...([['default', {}, true, ''], ['one source, no manifest', { sourceId: 'default' }, false, ' (policy with a source, no manifest)']] as const).map(([variant, policy, manifest, note]): Pin => ({
+    from: `src/core/search/explain-target.ts:212 probeTarget${note}, at 746062e471`,
+    case: { method: 'probeTargetRows', variant, run: e => e.probeTargetRows('notes/a', policy, manifest) },
+    texts: () => [`SELECT p.source_id,
+       (SELECT COUNT(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc', manifest)}) AS chunks,
+       (SELECT COUNT(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND cc.embedding IS NOT NULL AND ${chunkGenerationFilter('p', 'cc', manifest)}) AS embedded,
+       ((p.text_projection_revision = p.knowledge_revision) IS TRUE) AS current,
+       p.chunker_version
+     FROM pages p WHERE p.slug = $1 AND ${pageReadFilter('p', policy, ['notes/a'], true)} ORDER BY p.source_id COLLATE "C"`],
+  })),
+  {
+    from: 'src/core/search/relational-chain.ts:321 resolveChainAnchors, at 746062e471',
+    case: { method: 'listChainAnchors', variant: 'default', run: e => e.listChainAnchors('notes/a', {}) },
+    texts: () => [`SELECT p.id, p.source_id FROM pages p WHERE p.slug = $1 AND ${pageReadFilter('p', {}, ['notes/a'], true)} ORDER BY p.source_id COLLATE "C"`],
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',

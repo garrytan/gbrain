@@ -94,6 +94,8 @@ export const RUST_ENGINE_MEMBERS = {
   readPageFileOrigin: 'pages',
   upsertGuestSource: 'sources',
   listGuestNotes: 'pages',
+  probeTargetRows: 'pages',
+  listChainAnchors: 'pages',
   listTypePageBodies: 'pages',
   listSourceTypePageBodies: 'pages',
   countRetypeCandidates: 'pages',

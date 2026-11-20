@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1041/1051
+# covered: 1043/1053
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -80,6 +80,7 @@
 # slug_reads: 6/6
 # facts_home_reads: 3/4
 # guest_sources: 2/2
+# target_probe: 2/2
 # type_page_reads: 4/4
 # write_guards: 10/10
 # page_visibility: 4/4
@@ -859,7 +860,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	25	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	24	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -1067,6 +1068,8 @@ listFencedFactsOfMissingPages	facts_home_reads	yes	1	no	yes	yes	serves
 readPageFileOrigin	facts_home_reads	no	0	no	-	-	-
 upsertGuestSource	guest_sources	yes	2	no	yes	yes	serves
 listGuestNotes	guest_sources	yes	1	no	yes	yes	serves
+probeTargetRows	target_probe	yes	1	no	yes	yes	serves
+listChainAnchors	target_probe	yes	1	no	yes	yes	serves
 listTypePageBodies	type_page_reads	yes	2	no	yes	yes	serves
 listSourceTypePageBodies	type_page_reads	yes	1	no	yes	yes	serves
 countRetypeCandidates	type_page_reads	yes	1	no	yes	yes	serves

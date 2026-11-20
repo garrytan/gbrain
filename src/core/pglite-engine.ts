@@ -301,6 +301,7 @@ import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import * as collateRepairReadsImpl from './engine-sql/collate-repair-reads.ts';
 import * as collateFactsHomeReadsImpl from './engine-sql/collate-facts-home-reads.ts';
 import * as collateGuestSourcesImpl from './engine-sql/collate-guest-sources.ts';
+import * as collateTargetProbeImpl from './engine-sql/collate-target-probe.ts';
 import * as collateTypePageReadsImpl from './engine-sql/collate-type-page-reads.ts';
 import * as collateSlugReadsImpl from './engine-sql/collate-slug-reads.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
@@ -1567,6 +1568,8 @@ export class PGLiteEngine implements BrainEngine {
   readPageFileOrigin(sourceId: string, slug: string) { return collateFactsHomeReadsImpl.readPageFileOrigin(this.rawRead, sourceId, slug); }
   upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string) { return collateGuestSourcesImpl.upsertGuestSource(this.rawRead, sourceId, writers, trustCeiling); }
   listGuestNotes(slug: string, guestSource?: string) { return collateGuestSourcesImpl.listGuestNotes(this.rawRead, slug, guestSource); }
+  probeTargetRows(slug: string, policy: PageReadPolicy, chunkManifest = true) { return collateTargetProbeImpl.probeTargetRows(this.rawRead, slug, policy, chunkManifest); }
+  listChainAnchors(slug: string, policy: PageReadPolicy) { return collateTargetProbeImpl.listChainAnchors(this.rawRead, slug, policy); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.rawRead, opts, timeoutMs); }

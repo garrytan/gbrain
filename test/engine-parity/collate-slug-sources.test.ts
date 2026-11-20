@@ -8,7 +8,7 @@
  *    store sort: `gbrain access who-can-read` (whoCanRead), the trust page-ref ambiguity error (resolvePageRef), `gbrain
  *    quarantine clear`'s "exists in N sources" error, `extract-conversation-facts --grammar`'s ambiguity error, the
  *    guest-promotion ambiguity error (promoteGuestNote), the scoped get_links miss hint, explain-target's probe rows
- *    (probeTarget), the relational chain anchors (resolveChainAnchors), and readPageSnapshot's pick when the preferred
+ *    (probeTargetRows), the relational chain anchors (resolveChainAnchors), and readPageSnapshot's pick when the preferred
  *    source does not hold the slug (the lowest source id).
  *  - Regression: an en_US Postgres sorted source ids by its locale, which skips `-` (`a0, ab, a-z` instead of `a-z, a0,
  *    ab`), so these errors, hints and picks named another order or another source than on PGLite and Rust brains.
@@ -30,7 +30,6 @@ import { resolvePageRef } from '../../src/core/trust/refs.ts';
 import { promoteGuestNote } from '../../src/core/guests/promote.ts';
 import { GUEST_TRUST_CEILING } from '../../src/core/guests/sources.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
-import { probeTarget } from '../../src/core/search/explain-target.ts';
 import { resolveChainAnchors } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
@@ -133,12 +132,13 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return hint;
   });
 
-  parityTest('probeTarget and resolveChainAnchors list the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('probeTarget and resolveChainAnchors list the sources by byte', { methods: ['putPage', 'probeTargetRows', 'listChainAnchors'] }, async (engine, backend) => {
     await seed(engine, backend);
-    const probe = (await probeTarget((sql, params) => engine.executeRaw(sql, params), SLUG, {})).map(r => r.source_id);
+    const rows = await engine.probeTargetRows(SLUG, {});
+    const probe = rows.map(r => r.source_id);
     const anchors = (await resolveChainAnchors(engine, SLUG, {})).map(a => a.source_id);
     expect({ probe, anchors }).toEqual({ probe: BYTE_SOURCES, anchors: BYTE_SOURCES });
-    return { probe, anchors };
+    return { probe, anchors, counts: rows.map(r => [r.chunks, r.embedded, r.current, r.chunker_version]) };
   });
 
   parityTest('readPageSnapshot picks the lowest source id by byte when the preferred source lacks the slug', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {

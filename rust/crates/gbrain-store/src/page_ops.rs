@@ -44,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod relational;
 mod retrievals;
+mod target_probe;
 pub(crate) use retrievals::{last_retrieved_us, remove_page_rows};
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The

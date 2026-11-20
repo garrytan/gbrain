@@ -96,6 +96,7 @@ mod retrieval_feedback;
 mod salience;
 mod stats;
 mod takes;
+mod target_probe;
 mod telemetry;
 mod timeline_queries;
 mod transactions;

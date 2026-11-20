@@ -274,6 +274,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   facts_home_reads: ['scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'readPageFileOrigin'],
   // guest_sources: the guest source rows and the notes in them (engine-sql/collate-guest-sources.ts)
   guest_sources: ['upsertGuestSource', 'listGuestNotes'],
+  // target_probe: the copies of one slug under a read policy (engine-sql/collate-target-probe.ts)
+  target_probe: ['probeTargetRows', 'listChainAnchors'],
   // type_page_reads: the schema-pack conversions' page reads (engine-sql/collate-type-page-reads.ts)
   type_page_reads: ['listTypePageBodies', 'listSourceTypePageBodies', 'countRetypeCandidates', 'listRetypeSampleSlugs'],
   write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',

@@ -228,6 +228,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageFileOrigin': OOS.callerRawSql,
   'upsertGuestSource': OOS.callerRawSql,
   'listGuestNotes': OOS.callerRawSql,
+  'probeTargetRows': OOS.callerRawSql,
+  'listChainAnchors': OOS.callerRawSql,
   'listTypePageBodies': OOS.callerRawSql,
   'listSourceTypePageBodies': OOS.callerRawSql,
   'countRetypeCandidates': OOS.callerRawSql,
@@ -1722,6 +1724,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listLiveSourceIncarnations', [['default', (e) => e.listLiveSourceIncarnations(['default'])]]),
   ...variants('listAttendanceScanWindow', [['default', (e) => e.listAttendanceScanWindow('default', '', 10)]]),
   ...variants('upsertGuestSource', [['default', (e) => e.upsertGuestSource('default', ['a-z', 'ab'], 'external_untrusted')]]),
+  ...variants('probeTargetRows', [['default', (e) => e.probeTargetRows('notes/a', {})], ['no manifest', (e) => e.probeTargetRows('notes/a', { sourceId: 'default' }, false)]]),
+  ...variants('listChainAnchors', [['default', (e) => e.listChainAnchors('notes/a', {})]]),
   ...variants('listGuestNotes', [['all', (e) => e.listGuestNotes('notes/a')], ['one source', (e) => e.listGuestNotes('notes/a', 'default')]]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
