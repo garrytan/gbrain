@@ -10,7 +10,6 @@
 
 use crate::Store;
 use crate::cli_reads::pg_text::timestamptz_text;
-use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::kv::KvRead;
 use crate::pages::read_page;
@@ -552,71 +551,6 @@ impl Store {
                     && operations.contains(&r.operation)
             })
             .count() as u64)
-    }
-
-    /// `listRecentWriterVersions(days)`: the committed requests published in the last `days`, per
-    /// admitting host, principal and version (by creation) and per publishing host, principal and
-    /// version (by publication), newest first. The migration cutoff is the epoch on this engine
-    /// (`readWriterVersionCutoff`), so every request counts, and a request on a worktree has no
-    /// owner row to name a host the request itself does not.
-    pub fn list_recent_writer_versions(&self, days: f64) -> Result<Vec<Value>> {
-        let since = self.env.now_micros() - micros(days * 86400.0);
-        // (role, host, principal, version) -> (last seen, requests)
-        type Key = (&'static str, Option<String>, String, Option<String>);
-        let mut groups: BTreeMap<Key, (i64, i64)> = BTreeMap::new();
-        for r in all_requests(&*self.read()?)? {
-            let publication = extra_time(&r, "published_at").or(r.completed_at_us);
-            if r.state != "committed" || !publication.is_some_and(|p| p >= since) {
-                continue;
-            }
-            let text = |column: &str| {
-                r.extra
-                    .get(column)
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            };
-            let principal = format!("{}:{}", r.principal_kind, r.principal_id);
-            let mut note = |key: Key, seen: i64| {
-                let g = groups.entry(key).or_insert((seen, 0));
-                g.0 = g.0.max(seen);
-                g.1 += 1;
-            };
-            note(
-                (
-                    "admitter",
-                    text("admitter_host_id"),
-                    principal.clone(),
-                    text("admitter_version"),
-                ),
-                r.created_at_us,
-            );
-            if let Some(p) = publication {
-                note(
-                    (
-                        "consumer",
-                        text("consumer_host_id"),
-                        principal,
-                        text("consumer_version"),
-                    ),
-                    p,
-                );
-            }
-        }
-        let mut rows: Vec<(Key, (i64, i64))> = groups.into_iter().collect();
-        rows.sort_by_key(|(_, (seen, _))| std::cmp::Reverse(*seen));
-        Ok(rows
-            .into_iter()
-            .map(|((role, host_id, principal, version), (seen, requests))| {
-                json!({
-                    "role": role,
-                    "host_id": host_id,
-                    "principal": principal,
-                    "version": version,
-                    "last_seen": iso(seen),
-                    "requests": requests,
-                })
-            })
-            .collect())
     }
 }
 

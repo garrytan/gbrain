@@ -1,7 +1,7 @@
 /**
- * Golden: the SQL text of the four typed reads that replaced raw SQL in rank_entities' remote coverage,
- * search_exact's held-snippet check and the held fence cells of a world-only fact read (readRankCoverage,
- * readExactSnippetChunks, listExactRescanChunks, listHeldFenceCells).
+ * Golden: the SQL text of the five typed reads that replaced raw SQL in rank_entities' remote coverage,
+ * search_exact's held-snippet check, the held fence cells of a world-only fact read and the fence overlay of a page
+ * body (readRankCoverage, readExactSnippetChunks, listExactRescanChunks, listHeldFenceCells, readFenceOverlayRows).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: PGLiteEngine and PostgresEngine send byte-identical statement text and parameters for each member
@@ -46,6 +46,8 @@ async function capture(proto: object): Promise<Record<string, Recorded[]>> {
     { sourceId: 'default', slug: 'people/held-example', rowNum: 2, claim: 'Ana keeps bees', partial: false },
     { sourceId: 'default', slug: 'people/held-example', rowNum: -1, claim: 'Ana walks', partial: true },
   ];
+  const page = { sourceId: 'default', slug: 'people/held-example' };
+  const incoming = [{ row_num: 2, claim: 'Ana keeps bees', visibility: 'world', fp: 'fp-2' }, { row_num: 3, claim: 'Ana walks', visibility: 'world', fp: null }];
   const coverage = [{ link_behind: false, mention_due: false }];
   const keys = [{ pageId: 7, chunkIndex: 0, snippet: 'needle' }, { pageId: 9, chunkIndex: 2, snippet: 'thread' }];
   return {
@@ -60,6 +62,10 @@ async function capture(proto: object): Promise<Record<string, Recorded[]>> {
     listHeldFenceCells_world: await run([], e => e.listHeldFenceCells(cells)),
     listHeldFenceCells_member: await run([], e => e.listHeldFenceCells(cells), ['member:alice-example']),
     listHeldFenceCells_empty: await run([], e => e.listHeldFenceCells([])),
+    readFenceOverlayRows_open: await run([], e => e.readFenceOverlayRows(page, incoming, { hideHeld: false })),
+    readFenceOverlayRows_world: await run([], e => e.readFenceOverlayRows(page, incoming, { hideHeld: true })),
+    readFenceOverlayRows_member: await run([], e => e.readFenceOverlayRows(page, incoming, { hideHeld: true }), ['member:alice-example']),
+    readFenceOverlayRows_empty: await run([], e => e.readFenceOverlayRows(page, [], { hideHeld: true })),
   };
 }
 
@@ -79,6 +85,10 @@ describe('remote read statements', () => {
     // A member caller's own page facts widen the held check; the world-only form names no member.
     expect(pglite.listHeldFenceCells_member![0]!.sql).toContain('member:alice-example');
     expect(pglite.listHeldFenceCells_world![0]!.sql).not.toContain('member:');
+    expect(pglite.readFenceOverlayRows_empty).toEqual([]);
+    expect(pglite.readFenceOverlayRows_member![0]!.sql).toContain('member:alice-example');
+    expect(pglite.readFenceOverlayRows_world![0]!.sql).not.toContain('member:');
+    expect(pglite.readFenceOverlayRows_open![0]!.sql).not.toContain('FROM facts hr');
     // The private variant adds the caller's page filter; the trusted one does not.
     expect(pglite.readRankCoverage_private![0]!.sql).not.toBe(pglite.readRankCoverage_trusted![0]!.sql);
     expect(pglite.listExactRescanChunks_private![0]!.sql).not.toBe(pglite.listExactRescanChunks_trusted![0]!.sql);

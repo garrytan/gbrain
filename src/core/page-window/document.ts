@@ -79,7 +79,7 @@ export function pageDocument(page: ProjectableBody): PageDocument {
  * only when the body has world facts rows.
  */
 export async function readPageDocument(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readFenceOverlayRows'>,
   page: { source_id: string; slug: string; compiled_truth: string; timeline?: string | null },
   opts: { hideHeld?: boolean } = {},
 ): Promise<PageDocument> {

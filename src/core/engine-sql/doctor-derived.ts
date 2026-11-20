@@ -260,7 +260,7 @@ const UNTILED_SQL = `SELECT p.id, p.source_id, p.slug, p.knowledge_revision::tex
                AND (m.gen_to IS NULL OR m.gen_to > p.body_generation)) r) t
       WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
         AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND (NOT t.gapless OR t.covered <> p.body_bytes)
-      ORDER BY p.source_id, p.slug LIMIT $3`;
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT $3`;
 
 /** Live segmented pages of unarchived sources whose live generation's rows do not tile the body (ordered by source and slug). */
 export function listUntiledSegmentedPageRows(raw: EngineRawRead, sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number): Promise<UntiledPageRow[]> {

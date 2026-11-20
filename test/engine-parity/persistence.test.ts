@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
  * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
- * the claim upkeep (renewal, expiry, the claimable probe) and the admission reads (source membership, topology changes,
+ * the publication's effects insert and the receipt's read of them, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -18,12 +18,15 @@
  *    sequence, time stamps, the source incarnation) are compared by shape or left out of the returned value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { basisEmbedding, createSource, parityArms } from './harness.ts';
+import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
-import type { TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
-import { assertPageRequestIdentity } from '../../src/core/persistence/journal.ts';
+import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
+import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
+import { assertPageRequestIdentity, completeWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
+import { countPendingProjections, countProjectionRebuild, type CoverageRelevance } from '../../src/core/search/retrieval-coverage.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -140,6 +143,16 @@ describe('engine parity: write journal', () => {
     const oneSource = await engine.readHeldCoverageRows(['default']);
     const answers = { pages, noPages, everySource, oneSource };
     expect(answers).toEqual({ pages: [], noPages: [], everySource: [], oneSource: [] });
+    return answers;
+  });
+
+  parityTest('the held fence read is empty on a brain with no held fence result', { methods: ['listFenceHoldRows'] }, async (engine) => {
+    const kinds = ['fact_fence', 'take_fence'];
+    const everyOwner = await engine.listFenceHoldRows(['default'], kinds);
+    const oneOwner = await engine.listFenceHoldRows(['default', 'other'], kinds, 'page:people/alice-example');
+    const noSources = await engine.listFenceHoldRows([], kinds);
+    const answers = { everyOwner, oneOwner, noSources };
+    expect(answers).toEqual({ everyOwner: [], oneOwner: [], noSources: [] });
     return answers;
   });
 
@@ -436,6 +449,306 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('selectClaimableWrite takes the oldest queued request in a transaction, honours excluded and lane roots, and finds none once both are claimed', {
+    methods: ['selectClaimableWrite', 'transactionDirect', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim'],
+  }, async (engine) => {
+    const head = (over: Partial<ClaimHeadSpec> = {}) => engine.transactionDirect(async tx => {
+      const row = await tx.selectClaimableWrite<WriteRequest>({ hostId: HOST, excludeRoots: [], fifoRoots: [], laneRoots: [], nonce: 'parity-nonce', syncSeen: {},
+        priority: null, leaseHolder: null, ...over });
+      return row && row.request_id;
+    });
+    const empty = await head();
+    const first = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const second = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const root = `db:${(await engine.readSourceMembership('default'))!.incarnation}`;
+    const queued = {
+      config: await head(), on: await head({ priority: true }), off: await head({ priority: false }), fifo: await head({ fifoRoots: [root] }),
+      leaseHolder: await head({ leaseHolder: { lockPrefix: 'gbrain-sync:', pid: 1, host: 'parity-host' } }), seen: await head({ syncSeen: { [HOST]: '1' } }),
+      excluded: await head({ excludeRoots: [root] }), otherExcluded: await head({ excludeRoots: ['db:parity-elsewhere'] }),
+      laneFirst: await head({ laneRoots: [HOST], priority: true }), laneFifo: await head({ laneRoots: [HOST], priority: false }),
+    };
+    await engine.stampWriteClaim(first, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const behindRunning = await head();
+    await engine.stampWriteClaim(second, OTHER_TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const claimed = await head();
+    const answers = { empty, queued, behindRunning, claimed };
+    const b1 = 'b0000000-0000-4000-8000-0000000000b1';
+    expect(answers).toEqual({
+      empty: null,
+      queued: { config: b1, on: b1, off: b1, fifo: b1, leaseHolder: b1, seen: b1, excluded: null, otherExcluded: b1, laneFirst: b1, laneFifo: null },
+      behindRunning: null, claimed: null,
+    });
+    return answers;
+  });
+
+  parityTest('insertPublicationEffects inserts in queue order, skips a gated effect while auto-linking is off and keeps a kind already queued', {
+    methods: ['insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'setConfig', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const revision = 'e0000000-0000-4000-8000-0000000000e1';
+    const insert = (requestId: string, effects: QueuedPublicationEffect[], rev: string | null = revision) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId, revision: rev, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null, effects });
+    });
+    const page = { slug: 'notes/parity', page_id: 1 };
+    const first = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const queued = await insert(first, [{ kind: 'embedding', data: page }, { kind: 'facts-backstop', data: { ...page, visibility: 'private' } },
+      { kind: 'links', data: { ...page, range: { from: 0, to: 4 } }, gated: true }]);
+    const again = await insert(first, [{ kind: 'embedding', data: { ...page, retry: true } }]);
+    await engine.setConfig('mcp.remote_auto_links', ' OFF ');
+    const second = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    const remoteOff = await insert(second, [{ kind: 'links', data: page, gated: true }, { kind: 'embedding', data: page }], null);
+    await engine.setConfig('mcp.remote_auto_links', 'true');
+    await engine.setConfig('auto_link', 'No');
+    const third = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    const autoLinkOff = await insert(third, [{ kind: 'links', data: page, gated: true }, { kind: 'git', data: page }]);
+    await engine.setConfig('auto_link', 'yes');
+    const fourth = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b4');
+    const switchesOn = await insert(fourth, [{ kind: 'links', data: page, gated: true }]);
+    const answers = { queued, again, remoteOff, autoLinkOff, switchesOn };
+    expect(answers).toEqual({ queued: ['embedding', 'facts-backstop', 'links'], again: [], remoteOff: ['embedding'], autoLinkOff: ['git'], switchesOn: ['links'] });
+    return answers;
+  });
+
+  parityTest('insertWithdrawalEffects queues a withdrawal\'s three effects in the withdrawal\'s transaction, keeps a queued kind, skips an unknown source and refuses a missing request', {
+    methods: ['insertWithdrawalEffects', 'transaction', 'readRequestEffects', 'selectClaimableEffect', 'transactionDirect', 'declarePersistence', 'readSourceMembership',
+      'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b5');
+    const r1 = 'e0000000-0000-4000-8000-0000000000e1', r2 = 'e0000000-0000-4000-8000-0000000000e2';
+    const targets = [{ slug: 'people/b', page_id: 2, revision: r2 }, { slug: 'people/a', page_id: 1, revision: r1 }];
+    await engine.transaction(async tx => {
+      await tx.insertWithdrawalEffects({ requestId: id, sourceId: 'default', targets });
+      await tx.insertWithdrawalEffects({ requestId: id, sourceId: 'default', targets: [] });
+      await tx.insertWithdrawalEffects({ requestId: 'b0000000-0000-4000-8000-0000000000ff', sourceId: 'no-such-source', targets });
+    });
+    const refusal = async (requestId: string) => {
+      try { await engine.transaction(tx => tx.insertWithdrawalEffects({ requestId, sourceId: 'default', targets })); return 'ok'; }
+      catch (e) { return /invalid input syntax for type uuid|violates foreign key constraint "persistence_effects_request_id_fkey"/.exec(String((e as Error).message))?.[0] ?? String(e); }
+    };
+    const refusals = { missing: await refusal('b0000000-0000-4000-8000-0000000000fe'), notUuid: await refusal('not-a-uuid') };
+    const head = await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.selectClaimableEffect<Record<string, unknown>>(HOST, []);
+    });
+    const waiting = (kind: string) => ({ kind, state: 'queued', error_code: null, outcome: null, recovering: false });
+    const answers = { effects: await engine.readRequestEffects(id), stray: await engine.readRequestEffects('b0000000-0000-4000-8000-0000000000ff'),
+      head: { kind: head?.kind, data: head?.data, revision: head?.revision, source_id: head?.source_id, incarnation: head?.source_incarnation === incarnation,
+        worktree_id: head?.worktree_id }, refusals };
+    expect(answers).toEqual({ effects: [waiting('embedding'), waiting('git'), waiting('withdrawal-mirror')], stray: [],
+      head: { kind: 'withdrawal-mirror', data: { version: 2, targets: [{ slug: 'people/a', page_id: 1, revision: r1 }, { slug: 'people/b', page_id: 2, revision: r2 }] },
+        revision: null, source_id: 'default', incarnation: true, worktree_id: null },
+      refusals: { missing: 'violates foreign key constraint "persistence_effects_request_id_fkey"', notUuid: 'invalid input syntax for type uuid' } });
+    return answers;
+  });
+
+  parityTest('readRequestEffects reads a request\'s queued effects in kind order, or only its Git effect, and refuses a non-uuid id', {
+    methods: ['readRequestEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const page = { slug: 'notes/parity', page_id: 1 };
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const bare = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'links', data: page, gated: true }, { kind: 'git', data: { relative_path: 'notes/parity.md' } }, { kind: 'embedding', data: page }] });
+    });
+    let refusal = 'ok';
+    try { await engine.readRequestEffects('not-a-uuid'); } catch (e) { refusal = /invalid input syntax for type uuid/.exec(String((e as Error).message))?.[0] ?? String(e); }
+    const answers = { all: await engine.readRequestEffects(id), git: await engine.readRequestEffects(id, 'git'), none: await engine.readRequestEffects(bare),
+      noGit: await engine.readRequestEffects(bare, 'git'), refusal };
+    const waiting = (kind: string) => ({ kind, state: 'queued', error_code: null, outcome: null, recovering: false });
+    expect(answers).toEqual({ all: [waiting('embedding'), waiting('git'), waiting('links')], git: [waiting('git')], none: [], noGit: [],
+      refusal: 'invalid input syntax for type uuid' });
+    return answers;
+  });
+
+  parityTest('the effect worker claims the due effect and settles each claim under its token, a stale token changing nothing', {
+    methods: ['selectClaimableEffect', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow',
+      'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'readRequestEffects', 'insertPublicationEffects', 'transactionDirect',
+      'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'lockEffectGuard'],
+  }, async (engine) => {
+    type Row = { id: string | number; kind: string; state: string; attempts: number; error_code: string | null; data: Record<string, unknown>; outcome: unknown; execution_token: string | null };
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b3');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: 1, target_failures: 1 } }, { kind: 'git', data: { relative_path: 'notes/parity.md', target_failures: 2 } },
+          { kind: 'links', data: { slug: 'notes/parity', page_id: 1 } }] });
+    });
+    const owner = { pid: 1, nonce: 'n', start: 's' };
+    let n = 0;
+    const claim = (dead: string[] = []) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const candidate = await tx.selectClaimableEffect<Row>(HOST, dead);
+      if (!candidate) return null;
+      const token = `f0000000-0000-4000-8000-00000000000${++n}`;
+      return tx.stampEffectClaim<Row>({ id: candidate.id, token, ownerJson: JSON.stringify({ token, owner }) });
+    });
+    const shape = (row: Row | null) => row && { kind: row.kind, state: row.state, attempts: Number(row.attempts), error_code: row.error_code, data: row.data, outcome: row.outcome };
+    const ref = (row: Row | null) => ({ id: row!.id, token: row!.execution_token });
+    const claims: unknown[] = [];
+    const a = await claim(); claims.push(shape(a));
+    const renewed = { stale: await engine.renewEffectClaim({ id: a!.id, token: OTHER_TOKEN }, { direct: true }), nullToken: await engine.renewEffectClaim({ id: a!.id, token: null }),
+      held: await engine.renewEffectClaim(ref(a), { direct: true }) };
+    const b = await claim(); claims.push(shape(b));
+    const c = await claim(); claims.push(shape(c));
+    const none = await claim();
+    const deadOwner = shape(await engine.transactionDirect(async tx => { await tx.declarePersistence(); return tx.selectClaimableEffect<Row>(HOST, ['1:n:s']); }));
+    await engine.completeEffectRow({ ...ref(a), outcomeJson: JSON.stringify({ embedding: 'skipped', reason: 'parity' }) });
+    await engine.completeEffectRow({ ...ref(a), outcomeJson: JSON.stringify({ embedding: 'again' }) });
+    await engine.retryEffectRow({ ...ref(b), reason: 'parity_retry', delayMs: 0 });
+    await engine.failEffectRow({ ...ref(c), reason: 'parity_failed' });
+    const b2 = await claim(); claims.push(shape(b2));
+    await engine.advanceEffectRow({ ...ref(b2), slug: 'notes/a' });
+    const b3 = await claim(); claims.push(shape(b3));
+    await engine.requeueEffectRow({ ...ref(b3), dataJson: JSON.stringify({ relative_path: 'notes/parity.md', after_slug: 'notes/b' }), reason: 'parity_requeue', delayMs: 0 });
+    const b4 = await claim(); claims.push(shape(b4));
+    await engine.retryBusyEffectRow({ ...ref(b4), dataJson: JSON.stringify({ busy_retries: 1 }), delayMs: 0 });
+    const b5 = await claim(); claims.push(shape(b5));
+    await engine.parkEffectRow({ ...ref(b5), dataJson: JSON.stringify({ relative_path: 'notes/parity.md', parked: [{ slug: 'notes/a' }] }) });
+    await engine.advanceEffectRow({ ...ref(b5), slug: 'notes/stale' });
+    const refusals: string[] = [];
+    for (const run of [() => engine.selectClaimableEffect('not-a-uuid', []), () => engine.readMirrorGateRows(['not-a-uuid']),
+      () => engine.lockEffectGuard('not-a-uuid')]) {
+      try { await run(); refusals.push('ok'); } catch (e) { refusals.push(/invalid input syntax for type uuid/.exec(String((e as Error).message))?.[0] ?? String(e)); }
+    }
+    const answers = { claims, renewed, none, deadOwner, gates: await engine.readMirrorGateRows([id]), effects: await engine.readRequestEffects(id), refusals,
+      guard: [await engine.lockEffectGuard(null), await engine.lockEffectGuard('f0000000-0000-4000-8000-0000000000ff')] };
+    expect(answers.none).toBeNull();
+    expect(answers.renewed).toEqual({ stale: false, nullToken: false, held: true });
+    expect(answers.effects).toEqual([
+      { kind: 'embedding', state: 'committed', error_code: null, outcome: { embedding: 'skipped', reason: 'parity' }, recovering: false },
+      { kind: 'git', state: 'failed', error_code: 'targets_parked', outcome: null, recovering: false },
+      { kind: 'links', state: 'failed', error_code: 'parity_failed', outcome: null, recovering: false }]);
+    expect(answers.refusals).toEqual(['invalid input syntax for type uuid', 'invalid input syntax for type uuid', 'invalid input syntax for type uuid']);
+    expect(answers.guard).toEqual([null, null]);
+    return answers;
+  });
+
+  parityTest('a target parked behind the withdrawal mirror is re-armable once that mirror commits, and only then', {
+    methods: ['hasRearmableTargets', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow', 'insertPublicationEffects', 'transactionDirect',
+      'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b4');
+    const parked = (code: string) => [{ slug: 'notes/parity', error_code: code }];
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'withdrawal-mirror', data: { slugs: ['notes/parity'] } }, { kind: 'git', data: { relative_path: 'notes/parity.md', parked: parked('withdrawal_mirror_failed') } },
+          { kind: 'links', data: { slug: 'notes/parity', parked: parked('withdrawal_mirror_failed') } }] });
+    });
+    const probe = () => engine.hasRearmableTargets([id], 'withdrawal_mirror_failed');
+    const before = await probe();
+    const mirror = await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const candidate = await tx.selectClaimableEffect<{ id: string | number; kind: string }>(HOST, []);
+      return tx.stampEffectClaim<{ id: string | number; kind: string; execution_token: string }>({ id: candidate!.id, token: 'f0000000-0000-4000-8000-0000000000c1', ownerJson: '{}' });
+    });
+    await engine.completeEffectRow({ id: mirror!.id, token: mirror!.execution_token, outcomeJson: '{}' });
+    const refusals: string[] = [];
+    try { await engine.hasRearmableTargets(['not-a-uuid'], 'x'); refusals.push('ok'); } catch (e) { refusals.push(/invalid input syntax for type uuid/.exec(String((e as Error).message))?.[0] ?? String(e)); }
+    const answers = { mirrorKind: mirror!.kind, before, after: await probe(), otherCode: await engine.hasRearmableTargets([id], 'some_other_code'),
+      otherRequest: await engine.hasRearmableTargets(['b0000000-0000-4000-8000-0000000000ff'], 'withdrawal_mirror_failed'), refusals };
+    expect(answers).toEqual({ mirrorKind: 'withdrawal-mirror', before: false, after: true, otherCode: false, otherRequest: false, refusals: ['invalid input syntax for type uuid'] });
+    return answers;
+  });
+
+  parityTest('the idle probe sees a queued write and an effect, and an excluded root hides the write', {
+    methods: ['probeIdleWork', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const spec = (excludedRoots: string[] = []) => ({ hostId: HOST, excludedRoots, publishing: false, retryingTopologies: [], laneRoots: [],
+      cursor: { after: { source_incarnation: incarnation, slug: '' }, highWater: null }, abandonedBefore: null, foregroundPriority: null });
+    const probe = async (excludedRoots?: string[]) => {
+      const row = await engine.probeIdleWork(spec(excludedRoots));
+      return row && { work: row.work, projection_work: row.projection_work, projection_last: row.projection_last };
+    };
+    const empty = await probe();
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b5');
+    const queued = await probe();
+    const excluded = await probe([`db:${incarnation}`]);
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'withdrawal-mirror', data: { slugs: ['notes/parity'] } }] });
+    });
+    const effect = await probe([`db:${incarnation}`]);
+    const answers = { empty, queued, excluded, effect };
+    const idle = { work: false, projection_work: false, projection_last: null };
+    expect(answers).toEqual({ empty: idle, queued: { ...idle, work: true }, excluded: idle, effect: { ...idle, work: true } });
+    return answers;
+  });
+
+  parityTest('the no-op embedding settle finds a queued effect whose page already carries current vectors and settles it once', {
+    methods: ['probeNoopEmbeddingSettle', 'lockNoopEmbeddingWindow', 'readNoopEmbeddingCandidates', 'settleNoopEmbeddingRows', 'putPage', 'sealChunks',
+      'setPageEmbeddingSignature', 'getPage', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'insertPublicationEffects',
+      'transactionDirect', 'declarePersistence', 'readRequestEffects'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await engine.putPage('notes/settle', { type: 'note', title: 'Settle', compiled_truth: 'settle body', timeline: '' });
+    await installChunks(engine, 'notes/settle', [chunk(0, 'settle body', { embedding: basisEmbedding(3), model: 'model-a' })]);
+    await engine.setPageEmbeddingSignature('notes/settle', { signature: 'sig-a' });
+    const page = (await engine.getPage('notes/settle'))!;
+    const requestId = 'b0000000-0000-4000-8000-0000000000b6';
+    const empty = await engine.probeNoopEmbeddingSettle('0');
+    const id = await admitDirect(engine, requestId);
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: id, revision: page.knowledge_revision!, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { page_id: page.id } }] });
+    });
+    const due = await engine.probeNoopEmbeddingSettle('0');
+    const candidates = (spec: { signature?: string; expectedModel?: string | null } = {}) => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const { newest, rows } = await tx.lockNoopEmbeddingWindow({ from: '0', limit: 50 });
+      const found = await tx.readNoopEmbeddingCandidates({ hostId: HOST, signature: spec.signature ?? 'sig-a',
+        expectedModel: spec.expectedModel === undefined ? 'model-a' : spec.expectedModel, column: 'embedding', window: rows.map(row => row.id),
+        pageIds: rows.flatMap(row => row.page_id === null ? [] : [row.page_id]) });
+      return { newestIsLast: newest === rows[rows.length - 1]?.id, pages: rows.map(row => row.page_id === page.id), found: found.map(c => ({ kind: c.kind, source_id: c.source_id, worktree_id: c.worktree_id, effect: c.id === rows[0]?.id })) };
+    });
+    const wrongSignature = await candidates({ signature: 'sig-b' });
+    const wrongModel = await candidates({ expectedModel: 'model-b' });
+    const noModel = await candidates({ expectedModel: null });
+    const window = await candidates();
+    const settle = () => engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const { rows } = await tx.lockNoopEmbeddingWindow({ from: '0', limit: 50 });
+      return (await tx.settleNoopEmbeddingRows(rows.map(row => row.id))).map(row => row.request_id);
+    });
+    const settled = await settle();
+    const again = await settle();
+    const after = await engine.probeNoopEmbeddingSettle('0');
+    const effects = (await engine.readRequestEffects(id)).map(e => ({ kind: e.kind, state: e.state, error_code: e.error_code, outcome: e.outcome }));
+    const answers = { empty, due, wrongSignature, wrongModel, noModel, window, settled: settled.map(r => r === id), again, after, effects };
+    const none = { newestIsLast: true, pages: [true], found: [] };
+    expect(answers).toEqual({ empty: false, due: true, wrongSignature: none, wrongModel: none, noModel: none,
+      window: { newestIsLast: true, pages: [true], found: [{ kind: 'embedding', source_id: 'default', worktree_id: null, effect: true }] },
+      settled: [true], again: [], after: false, effects: [{ kind: 'embedding', state: 'committed', error_code: null, outcome: {} }] });
+    return answers;
+  });
+
+  parityTest('completeWrite with no lock held asks for synchronous commit, declares, locks and ends the claimed request', {
+    methods: ['requireSynchronousCommit', 'declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest',
+      'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'readWriteRequestById'],
+  }, async (engine) => {
+    const id = await admitDirect(engine);
+    const claimed = await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const done = await engine.transaction((tx) => completeWrite(tx, claimed as WriteRequest, 'failed', { status: 'parity' }, { code: 'parity_error', message: 'parity' }));
+    const outside = await engine.requireSynchronousCommit();
+    const stored = view(await engine.readWriteRequestById(id));
+    const released = counters(await engine.lockPersistenceCounters(KEYS));
+    const result = { done: view(done), stored, outside: outside ?? null, released: released.brain };
+    expect(result.done).toMatchObject({ state: 'failed', errorCode: 'parity_error', completed: true });
+    expect(result.stored).toEqual(result.done);
+    expect(result.released).toMatchObject({ outstanding: 0, intentBytes: 0, lifetimeIds: 1 });
+    return result;
+  });
+
   parityTest('renewWriteClaim extends a claim held under its token and refuses any other token', { methods: ['renewWriteClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {
     const id = await admitDirect(engine);
     await engine.stampWriteClaim(id, TOKEN, 1_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
@@ -450,6 +763,32 @@ describe('engine parity: write journal', () => {
     const answers = { held, phase: renewed?.claim_phase, keptPhase, keptPhaseValue: kept?.claim_phase, stranger, unknown, extended };
     expect(answers).toMatchObject({ held: true, phase: { phase: 'publishing' }, keptPhase: true, keptPhaseValue: { phase: 'publishing' }, stranger: false, unknown: false, extended: true });
     return answers;
+  });
+
+  parityTest('releaseUnpublishedClaim returns a claim to queued under its token so the writer claims it again', { methods: ['releaseUnpublishedClaim', 'stampWriteClaim', 'readWriteRequestById'] }, async (engine) => {
+    const id = await admitDirect(engine);
+    const pick = (row: Record<string, unknown> | null) => row && ({ state: row.state, token: row.execution_token ?? null, lease: row.claim_expires_at ?? null,
+      blocked: row.blocked_reason ?? null, attempts: Number(row.preparation_attempts), phase: row.claim_phase ?? null });
+    const first = await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'preparing', token: TOKEN }));
+    // A release under another token changes nothing: the claim is still this writer's.
+    await releaseUnpublishedClaim(engine, { ...(first as WriteRequest), execution_token: OTHER_TOKEN }, 'claim_lost');
+    const strangerRow = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    const stranger = strangerRow && { state: strangerRow.state, token: strangerRow.token, leased: strangerRow.lease !== null };
+    // A transient failure (a lock timeout) releases the claim uncharged: queued, no token, no lease, no phase.
+    await releaseUnpublishedClaim(engine, first as WriteRequest, 'database_contention');
+    const released = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    // The writer retries it: a second claim takes it, and a charged release counts one attempt and keeps the phase.
+    const retry = await engine.stampWriteClaim(id, OTHER_TOKEN, 60_000, JSON.stringify({ phase: 'preparing', token: OTHER_TOKEN }));
+    await releaseUnpublishedClaim(engine, retry as WriteRequest, 'preparation_deadline', { charge: true });
+    const charged = pick(await engine.readWriteRequestById(id) as Record<string, unknown> | null);
+    const result = { stranger, released, retried: (retry as WriteRequest | null)?.state ?? null, charged };
+    expect(result).toEqual({
+      stranger: { state: 'running', token: TOKEN, leased: true },
+      released: { state: 'queued', token: null, lease: null, blocked: 'database_contention', attempts: 0, phase: null },
+      retried: 'running',
+      charged: { state: 'queued', token: null, lease: null, blocked: 'preparation_deadline', attempts: 1, phase: { phase: 'preparing', token: OTHER_TOKEN } },
+    });
+    return result;
   });
 
   parityTest('expireStaleWriteClaims returns an expired claim to queued, charges a preparing one when asked, and frees a dead owner\'s claim', {
@@ -479,7 +818,11 @@ describe('engine parity: write journal', () => {
 
 /** Admits a queued request and completes it as committed outside a transaction; returns its journal id. */
 async function completeDirect(engine: BrainEngine, requestId: string): Promise<string> {
-  const id = await admitDirect(engine, requestId);
+  return completeAdmitted(engine, await admitDirect(engine, requestId));
+}
+
+/** Completes an admitted request as committed outside a transaction; returns its journal id. */
+async function completeAdmitted(engine: BrainEngine, id: string): Promise<string> {
   await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
   await engine.completeWriteRow({
     id, state: 'committed', outcome: { status: 'parity' }, errorCode: null, errorMessage: null, consumerVersion: 'parity',
@@ -546,6 +889,52 @@ describe('engine parity: write-journal housekeeping', () => {
       terminalReservation: Number(r.terminal_reservation), compacted: r.compacted, effectBytes: r.effect_bytes, unfinished: r.unfinished })), none };
     expect(answers).toEqual({ rows: [{ done: true, principal: 'local_cli:parity-writer', outcome: { status: 'parity' }, authority: { scopes: ['write'] },
       terminalReservation: 800, compacted: false, effectBytes: '0', unfinished: false }], none: [] });
+    return answers;
+  });
+
+  parityTest('trueUpReservations shrinks a settled request once, skips a stale or unsettled one, and releases the freed bytes', {
+    methods: ['trueUpReservations', 'listTrueUpRequests', 'transaction', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'readCounterRows',
+      'getConfig', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const settled = await completeDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const pending = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      await tx.insertPublicationEffects({ requestId: pending, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: 1 } }] });
+    });
+    await completeAdmitted(engine, pending);
+    const listed = await engine.listTrueUpRequests<{ id: string; terminal_reservation: string | number; effect_bytes: string; unfinished: boolean }>([settled, pending]);
+    const pendingBytes = listed.find(r => r.id === pending)!.effect_bytes;
+    const trueUp = (rows: Array<{ id: string; old: number; kept: number; effects: string }>) => engine.transaction(async tx => {
+      await tx.declarePersistence();
+      await tx.lockPersistenceCounters(KEYS);
+      return tx.trueUpReservations(rows);
+    });
+    const terminal = async () => Object.fromEntries(Object.entries(counters(await engine.readCounterRows(KEYS))).map(([k, v]) => [k, v.terminalBytes]));
+    const before = await terminal();
+    const stale = await trueUp([{ id: settled, old: 4096, kept: 300, effects: '0' }]);
+    const effectsChanged = await trueUp([{ id: settled, old: 800, kept: 300, effects: '5' }]);
+    const unsettled = await trueUp([{ id: pending, old: 4096, kept: 300, effects: pendingBytes }]);
+    const unknown = await trueUp([{ id: 'a0000000-0000-4000-8000-0000000000a9', old: 800, kept: 300, effects: '0' }]);
+    const shrunk = await trueUp([{ id: settled, old: 800, kept: 300, effects: '0' }]);
+    const again = await trueUp([{ id: settled, old: 800, kept: 300, effects: '0' }]);
+    const none = await trueUp([]);
+    const after = await engine.listTrueUpRequests<{ id: string; terminal_reservation: string | number }>([settled, pending]);
+    const answers = {
+      listed: listed.map(r => ({ settled: r.id === settled, reservation: Number(r.terminal_reservation), effectBytes: r.effect_bytes, unfinished: r.unfinished }))
+        .sort((a, b) => Number(b.settled) - Number(a.settled)),
+      pendingBytesOverFloor: Number(pendingBytes) > 1024, before, stale, effectsChanged, unsettled, unknown, shrunk, again, none,
+      reservations: after.map(r => ({ settled: r.id === settled, reservation: Number(r.terminal_reservation) })).sort((a, b) => Number(b.settled) - Number(a.settled)), counters: await terminal(),
+      clamped: await engine.getConfig('persistence.true_up.clamped'),
+    };
+    expect(answers).toEqual({
+      listed: [{ settled: true, reservation: 800, effectBytes: '0', unfinished: false }, { settled: false, reservation: 4096, effectBytes: pendingBytes, unfinished: true }],
+      pendingBytesOverFloor: true, before: { 'principal:local_cli:parity-writer': 4896, brain: 4896 }, stale: 0, effectsChanged: 0, unsettled: 0, unknown: 0,
+      shrunk: 500, again: 0, none: 0, reservations: [{ settled: true, reservation: 300 }, { settled: false, reservation: 4096 }],
+      counters: { 'principal:local_cli:parity-writer': 4396, brain: 4396 }, clamped: null,
+    });
     return answers;
   });
 
@@ -647,6 +1036,53 @@ describe('engine parity: write-journal housekeeping', () => {
     return answers;
   });
 
+  parityTest('many writes to one page keep one projection job at its last revision, and sealing drains every job', {
+    methods: ['putPage', 'sealChunks', 'readPageSnapshot', 'readSourceMembership', 'listPendingSegmentedProjections',
+      'selectProjectionWindowJobs', 'countPendingProjectionPages', 'projectionRebuildProgress'],
+  }, async (engine) => {
+    const ALL: CoverageRelevance = { all: true, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false };
+    const body = (slug: string, n: number) => `${slug} body ${n}`;
+    const many = Array.from({ length: 8 }, (_, i) => `notes/many-${i}`);
+    // Five changes to one page, the last one twice (the repeat keeps the revision), then one write to each of many pages.
+    for (let n = 0; n < 5; n++) await engine.putPage('notes/hot', { type: 'note', title: 'hot', compiled_truth: body('notes/hot', n) });
+    await engine.putPage('notes/hot', { type: 'note', title: 'hot', compiled_truth: body('notes/hot', 4) });
+    for (const slug of many) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body(slug, 0) });
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const slugs = ['notes/hot', ...many];
+    const revisions = new Map<string, string>();
+    for (const slug of slugs) revisions.set(slug, (await engine.readPageSnapshot(slug))!.revision);
+    const TS = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/;
+    const rows = (all: Awaited<ReturnType<BrainEngine['selectProjectionWindowJobs']>>) => all.map(r => ({
+      lane: r.lane, ord: r.ord === null ? null : Number(r.ord), slug: r.slug,
+      inc: r.source_incarnation === null ? null : r.source_incarnation === incarnation,
+      revision: r.revision === null ? null : r.revision === revisions.get(r.slug ?? ''), highWater: r.high_water === null ? null : TS.test(r.high_water),
+    })).sort((x, y) => (x.lane ?? '').localeCompare(y.lane ?? '') || (x.ord ?? 0) - (y.ord ?? 0) || (x.slug ?? '').localeCompare(y.slug ?? ''));
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    const reads = async () => ({
+      window: rows(await engine.selectProjectionWindowJobs(start, true)),
+      anyWindow: rows(await engine.selectProjectionWindowJobs(start, false)),
+      pending: await engine.listPendingSegmentedProjections({ limit: 50, retryCooldown: false }),
+      count: await countPendingProjections(engine, {}, ALL),
+      rebuild: await countProjectionRebuild(engine, {}),
+    });
+    const queued = await reads();
+    // The drain: sealing each page at its current revision drops its job.
+    for (const slug of slugs) {
+      const n = slug === 'notes/hot' ? 4 : 0;
+      await installChunks(engine, slug, [chunk(0, body(slug, n))]);
+    }
+    const drained = await reads();
+    const answers = { queued, drained };
+    const sorted = [...slugs].sort();
+    const row = (lane: string, ord: number, slug: string) => ({ lane, ord, slug, inc: true, revision: true, highWater: true });
+    expect(answers.queued.window).toEqual([...sorted.map(slug => row('recent', 0, slug)), ...sorted.map((slug, i) => row('window', i + 1, slug))]);
+    expect(answers.queued.count).toMatchObject({ total: 9 });
+    const nulls = [{ lane: null, ord: null, slug: null, inc: null, revision: null, highWater: null }];
+    expect(answers.drained.window).toEqual(nulls);
+    expect(answers.drained.count).toMatchObject({ total: 0 });
+    return answers;
+  });
+
   parityTest('the window read walks the queue in byte order of slug from any cursor, whatever the server locale', {
     methods: ['putPage', 'readSourceMembership', 'selectProjectionWindowJobs'],
   }, async (engine) => {
@@ -666,6 +1102,59 @@ describe('engine parity: write-journal housekeeping', () => {
     for (const [i, slug] of bytes.entries()) expected[slug] = [...bytes.slice(i + 1), ...bytes.slice(0, i + 1)];
     expect(walks).toEqual(expected);
     return walks;
+  });
+
+  parityTest('the projector claims, renews, releases, fails and deletes a queued job, one live claim at a time', {
+    methods: ['putPage', 'readPageSnapshot', 'readSourceMembership', 'selectProjectionWindowJobs', 'claimSegmentedProjection',
+      'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed'],
+  }, async (engine) => {
+    await engine.putPage('notes/a', { type: 'note', title: 'a', compiled_truth: 'notes/a body' });
+    const ref = { sourceId: 'default', slug: 'notes/a' };
+    const job = { sourceIncarnation: (await engine.readSourceMembership('default'))!.incarnation, slug: 'notes/a',
+      revision: (await engine.readPageSnapshot('notes/a'))!.revision };
+    const other = { ...job, revision: '00000000-0000-4000-8000-000000000000' };
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    // Whether the job is in the window: with the retry cooldown (hides claimed and freshly failed jobs) and without it (lists every job).
+    const seen = async () => ({
+      cooldown: (await engine.selectProjectionWindowJobs(start, true)).some(r => r.lane === 'window' && r.slug === 'notes/a'),
+      any: (await engine.selectProjectionWindowJobs(start, false)).some(r => r.lane === 'window' && r.slug === 'notes/a'),
+    });
+    const [a, b] = ['segmented_projecting:a', 'segmented_projecting:b'];
+    const answers: Record<string, unknown> = {};
+    answers.noPage = await engine.claimSegmentedProjection({ sourceId: 'default', slug: 'notes/none' }, a);
+    answers.noSource = await engine.claimSegmentedProjection({ sourceId: 'no-such-source', slug: 'notes/a' }, a);
+    answers.queued = await seen();
+    answers.claim = await engine.claimSegmentedProjection(ref, a);
+    answers.claimed = await seen();
+    answers.second = await engine.claimSegmentedProjection(ref, b);
+    answers.renewOther = await engine.renewSegmentedProjectionClaim(ref, b);
+    answers.renew = await engine.renewSegmentedProjectionClaim(ref, a);
+    answers.renewInTx = await engine.transaction(tx => tx.renewSegmentedProjectionClaim(ref, a));
+    await engine.releaseSegmentedProjectionClaim(ref, b);
+    answers.afterOtherRelease = await seen();
+    // A live claim keeps the failed mark off.
+    await engine.markProjectionRebuildFailed(job);
+    answers.failWhileClaimed = await seen();
+    await engine.releaseSegmentedProjectionClaim(ref, a);
+    answers.released = await seen();
+    await engine.markProjectionRebuildFailed(other);
+    answers.failOtherRevision = await seen();
+    await engine.markProjectionRebuildFailed(job);
+    answers.failed = await seen();
+    answers.reclaim = await engine.claimSegmentedProjection(ref, b);
+    await engine.releaseSegmentedProjectionClaim(ref, b);
+    await engine.deleteProjectionJob(other);
+    answers.deleteOtherRevision = await seen();
+    await engine.deleteProjectionJob(job);
+    answers.deleted = await seen();
+    answers.afterDelete = await engine.claimSegmentedProjection(ref, a);
+    const both = { cooldown: true, any: true }, held = { cooldown: false, any: true }, none = { cooldown: false, any: false };
+    expect(answers).toEqual({
+      noPage: 'absent', noSource: 'absent', queued: both, claim: 'claimed', claimed: held, second: 'held', renewOther: false, renew: true,
+      renewInTx: true, afterOtherRelease: held, failWhileClaimed: held, released: both, failOtherRevision: both,
+      failed: held, reclaim: 'claimed', deleteOtherRevision: both, deleted: none, afterDelete: 'absent',
+    });
+    return answers;
   });
 
   parityTest('the projection queue reads find no pending job on a brain whose pages are projected', {

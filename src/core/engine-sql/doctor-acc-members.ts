@@ -5,11 +5,7 @@
  * that bound on them (BOUNDED_TYPED_READS).
  */
 export const DOCTOR_ACC_MEMBERS: readonly string[] = [
-  'listPolicySourceIds', 'isAccessStateUnreadable', 'listRawOnlyRules', 'listAudienceMemberIds', 'listLabelledOnlyMemberIds', 'listAccessMemberRows',
-  'listAttestCredentialRows', 'listActiveAccessTokenRows', 'listActiveOauthClientRows', 'listOauthClientAuthShapes', 'listDanglingFederatedReads',
+  'listPolicySourceIds', 'isAccessStateUnreadable', 'listRawOnlyRules', 'listAudienceMemberIds', 'listLabelledOnlyMemberIds',   'listAttestCredentialRows', 'listActiveAccessTokenRows', 'listActiveOauthClientRows', 'listOauthClientAuthShapes', 'listDanglingFederatedReads',
   'listOrphanWorkspaceSources', 'listPrivilegedDcrClients', 'readMcpRequestLogBytes', 'countMcpRequestLogRows', 'hasMcpLogRowsPastWindow',
-  'readKnowledgeRevisionNotNull', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows', 'originIndexPresent', 'listDecideCalibrationRows',
-  'listRecentResolvedModels', 'listMixedModelDecisions', 'listDecideSlotUsage', 'readDecideDailySpend', 'listDecideReceiptStats',
-  'readPendingProposalSummary', 'readChronicleLedgerStats', 'readChronicleDuplicateEvents', 'readFeedbackStatus', 'listBeliefCoveredSources',
-  'listVolunteerChannels',
+  'readKnowledgeRevisionNotNull', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows', 'originIndexPresent',     'readChronicleLedgerStats', 'readChronicleDuplicateEvents', 'readFeedbackStatus',   'listVolunteerChannels',
 ];

@@ -14,11 +14,12 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::scan_prefix;
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 /// `DREAM_VERDICT_TTL_SECONDS` (src/core/engine.ts).
 pub const DREAM_VERDICT_TTL_SECONDS: i64 = 30 * 86_400;
@@ -27,16 +28,16 @@ pub const DREAM_VERDICT_TTL_SECONDS: i64 = 30 * 86_400;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DreamRecord {
     worth_processing: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     reasons: Option<Value>,
     judged_at_us: i64,
     #[serde(default)]
     score: Option<f64>,
     #[serde(default)]
     content_type: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     segments: Option<Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     entities: Option<Value>,
     #[serde(default)]
     model: Option<String>,
@@ -51,7 +52,7 @@ impl DreamRecord {
     fn to_json(&self) -> Value {
         let list = |v: &Option<Value>| match v {
             None | Some(Value::Null) => json!([]),
-            Some(v) => jsonb(v),
+            Some(v) => ordered(v),
         };
         json!({
             "worth_processing": self.worth_processing,
@@ -80,24 +81,6 @@ pub struct DreamVerdictInput {
     pub entities: Option<Value>,
     pub model: Option<String>,
     pub triage_version: Option<f64>,
-}
-
-/// A JSON value in the key order a Postgres `jsonb` value prints: object keys sorted by byte
-/// length, then by bytes (a later duplicate key already replaced the earlier one on parse).
-pub(crate) fn jsonb(value: &Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items.iter().map(jsonb).collect()),
-        Value::Object(map) => {
-            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
-            entries.sort_by(|(a, _), (b, _)| (a.len(), a.as_bytes()).cmp(&(b.len(), b.as_bytes())));
-            let mut out = Map::new();
-            for (k, v) in entries {
-                out.insert(k.clone(), jsonb(v));
-            }
-            Value::Object(out)
-        }
-        other => other.clone(),
-    }
 }
 
 /// Refuses a JSON value Postgres `jsonb` refuses: a string or key holding U+0000

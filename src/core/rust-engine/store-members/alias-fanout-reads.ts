@@ -1,5 +1,6 @@
 /**
- * Alias fan-out reads (BrainEngine findPagesByTitles, resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows;
+ * Alias fan-out reads (BrainEngine findPagesByTitles, resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows,
+ * and the entity card's readEntityAliasRows;
  * SQL in engine-sql/alias-fanout-reads.ts). `findPagesByTitles` reads `excludePrivate` through the page policy
  * (private-provenance.ts `storePagePolicy`), the caller's reader identity and private-readable grant included; any other
  * caller whose policy differs (folder rules, lineage, an owner read) refuses.
@@ -7,7 +8,7 @@
  * (`replaceDerivedAliases`); a `frontmatter` row is never case-sensitive and has a null `alias_text`
  * (rust/docs/store/alias_fanout_reads.md).
  */
-import type { CaseSensitiveAliasRow, PageAliasRow, TitleHitRow } from '../../engine-sql/alias-fanout-reads.ts';
+import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from '../../engine-sql/alias-fanout-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -40,4 +41,18 @@ export const readPageAliasRows: StoreMember<[sourceIds: readonly string[], slugs
   async (brain, sourceIds, slugs) => {
     if (!sourceIds.length || !slugs.length) return [];
     return storeCall({ member: 'readPageAliasRows' }, () => brain.readPageAliasRows([...sourceIds], [...slugs]));
+  };
+
+/**
+ * The entity card's alias rows: the store's alias rows of the listed slugs (by slug, alias, then origin), stably
+ * re-sorted by alias in byte order, so equal aliases keep slug then origin order (Postgres leaves that tie to the plan).
+ */
+export const readEntityAliasRows: StoreMember<[sourceId: string, slugs: readonly string[]], EntityAliasRow[]> =
+  async (brain, sourceId, slugs) => {
+    if (!slugs.length) return [];
+    const found = await storeCall({ member: 'readEntityAliasRows', sourceId },
+      () => brain.readPageAliasRows([sourceId], [...slugs])) as PageAliasRow[];
+    return found
+      .map(r => ({ slug: r.slug, alias_norm: r.alias_norm, origin: r.origin, alias_text: r.alias_text }))
+      .sort((a, b) => Buffer.compare(Buffer.from(a.alias_norm), Buffer.from(b.alias_norm)));
   };

@@ -1,0 +1,5 @@
+**On the Rust engine, search results keep their content-flag and unverified-extraction marks and the alias hop again finds pages by their aliases.**
+
+### Fixed
+- On the Rust engine, `gbrain query`, `gbrain search`, `gbrain whoknows` and the MCP search tools again mark a result whose page has a content flag, and mark an auto-extracted page that is still unverified, the same as on PGLite and Postgres. Before, the two reads behind these marks stopped on the search options that search hands them (for example the page type filter). Search ignores such a failure, so the marks were left out with no warning, and an unverified page could rank too high because it got the ranking boost that only checked pages get.
+- On the Rust engine, the alias hop in search again finds a page when the query is one of the page's aliases. Before, the alias read stopped on the hop's slug-exclude and switch options, and the hop was skipped with no warning. The hop still applies those excludes itself, after the read.

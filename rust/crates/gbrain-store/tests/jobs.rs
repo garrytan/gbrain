@@ -3,7 +3,7 @@
 mod memory_env;
 
 use gbrain_store::error::{ADMISSION_REFUSED, INVALID_STATE};
-use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter};
+use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, TokenDelta};
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -53,6 +53,92 @@ fn claim(b: &Brain, token: &str) -> Option<Value> {
 
 fn job(b: &Brain, id: i64) -> Value {
     b.get_job(id).unwrap().expect("job exists")
+}
+
+/// Workers claim and complete while a submitter keeps adding jobs. With concurrent writes on, a
+/// claim that loses a race to another claim, a completion or a submission runs again.
+#[test]
+fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once() {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for workers in [4usize, 16, 64] {
+        let b = brain("jobs-arrivals");
+        let first: Vec<i64> = (0..64)
+            .map(|i| add(&b, "work", json!({ "priority": i % 3 })))
+            .collect();
+        let arrived = Mutex::new(Vec::new());
+        let submitting = AtomicBool::new(true);
+        let claimed: Vec<Vec<i64>> = std::thread::scope(|s| {
+            s.spawn(|| {
+                for i in 0..64 {
+                    let id = add(&b, "work", json!({ "priority": i % 2 }));
+                    arrived.lock().unwrap().push(id);
+                }
+                submitting.store(false, Ordering::SeqCst);
+            });
+            let handles: Vec<_> = (0..workers)
+                .map(|w| {
+                    let (b, submitting) = (&b, &submitting);
+                    s.spawn(move || {
+                        let token = format!("worker-{w}:token");
+                        let spec = claim_spec(&token, &["work"]);
+                        let mut mine = Vec::new();
+                        loop {
+                            // Read the flag first: a None after the last submission means done.
+                            let more = submitting.load(Ordering::SeqCst);
+                            match b.claim_next_job(&spec).unwrap() {
+                                Some(row) => {
+                                    let id = row["id"].as_i64().unwrap();
+                                    let done = b.complete_job(id, &token, None).unwrap();
+                                    assert!(
+                                        done.is_some(),
+                                        "the claimer could not complete job {id}"
+                                    );
+                                    mine.push(id);
+                                }
+                                // An empty claim is a write: back off so the submitter gets in.
+                                None if more => {
+                                    std::thread::sleep(std::time::Duration::from_millis(2))
+                                }
+                                None => return mine,
+                            }
+                        }
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let all: BTreeSet<i64> = first
+            .into_iter()
+            .chain(arrived.into_inner().unwrap())
+            .collect();
+        assert_eq!(all.len(), 128);
+        let mut union = BTreeSet::new();
+        for id in claimed.iter().flatten() {
+            assert!(
+                union.insert(*id),
+                "{workers} workers: job {id} was claimed twice"
+            );
+        }
+        assert_eq!(
+            union, all,
+            "{workers} workers: every job is claimed exactly once"
+        );
+        for id in &all {
+            let row = job(&b, *id);
+            assert_eq!(row["status"], "completed");
+            assert_eq!(row["claim_generation"], 1);
+            assert_eq!(row["attempts_started"], 1);
+        }
+        if let Some(stats) = b.occ_stats() {
+            eprintln!(
+                "{workers} workers: {} commits, {} conflicts, hot keys {:?}",
+                stats.commits,
+                stats.conflicts,
+                stats.hot_keys.iter().take(3).collect::<Vec<_>>()
+            );
+        }
+    }
 }
 
 #[test]
@@ -212,4 +298,53 @@ fn list_jobs_filters_and_orders_newest_first() {
     assert_eq!(ids(json!({})), vec![c, a]);
     assert_eq!(ids(json!({"name": "work"})), vec![a]);
     assert_eq!(ids(json!({"limit": 1, "offset": 1})), vec![a]);
+}
+
+/// Postgres refuses a NUL byte in text, and the claim index uses it as the queue separator: a queue named
+/// `default\0private` must not be admitted, or a worker on `default` would claim its job.
+#[test]
+fn a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue() {
+    let b = brain("jobs-queue-nul");
+    let err = admit(
+        &b,
+        json!({ "insert": insert("work", json!({ "queue": "default\u{0}private" })) }),
+    )
+    .expect_err("a NUL in the queue name refuses");
+    assert_eq!(err.code, "constraint_violation");
+    assert!(claim(&b, "w:1").is_none(), "nothing was admitted to claim");
+    let id = add(&b, "work", json!({}));
+    assert_eq!(claim(&b, "w:2").unwrap()["id"], id);
+}
+
+/// `tokens_input` is an `INTEGER`: a roll-up that overflows it fails the completion (as the SQL `+` does)
+/// rather than wrapping to a negative count in a release build.
+#[test]
+fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
+    let b = brain("jobs-token-overflow");
+    let parent = add(&b, "parent", json!({}));
+    let kids: Vec<i64> = (0..2)
+        .map(|_| add(&b, "work", json!({ "parent_job_id": parent })))
+        .collect();
+    for (n, kid) in kids.iter().enumerate() {
+        let token = format!("w:{n}");
+        assert!(claim(&b, &token).is_some());
+        let delta = TokenDelta {
+            input: 1_500_000_000,
+            output: 0,
+            cache_read: 0,
+        };
+        assert!(b.add_job_tokens(*kid, &token, &delta).unwrap());
+    }
+    assert!(b.complete_job(kids[0], "w:0", None).unwrap().is_some());
+    assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
+    let err = b
+        .complete_job(kids[1], "w:1", None)
+        .expect_err("the roll-up overflows");
+    assert_eq!(err.code, "invalid_argument");
+    assert_eq!(
+        job(&b, kids[1])["status"],
+        "active",
+        "the refused completion wrote nothing"
+    );
+    assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
 }

@@ -237,13 +237,27 @@ describe('engine parity: read-command statements', () => {
     };
   });
 
-  parityTest('listExactIdentityCandidates for a remote caller with excludePrivate leaves out private pages', { methods: ['listExactIdentityCandidates'] }, async (engine) => {
+  parityTest('listExactIdentityCandidates for a remote caller with excludePrivate leaves out private and reader-named pages before the limit', { methods: ['listExactIdentityCandidates'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    // The hidden pages sort first (source, then slug), so a filter after the limit would return nothing.
     await engine.putPage('people/erin-example', note('Erin', 'p', { visibility: 'private' }, 'person'));
-    // The store keeps no private visibility: on the Rust arm this call is its typed refusal.
-    return engine.listExactIdentityCandidates({
+    await engine.putPage('people/erin-example', note('Erin', 'p', { readable_by: ['alice-example'] }, 'person'), { sourceId: 'other' });
+    await engine.putPage('team/erin-example', note('Erin', 'p', {}, 'person'), { sourceId: 'other' });
+    const read = (remote: { excludePrivate: boolean } | undefined, limit = 10) => engine.listExactIdentityCandidates({
       probes: { titleKeys: [], titleRaw: '', basenames: ['erin-example'], aliasKeys: [], emails: [] },
-      sourceIds: ['default'], types: { types: ['person'], per_source: [] }, remote: { excludePrivate: true }, limit: 10,
-    });
+      sourceIds: ['default', 'other'], types: { types: ['person'], per_source: [] }, ...(remote ? { remote } : {}), limit,
+    }).then(rows => rows.map(r => `${r.source_id}:${r.slug}`));
+    const local = await read(undefined);
+    const hidden = await read({ excludePrivate: true });
+    const limited = await read({ excludePrivate: true }, 1);
+    const member = await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => read({ excludePrivate: true }));
+    const granted = await withCallerAccess({ identity: ['member:bob-example'], privateReadableSources: ['default'], hidePrivate: true }, () => read({ excludePrivate: true }));
+    expect(local).toEqual(['default:people/erin-example', 'other:people/erin-example', 'other:team/erin-example']);
+    expect(hidden).toEqual(['other:team/erin-example']);
+    expect(limited).toEqual(['other:team/erin-example']);
+    expect(member).toEqual(['other:people/erin-example', 'other:team/erin-example']);
+    expect(granted).toEqual(['default:people/erin-example', 'other:team/erin-example']);
+    return { local, hidden, limited, member, granted };
   });
 
   parityTest('rankEntities folds retired pages along their redirect chains and counts distinct edges', { methods: ['rankEntities'] }, async (engine, backend) => {

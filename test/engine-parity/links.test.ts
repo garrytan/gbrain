@@ -21,7 +21,7 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
-import type { Link, PageInput, PageType } from '../../src/core/types.ts';
+import type { Link, PageInput, PageType, RelationalFanoutOpts, SearchResult } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
@@ -29,6 +29,7 @@ import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { runPostFusionStages, type PostFusionOpts } from '../../src/core/search/hybrid.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -328,6 +329,27 @@ describe('engine parity: graph traversal', () => {
   );
 
   parityTest(
+    'traversePaths orders links of one edge pair by link type in byte order, then link id, past the small-sort size',
+    { methods: ['traversePaths', 'traversePathsDetailed', 'addLink', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['tt/a', 'tt/b', ...Array.from({ length: 12 }, (_, k) => `tt/n${String(k).padStart(2, '0')}`)]);
+      for (let k = 0; k < 12; k++) await engine.addLink('tt/a', `tt/n${String(k).padStart(2, '0')}`, 'n', 'mentions', 'manual');
+      for (const t of ['b', 'c', 'a', 'D', 'd']) await engine.addLink('tt/a', 'tt/b', `ctx ${t}`, t, 'manual');
+      await engine.addLink('tt/b', 'tt/a', 'back', 'mentions', 'manual');
+      const pair = (paths: Awaited<ReturnType<BrainEngine['traversePaths']>>) =>
+        edgeShape(paths).filter((e) => e.startsWith('tt/a>tt/b:') || e.startsWith('tt/b>tt/a:'));
+      const out = pair(await engine.traversePaths('tt/a', { depth: 2, direction: 'out' }));
+      const both = pair(await engine.traversePaths('tt/a', { depth: 2, direction: 'both' }));
+      const into = pair(await engine.traversePaths('tt/b', { depth: 2, direction: 'in' }));
+      const detailed = pair((await engine.traversePathsDetailed('tt/a', { depth: 2, direction: 'both' })).paths);
+      expect(out).toEqual(['tt/a>tt/b:D@1', 'tt/a>tt/b:a@1', 'tt/a>tt/b:b@1', 'tt/a>tt/b:c@1', 'tt/a>tt/b:d@1', 'tt/b>tt/a:mentions@2']);
+      expect(both).toEqual(['tt/a>tt/b:D@1', 'tt/a>tt/b:a@1', 'tt/a>tt/b:b@1', 'tt/a>tt/b:c@1', 'tt/a>tt/b:d@1', 'tt/b>tt/a:mentions@1']);
+      expect(detailed).toEqual(both);
+      return { out, both, into, detailed };
+    },
+  );
+
+  parityTest(
     'traverseGraph source scope keeps cross-source nodes out of a scoped walk',
     { methods: ['traverseGraph', 'addLink', 'putPage'] },
     async (engine, backend) => {
@@ -364,6 +386,30 @@ describe('engine parity: graph traversal', () => {
       expect(typed).toEqual(['tg/a>tg/b:cycle-fwd@1']);
       expect(typedMiss).toEqual([]);
       return { out, typed, typedMiss, context };
+    },
+  );
+
+  parityTest(
+    'traversePaths breaks a depth/from/to tie by link_type in byte order',
+    { methods: ['traversePaths', 'addLink', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['tie/a', 'tie/b']);
+      // Inserted out of byte order, with case and ASCII punctuation that a
+      // locale collation would fold or skip.
+      for (const type of ['mentions', 'Mentions', 'men_tions', 'founded', 'men-tions', 'MENTIONS.x']) {
+        await engine.addLink('tie/a', 'tie/b', `${type}-ctx`, type, 'manual');
+      }
+      const byteOrder = ['MENTIONS.x', 'Mentions', 'founded', 'men-tions', 'men_tions', 'mentions'];
+      const shapes: Record<string, string[]> = {};
+      for (const [seed, direction] of [['tie/a', 'out'], ['tie/b', 'in'], ['tie/a', 'both']] as const) {
+        const paths = await engine.traversePaths(seed, { depth: 1, direction });
+        // Every row differs before the link id key, so the link id never decides.
+        const keys = paths.map((p) => [p.depth, p.from_slug, p.to_slug, p.from_source_id, p.to_source_id, p.link_type].join('|'));
+        expect(new Set(keys).size).toBe(keys.length);
+        expect(paths.map((p) => p.link_type)).toEqual(byteOrder);
+        shapes[`${direction}`] = edgeShape(paths);
+      }
+      return shapes;
     },
   );
 
@@ -498,6 +544,61 @@ describe('engine parity: relational fan-out', () => {
       return { toObject: sorted(toObject, (e) => e.to), toSubject, capped, empty };
     },
   );
+
+  // Review finding specialist-batched#1 / targeted#1 and #5: with requireSafeChunks the SQL engines return an edge's
+  // context only when its evidence page is sealed at the safe fence and holds no facts/takes fence (textGate), and a
+  // canonical chunk only for a sealed page.
+  parityTest(
+    'requireSafeChunks withholds edge context and canonical chunks of unsealed or fenced pages',
+    { methods: ['relationalChainHop', 'relationalFanout', 'sealChunks', 'upsertChunks', 'addLink'] },
+    async (engine) => {
+      const company = (await engine.putPage('companies/sf-co', page('companies/sf-co', { type: 'company' }))).id;
+      const people: Array<[string, string]> = [
+        ['people/sf-sealed', 'sealed plain body'],
+        ['people/sf-unsealed', 'unsealed plain body'],
+        ['people/sf-fenced', 'fenced body\n\n<!--- gbrain:facts:begin -->\n| 1 | owns the vault | fact |\n<!--- gbrain:facts:end -->'],
+        ['people/sf-takes', 'takes body\n\n<!--- gbrain:takes:begin -->\n| 1 | thinks so | take |\n<!--- gbrain:takes:end -->'],
+      ];
+      for (const [slug, body] of people) {
+        await engine.putPage(slug, page(slug, { type: 'person', compiled_truth: body }));
+        const chunks = [{ chunk_index: 0, chunk_text: `${slug} chunk`, chunk_source: 'compiled_truth' as const }];
+        if (slug === 'people/sf-unsealed') await engine.upsertChunks(slug, chunks);
+        else await engine.sealChunks(slug, chunks);
+        await engine.addLink(slug, 'companies/sf-co', `ctx ${slug}`, 'invested_in', 'manual');
+      }
+      const chain = async (opts: Partial<import('../../src/core/types.ts').ChainHopOpts>) =>
+        sorted((await engine.relationalChainHop([company], {
+          linkTypes: ['invested_in'], toward: 'subject', subjectTypes: ['person'], objectTypes: ['company'],
+          degreeLinkTypes: ['invested_in'], neighborCap: 100, ...opts,
+        })).map((e) => ({ to: e.to_slug, context: e.context, chunk: e.canonical_chunk_id != null })), (e) => e.to);
+      const fanout = async (opts: RelationalFanoutOpts) =>
+        (await engine.relationalFanout(['companies/sf-co'], { direction: 'in', ...opts }))
+          .map((r) => `${r.slug}:${r.canonical_chunk_id != null ? 'chunk' : 'nochunk'}`).sort();
+      const open = await chain({});
+      const safe = await chain({ requireSafeChunks: true });
+      const safeHolders = await chain({ requireSafeChunks: true, takesHoldersAllowList: ['people/sf-sealed'] });
+      // GST-3058: the owner's own direct call reads the stored context; a holders list still skips takes-bearing evidence.
+      const owner = <T>(fn: () => Promise<T>) => withCallerAccess({ owner: true, ownerReads: true }, fn);
+      const ownerSafe = await owner(() => chain({ requireSafeChunks: true }));
+      const ownerHolders = await owner(() => chain({ requireSafeChunks: true, takesHoldersAllowList: ['people/sf-sealed'] }));
+      const fanOpen = await fanout({});
+      const fanSafe = await fanout({ requireSafeChunks: true });
+      expect(open.every((e) => e.context !== null && e.chunk)).toBe(true);
+      expect(ownerSafe.map((e) => e.context === null)).toEqual([false, false, false, false]);
+      expect(ownerHolders.map((e) => [e.to, e.context === null])).toEqual([
+        ['people/sf-fenced', false], ['people/sf-sealed', false], ['people/sf-takes', true], ['people/sf-unsealed', true],
+      ]);
+      expect(safe).toEqual([
+        { to: 'people/sf-fenced', context: null, chunk: true },
+        { to: 'people/sf-sealed', context: 'ctx people/sf-sealed', chunk: true },
+        { to: 'people/sf-takes', context: null, chunk: true },
+        { to: 'people/sf-unsealed', context: null, chunk: false },
+      ]);
+      expect(safeHolders).toEqual(safe);
+      expect(fanSafe).toContain('people/sf-unsealed:nochunk');
+      return { open, safe, safeHolders, ownerSafe, ownerHolders, fanOpen, fanSafe };
+    },
+  );
 });
 
 describe('engine parity: backlink and page signal reads', () => {
@@ -565,6 +666,38 @@ describe('engine parity: backlink and page signal reads', () => {
   );
 
   parityTest(
+    'getContentFlagsByPageIds and getUnverifiedExtractionPageIds take the whole hybrid search options and read only the page policy',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'putPage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [['hs/open', {}], ['hs/private', { visibility: 'private' }], ['hs/other', { type: 'person' }]] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter: { ...frontmatter, ...marks } }))).id);
+      }
+      const all = [...ids.values()];
+      // What stampContentFlags and stampUnverifiedExtractions pass (search/hybrid.ts): the caller's whole
+      // HybridSearchOpts. The search filters already ran in the arms; the stamp reads apply only the page policy.
+      const hybrid = {
+        limit: 5, offset: 0, type: 'note', types: ['note'], exclude_slugs: ['hs/other'], exclude_slug_prefixes: ['hs/x'],
+        include_slug_prefixes: ['hs/'], detail: 'medium', where: { status: ['active'] }, afterDate: '2020-01-01',
+        expansion: true, mode: 'balanced', explain: true, onMeta: () => undefined, dedupOpts: { maxPerPage: 2 },
+        takesHoldersAllowList: ['alice-example'], requireSafeChunks: true, excludePrivate: true,
+      } as never;
+      const out = {
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, hybrid)).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, hybrid)).map(([slug]) => slug),
+      };
+      const policy = {
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, { excludePrivate: true })).map(([slug]) => slug),
+      };
+      expect(out).toEqual(policy);
+      expect(out.flags).toEqual(['hs/open', 'hs/other']);
+      return out;
+    },
+  );
+
+  parityTest(
     'getContentFlagsByPageIds, getUnverifiedExtractionPageIds and getEffectiveDates under excludePrivate apply a caller\'s reader identity and private-readable grant',
     { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'getEffectiveDates', 'putPage'] },
     async (engine) => {
@@ -594,6 +727,36 @@ describe('engine parity: backlink and page signal reads', () => {
       expect(sorted(granted.unverified)).toEqual(['pv/open', 'pv/private', 'pv/readers']);
       expect(member.dates).toEqual(['default::pv/open', 'default::pv/readers', 'default::pv/team']);
       return { member, granted, stranger };
+    },
+  );
+
+  // Hybrid search hands its whole option object (limit, offset, detail, type...) to the two stamp reads as the read
+  // policy; the read filter reads only the policy keys, and any object turns on the live filter.
+  parityTest(
+    'getContentFlagsByPageIds and getUnverifiedExtractionPageIds read only the policy keys of a search option object',
+    { methods: ['getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds', 'putPage', 'softDeletePage'] },
+    async (engine) => {
+      const ids = new Map<string, number>();
+      const marks = { content_flag: { reason: 'markup_heavy', detail: 'tags' }, provenance: 'auto-extracted', status: 'unverified' };
+      for (const [slug, frontmatter] of [['so/open', {}], ['so/private', { visibility: 'private' }], ['so/gone', {}]] as const) {
+        ids.set(slug, (await engine.putPage(slug, page(slug, { frontmatter: { ...frontmatter, ...marks } }))).id);
+      }
+      await engine.softDeletePage('so/gone');
+      const all = [...ids.values()];
+      const search = { limit: 10, offset: 0, detail: 'low' as const, type: 'concept' as PageType, exclude_slugs: ['x/y'], walkDepth: 0 };
+      const read = async (opts?: Record<string, unknown>) => ({
+        flags: bySlug(ids, await engine.getContentFlagsByPageIds(all, opts)).map(([slug]) => slug),
+        unverified: bySlug(ids, await engine.getUnverifiedExtractionPageIds(all, opts)).map(([slug]) => slug),
+      });
+      const bare = await read();
+      const paged = await read(search);
+      const hidden = await read({ ...search, excludePrivate: true, sourceId: 'default' });
+      const holders = await read({ ...search, takesHoldersAllowList: [] });
+      expect(sorted(bare.flags)).toEqual(['so/gone', 'so/open', 'so/private']);
+      expect(sorted(paged.flags)).toEqual(['so/open', 'so/private']);
+      expect(hidden.unverified).toEqual(['so/open']);
+      expect(holders).toEqual(paged);
+      return { bare, paged, hidden, holders };
     },
   );
 
@@ -704,6 +867,36 @@ describe('engine parity: backlink and page signal reads', () => {
     },
   );
 
+  // Review finding outside-voice#5: hybrid search hands its whole post-fusion option bag (applyBacklinks, floorRatio,
+  // graphSignalsEnabled, query, titleBoost...) to getSalienceScores. A member that refused those keys had its refusal
+  // swallowed by the stage, so the salience boost silently never applied on the Rust engine.
+  parityTest(
+    'the salience boost applies through the post-fusion stage, which passes the hybrid option bag',
+    { methods: ['getSalienceScores', 'setEmotionalWeightBatch', 'putPage'] },
+    async (engine) => {
+      const ids = await seedPages(engine, ['salpf/plain', 'salpf/weighted']);
+      await engine.setEmotionalWeightBatch([{ slug: 'salpf/weighted', source_id: 'default', weight: 0.9 }]);
+      const round = (n: number) => Math.round(n * 1e6) / 1e6;
+      // The stage hands the bag on only when it carries a read policy (hasReadPolicy), as a source-scoped search does.
+      const run = async (policy: Pick<PostFusionOpts, 'sourceId' | 'takesHoldersAllowList'>) => {
+        const results = ['salpf/plain', 'salpf/weighted'].map((slug) => ({
+          slug, page_id: ids.get(slug)!, source_id: 'default', title: slug, type: 'note', chunk_text: slug,
+          chunk_source: 'compiled_truth', chunk_id: 0, chunk_index: 0, score: 1, stale: false,
+        })) as unknown as SearchResult[];
+        await runPostFusionStages(engine, results, {
+          ...policy, excludePrivate: undefined, requireSafeChunks: undefined, applyBacklinks: true, salience: 'on',
+          recency: 'off', floorRatio: undefined, graphSignalsEnabled: false, query: 'salpf', titleBoost: undefined,
+        });
+        return Object.fromEntries(results.map((r) => [r.slug, round(r.score)]));
+      };
+      const unscoped = await run({});
+      const scoped = await run({ sourceId: 'default' });
+      const holders = await run({ takesHoldersAllowList: ['garry'] });
+      expect(scoped['salpf/weighted']).toBeGreaterThan(scoped['salpf/plain']);
+      return { unscoped, scoped, holders };
+    },
+  );
+
   parityTest(
     'findOrphanPages: islanded default vs inbound mode, with source scope',
     { methods: ['findOrphanPages', 'addLink', 'putPage'] },
@@ -733,7 +926,7 @@ describe('engine parity: backlink and page signal reads', () => {
       await engine.putPage('fz/a-tie', page('Widget Example', { type: 'concept' }));
       await engine.putPage('fz_x/odd', page('Gadget Thing', { type: 'concept' }));
       await engine.putPage('fz/gone', page('Vanished Widget Example', { type: 'concept' }));
-      await engine.putPage('fz/alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
+      await engine.putPage('fz/z-alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
       await engine.softDeletePage('fz/gone');
       const tie = await engine.findByTitleFuzzy('Widget Example');
       const partial = await engine.findByTitleFuzzy('Widget Exampl', 'fz');

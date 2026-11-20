@@ -15,8 +15,9 @@
 //! Text compares and sorts in byte order (Postgres `COLLATE "C"`). Dates cross the binding as ISO
 //! strings with microseconds.
 //!
-//! What the store does not hold answers as empty: no page has a `last_retrieved_at` (no retrieval
-//! records) and no chunk has an embedding (so `representative_chunk_id` is always null).
+//! `last_retrieved_at` is the page's retrieval record (`page_ops/retrievals.rs`, bumpPageRetrievals).
+//! What the store does not hold answers as empty: no chunk has an embedding (so
+//! `representative_chunk_id` is always null).
 //!
 //! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
@@ -29,7 +30,7 @@
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, remove_page, write_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
@@ -39,6 +40,9 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+mod retrievals;
+pub(crate) use retrievals::remove_page_rows;
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The
 /// TypeScript member turns it into PGLite's `segmentedRevertRefusal`.
@@ -65,7 +69,8 @@ pub struct PageRef {
 
 /// The `PageReadScope` of the id and ref reads. `live` is true when the caller passed a scope at
 /// all: PGLite then adds its live filter (not deleted, not quarantined, source not archived).
-/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`);
+/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`; the
+/// owner-only sources are read once per read, `OwnerOnlyCache`);
 /// `min_trust` and `suppress_flagged` are `pageEligibleSql`'s trust floor and flagged-page filter
 /// over the page's stored tier and write-gate receipts (`trust::TrustPolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -182,7 +187,7 @@ fn jsonb_text(value: &Value) -> String {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            keys.sort_by(|a, b| crate::jsonb::key_cmp(a, b));
             let parts: Vec<String> = keys
                 .iter()
                 .map(|k| format!("{}: {}", Value::String((*k).clone()), jsonb_text(&map[*k])))
@@ -218,6 +223,7 @@ fn passes_read_scope(
     scope: &PageReadScope,
     trust: &TrustPolicy,
     sources: &HashMap<String, SourceRecord>,
+    owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
     if let Some(ids) = scope.source_ids.as_ref().filter(|ids| !ids.is_empty()) {
         if !ids.contains(&page.source_id) {
@@ -238,7 +244,7 @@ fn passes_read_scope(
         }
     }
     if let Some(policy) = &scope.exclude_private
-        && page_hidden(read, page, policy)?
+        && owner_only.page_hidden(read, page, policy)?
     {
         return Ok(false);
     }
@@ -650,6 +656,7 @@ fn find_duplicate_in(
 
 fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let connections = crate::links::in_links(read, page.id)?.len();
+    let retrieved = retrievals::last_retrieved_us(read, page.id)?.map(iso);
     Ok(json!({
         "slug": page.slug,
         "source_id": page.source_id,
@@ -658,7 +665,7 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "title": page.title,
         "compiled_truth": page.compiled_truth,
         "connection_count": connections,
-        "last_retrieved_at": Value::Null,
+        "last_retrieved_at": retrieved,
         "representative_chunk_id": Value::Null,
     }))
 }
@@ -739,6 +746,7 @@ impl Store {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
         let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in refs {
@@ -746,7 +754,7 @@ impl Store {
                 continue;
             }
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&*read, &page, scope, &trust, &sources)?
+                && passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(json!({
                     "slug": page.slug,
@@ -762,6 +770,7 @@ impl Store {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
         let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let wanted: BTreeSet<u64> = ids
             .iter()
             .filter_map(|id| u64::try_from(*id).ok())
@@ -769,7 +778,7 @@ impl Store {
         let mut out = Vec::new();
         for id in wanted {
             if let Some(page) = crate::pages::read_page_by_id(&*read, id)?
-                && passes_read_scope(&*read, &page, scope, &trust, &sources)?
+                && passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(page);
             }
@@ -941,7 +950,7 @@ impl Store {
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
-    /// transaction and returns `{ slugs, count }`.
+    /// transaction and returns the same three fields.
     pub fn purge_deleted_pages(
         &self,
         older_than_hours: f64,
@@ -970,15 +979,18 @@ impl Store {
             });
             Ok(pages)
         };
-        if options.dry_run {
-            let read = self.read()?;
-            let pages = select(&*read, self.env.now_micros())?;
+        // Both paths name the pages (slug, source, deleted_at): the destructive caller scrubs their journal text.
+        let answer = |pages: &[PageRecord]| {
             let rows: Vec<Value> = pages
                 .iter()
                 .map(|p| json!({ "slug": p.slug, "source_id": p.source_id, "deleted_at": p.deleted_at_us.map(iso) }))
                 .collect();
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            return Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }));
+            json!({ "slugs": slugs, "count": slugs.len(), "pages": rows })
+        };
+        if options.dry_run {
+            let read = self.read()?;
+            return Ok(answer(&select(&*read, self.env.now_micros())?));
         }
         self.write(|tx| {
             let pages = select(&*tx, self.env.now_micros())?;
@@ -993,8 +1005,7 @@ impl Store {
             for (source, slugs) in &by_source {
                 scrub_purged_slugs(tx, source, slugs)?;
             }
-            let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            Ok(json!({ "slugs": slugs, "count": slugs.len() }))
+            Ok(answer(&pages))
         })
     }
 
@@ -1072,8 +1083,9 @@ impl Store {
         if let Some(scope) = &query.untrusted {
             let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
             let mut kept = Vec::with_capacity(found.len());
+            let mut owner_only = OwnerOnlyCache::default();
             for page in found {
-                if passes_read_scope(&*read, &page, scope, &trust, &sources)? {
+                if passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)? {
                     kept.push(page);
                 }
             }
@@ -1165,8 +1177,9 @@ impl Store {
     }
 
     /// `listPrefixSampledPages(opts)`: one live inline page per wanted slug prefix (the first two slug
-    /// segments), the one with the most inbound links, then the lowest slug; ordered by prefix.
-    /// No page has a retrieval date, so `staleBias` ranks every page the same.
+    /// segments), ordered by prefix. With `staleBias`, a page never retrieved comes first, then one
+    /// last retrieved over `staleThresholdDays` (default 90) ago; then the most inbound links, then
+    /// the lowest slug.
     pub fn list_prefix_sampled_pages(&self, options: &PrefixSampleOptions) -> Result<Vec<Value>> {
         if options.prefixes.is_empty() {
             return Ok(Vec::new());
@@ -1179,7 +1192,9 @@ impl Store {
             .map(String::as_str)
             .collect();
         let read = self.read()?;
-        let mut best: BTreeMap<String, (usize, PageRecord)> = BTreeMap::new();
+        let days = options.stale_threshold_days.unwrap_or(90.0).round();
+        let stale_before = self.env.now_micros() - (days * 86_400_000_000.0) as i64;
+        let mut best: BTreeMap<String, ((u8, usize), PageRecord)> = BTreeMap::new();
         for page in all_pages(&*read)? {
             if page.deleted_at_us.is_some()
                 || page.compiled_truth.is_null()
@@ -1192,7 +1207,16 @@ impl Store {
                 continue;
             };
             let prefix = prefix.to_string();
-            let links = crate::links::in_links(&*read, page.id)?.len();
+            let stale = if options.stale_bias {
+                match retrievals::last_retrieved_us(&*read, page.id)? {
+                    None => 2,
+                    Some(at) if at < stale_before => 1,
+                    Some(_) => 0,
+                }
+            } else {
+                0
+            };
+            let links = (stale, crate::links::in_links(&*read, page.id)?.len());
             let better = match best.get(&prefix) {
                 None => true,
                 Some((n, held)) => match links.cmp(n) {

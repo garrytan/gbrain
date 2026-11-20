@@ -673,8 +673,8 @@ describe('engine parity: minion queue', () => {
     });
 
   // A delegated job with a frozen grant snapshot: the policy locks the client (lockOAuthClient) and reads the client's
-  // grant. PGLite and Postgres find no OAuth row and refuse the retry (client_deleted); the Rust store keeps no OAuth
-  // rows, so the Rust arm stops on the typed refusal at the grant read, before anything is written.
+  // grant. PGLite and Postgres find no OAuth row and refuse the retry (client_deleted); the Rust store reads the missing
+  // row as absent through readOauthClient, so the Rust arm refuses the same way.
   parityTest('retryJob with the delegated retry policy refuses a delegated job whose OAuth client is gone',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob'] }, async (engine) => {
       const grant = {
@@ -726,8 +726,8 @@ describe('engine parity: minion queue', () => {
     });
 
   // With a current source the authority check goes on to the job owner's OAuth client. PGLite and Postgres find no
-  // client and deny the retry; the Rust store keeps no oauth_clients rows, so the Rust arm stops on the typed refusal
-  // at that grant read, before anything is written.
+  // client and deny the retry; the Rust store reads the missing row as absent through readOauthClient, so the Rust arm
+  // denies it the same way.
   parityTest('MinionQueue.retryJob refuses an agent job with a current source at the owner\'s grant read',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob', 'getJob', 'getSource'] }, async (engine) => {
       const created = (await engine.getSource('default'))?.created_at;

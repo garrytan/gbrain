@@ -49,7 +49,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/persistence/links-maintenance.ts': 'link extraction from stored page text',
   'src/core/persistence/loop-fact-retirement.ts': 'expires a loop fact (lifecycle)',
   'src/core/persistence/page-purge.ts': 'the purge\'s in-transaction recheck versions and soft-deletes the page it was asked to purge when a page derived from it still needs it (lifecycle); no new text',
-  'src/core/persistence/forget-prepare.ts': 'forget (lifecycle): strikes withdrawn rows and records the withdrawal; it writes no new claim',
   'src/core/repair/captured-facts.ts': 'owner repair of existing rows',
   'src/core/repair/agent-session-facts.ts': 'owner repair of existing rows',
   'src/core/repair/consolidate-ties.ts': 'owner repair reopening the validity of existing facts (lifecycle)',

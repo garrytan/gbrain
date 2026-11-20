@@ -21,12 +21,12 @@
  * under the same byte bound; the flip touches O(changed rows).
  */
 import type { ManifestRow, ManifestRowInput, BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState,
-  SegmentChunkInput, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../page-body/types.ts';
+  SegmentChunkInput, SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../page-body/types.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { BODY_STAGING_HARD_MS, BODY_STAGING_IDLE_MS, SEGMENT_TEXT_GC_GRACE_MS, STAGE_BATCH_BYTES } from '../page-body/limits.ts';
 import { jsonRowBatches, sanitizeText } from '../batch-rows.ts';
 import { normalizeEngineColumn, quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { currentTextProjectionFilter, SAFE_FENCE_CHUNKER_VERSION, SEGMENTED_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { validateSlug } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -37,7 +37,6 @@ import { compileRowNormalizer } from './normalize.ts';
 import { liveTilingSql, stagingNeedsTextSql, untiledSql } from '../page-body/schema.ts';
 import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
-import { SEGMENTED_CHUNKER_VERSION } from '../page-body/chunker-version.ts';
 import { pageSearchVectorSql } from '../fts-language.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';
@@ -171,6 +170,18 @@ export async function readManifest(exec: LegacyUnscopedRead, pageId: number,
      ${tail}`);
   const out = rows.map(toManifestRow);
   return opts.lastN !== undefined ? out.reverse() : out;
+}
+
+/**
+ * `readSegmentedEmbedPage`: a segmented page that is live, sealed and in a live source, by id or by source and slug;
+ * null otherwise (inline pages included). The statement page-body/segmented-embedding.ts always sent, byte for byte.
+ */
+export async function readSegmentedEmbedPage(exec: LegacyUnscopedRead, ref: SegmentedEmbedRef): Promise<SegmentedEmbedPage | null> {
+  const where = 'id' in ref ? sqlFragment`p.id = ${ref.id}` : sqlFragment`p.source_id = ${ref.sourceId} AND p.slug = ${ref.slug}`;
+  const { rows: [row] } = await exec.run<{ id: number; slug: string; source_id: string; title: string; contextual_retrieval_mode: SegmentedEmbedPage['contextual_retrieval_mode']; body_bytes: number | string }>(sqlFragment`SELECT p.id, p.slug, p.source_id, p.title, p.contextual_retrieval_mode, p.body_bytes
+       FROM pages p JOIN sources s ON s.id = p.source_id
+      WHERE ${where} AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${trustedSql(currentTextProjectionFilter('p'))}`);
+  return row ? { ...row, id: Number(row.id), body_storage: 'segmented', body_bytes: Number(row.body_bytes) } : null;
 }
 
 /** The write column and model label the chunk rows carry, resolved on this executor's handle (as upsertChunks does). */

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimHeadStatement, type ClaimHeadSpec } from '../../src/core/engine-sql/persistence-claims.ts';
 import { __setChatTransportForTests, type ChatResult } from '../../src/core/ai/gateway.ts';
 import { runPhaseExtractAtoms } from '../../src/core/cycle/extract-atoms.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
@@ -31,19 +32,24 @@ export async function exerciseAtomRetrySourceIsolation(engine: BrainEngine): Pro
       if (key === 'transaction' || key === 'transactionDirect') {
         return async <T>(fn: (tx: BrainEngine) => Promise<T>) => current[key](tx => fn(observe(tx)));
       }
-      if (key === 'executeRaw') return async (sql: string, args?: unknown[]) => {
-        if (sql.includes('SELECT r.* FROM persistence_requests r') && sql.includes('FOR UPDATE OF r SKIP LOCKED')) {
-          if (phase === 'hold') {
-            const failed = await current.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent ? 'checkpointKey' AND intent->>'kind'='managed_atom_page' AND state='conflict'", [priorSource]);
-            if (failed.length) return [];
-          }
-          if (phase === 'drain') {
-            const pending = await current.executeRaw("SELECT id FROM persistence_requests WHERE id=$1::uuid AND state IN ('queued','running')", [pendingRetryId]);
-            if (pending.length) return current.executeRaw(sql.replace("WHERE (r.state='queued'", `WHERE r.source_id=$${args!.length + 1} AND (r.state='queued'`), [...args!, priorSource]);
-            phase = 'done';
-          }
+      // The FIFO head read is the typed selectClaimableWrite member (engine-sql/persistence-claims.ts).
+      if (key === 'selectClaimableWrite') return async (spec: ClaimHeadSpec) => {
+        if (phase === 'hold') {
+          const failed = await current.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent ? 'checkpointKey' AND intent->>'kind'='managed_atom_page' AND state='conflict'", [priorSource]);
+          if (failed.length) return null;
         }
-        return current.executeRaw(sql, args);
+        if (phase === 'drain') {
+          const pending = await current.executeRaw("SELECT id FROM persistence_requests WHERE id=$1::uuid AND state IN ('queued','running')", [pendingRetryId]);
+          if (pending.length) {
+            const { sql, params } = claimHeadStatement(spec);
+            const scoped = sql.replace("WHERE (r.state='queued'", `WHERE r.source_id=$${params.length + 1} AND (r.state='queued'`);
+            if (scoped === sql) throw new Error('the FIFO head read no longer starts its filter with the queued state; update this fault');
+            const [row] = await current.executeRaw(scoped, [...params, priorSource]);
+            return row ?? null;
+          }
+          phase = 'done';
+        }
+        return current.selectClaimableWrite(spec);
       };
       const value = Reflect.get(current, key);
       return typeof value === 'function' ? value.bind(current) : value;

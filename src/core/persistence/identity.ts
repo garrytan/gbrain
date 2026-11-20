@@ -45,11 +45,14 @@ export function persistenceHome(): string { return join(configDir(), 'persistenc
 /** Exclusive create keeps simultaneous installations on one identity without replacing it. */
 function privateJson<T>(path: string, create: () => T): T {
   if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf8')) as T;
+  return publishPrivateJson(path, create());
+}
+/** Publishes `value` at `path` unless a file is there already; returns the file's document either way. */
+function publishPrivateJson<T>(path: string, value: T): T {
   mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   const fd = openSync(temporary, 'wx', 0o600);
   try {
-    const value = create();
     writeFileSync(fd, JSON.stringify(value)); fsyncSync(fd);
     // Publish a fully flushed inode without replacing an existing identity.
     // O_EXCL on the final file alone exposes a partially written JSON document.
@@ -203,7 +206,8 @@ function requestMemo<T>(engine: object, key: string, read: () => Promise<T>): Pr
 function brainIdentity(engine: LocalWriterEngine): Promise<string> {
   return requestMemo(engine, 'brain', () => readBrainIdentity(engine));
 }
-async function readBrainIdentity(engine: LocalWriterEngine): Promise<string> {
+/** The brain's persistence identity, through the typed member; a brain with no persistence row refuses writer_not_initialized. */
+export async function readBrainIdentity(engine: Pick<BrainEngine, 'readPersistenceBrainId'>): Promise<string> {
   const brainId = await engine.readPersistenceBrainId();
   if (brainId === null) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
     'This brain\'s database has no persistence metadata row, which the schema migrations create, so no local writer can be registered or verified; nothing changed. Run gbrain doctor --json on the brain host; if it reports pending migrations, bring the schema current with gbrain apply-migrations, then run the command again.',
@@ -220,26 +224,39 @@ export async function registerLocalWriter(engine: BrainEngine, lane: 'cli' | 'st
   }
   const brain = await brainIdentity(engine);
   const path = join(persistenceHome(), `${brain}.${lane}.json`);
-  if (!replace) return ensureLocalWriter(engine, lane, grant, path);
+  if (!replace) return (await ensureLocalWriterRow(engine, lane, grant, brain)).local;
+  return withRegistrationLock(brain, lane, async () => {
+    if (existsSync(path)) return rotateLocalWriter(engine, lane, grant, path);
+    return (await ensureLocalWriterRow(engine, lane, grant, brain, true)).local;
+  });
+}
+
+async function withRegistrationLock<T>(brain: string, lane: 'cli' | 'stdio', run: () => Promise<T>): Promise<T> {
   const lock = await acquireNativeLock(join(persistenceHome(), 'locks', `${brain}.${lane}.registration.lock`), { timeoutMs: 5000 });
   if (!lock) throw opError('writer_lock_unavailable', 'Local writer registration is busy.',
     `Another process held the ${lane} writer registration lock of this brain for 5 seconds while registering or replacing it, so nothing changed. Check the registrations with the command in fix, then run the registration again only if it is still needed.`,
     { fix: registrationsFix() });
-  try {
-    if (existsSync(path)) return await rotateLocalWriter(engine, lane, grant, path);
-    return await ensureLocalWriter(engine, lane, grant, path);
-  } finally { await lock.release(); }
+  try { return await run(); } finally { await lock.release(); }
 }
-
-async function ensureLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<LocalRegistration> {
-  return (await ensureLocalWriterRow(engine, lane, grant, path)).local;
-}
-/** `ensureLocalWriter` with the row it read (undefined when it inserted the registration). */
-async function ensureLocalWriterRow(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<{ local: LocalRegistration; existing?: LocalWriterRow }> {
-  const local = privateJson<LocalRegistration>(path, () => ({ id: randomUUID(), credential: randomBytes(32).toString('hex'), lane }));
+/** The registration of `lane`, minted first when it has no credential file; with the row it read (undefined when it inserted it). */
+async function ensureLocalWriterRow(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, brain: string, locked = false): Promise<{ local: LocalRegistration; existing?: LocalWriterRow }> {
+  const path = join(persistenceHome(), `${brain}.${lane}.json`);
+  if (!existsSync(path)) await (locked ? mintLocalWriter(engine, lane, grant, path) : withRegistrationLock(brain, lane, () => mintLocalWriter(engine, lane, grant, path)));
+  const local = JSON.parse(readFileSync(path, 'utf8')) as LocalRegistration;
   if (local.lane !== lane || typeof local.credential !== 'string' || typeof local.id !== 'string') throw invalidIdentityFile('Local writer registration is invalid.', path, `${lane} writer registration`);
   const existing = await ensureRegistrationRow(engine, local, grant, () => credentialMismatch(path, local.id, lane));
   return { local, ...(existing ? { existing } : {}) };
+}
+/**
+ * A first registration, under the registration lock: the row goes in before the credential file is published, so a
+ * process that stops between the two leaves an unused row nobody holds a credential for, never a file that names a
+ * missing row (that file reads as revoked). A file published meanwhile wins; the caller then checks its row.
+ */
+async function mintLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<void> {
+  if (existsSync(path)) return;
+  const local: LocalRegistration = { id: randomUUID(), credential: randomBytes(32).toString('hex'), lane };
+  await ensureRegistrationRow(engine, local, grant, () => credentialMismatch(path, local.id, lane));
+  publishPrivateJson(path, local);
 }
 /**
  * Inserts `local`'s row unless it exists; a revoked row, or one with another lane or credential, refuses. Returns the row it
@@ -304,7 +321,7 @@ export async function withRegisteredLocalWriter<T>(engine: BrainEngine, lane: 'c
     return withVerifiedLocalRegistration(engine, local, run);
   }
   const brain = brainId ?? await brainIdentity(engine);
-  const { local, existing } = await ensureLocalWriterRow(engine, lane, defaultGrant(), join(persistenceHome(), `${brain}.${lane}.json`));
+  const { local, existing } = await ensureLocalWriterRow(engine, lane, defaultGrant(), brain);
   const writer = existing ? verifiedFromRow(local, existing) : await verifyLocalWriter(engine, local);
   return verifiedLocalWriter.run(writer, () => registeredRow.run({ id: local.id, row: existing }, () => run(writer)));
 }

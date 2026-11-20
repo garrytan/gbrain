@@ -15,22 +15,28 @@ import {
   _resetTrackRetrievalCacheForTests,
   _resetPendingLastRetrievedWritesForTests,
   _peekPendingLastRetrievedWritesForTests,
+  BUMP_LAST_RETRIEVED_SQL,
 } from '../src/core/last-retrieved.ts';
 
 // Minimal BrainEngine stub. The drain helper itself doesn't touch
 // the engine — only bumpLastRetrievedAt does — so we control behavior
-// through what `executeRaw` does.
+// through what `executeRaw` does (the stub's typed bumpPageRetrievals
+// member forwards the write to it).
 function makeStubEngine(opts?: {
   executeRaw?: (sql: string, params?: unknown[]) => Promise<unknown[]>;
   getConfig?: (key: string) => Promise<string | null>;
 }): BrainEngine {
+  const executeRaw =
+    opts?.executeRaw ??
+    (async () => {
+      return [];
+    });
   const engine = {
     kind: 'pglite' as const,
-    executeRaw:
-      opts?.executeRaw ??
-      (async () => {
-        return [];
-      }),
+    executeRaw,
+    bumpPageRetrievals: async (ids: number[]) => {
+      await executeRaw(BUMP_LAST_RETRIEVED_SQL, [ids]);
+    },
     getConfig:
       opts?.getConfig ??
       (async () => {

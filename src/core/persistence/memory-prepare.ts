@@ -20,11 +20,11 @@ import { lexicalContestCandidate, recordContestedFact, recordHeldShare, restated
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
 import { prepareFenceFactAppend, prepareFenceFactCreate, prepareFenceRowRetirement, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
-import { remoteProvenanceFloorSql, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { noteBelief } from '../belief/ledger.ts';
-import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
+import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
@@ -63,11 +63,8 @@ function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', en
 /** The newest active fact in this source and visibility that states the same normalized claim without an entity. */
 async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: SingleFactIntent, excludePrivate: boolean): Promise<number | null> {
   // GST-359 C2: a member's fact links only its own page's unlinked copy; no other write links one on a member page.
-  const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
-    WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
-      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}
-      AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
-    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.page_slug ?? null]);
+  const row = await engine.findActiveSingleFact({ sourceId, entitySlug: null, visibility: input.visibility, fact: input.fact,
+    attributedTo: null, pageSlug: input.page_slug ?? null, remoteFloor: excludePrivate && !input.page_slug, newest: true });
   return row ? Number(row.id) : null;
 }
 

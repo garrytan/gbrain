@@ -15,6 +15,8 @@
  * - `readPageVersionEdition`: the retained version an as-of read loads as its edition.
  * - `readCursorEdition`: where the edition a window cursor pinned stands now.
  * - `pageAwaitsRederive`: whether a purge hid the page until it is derived again (`needs_rederive`).
+ * - `listPageRefsByIds`: the source, slug and type of each listed page, deleted or not, for the reads that quote a
+ *   third-party page's rows (search/transcript-quote.ts `pageTypesById`, the get_chunks owner lookup).
  *
  * Every function takes the engine (or transaction) it runs on. Ids come back as numbers; ordered text sorts
  * `COLLATE "C"`.
@@ -249,6 +251,23 @@ export async function listVersionReasonWriters(tx: Raw, ids: readonly number[]):
     LEFT JOIN LATERAL (SELECT n.id, n.type, n.trust_tier FROM page_versions n WHERE n.page_id = pv.page_id AND n.id > pv.id ORDER BY n.id LIMIT 1) nx ON true
     WHERE pv.id = ANY(${[...ids]}::bigint[]) ORDER BY pv.id`);
   return got.map(r => ({ id: Number(r.id), type: r.type ?? null, tier: r.tier ?? null }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Quoting
+
+/** A page named by id: its source, slug and stored type. */
+export interface PageIdRef { id: number; source_id: string; slug: string; type: string | null }
+
+/**
+ * The source, slug and stored type of each listed page, deleted or not, by id; an id no page has answers nothing. No
+ * scope or policy filter: the callers pass ids of rows they already read under the caller's scope.
+ */
+export async function listPageRefsByIds(tx: Raw, ids: readonly number[]): Promise<PageIdRef[]> {
+  if (ids.length === 0) return [];
+  const got = await rows<{ id: number | string; source_id: string; slug: string; type: string | null }>(tx,
+    sqlFragment`SELECT id, source_id, slug, type FROM pages WHERE id = ANY(${[...new Set(ids.map(Number))]}::bigint[]) ORDER BY id`);
+  return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

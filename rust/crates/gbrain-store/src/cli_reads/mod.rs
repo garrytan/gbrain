@@ -10,6 +10,7 @@ pub mod doctor_pages;
 pub mod doctor_persistence;
 pub mod doctor_sources;
 pub mod entities;
+pub mod export;
 pub mod import;
 mod pg_case;
 pub(crate) mod pg_text;

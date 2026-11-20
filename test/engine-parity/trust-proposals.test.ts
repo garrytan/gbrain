@@ -1,6 +1,7 @@
 /**
  * BrainEngine parity — the trust decision queue (engine-sql/trust-proposals.ts): insertTrustProposal, getTrustProposal,
- * listTrustProposals, pendingTrustProposalsFor, updatePendingTrustProposalAfter and transitionTrustProposal.
+ * listTrustProposals, pendingTrustProposalsFor, updatePendingTrustProposalAfter and transitionTrustProposal; and the
+ * contradiction list `trust review` reads beside it (listPendingContradictions).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
@@ -12,6 +13,9 @@
  *    the fence guard's held arm read the wrong state.
  *  - Why existing coverage misses it: the statements ran through `executeRaw` inside trust/proposals.ts, which the
  *    parity cases cannot call (D18).
+ *  - The contradiction cases: decide proposals are written by the decide sweep's own writer (ai/decide/proposals-store.ts,
+ *    the decide proposal members the Rust store serves). All three arms list the pending pair of two active facts and
+ *    leave out a stale or decided pair; `trust review` answers the same on each.
  *  - Seam: the queue is read and written through the six typed members only. Times are masked to "set" or null: each
  *    engine stamps its own clock. Ids are compared as offsets from the first id, since each arm starts its own sequence.
  */
@@ -19,6 +23,8 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { TrustProposalRow } from '../../src/core/engine-sql/trust-proposals.ts';
 import { parityArms } from './harness.ts';
+import { insertProposal, transitionProposal } from '../../src/core/ai/decide/proposals-store.ts';
+import { buildTrustReview } from '../../src/core/trust/review.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -144,4 +150,43 @@ describe('engine parity: the trust decision queue', () => {
     expect({ refused, all }).toEqual({ refused: true, all: [] });
     return { refused, all };
   });
+
+  parityTest('trust review lists no contradiction on a brain with active facts and no decide proposal', { methods: ['insertFacts', 'listPendingContradictions'] }, async (engine) => {
+    await facts(engine, 2);
+    const review = await buildTrustReview(engine, {});
+    expect(review.counts.contradiction).toBe(0);
+    return review;
+  });
+
+  parityTest('listPendingContradictions lists a pending pair of two active facts, not a stale or decided pair', {
+    methods: ['insertFacts', 'listPendingContradictions'],
+  }, async (engine) => {
+    const { ids } = await engine.insertFacts(Array.from({ length: 6 }, (_, i) => ({
+      row_num: i + 1, source_markdown_slug: SLUG, fact: `Claim ${i + 1}`, entity_slug: SLUG, source: 'fence', kind: 'fact' as const,
+      visibility: 'world' as const, valid_from: new Date(`2026-02-0${i + 1}T01:02:03.250Z`),
+      // Claim 4 ended: a pair that names it is stale.
+      ...(i === 3 ? { valid_until: new Date('2026-02-05T00:00:00Z') } : {}),
+    })) as never, { source_id: SRC });
+    const f = ids as number[];
+    const name = new Map(f.map((id, i) => [id, `Claim ${i + 1}`]));
+    const pair = (i: number, newer: number, older: number) => ({ source_id: SRC, sweep_id: 'sweep-parity', pair_index: i, new_fact_id: f[newer]!, old_fact_id: f[older]!,
+      direction: 'new_supersedes_old', p_supersede: 0.9, threshold: 0.8, proposal_floor: 0.5, model_resolved: null });
+    const write = await insertProposal(engine, pair(0, 1, 0)).then(() => null, (e: unknown) => e);
+    expect(write).toBeNull();
+    await insertProposal(engine, pair(1, 3, 2));
+    const decided = await insertProposal(engine, pair(2, 5, 4));
+    expect(await transitionProposal(engine, decided!, 'pending', 'rejected')).toBe(true);
+    const view = async (filter: Parameters<BrainEngine['listPendingContradictions']>[0]) => (await engine.listPendingContradictions(filter)).map((r) => ({
+      ...r, id: 'id', created_at: r.created_at ? 'set' : null, new_fact_id: name.get(Number(r.new_fact_id)), old_fact_id: name.get(Number(r.old_fact_id)),
+    }));
+    const out = { all: await view({}), source: await view({ sourceId: SRC }), otherSource: await view({ sourceId: 'other' }),
+      since: await view({ since: new Date('2999-01-01T00:00:00Z') }) };
+    expect(out.all).toEqual([{ id: 'id', source_id: SRC, sweep_id: 'sweep-parity', created_at: 'set', new_fact_id: 'Claim 2', old_fact_id: 'Claim 1',
+      new_fact: 'Claim 2', old_fact: 'Claim 1', trust_tier: 'unknown', entity_slug: SLUG, slug: SLUG, claim_metric: null, claim_unit: null,
+      claim_period: null, new_value: null, old_value: null }]);
+    expect(out).toEqual({ all: out.all, source: out.all, otherSource: [], since: [] });
+    const review = await buildTrustReview(engine, { kind: 'contradiction' });
+    return { ...out, listed: review.items.map((i) => ({ kind: i.kind, detail: i.detail, page: i.page, tier: i.tier, label: i.label })) };
+  });
 });
+

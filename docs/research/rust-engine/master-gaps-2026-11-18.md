@@ -16,7 +16,7 @@ This is research, not a promise about current behavior. No change to master was 
 | Fence trend prefix sorted by the text form of `sequence` | `d231ce57d4` | Yes: `src/core/persistence/sync-prepare.ts:626` and `:646` | Same bug. Trend sample paths and the open-import list come out of order past a power of ten. |
 | Projection window `ord` read as a BigInt on Postgres | `abf4d9aada` | Same SQL: `src/core/page-state/projection-window.ts:83` | No wrong value reaches a caller today. The only reader converts with `Number()`. |
 | Projection queue walked in the server's text order on Postgres | `0044e342e9` | Yes: `src/core/page-state/projections.ts:763`, `:793`, `:806`, `:808`; `src/core/page-state/projection-window.ts:79-85`; `src/core/page-state/image-seal.ts:80`, `:81`, `:85` | Same bug on a Postgres server whose collation is not C (for example en_US.utf8). The drain, its preview, the resident window and the image seal visit jobs in a different order than PGLite. |
-| No index serves the byte-order queue walk | `v326` migration on this branch | Yes: `src/core/page-state/projection-schema.ts:51-57` has only the primary key | No effect until master pins `COLLATE "C"`; then each window lane reads and sorts the whole queue on a non-C Postgres. |
+| No index serves the byte-order queue walk | `v331` migration on this branch (renumbered from v326, then v327, then v328 was reserved for #9704, then master took v329 in #9824, then master took v330 in #9839; now v331) | Yes: `src/core/page-state/projection-schema.ts:51-57` has only the primary key | No effect until master pins `COLLATE "C"`; then each window lane reads and sorts the whole queue on a non-C Postgres. |
 | Duplicate take-supersession row in the canonical writer census | `f3906b8497` | Yes: `docs/architecture/canonical-writers.tsv:272` (stale) and `:274` | The stale row describes code that is gone. No test rejects a duplicate row on master. |
 | Partial-clone holds on git 2.43 | none | Same code: `src/core/persistence/sync-blobs.ts:55-62` | Two tests fail on git 2.43. They pass on CI's git 2.56. |
 
@@ -78,12 +78,12 @@ Master has the same code at `src/core/page-state/projections.ts:763`, `:793`, `:
 `src/core/page-state/projection-window.ts:79-85` and `src/core/page-state/image-seal.ts:80`, `:81`
 and `:85`. Master has no `projectionWindowFragment`, so the engine-sql copy has nothing to fix there.
 
-Cost, and the index that pays it back (v326 on this branch): the only index on `page_projection_jobs`
+Cost, and the index that pays it back (v331 on this branch): the only index on `page_projection_jobs`
 is its primary key `(source_incarnation, slug)` with the default collation, and the planner treats
 the default collation and "C" as different collations, so the pinned comparison cannot use it. On
 300,000 queue rows in an en_US.utf8 database the pinned forward lane alone went from an index scan
-(0.18 ms) to a full scan and sort (20 ms) on a scratch copy of the table. Migration v326
-(`src/core/schema-migrations/v326-projection-jobs-byte-order-index.ts`) adds
+(0.18 ms) to a full scan and sort (20 ms) on a scratch copy of the table. Migration v331
+(`src/core/schema-migrations/v331-projection-jobs-byte-order-index.ts`) adds
 `idx_page_projection_jobs_slug_c` on `(source_incarnation, slug COLLATE "C")`, built CONCURRENTLY on
 Postgres. With it the forward lane is an index scan again (0.13 ms).
 
@@ -95,8 +95,8 @@ because no index has `updated_at`.
 
 The segmented-queue listing (`listPendingSegmentedProjections`, `ORDER BY j.updated_at, j.slug
 COLLATE "C"`, 3,000 segmented pages of 300,000) scans the jobs table and sorts it with or without the
-pin (35.7 ms before the pin, 34.8 ms after, 34.2 ms with v326). The pin did not cause the scan, so
-v326 adds no second index. A trial index on `(updated_at, slug COLLATE "C")` made the planner walk
+pin (35.7 ms before the pin, 34.8 ms after, 34.2 ms with v331). The pin did not cause the scan, so
+v331 adds no second index. A trial index on `(updated_at, slug COLLATE "C")` made the planner walk
 it with a nested loop into the pages table, and the same listing took 126.8 s.
 
 Master has no index for the pinned order either: `page_projection_jobs` is created at

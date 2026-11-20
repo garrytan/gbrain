@@ -44,17 +44,6 @@ export async function listLabelledOnlyMemberIds(raw: EngineRawRead): Promise<str
     'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id')).map(r => r.id);
 }
 
-const LIST_MEMBERS_SQL = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`;
-const LIST_LIVE_MEMBERS_SQL = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`;
-
-/** Every member row with its groups, removed members only when asked. */
-export function listAccessMemberRows(raw: EngineRawRead, includeRemoved: boolean): Promise<Row[]> {
-  return raw<Row>(includeRemoved ? LIST_MEMBERS_SQL : LIST_LIVE_MEMBERS_SQL);
-}
 
 export interface AttestCredentialRow { kind: 'token' | 'client'; id: string; name: string; row: Row | string }
 
@@ -274,81 +263,6 @@ export async function originIndexPresent(raw: EngineRawRead, name: string): Prom
   return Boolean(row?.present);
 }
 
-/** Decide calibrations (`slot` null for every slot), retired ones only with `includeRetired`. */
-export function listDecideCalibrationRows(raw: EngineRawRead, slot: string | null, includeRetired: boolean): Promise<Row[]> {
-  return raw<Row>(
-    `SELECT * FROM decide_calibrations
-      WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
-    [slot, includeRetired]);
-}
-
-/** Resolved models of the receipts in the trailing window, newest first. */
-export function listRecentResolvedModels(raw: EngineRawRead, sinceHours: number): Promise<Row[]> {
-  return raw<Row>(
-    `SELECT slot, provider, model_resolved, COUNT(*)::int AS n, MAX(created_at) AS last_at FROM decision_receipts
-      WHERE model_resolved IS NOT NULL AND created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot, provider, model_resolved ORDER BY MAX(created_at) DESC`,
-    [sinceHours]);
-}
-
-/** Decisions per slot whose rows failed on mixed resolved models, in the trailing window. */
-export function listMixedModelDecisions(raw: EngineRawRead, sinceHours: number): Promise<Row[]> {
-  return raw<Row>(
-    `SELECT slot, COUNT(*)::int AS n FROM decision_receipts
-      WHERE created_at >= now() - ($1::int * interval '1 hour') AND error_reason = 'mixed_model'
-      GROUP BY slot`,
-    [sinceHours]);
-}
-
-/** Per-slot decision counts, tokens, errors and egress refusals in the trailing window. */
-export function listDecideSlotUsage(raw: EngineRawRead, sinceHours: number): Promise<Row[]> {
-  return raw<Row>(
-    `SELECT slot, COUNT(DISTINCT decision_id)::int AS decisions, COUNT(*)::int AS rows,
-            COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-            SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END)::int AS errors,
-            SUM(CASE WHEN outcome = 'skipped' THEN 1 ELSE 0 END)::int AS skipped,
-            SUM(CASE WHEN error_reason LIKE 'egress%' OR error_reason IN ('denied_source','missing_provenance') THEN 1 ELSE 0 END)::int AS egress
-       FROM decision_receipts WHERE created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot ORDER BY slot`,
-    [sinceHours]);
-}
-
-/** Spend of TypeSafe providers since `sinceIso` (an ISO timestamp), in total and from remote callers. */
-export async function readDecideDailySpend(raw: EngineRawRead, sinceIso: string): Promise<{ total: number; remote: number }> {
-  const rows = await raw<{ total: number | string | null; remote: number | string | null }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total, COALESCE(SUM(CASE WHEN remote THEN cost_usd ELSE 0 END), 0) AS remote
-       FROM decide_spend WHERE created_at >= $1::timestamptz AND provider LIKE 'typesafe:%'`,
-    [sinceIso]);
-  return { total: Number(rows[0]?.total ?? 0), remote: Number(rows[0]?.remote ?? 0) };
-}
-
-/** Receipt counts and latency per slot, mode, outcome and error reason in the trailing window (`slot` null for every slot). */
-export function listDecideReceiptStats(raw: EngineRawRead, sinceHours: number, slot: string | null): Promise<Row[]> {
-  return raw<Row>(
-    `SELECT slot, mode, outcome, error_reason, COUNT(*)::int AS n, AVG(answer_value)::float8 AS avg_value,
-            percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p50_latency,
-            percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p95_latency,
-            COALESCE(SUM(input_tokens), 0)::int AS input_tokens
-       FROM decision_receipts
-      WHERE created_at >= now() - ($1::int * interval '1 hour') AND ($2::text IS NULL OR slot = $2)
-      GROUP BY slot, mode, outcome, error_reason ORDER BY slot, mode, outcome, error_reason`,
-    [sinceHours, slot]);
-}
-
-/** Pending memory proposals and the oldest one's age in whole hours; zero on a schema that predates the table. */
-export async function readPendingProposalSummary(raw: EngineRawRead): Promise<{ pending: number; oldest_hours: number | null }> {
-  try {
-    const [row] = await raw<{ n: number | string; oldest: number | string | null }>(`SELECT count(*) AS n,
-      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
-    const pending = Number(row?.n ?? 0);
-    return { pending, oldest_hours: pending && row?.oldest !== null && row?.oldest !== undefined ? Math.floor(Number(row.oldest)) : null };
-  } catch (error) {
-    if (isMissingSchemaObject(error, 'table', 'memory_proposals')) return { pending: 0, oldest_hours: null };
-    throw error;
-  }
-}
-
 /** Life Chronicle ledger rollups (automatic rows only). `available` is false when the ledger tables are absent. */
 export interface ChronicleLedgerStats {
   available: boolean;
@@ -487,13 +401,6 @@ export async function readFeedbackStatus(raw: EngineRawRead): Promise<FeedbackSt
     lowest: lowest.map(r => ({ ...r, weight: Number(r.weight), low_ratings: Number(r.low_ratings) })),
     highest: highest.map(r => ({ ...r, weight: Number(r.weight) })),
   };
-}
-
-/** Sources with a coverage event (`subject_key = coverageKey`) in their current incarnation, by id. */
-export async function listBeliefCoveredSources(raw: EngineRawRead, coverageKey: string): Promise<string[]> {
-  const rows = await raw<{ id: string }>(`SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM belief_events e
-    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY 1`, [coverageKey]);
-  return rows.map(r => r.id);
 }
 
 export interface VolunteerChannelRow { channel: string; n: string | number; last_fired: string | Date | null }

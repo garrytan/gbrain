@@ -25,11 +25,8 @@ describe('doctor reads, second set', () => {
     'the access, token, OAuth, decide, chronicle, feedback, belief and volunteer reads answer empty on a fresh brain',
     { methods: [
       'listPolicySourceIds', 'isAccessStateUnreadable', 'listRawOnlyRules', 'listAudienceMemberIds', 'listLabelledOnlyMemberIds',
-      'listAccessMemberRows', 'listAttestCredentialRows', 'listActiveAccessTokenRows', 'listActiveOauthClientRows',
-      'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listPrivilegedDcrClients', 'listBeliefCoveredSources',
-      'listVolunteerChannels', 'listDecideCalibrationRows', 'listRecentResolvedModels', 'listMixedModelDecisions',
-      'listDecideSlotUsage', 'readDecideDailySpend', 'listDecideReceiptStats', 'readPendingProposalSummary',
-      'readChronicleLedgerStats', 'readChronicleDuplicateEvents', 'readFeedbackStatus',
+      'listAttestCredentialRows', 'listActiveAccessTokenRows', 'listActiveOauthClientRows',
+      'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listPrivilegedDcrClients', 'listVolunteerChannels', 'readChronicleLedgerStats', 'readChronicleDuplicateEvents', 'readFeedbackStatus',
     ] },
     async (engine) => {
       const answers = {
@@ -38,33 +35,20 @@ describe('doctor reads, second set', () => {
         rawOnly: await engine.listRawOnlyRules(),
         audience: await engine.listAudienceMemberIds(),
         labelledOnly: await engine.listLabelledOnlyMemberIds(),
-        members: await engine.listAccessMemberRows(true),
-        liveMembers: await engine.listAccessMemberRows(false),
         attest: await engine.listAttestCredentialRows(),
         tokens: await engine.listActiveAccessTokenRows(),
         clients: await engine.listActiveOauthClientRows(),
         authShapes: await engine.listOauthClientAuthShapes(),
         dangling: await engine.listDanglingFederatedReads(),
         privileged: await engine.listPrivilegedDcrClients('(^|[[:space:]])(admin)([[:space:]]|$)'),
-        covered: await engine.listBeliefCoveredSources('coverage'),
         volunteerAll: await engine.listVolunteerChannels(null),
         volunteerScoped: await engine.listVolunteerChannels(['default']),
-        calibrations: await engine.listDecideCalibrationRows(null, true),
-        calibrationsForSlot: await engine.listDecideCalibrationRows('conflict', false),
-        models: await engine.listRecentResolvedModels(24),
-        mixed: await engine.listMixedModelDecisions(24),
-        usage: await engine.listDecideSlotUsage(24),
-        spend: await engine.readDecideDailySpend('2026-01-01T00:00:00Z'),
-        receipts: await engine.listDecideReceiptStats(24, null),
-        proposals: await engine.readPendingProposalSummary(),
         chronicle: await engine.readChronicleLedgerStats(),
         duplicates: await engine.readChronicleDuplicateEvents(),
         feedback: await engine.readFeedbackStatus(),
       };
       expect(answers.policySources).toEqual([]);
       expect(answers.unreadable).toBe(false);
-      expect(answers.spend).toEqual({ total: 0, remote: 0 });
-      expect(answers.proposals).toEqual({ pending: 0, oldest_hours: null });
       expect(answers.chronicle.available).toBe(true);
       expect(answers.feedback.events).toBe(0);
       return answers;

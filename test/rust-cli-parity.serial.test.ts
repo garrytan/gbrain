@@ -52,6 +52,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
+const EFFECT_PASS = join(ROOT, 'test', 'helpers', 'effect-pass-process.ts');
 const FIXTURE = join(ROOT, 'test', 'fixtures', 'rust-cli-parity-brain');
 const TARGET = detectAddonTarget();
 const ADDON = TARGET ? join(ROOT, 'rust', 'target', 'addon', `gbrain_engine.${TARGET}.node`) : '';
@@ -89,10 +90,14 @@ function childEnv(brain: Brain): Record<string, string> {
   };
 }
 
-async function cli(brain: Brain, args: string[]): Promise<Run> {
-  const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+async function run(argv: string[], brain: Brain): Promise<Run> {
+  const proc = Bun.spawn(argv, { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+async function cli(brain: Brain, args: string[]): Promise<Run> {
+  return run(['bun', 'run', CLI, ...args], brain);
 }
 
 function makeBrain(backend: Backend, name: BrainName = backend): Brain {
@@ -279,12 +284,12 @@ const COMMANDS: string[][] = [
  * serves that member, this case fails and names the new next member, so the record stays current.
  */
 /** A write stops on Rust with a typed refusal that names `member`, or is accepted and stays queued behind `member`. */
-const RECORDED_WRITES: Array<{ args: string[]; rust: 'refused' | 'queued'; member: string }> = [
-  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'queued', member: 'executeRawDirect' },
+const RECORDED_WRITES: Array<{ args: string[]; rust: 'equal' } | { args: string[]; rust: 'refused' | 'queued'; member: string }> = [
+  { args: ['put', 'notes/parity-put', '--content', '---\ntype: note\ntitle: Parity put\n---\nBody text.\n', '--json'], rust: 'equal' },
 ];
-// `put` passes the persistence declaration and write admission, so the request is recorded (state queued). The
-// background writer that applies it then stops at the raw consumer heartbeat (executeRawDirect in
-// src/core/persistence/consumer-heartbeat.ts), so the reply is write_pending (exit 10) and nothing is applied.
+// `put` records, claims, publishes and completes its request on the Rust brain as on PGLite: the store keeps the
+// publication's effects (insertPublicationEffects) and the receipt says committed. Its `write-request` receipt is then
+// read on both brains: the same, but for the effects, which the Rust brain stores and does not run yet.
 
 type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
@@ -367,8 +372,12 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     }, 240_000);
   }
 
-  for (const { args, rust: outcome, member: next } of RECORDED_WRITES) {
-    test(`${label(args)} writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : 'stays queued on Rust behind'} ${next}`, async () => {
+  for (const write of RECORDED_WRITES) {
+    const { args, rust: outcome } = write;
+    const next = 'member' in write ? write.member : '';
+    const title = outcome === 'equal' ? 'writes on PGLite and on Rust with the same answer'
+      : `writes on PGLite and ${outcome === 'refused' ? 'refuses on Rust at' : 'stays queued on Rust behind'} ${next}`;
+    test(`${label(args)} ${title}`, async () => {
       const [pg, rust] = await Promise.all([cli(brains.pglite, args), rustArm === 'on' ? cli(brains.rust, args) : Promise.resolve(null)]);
       expect({ exitCode: pg.exitCode, json: parseJson(pg.stdout) !== undefined }).toEqual({ exitCode: 0, json: true });
       if (!rust || engineMissing(rust)) {
@@ -376,12 +385,39 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
         return;
       }
       const member = refusedMember(rust);
+      if (outcome === 'equal') {
+        // The write completed on Rust, so the mirror (PGLite with the writes Rust completed) gets it too.
+        const mirror = await cli(brains.mirror, args);
+        expect(mirror.exitCode).toBe(0);
+        const want = { exitCode: pg.exitCode, member: null, json: normalize(parseJson(pg.stdout), pathsOf(brains.pglite)) };
+        const got = { exitCode: rust.exitCode, member, json: normalize(parseJson(rust.stdout) ?? `${rust.stdout}\n${rust.stderr}`, pathsOf(brains.rust)) };
+        const equal = got.exitCode === want.exitCode && got.member === null && same(got.json, want.json);
+        table.push({ command: label(args), state: equal ? 'equal' : 'diverged', note: equal ? 'written' : member ?? `exit ${rust.exitCode}` });
+        if (!equal) expect(got).toEqual(want);
+        // The write's receipt reads the same on both brains, its effects included: each brain ran its effect pass and
+        // settled each effect the same way (rust/docs/store/persistence.md, "Effect worker"). The put's own process stops
+        // its effect drain once it has replied (GBRA-156), so each brain runs one effect pass first, in its own
+        // environment; otherwise the receipt reads whichever side of that race the put landed on.
+        const passes = await Promise.all([brains.pglite, brains.rust].map((brain) => run(['bun', 'run', EFFECT_PASS], brain)));
+        expect(passes.map((pass) => pass.exitCode)).toEqual([0, 0]);
+        const requestOf = (run: Run) => String((parseJson(run.stdout) as { request_id?: unknown } | undefined)?.request_id ?? '');
+        const [pgReceipt, rustReceipt] = await Promise.all([cli(brains.pglite, ['write-request', requestOf(pg), '--json']),
+          cli(brains.rust, ['write-request', requestOf(rust), '--json'])]);
+        type Receipt = { effects?: Array<Record<string, unknown>> } & Record<string, unknown>;
+        const pgBody = parseJson(pgReceipt.stdout) as Receipt | undefined;
+        const rustBody = parseJson(rustReceipt.stdout) as Receipt | undefined;
+        expect({ exitCode: rustReceipt.exitCode, receipt: normalize(rustBody, []), member: refusedMember(rustReceipt) })
+          .toEqual({ exitCode: pgReceipt.exitCode, receipt: normalize(pgBody, []), member: null });
+        expect(pgBody?.effects?.some((e) => e.kind === 'embedding' && e.state === 'skipped')).toBe(true);
+        return;
+      }
       if (outcome === 'queued') {
         // Accepted, never applied: the reply is the typed pending receipt, not a refusal or a success.
         const body = parseJson(rust.stdout) as { code?: string; state?: string } | undefined;
         const queued = rust.exitCode === 10 && body?.code === 'write_pending' && body?.state === 'queued';
         table.push({ command: label(args), state: queued ? 'queued' : 'diverged', note: queued ? `behind ${next}` : `exit ${rust.exitCode}` });
         expect({ exitCode: rust.exitCode, code: body?.code, state: body?.state, member }).toEqual({ exitCode: 10, code: 'write_pending', state: 'queued', member: null });
+        // The receipt's state is the stored row read after the writer returned its claim (finishUnpublishedFailure).
         return;
       }
       table.push({ command: label(args), state: member ? 'refused' : 'diverged', note: member ?? `exit ${rust.exitCode}` });
@@ -445,7 +481,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
       // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
       // readRawProvenanceGaps counts the gaps in the store.
-      untypedWarnings: ['backup_coverage', 'extract_atoms_backlog', 'fact_take_vectors', 'provenance_stamp_drift',
+      // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
+      // does, so the check reads the same model and passes with PGLite's message.
+      untypedWarnings: ['backup_coverage', 'extract_atoms_backlog', 'provenance_stamp_drift',
         'retrieval_reflex_health', 'sync_failures', 'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog

@@ -51,7 +51,7 @@ async function pageRow(): Promise<{ id: number; generation: number; bytes: numbe
 }
 
 /** The engine with `hook` run once, at the first call of `method` whose arguments `when` accepts, before or after the real call. */
-function interleaved(method: 'readManifest' | 'executeRaw' | 'readPageSnapshot', when: (args: unknown[]) => boolean, at: 'before' | 'after', hook: () => Promise<void>): BrainEngine {
+function interleaved(method: 'readManifest' | 'readBodyManifestRows' | 'executeRaw' | 'readPageSnapshot', when: (args: unknown[]) => boolean, at: 'before' | 'after', hook: () => Promise<void>): BrainEngine {
   let armed = true;
   return new Proxy(engine, {
     get(target, key) {
@@ -103,8 +103,8 @@ describe('GBRA-287: segmented reads across a concurrent publish', () => {
 
   test('a live open whose generation a publish retired opens the new live body', async () => {
     const before = await pageRow();
-    const isManifestRead = (args: unknown[]) => typeof args[0] === 'string' && (args[0] as string).includes('JOIN page_body_manifest m ON m.page_id=$1');
-    const reader = interleaved('executeRaw', isManifestRead, 'before', async () => {
+    // The live open's manifest read is the typed readBodyManifestRows (generation null: the page's live one).
+    const reader = interleaved('readBodyManifestRows', args => args[1] === null, 'before', async () => {
       await publish('b', 3 * 1024 * 1024);
       const live = await pageRow();
       await engine.executeRaw('DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_to IS NOT NULL AND gen_to<=$2', [live.id, live.generation]);

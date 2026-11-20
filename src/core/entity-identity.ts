@@ -11,9 +11,11 @@
  * group.
  *
  * v1 posture (deliberate):
- *   - MANUAL-ONLY. Rows come exclusively from the entity_identity_link op.
+ *   - A HUMAN DECIDES. Rows come from the entity_identity_link op ('manual')
+ *     and from the owner's gbrain dedupe confirm ('dedupe:confirm', the
+ *     projection of a recorded decision: entities/identity-decisions.ts).
  *     No auto-matching, no name-similarity heuristics — a wrong identity
- *     merge silently corrupts retrieval, so v1 keeps a human in the loop.
+ *     merge silently corrupts retrieval, so a human stays in the loop.
  *     Near names are only flagged for review (entities/near-name.ts,
  *     extraction_pending possible_duplicates); nothing here is written from them.
  *   - A page belongs to at most one identity (UNIQUE (source_id, page_id));
@@ -23,15 +25,17 @@
  *     get_backlinks ops merge edges from a page's identity co-members
  *     (dedup'd), never widening past the caller's source grant.
  *
- * Everything here goes through `engine.executeRaw` with the SAME SQL text on
- * both engines — parity by construction (pinned in the entity-identity test
- * + the DATABASE_URL-gated engine-parity suite).
+ * The storage goes through typed engine members (linkEntityIdentityRow,
+ * unlinkEntityIdentityRow, listEntityIdentityRows, readEntityIdentityIdsForPages):
+ * Postgres and PGLite share one SQL copy in engine-sql/entity-identities.ts,
+ * and the Rust engine answers from its store. Validation stays here, so every
+ * engine raises the same errors.
  */
 
 import type { BrainEngine } from './engine.ts';
 import type { Link } from './types.ts';
 import { isMissingSchemaObject } from './utils.ts';
-import { privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 /** Config key for the flag-gated retrieval union. Default OFF. */
 export const ENTITY_IDENTITY_UNION_CONFIG_KEY = 'entity_identity.union';
@@ -63,21 +67,6 @@ export interface EntityIdentityMember {
   canonical: boolean;
 }
 
-async function resolvePageId(
-  engine: BrainEngine,
-  slug: string,
-  sourceId: string,
-): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL`,
-    [slug, sourceId],
-  );
-  if (rows.length === 0) {
-    throw new Error(`page not found: ${slug} (source ${sourceId}) — the identity key is (source_id, slug)`);
-  }
-  return Number(rows[0]!.id);
-}
-
 /**
  * Link a page into an identity group (upsert on the page: re-linking MOVES
  * the page to the new identity — explicit manual intent). `canonical: true`
@@ -106,29 +95,7 @@ export async function linkEntityIdentity(
   }
   const establishedBy = (opts.establishedBy ?? 'manual').trim() || 'manual';
   const canonical = typeof opts.canonical === 'boolean' ? opts.canonical : null;
-  const pageId = await resolvePageId(engine, opts.slug, opts.sourceId);
-
-  await engine.transaction(async (tx) => {
-    if (canonical === true) {
-      await tx.executeRaw(
-        `UPDATE entity_identities SET canonical = false WHERE entity_id = $1 AND canonical`,
-        [entityId],
-      );
-    }
-    await tx.executeRaw(
-      `INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6::boolean, false))
-       ON CONFLICT (source_id, page_id) DO UPDATE SET
-         entity_id = EXCLUDED.entity_id,
-         confidence = EXCLUDED.confidence,
-         established_by = EXCLUDED.established_by,
-         canonical = CASE WHEN $6::boolean IS NULL
-           THEN entity_identities.canonical AND entity_identities.entity_id = EXCLUDED.entity_id
-           ELSE EXCLUDED.canonical END,
-         established_at = now()`,
-      [entityId, opts.sourceId, pageId, confidence, establishedBy, canonical],
-    );
-  });
+  await engine.linkEntityIdentityRow({ entityId, slug: opts.slug, sourceId: opts.sourceId, confidence, establishedBy, canonical });
 
   const members = await listEntityIdentities(engine, { entityId });
   const me = members.find(m => m.slug === opts.slug && m.source_id === opts.sourceId);
@@ -143,17 +110,7 @@ export async function unlinkEntityIdentity(
   opts: { entityId: string; slug: string; sourceId: string },
 ): Promise<boolean> {
   const entityId = validateEntityId(opts.entityId);
-  const rows = await engine.executeRaw<{ id: number }>(
-    `DELETE FROM entity_identities ei
-     USING pages p
-     WHERE ei.page_id = p.id
-       AND ei.entity_id = $1
-       AND p.slug = $2
-       AND ei.source_id = $3
-     RETURNING ei.id`,
-    [entityId, opts.slug, opts.sourceId],
-  );
-  return rows.length > 0;
+  return engine.unlinkEntityIdentityRow({ entityId, slug: opts.slug, sourceId: opts.sourceId });
 }
 
 /**
@@ -174,67 +131,17 @@ export async function listEntityIdentities(
   engine: BrainEngine,
   opts: { entityId?: string; slug?: string; slugSourceId?: string; sourceId?: string; allowedSources?: string[]; excludePrivate?: boolean } = {},
 ): Promise<EntityIdentityMember[]> {
-  const where: string[] = [];
-  const params: unknown[] = [];
   const allowedSources = opts.allowedSources?.length ? opts.allowedSources
     : opts.sourceId ? [opts.sourceId] : undefined;
-  if (opts.excludePrivate) where.push(privatePagesFilterForCaller('p'));
-  if (opts.entityId) {
-    params.push(validateEntityId(opts.entityId));
-    where.push(`ei.entity_id = $${params.length}`);
-  }
-  if (opts.slug) {
-    params.push(opts.slug);
-    const slugParam = params.length;
-    // #4224 review fix: the seed sub-select must be source-scoped — an
-    // unscoped `p2.slug = $` matches ANY source's page with that slug, so a
-    // read against a NON-member page unioned a foreign same-slug member's
-    // group.
-    let seedScope = '';
-    if (opts.slugSourceId) {
-      params.push(opts.slugSourceId);
-      seedScope = ` AND ei2.source_id = $${params.length}`;
-    }
-    if (allowedSources) {
-      const ph = allowedSources.map((s) => {
-        params.push(s);
-        return `$${params.length}`;
-      });
-      seedScope += ` AND ei2.source_id IN (${ph.join(', ')})`;
-    }
-    if (opts.excludePrivate) seedScope += ` AND ${privatePagesFilterForCaller('p2')}`;
-    where.push(`ei.entity_id IN (
-      SELECT ei2.entity_id FROM entity_identities ei2
-      JOIN pages p2 ON p2.id = ei2.page_id AND p2.source_id = ei2.source_id
-      WHERE p2.slug = $${slugParam} AND p2.deleted_at IS NULL${seedScope}
-    )`);
-  }
-  if (allowedSources) {
-    const placeholders = allowedSources.map((s) => {
-      params.push(s);
-      return `$${params.length}`;
-    });
-    where.push(`ei.source_id IN (${placeholders.join(', ')})`);
-  }
+  const entityId = opts.entityId ? validateEntityId(opts.entityId) : undefined;
   try {
-    const rows = await engine.executeRaw<{
-      entity_id: string;
-      source_id: string;
-      slug: string;
-      title: string | null;
-      confidence: number;
-      established_by: string;
-      established_at: Date | string;
-      canonical: boolean;
-    }>(
-      `SELECT ei.entity_id, ei.source_id, p.slug, p.title, ei.confidence,
-              ei.established_by, ei.established_at, ei.canonical
-       FROM entity_identities ei
-       JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
-       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY ei.entity_id, ei.canonical DESC, ei.source_id, p.slug`,
-      params,
-    );
+    const rows = await engine.listEntityIdentityRows({
+      ...(entityId ? { entityId } : {}),
+      ...(opts.slug ? { slug: opts.slug } : {}),
+      ...(opts.slug && opts.slugSourceId ? { slugSourceId: opts.slugSourceId } : {}),
+      ...(allowedSources ? { allowedSources } : {}),
+      ...(opts.excludePrivate ? { excludePrivate: true } : {}),
+    });
     return rows.map(r => ({
       entity_id: r.entity_id,
       source_id: r.source_id,
@@ -263,18 +170,22 @@ export async function identityIdsForPages(
   if (pages.length === 0) return new Map();
   const wanted = new Set(pages.map(p => `${p.sourceId}:${p.slug}`));
   try {
-    const rows = await engine.executeRaw<{ entity_id: string; source_id: string; slug: string }>(
-      `SELECT ei.entity_id, ei.source_id, p.slug
-         FROM entity_identities ei
-         JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
-        WHERE ei.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
-      [[...new Set(pages.map(p => p.sourceId))], [...new Set(pages.map(p => p.slug))]],
-    );
+    const rows = await engine.readEntityIdentityIdsForPages(pages);
     return new Map(rows.map((r): [string, string] => [`${r.source_id}:${r.slug}`, r.entity_id]).filter(([k]) => wanted.has(k)));
   } catch (e) {
     if (isMissingSchemaObject(e, 'table', 'entity_identities')) return new Map();
     throw e;
   }
+}
+
+/**
+ * Count once (duplicate people PR 2): the other members of the identity group a page belongs to, when that group holds a
+ * member gbrain dedupe confirm linked; empty for a page in no group or only in a hand-made one. Trusted local callers only.
+ */
+export async function confirmedCoMembers(engine: BrainEngine, sourceId: string, slug: string): Promise<EntityIdentityMember[]> {
+  const members = await listEntityIdentities(engine, { slug, slugSourceId: sourceId });
+  if (!members.some(m => m.slug === slug && m.source_id === sourceId) || !members.some(m => m.established_by === 'dedupe:confirm')) return [];
+  return members.filter(m => !(m.slug === slug && m.source_id === sourceId));
 }
 
 /** Is the flag-gated retrieval union on? Fail-closed on any read error. */
@@ -284,7 +195,8 @@ export async function isIdentityUnionEnabled(engine: BrainEngine): Promise<boole
     if (v === null || v === undefined) return false;
     const s = String(v).trim().toLowerCase();
     return s === 'true' || s === '1';
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     return false;
   }
 }
@@ -327,7 +239,8 @@ export async function unionLinksAcrossIdentity(
       allowedSources: opts.allowedSources,
       excludePrivate: opts.excludePrivate,
     });
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e); // a refusal is not "no identity"
     return links; // never let the union break the base read
   }
   // #4224 review fix: the identity key is (source_id, slug) — exclude only
@@ -368,7 +281,8 @@ export async function unionLinksAcrossIdentity(
         seen.add(k);
         merged.push(l);
       }
-    } catch {
+    } catch (e) {
+      rethrowCapabilityMissing(e);
       // A single member's failure never breaks the base read.
     }
   }

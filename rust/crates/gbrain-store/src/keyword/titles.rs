@@ -16,7 +16,7 @@
 //! ```
 //!
 //! `$tsq` is `websearch_to_tsquery(gbrain_fts_input(t))` of each text, joined by `||`
-//! (`tsquery_or`) from the left. `'whole'` and `'complete'` match and rank the whole page vector;
+//! (`tsquery_or`) from the left. The chain holds at most one query's item bound in all. `'whole'` and `'complete'` match and rank the whole page vector;
 //! `'title'` matches and ranks `ts_filter(vector, '{a}')`, the title lexemes. A `'complete'`
 //! attempt whose matches do not fit the cap returns no rows and `cut`.
 //!
@@ -50,11 +50,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::filters::{KeywordOptions, PageFilter, row_count, source_factor};
+use super::index::{Postings, serves};
 use super::rank::ts_rank_cd;
 use super::stem::pg_lower;
 use super::tsearch::{
-    TsQuery, TsVector, Weight, concat, fts_input, setweight, to_tsvector, ts_filter, ts_matches,
-    tsquery_or, websearch_to_tsquery,
+    TsQuery, TsVector, Weight, check_query_items, concat, fts_input, is_vector_overflow, setweight,
+    to_tsvector, ts_filter, ts_matches, tsquery_or_all, websearch_to_tsquery,
 };
 use super::vector_cache::{VectorKind, cached};
 use crate::Store;
@@ -63,7 +64,9 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::{PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, search_timeline};
+use crate::pages::{
+    PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, read_page_by_id, search_timeline,
+};
 use crate::timeline::{TimelineRecord, latest_entry_micros};
 
 /// `PAGE_TIMELINE_FTS_MAX_CHARS` (fts-language.ts): the timeline characters a page vector reads.
@@ -127,23 +130,19 @@ fn trigger_timeline(
     })
 }
 
-/// The page's `search_vector` (see the module doc).
-/// Cached by its form and texts (`vector_cache`).
-fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
-    if let Some(sealed) = search_timeline(read, page.id)?
-        && page.text_projection_revision.as_deref() == Some(sealed.revision.as_str())
-    {
-        return cached(
-            VectorKind::PageSealed,
-            &[&page.title, &sealed.timeline],
-            || {
-                let title = weighted(&page.title, Weight::A)?;
-                let timeline =
-                    weighted(left(&sealed.timeline, SEARCH_TIMELINE_MAX_CHARS), Weight::C)?;
-                concat(&title, &timeline)
-            },
-        );
-    }
+/// The sealed form of the page's `search_vector` (`pageSearchVectorSql`): the title at weight A and the sealed timeline
+/// at weight C. Cached by both texts (`vector_cache`).
+fn sealed_vector(title: &str, timeline: &str) -> Result<Arc<TsVector>> {
+    cached(VectorKind::PageSealed, &[title, timeline], || {
+        let head = weighted(title, Weight::A)?;
+        let tail = weighted(left(timeline, SEARCH_TIMELINE_MAX_CHARS), Weight::C)?;
+        concat(&head, &tail)
+    })
+}
+
+/// The trigger form of the page's `search_vector` (`update_page_search_vector`): the title at weight A, the timeline (or
+/// the lead of a segmented page) and the timeline entries the page row sees at weight C.
+fn trigger_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
     let raw = trigger_timeline(page.timeline.as_deref(), || timeline_lead(read, page))?;
     let mut entries: Vec<TimelineRecord> = Vec::new();
     let mut failure = None;
@@ -179,17 +178,76 @@ fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
     )
 }
 
+/// The page's `search_vector` (see the module doc).
+fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
+    if let Some(sealed) = search_timeline(read, page.id)?
+        && page.text_projection_revision.as_deref() == Some(sealed.revision.as_str())
+    {
+        return sealed_vector(&page.title, &sealed.timeline);
+    }
+    trigger_vector(read, page)
+}
+
+/// The page's vector as a search reads it, or `None` for a page whose vector cannot be built (past the tsvector size
+/// cap). SQL never stores such a page (its trigger raises in the write, and [`check_page_vector`] raises the same here),
+/// but a store written before that check may hold one. It matches nothing; it must not fail the searches that pass over
+/// it. Any other failure is still an error.
+pub(super) fn readable_page_vector(
+    read: &dyn KvRead,
+    page: &PageRecord,
+) -> Result<Option<Arc<TsVector>>> {
+    match page_vector(read, page) {
+        Ok(vector) => Ok(Some(vector)),
+        Err(e) if is_vector_overflow(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// The write-time half of `update_page_search_vector`: builds the vector the trigger would store for `page` (as the
+/// write leaves it) and returns the error the trigger raises (\"string is too long for tsvector\") when it cannot be
+/// stored. The built vector is cached for the searches that read the page next.
+pub(crate) fn check_page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<()> {
+    trigger_vector(read, page).map(|_| ())
+}
+
+/// The write-time half of `pageSearchVectorSql`: the vector a seal that sends `timeline` stores for a page titled `title`.
+pub(crate) fn check_sealed_page_vector(title: &str, timeline: &str) -> Result<()> {
+    sealed_vector(title, timeline).map(|_| ())
+}
+
+/// The page postings of every attempt's lexemes and the pages any attempt can match, ascending;
+/// `None` when the index does not serve the read or an attempt has no candidate bound (the scan).
+/// `Title` matches the weight-A lexemes of the same pages, so it has the same candidates.
+fn indexed_pages(read: &dyn KvRead, queries: &[&TsQuery]) -> Result<Option<(Postings, Vec<u64>)>> {
+    if !serves(read)? {
+        return Ok(None);
+    }
+    let postings = Postings::read(read, keys::KW_PAGE_POSTING, queries)?;
+    let Some(docs) = postings.candidates_of(queries) else {
+        return Ok(None);
+    };
+    let ids = docs.into_iter().map(|(id, _)| id).collect();
+    #[cfg(test)]
+    super::index::tests::served_by_index();
+    Ok(Some((postings, ids)))
+}
+
 /// `$tsq`: each text's `websearch_to_tsquery(gbrain_fts_input(t))`, ORed from the left.
 fn title_query(texts: &[String]) -> Result<TsQuery> {
-    let mut query: Option<TsQuery> = None;
+    let mut queries = Vec::with_capacity(texts.len());
+    let mut items = 0usize;
     for text in texts {
         let next = websearch_to_tsquery(&fts_input(text))?;
-        query = Some(match query {
-            None => next,
-            Some(q) => tsquery_or(q, next),
-        });
+        // The bound holds for the whole `||` chain, not just each text, so it stops the parsing as well as the join.
+        // An empty query (a stopword-only text) is skipped by `||` and adds no item and no operator; a nonempty one
+        // adds its items and, unless it comes first, the OR that joins it. The count is `tsquery_or_all`'s own.
+        if !next.items.is_empty() {
+            items += next.items.len() + usize::from(items > 0);
+            check_query_items(items)?;
+        }
+        queries.push(next);
     }
-    Ok(query.unwrap_or_default())
+    tsquery_or_all(queries)
 }
 
 /// `lower(btrim(title, ' "''' || chr(160)))`.
@@ -281,17 +339,39 @@ impl Store {
             .collect::<Result<Vec<_>>>()?;
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
-        let mut pages = all_pages(&*read)?;
-        pages.sort_by_key(|p| p.id);
+        let queries: Vec<&TsQuery> = windows.iter().map(|(_, _, q)| q).collect();
         let mut candidates: Vec<Candidate> = Vec::new();
-        for page in pages {
-            if filter.keeps(&*read, &page)? {
-                let whole = page_vector(&*read, &page)?;
-                candidates.push(Candidate {
-                    page,
-                    whole,
-                    title: None,
-                });
+        match indexed_pages(&*read, &queries)? {
+            // The pages any attempt can match, ascending by id, each with its sparse vector.
+            Some((postings, ids)) => {
+                for id in ids {
+                    let Some(page) = read_page_by_id(&*read, id)? else {
+                        continue;
+                    };
+                    if filter.keeps(&*read, &page)? {
+                        candidates.push(Candidate {
+                            page,
+                            whole: postings.sparse((id, 0)),
+                            title: None,
+                        });
+                    }
+                }
+            }
+            None => {
+                let mut pages = all_pages(&*read)?;
+                pages.sort_by_key(|p| p.id);
+                for page in pages {
+                    if filter.keeps(&*read, &page)? {
+                        let Some(whole) = readable_page_vector(&*read, &page)? else {
+                            continue;
+                        };
+                        candidates.push(Candidate {
+                            page,
+                            whole,
+                            title: None,
+                        });
+                    }
+                }
             }
         }
         let mut factors: HashMap<usize, f64> = HashMap::new();
@@ -350,7 +430,7 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     fn put(store: &Store, slug: &str, title: &str, timeline: &str) {
@@ -392,17 +472,33 @@ mod tests {
             ts_filter(&v, &[Weight::A]).to_text(),
             "'alpha':1A 'beta':2A"
         );
-        let q = tsquery_or(
-            websearch_to_tsquery("alpha").unwrap(),
-            websearch_to_tsquery("beta gamma").unwrap(),
-        );
+        let parts = |texts: &[&str]| {
+            tsquery_or_all(
+                texts
+                    .iter()
+                    .map(|t| websearch_to_tsquery(t).unwrap())
+                    .collect(),
+            )
+            .unwrap()
+        };
+        let q = parts(&["alpha", "beta gamma"]);
         assert_eq!(q.to_text(), "'alpha' | 'beta' & 'gamma'");
         // PGLite: ts_rank_cd('alpha beta', 'alpha' | 'beta' & 'gamma') = 0.10000000149011612.
         let doc = to_tsvector("alpha beta").unwrap();
         assert_eq!(f64::from(ts_rank_cd(&doc, &q)), 0.10000000149011612);
-        let empty = websearch_to_tsquery("the").unwrap();
-        assert_eq!(tsquery_or(empty.clone(), q.clone()), q);
-        assert_eq!(tsquery_or(q.clone(), empty), q);
+        // An empty query (all stopwords) is skipped wherever it stands; three queries fold from the left.
+        assert_eq!(parts(&["the", "alpha", "beta gamma"]), q);
+        assert_eq!(parts(&["alpha", "the", "beta gamma", "the"]), q);
+        assert_eq!(parts(&["alpha", "beta gamma", "the"]), q);
+        assert!(parts(&["the"]).items.is_empty());
+        assert_eq!(
+            parts(&["alpha", "beta", "gamma"]).to_text(),
+            "'alpha' | 'beta' | 'gamma'"
+        );
+        assert_eq!(
+            parts(&["alpha beta", "gamma delta", "epsilon"]).to_text(),
+            "'alpha' & 'beta' | 'gamma' & 'delta' | 'epsilon'"
+        );
     }
 
     #[test]
@@ -464,7 +560,7 @@ mod tests {
     }
 
     /// A segmented page published from one segment with `lead` as its timeline lead.
-    fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
+    pub(crate) fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
         use sha2::{Digest, Sha256};
         let staging = "66666666-6666-4666-8666-666666666666";
         let body = "one\n";
@@ -564,6 +660,38 @@ mod tests {
         assert_eq!(row["chunk_source"], "compiled_truth");
     }
 
+    /// `searchTitlesAttempts` takes the `||` chain of an attempt's texts from the caller. Each text is one small query,
+    /// but the chain holds the item bound of a single query in all: past it the attempt is refused (PostgreSQL answers
+    /// `stack depth limit exceeded` for a query it would walk that deep) instead of building a huge query, and a chain
+    /// at the bound is still answered.
+    #[test]
+    fn a_chain_of_texts_past_the_query_item_bound_is_refused() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a", "Quasar Notes", "");
+        let opts = KeywordOptions::default();
+        let run = |count: usize| {
+            let texts = vec!["quasar"; count];
+            store.search_titles_attempts(
+                &[attempt(&texts, TitleAttemptKind::Whole, 10.0)],
+                "",
+                5000.0,
+                &opts,
+            )
+        };
+        // 40,000 one-item queries and their 39,999 operators are 79,999 items: under the bound of 131,072.
+        let ok = run(40_000).unwrap();
+        assert_eq!(slugs(&ok[0]), ["notes/a"]);
+        // 70,000 of them are 139,999 items.
+        let started = std::time::Instant::now();
+        let e = run(70_000).unwrap_err();
+        assert!(
+            e.message.starts_with("stack depth limit exceeded"),
+            "{}",
+            e.message
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    }
+
     #[test]
     fn the_cap_ranks_the_lowest_ids_and_complete_attempts_return_nothing_when_cut() {
         let store = crate::test_support::store();
@@ -594,5 +722,230 @@ mod tests {
     #[test]
     fn exact_key_trims_quotes_and_lowercases_like_postgres() {
         assert_eq!(exact_title_key("\u{A0}\"ÉCOLE Ǆ\" "), "école ǆ");
+    }
+    /// Distinct six-character tokens whose tsvector is 1,048,570 bytes (ten each): inside the 1,048,575-byte cap alone,
+    /// and over it with one more lexeme.
+    fn full_title() -> String {
+        (0..104_857)
+            .map(|i| {
+                if i < 100_000 {
+                    format!("n{i:05}")
+                } else {
+                    format!("m{:05}", i - 100_000)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Distinct tokens whose tsvector is past the cap by itself.
+    fn oversized_title() -> String {
+        format!("{} extra", full_title())
+    }
+
+    fn quasar_slugs(store: &Store, kind: TitleAttemptKind) -> Vec<String> {
+        let out = store
+            .search_titles_attempts(
+                &[attempt(&["quasar"], kind, 10.0)],
+                "",
+                10.0,
+                &KeywordOptions::default(),
+            )
+            .unwrap();
+        slugs(&out[0])
+    }
+
+    /// `trg_pages_search_vector` builds the vector before the row is stored, so a title past the cap fails its own
+    /// putPage in SQL with nothing stored, with chunking or without.
+    #[test]
+    fn a_title_whose_vector_cannot_be_stored_is_refused_at_write_and_changes_nothing() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "Quasar one", "");
+        let before = store.count_pages(None).unwrap();
+        let chunks = store.count_chunks().unwrap();
+        let big = oversized_title();
+        let input: crate::pages::PageInput = serde_json::from_value(
+            json!({ "type": "note", "title": big, "compiled_truth": "body text" }),
+        )
+        .unwrap();
+        for index in [json!({}), json!({ "index": false })] {
+            let options: crate::pages::PutPageOptions = serde_json::from_value(index).unwrap();
+            for slug in ["notes/new", "notes/ok"] {
+                let err = store.put_page(slug, &input, &options).unwrap_err();
+                assert!(
+                    err.message.starts_with("string is too long for tsvector ("),
+                    "{}",
+                    err.message
+                );
+            }
+        }
+        assert_eq!(store.count_pages(None).unwrap(), before);
+        assert_eq!(store.count_chunks().unwrap(), chunks);
+        let stored = crate::pages::read_page(
+            &*store.read().unwrap(),
+            crate::sources::DEFAULT_SOURCE,
+            "notes/ok",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stored.title, "Quasar one");
+        assert_eq!(quasar_slugs(&store, TitleAttemptKind::Whole), ["notes/ok"]);
+        // The largest title that fits is stored.
+        put(&store, "notes/full", &full_title(), "");
+    }
+
+    /// `pageSearchVectorSql` builds the sealed vector in the seal's statement: a sealed timeline that pushes the page
+    /// vector past the cap fails the seal and stores nothing (the seal's own state stays as it was).
+    #[test]
+    fn a_seal_whose_vector_cannot_be_stored_is_refused_and_changes_nothing() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "Quasar one", "");
+        put(&store, "notes/full", &full_title(), "");
+        let revision = |store: &Store| {
+            crate::pages::read_page(
+                &*store.read().unwrap(),
+                crate::sources::DEFAULT_SOURCE,
+                "notes/full",
+            )
+            .unwrap()
+            .unwrap()
+            .text_projection_revision
+        };
+        let sealed_before = revision(&store);
+        let options = crate::chunks::UpsertChunksOptions {
+            seal: true,
+            search_timeline: Some("alpha beta".into()),
+            ..crate::chunks::UpsertChunksOptions::default()
+        };
+        let err = store
+            .upsert_chunks("notes/full", &[], &options)
+            .unwrap_err();
+        assert!(
+            err.message.starts_with("string is too long for tsvector ("),
+            "{}",
+            err.message
+        );
+        assert_eq!(revision(&store), sealed_before);
+        let read = store.read().unwrap();
+        let id = all_pages(&*read)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.slug == "notes/full")
+            .unwrap()
+            .id;
+        assert_eq!(search_timeline(&*read, id).unwrap(), None);
+        assert_eq!(quasar_slugs(&store, TitleAttemptKind::Whole), ["notes/ok"]);
+    }
+
+    /// A page stored with a vector past the cap (a store written before the write check) matches nothing and fails no
+    /// search: the other pages are still found by every attempt kind.
+    #[test]
+    fn a_stored_page_that_cannot_be_vectored_is_skipped_by_every_attempt() {
+        let store = crate::test_support::store();
+        put(&store, "notes/ok", "Quasar one", "");
+        put(&store, "notes/bad", "Quasar two", "");
+        store
+            .write(|tx| {
+                let mut page =
+                    crate::pages::read_page(&*tx, crate::sources::DEFAULT_SOURCE, "notes/bad")?
+                        .unwrap();
+                page.title = format!("quasar {}", oversized_title());
+                crate::put_json(tx, &keys::page(&page.source_id, &page.slug), &page)
+            })
+            .unwrap();
+        for kind in [
+            TitleAttemptKind::Whole,
+            TitleAttemptKind::Title,
+            TitleAttemptKind::Complete,
+        ] {
+            assert_eq!(quasar_slugs(&store, kind), ["notes/ok"], "{kind:?}");
+        }
+    }
+
+    /// Slugs of the pages one title attempt over `text` finds.
+    fn found(store: &Store, text: &str) -> Vec<String> {
+        let out = store
+            .search_titles_attempts(
+                &[attempt(&[text], TitleAttemptKind::Whole, 10.0)],
+                "",
+                10.0,
+                &KeywordOptions::default(),
+            )
+            .unwrap();
+        slugs(&out[0])
+    }
+
+    /// `trg_pages_search_vector` fires for every statement that SETs the title or timeline, also with the values they
+    /// already hold, and rebuilds the vector with the timeline entries the page has by then. A page whose title
+    /// fits the cap alone but not beside a timeline entry added later is therefore refused by the next putPage, with
+    /// no change: before, the check ran only for a changed title or timeline, the write was accepted, and the
+    /// updated timestamp brought the entry into the vector the searches read, so the page was silently skipped.
+    #[test]
+    fn a_putpage_with_unchanged_values_refuses_a_vector_a_timeline_entry_made_too_big() {
+        let store = crate::test_support::store();
+        put(&store, "notes/full", &full_title(), "");
+        assert_eq!(found(&store, "n00005"), ["notes/full"]);
+        let entry: crate::timeline::TimelineInput = serde_json::from_value(
+            json!({ "date": "2026-01-02", "summary": "extra", "detail": "" }),
+        )
+        .unwrap();
+        store
+            .add_timeline_entry(
+                "notes/full",
+                &entry,
+                &crate::timeline::AddTimelineOptions::default(),
+            )
+            .unwrap();
+        let input: crate::pages::PageInput = serde_json::from_value(
+            json!({ "type": "note", "title": full_title(), "compiled_truth": "body text", "timeline": "" }),
+        )
+        .unwrap();
+        for index in [json!({}), json!({ "index": false })] {
+            let options: crate::pages::PutPageOptions = serde_json::from_value(index).unwrap();
+            let err = store
+                .put_page("notes/full", &input, &options)
+                .expect_err("the unchanged putPage must be refused");
+            assert!(
+                err.message.starts_with("string is too long for tsvector ("),
+                "{}",
+                err.message
+            );
+        }
+        assert_eq!(found(&store, "n00005"), ["notes/full"]);
+    }
+
+    /// The bound counts the items the chain really holds: only nonempty queries, and an OR only between two of them.
+    /// `-quasar` parses to two items (`!'quasar'`) and `the` to none, so `-quasar` followed by 65,535 `quasar` texts holds
+    /// 2 + 65,535 + 65,535 = 131,072 items, exactly the bound (accepted), and 65,537 `quasar` texts hold 131,073 (refused).
+    /// Before, an OR was counted before the first query and for every empty one: the 131,072-item chain was refused, and so
+    /// was 65,536 `quasar` texts with a stopword (131,071 items).
+    #[test]
+    fn the_item_bound_counts_only_nonempty_queries_and_the_ors_between_them() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a", "Quasar Notes", "");
+        let opts = KeywordOptions::default();
+        let run = |lead: &[&str], quasars: usize| {
+            let mut texts: Vec<&str> = lead.to_vec();
+            texts.extend(std::iter::repeat_n("quasar", quasars));
+            store.search_titles_attempts(
+                &[attempt(&texts, TitleAttemptKind::Whole, 10.0)],
+                "",
+                5000.0,
+                &opts,
+            )
+        };
+        // 131,072 items: the bound itself.
+        let ok = run(&["-quasar"], 65_535).unwrap();
+        assert_eq!(slugs(&ok[0]), ["notes/a"]);
+        // 131,071 items, with an empty query and a stopword-only query that hold none.
+        let ok = run(&["the", "", "the"], 65_536).unwrap();
+        assert_eq!(slugs(&ok[0]), ["notes/a"]);
+        // 131,073 items.
+        let e = run(&[], 65_537).unwrap_err();
+        assert!(
+            e.message.starts_with("stack depth limit exceeded"),
+            "{}",
+            e.message
+        );
     }
 }

@@ -2072,7 +2072,7 @@ remediation plan never run it.
 | `unbound_readers` | A token or OAuth client bound to no person still reads the brain (grace, `--reads-unscoped`, or a host that does not enforce binding). | The `gbrain auth rescope ... --member <member>` the notice names, for each one |
 | `stdio_unbound` | A local harness connection bound to nobody still reads the brain. | `gbrain setup <harness> --stdio-member <owner>` |
 
-Then import again. `--readers source` imports open on purpose and prints no notice. Calls imported before are not changed by an upgrade.
+Then import again. `--readers source` imports open on purpose and prints no notice. Calls imported before are not changed by an upgrade: `gbrain repair visibility --propose` proposes the owner plus the matched attendees for each, and nothing changes until you apply a printed command with its `--expect` hash.
 
 ### Stale atoms
 

@@ -13,7 +13,7 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::kv::scan_prefix;
 use crate::persistence::{HousekeepingRow, turn_key};
-use crate::stats::{IngestRecord, jsonb_normalize};
+use crate::stats::IngestRecord;
 use crate::{keys, put_json};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -47,7 +47,7 @@ impl Store {
         for row in &input.rows {
             let key = turn_key(&input.op, &row.entry)?;
             let record = HousekeepingRow {
-                completed_keys: Value::Array(vec![jsonb_normalize(row.value.clone())]),
+                completed_keys: Value::Array(vec![crate::jsonb::order(row.value.clone())]),
                 updated_at_us: now,
             };
             staged.push((key, record));

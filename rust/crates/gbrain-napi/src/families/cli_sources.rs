@@ -18,6 +18,17 @@ impl Brain {
         self.run(env, move |s| s.list_local_path_sources())
     }
 
+    /// `readPlainSyncSource(id)`: `{ local_path, last_commit, config }` or `null` when the source
+    /// is missing or archived.
+    #[napi]
+    pub fn read_plain_sync_source<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_plain_sync_source(&source_id))
+    }
+
     /// `listSourceRoutingRows()`: `{ id, local_path, archived, config, default_has_pages }[]` by id.
     #[napi]
     pub fn list_source_routing_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

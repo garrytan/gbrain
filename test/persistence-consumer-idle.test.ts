@@ -58,9 +58,9 @@ function counting(target: PGLiteEngine) {
         return (obj[key] as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
       };
     }
-    // The journal's claim probe, stale-claim expiry, receipt budget read, compactable-receipt list and projection queue
-    // reads are typed members (engine-sql/persistence-*.ts); one statement each.
-    if (key === 'hasClaimableWrite' || key === 'expireStaleWriteClaims' || key === 'readReceiptBudget'
+    // The journal's claim probe, stale-claim expiry, receipt budget read, compactable-receipt list, projection queue
+    // reads and the idle probe are typed members (engine-sql/persistence-*.ts); one statement each.
+    if (key === 'probeIdleWork' || key === 'hasClaimableWrite' || key === 'expireStaleWriteClaims' || key === 'readReceiptBudget'
       || key === 'listCompactableReceipts' || key === 'listPendingSegmentedProjections' || key === 'selectProjectionWindowJobs') {
       return (...args: unknown[]) => {
         statements.push(key);

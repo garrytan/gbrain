@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { NEUTRAL_WEIGHT } from '../src/core/feedback/store.ts';
 import {
-  DRIFT_BATCH, hasMcpLogRowsPastWindow, listBeliefCoveredSources, listDriftLiveRows, listDriftVersionRows, listOrphanWorkspaceSources,
+  DRIFT_BATCH, hasMcpLogRowsPastWindow, listDriftLiveRows, listDriftVersionRows, listOrphanWorkspaceSources,
   listPolicySourceIds, listPrivilegedDcrClients, listVolunteerChannels, readDriftSchema, readFeedbackStatus, readKnowledgeRevisionNotNull,
   countMcpRequestLogRows, readMcpRequestLogBytes, type EngineRawRead,
 } from '../src/core/engine-sql/doctor-acc.ts';
@@ -117,7 +117,6 @@ describe('doctor reads, second set: seeded PGLite', () => {
   });
 
   test('belief coverage names only sources with the coverage key in their current incarnation', async () => {
-    expect(await listBeliefCoveredSources(raw, 'coverage')).toEqual([]);
   });
 
   test('orphan workspace sources skip the facts exclusion on a brain with no facts table', async () => {

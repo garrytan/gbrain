@@ -5,8 +5,8 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
- * listLinkEndpointPages, listPagesTitledIn, wordLexemes).
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
+ * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -14,8 +14,9 @@
  *
  * The store models the source filter, the page privacy policy (storePagePolicy), the trust floor and flag suppression
  * (`minTrust`, `suppressFlagged`: the page's stamped tier and its write-gate receipts) and the live test of the read
- * policy (src/core/search/read-policy-sql.ts). A privacy policy the store does not model or a temporal policy refuses
- * with `engine_capability_missing`. A derived-link
+ * policy (src/core/search/read-policy-sql.ts). relationalFanout and relationalChainHop also model `requireSafeChunks`
+ * (the canonical chunk's safe fence and the chain's evidence text gate, `takesHoldersAllowList` included). A privacy
+ * policy the store does not model or a temporal policy refuses with `engine_capability_missing`. A derived-link
  * replacement serves every option PGLite takes: the origin snapshot and the line-grammar generation are checked before
  * the store call, and the wanted pages and the origin's temporal evidence (link-temporal-apply.ts) are written after it,
  * as separate store calls. See rust/docs/store/link_queries.md and rust/docs/store/link_temporal.md.
@@ -34,7 +35,10 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
 } from '../../types.ts';
-import type { JunkEntityHubRow, LinkEndpointPage, LivePageSummary, TitledPage } from '../../engine-sql/link-reads.ts';
+import type {
+  EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary,
+  TitledPage,
+} from '../../engine-sql/link-reads.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -45,13 +49,18 @@ import { getConfig } from './config.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
 import { lockRegisteredSourceIds, replaceWantedLinkRows } from './wanted-links.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
+import { ownerWidened } from '../../search/private-visibility.ts';
+import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 
 /** The read-policy keys the store models: the source filter. */
 const SCOPE_KEYS = ['sourceId', 'sourceIds'] as const;
 /** The source filter plus `excludePrivate`, the page policy `privatePagesFilterForCaller` (storePagePolicy). */
 const POLICY_SCOPE_KEYS = [...SCOPE_KEYS, 'excludePrivate'] as const;
-/** Keys `pageReadFilter` never reads: the SQL engines ignore them in these statements, so the store does too. */
+/**
+ * Keys `pageReadFilter` never reads. The ranking reads ignore them, as the SQL engines do; the relational walks read
+ * them for the canonical chunk's safe fence and relationalChainHop's evidence text gate (`chainTextGate`).
+ */
 const UNREAD_BY_FILTER = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
 /** `pageReadFilter`'s trust options: `pageEligibleSql` over the page's stamped tier and its write-gate receipts. */
 const TRUST_KEYS = ['minTrust', 'suppressFlagged'] as const;
@@ -84,6 +93,28 @@ const scopeOf = (member: string, o: Record<string, unknown>) => ({
   sourceId: o.sourceId, sourceIds: o.sourceIds, excludePrivate: storePagePolicy(member, o.excludePrivate, CALLER_READERS) ?? null,
   minTrust: (o.minTrust as string | undefined) || null, suppressFlagged: o.suppressFlagged === true,
 });
+
+/**
+ * `textGate` of readChainHop (src/core/search/read-enrichment.ts), decided here because it reads the caller: with
+ * `requiresSafeChunks`, edge context needs a sealed evidence page with no facts / takes fence (`body`); the owner's own
+ * direct call reads the stored context (ownerWidened), unless its credential names a holders list, which still skips
+ * takes-bearing evidence (`takes`).
+ */
+function chainTextGate(opts: ChainHopOpts): 'body' | 'takes' | undefined {
+  if (!requiresSafeChunks(opts)) return undefined;
+  if (!ownerWidened()) return 'body';
+  return opts.takesHoldersAllowList === undefined ? undefined : 'takes';
+}
+
+/**
+ * The scope of a ranking read hybridSearch hands its whole option bag: the source filter, the page policy and the trust
+ * options, plus the bag's own keys (ignored, as PGLite reads only the page policy out of the bag). `scoped` says a
+ * policy object was passed at all, which turns on the live filter.
+ */
+function rankingScope(member: string, opts: PageReadPolicy | undefined): Record<string, unknown> {
+  const options = takeOptions(member, opts, READ_SCOPE_KEYS, [...UNREAD_BY_FILTER, ...HYBRID_BAG_KEYS]);
+  return { ...scopeOf(member, options), scoped: !!opts };
+}
 
 /**
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
@@ -284,10 +315,10 @@ export const getBacklinkCounts: StoreMember<[pageIds: number[], opts?: PageReadS
   async (brain, pageIds, opts) => {
     const result = new Map(pageIds.map(id => [id, 0]));
     if (!pageIds.length) return result;
-    const options = takeOptions('getBacklinkCounts', opts, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const scope = rankingScope('getBacklinkCounts', opts);
     int32Ids('getBacklinkCounts', pageIds);
     const rows: Array<{ page_id: number; cnt: number }> = await storeCall({ member: 'getBacklinkCounts' },
-      () => brain.getBacklinkCounts(pageIds, { ...scopeOf('getBacklinkCounts', options), scoped: !!opts }));
+      () => brain.getBacklinkCounts(pageIds, scope));
     for (const row of rows) result.set(Number(row.page_id), Number(row.cnt));
     return result;
   };
@@ -296,9 +327,9 @@ export const getAdjacencyBoosts: StoreMember<[pageIds: number[], opts?: PageRead
   async (brain, pageIds, opts) => {
     if (!pageIds.length) return new Map();
     int32Ids('getAdjacencyBoosts', pageIds, 'readAdjacencyBoosts');
-    const options = takeOptions('getAdjacencyBoosts', opts, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const scope = rankingScope('getAdjacencyBoosts', opts);
     const rows: Array<{ to_page_id: number; hits: number; cross_source_hits: number }> = await storeCall({ member: 'getAdjacencyBoosts' },
-      () => brain.getAdjacencyBoosts(pageIds, { ...scopeOf('getAdjacencyBoosts', options), scoped: !!opts }));
+      () => brain.getAdjacencyBoosts(pageIds, scope));
     return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
   };
 
@@ -320,6 +351,7 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
       depth,
       includeMentions: !!opts?.includeMentions,
       limit,
+      requireSafeChunks: requiresSafeChunks(opts),
     };
     return storeCall({ member: 'relationalFanout' }, () => brain.relationalFanout(seeds, wire));
   };
@@ -336,6 +368,7 @@ export const relationalChainHop: StoreMember<[frontierPageIds: number[], opts: C
       ...scopeOf('relationalChainHop', options),
       linkTypes: opts.linkTypes, toward: opts.toward, subjectTypes: opts.subjectTypes, objectTypes: opts.objectTypes,
       degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap,
+      requireSafeChunks: requiresSafeChunks(opts), textGate: chainTextGate(opts),
     };
     return storeCall({ member: 'relationalChainHop' }, () => brain.relationalChainHop(ids, wire));
   };
@@ -364,10 +397,10 @@ export const supersedingPageSlugs: StoreMember<[pageIds: number[], policy?: Page
   async (brain, pageIds, policy) => {
     const result = new Map<number, string>();
     if (pageIds.length === 0) return result;
-    const options = takeOptions('supersedingPageSlugs', policy, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const scope = rankingScope('supersedingPageSlugs', policy);
     const ids = bigintIds('supersedingPageSlugs', pageIds);
     const rows: Array<{ to_page_id: number; by_slug: string }> = await storeCall({ member: 'supersedingPageSlugs' },
-      () => brain.supersedingPageSlugs(ids, { ...scopeOf('supersedingPageSlugs', options), scoped: !!policy }));
+      () => brain.supersedingPageSlugs(ids, scope));
     for (const row of rows) {
       const id = Number(row.to_page_id);
       if (!result.has(id)) result.set(id, row.by_slug);
@@ -443,6 +476,17 @@ export const countInboundLinks: StoreMember<[slug: string, sourceId: string, opt
       () => brain.countInboundLinks({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource })));
   };
 
+/** The entity card's incoming edges: the links countInboundLinks counts, by link id, with raw temporal columns. */
+export const readEntityInboundEdges: StoreMember<[slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }], EntityInboundEdgeRow[]> =
+  async (brain, slug, sourceId, opts) => {
+    const excludePrivate = storePagePolicy('readEntityInboundEdges', opts.excludePrivate, CALLER_READERS) ?? null;
+    const rows: EntityInboundEdgeRow[] = await storeCall({ member: 'readEntityInboundEdges' },
+      () => brain.readEntityInboundEdges({ slug, sourceId, excludePrivate, originSameSource: !!opts.originSameSource }));
+    // The store prints timestamps as ISO text; Postgres returns them as Date (timestamptz).
+    const at = (v: Date | string | null) => v == null ? null : new Date(v);
+    return rows.map(r => ({ ...r, temporal_recorded_at: at(r.temporal_recorded_at), temporal_retired_at: at(r.temporal_retired_at) }));
+  };
+
 /** Automatic link preparation's endpoint pages: the origin source's rows first. */
 export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: string[], crossSourceSlugs: string[]], LinkEndpointPage[]> =
   async (brain, sourceId, slugs, crossSourceSlugs) => storeCall({ member: 'listLinkEndpointPages' },
@@ -463,4 +507,21 @@ export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> 
     if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
     const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
     return new Map(rows.map(r => [r.w, r.lexemes]));
+  };
+
+/** The stored link rows behind returned link contexts (worldLinkContexts): in ask order, then link id order. */
+export const readLinkContextMatches: StoreMember<[asks: readonly LinkContextAsk[]], LinkContextMatch[]> =
+  async (brain, asks) => {
+    if (asks.length === 0) return [];
+    const rows: LinkContextMatch[] = await storeCall({ member: 'readLinkContextMatches' }, () => brain.readLinkContextMatches(asks));
+    return rows.map(r => ({ ...r, i: Number(r.i), page_id: r.page_id == null ? null : Number(r.page_id) }));
+  };
+
+/** The origin page bodies worldLinkContexts reads, segmented pages left out: by id. */
+export const readLinkContextOriginPages: StoreMember<[ids: readonly number[]], LinkContextOriginPage[]> =
+  async (brain, ids) => {
+    if (ids.length === 0) return [];
+    const rows: LinkContextOriginPage[] = await storeCall({ member: 'readLinkContextOriginPages' },
+      () => brain.readLinkContextOriginPages(ids.map(Number)));
+    return rows.map(r => ({ ...r, id: Number(r.id) }));
   };

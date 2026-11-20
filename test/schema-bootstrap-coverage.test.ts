@@ -1266,6 +1266,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // check and bindCredential read it, all after migrations have run.
   'access_tokens.reads_unscoped',
   'oauth_clients.reads_unscoped',
+  // GST-2898 (migration token_read_shared) - the read-shared switch stamp. Same posture as reads_unscoped: absent from
+  // both schema blobs, so no index or function references it; the verifiers read it through to_jsonb after migrations.
+  'access_tokens.read_shared_revision',
+  'oauth_clients.read_shared_revision',
   // Wakeshift PR 2 (migration v313) - the persistence_requests row a write.settled watch points at. Same posture as
   // v301: wake_subscriptions exists only through migrations (v290), so no index or function in either blob references it.
   'wake_subscriptions.target_ref',

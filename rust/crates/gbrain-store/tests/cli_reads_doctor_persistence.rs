@@ -148,7 +148,6 @@ fn an_empty_journal_answers_the_empty_state_of_every_read() {
         store.count_compacted_caller_refusals(&ids, &ops).unwrap(),
         0
     );
-    assert!(store.list_recent_writer_versions(7.0).unwrap().is_empty());
 }
 
 #[test]
@@ -429,7 +428,7 @@ fn the_counter_drift_read_counts_receipts_and_topology_changes() {
 }
 
 #[test]
-fn local_edit_adoptions_and_writer_versions_are_read_from_committed_writes() {
+fn local_edit_adoptions_are_read_from_committed_writes() {
     let dir = TempDir::new("per-adoptions");
     let store = open(&dir);
     store.lock_persistence_counters(&keys()).unwrap();
@@ -449,21 +448,4 @@ fn local_edit_adoptions_and_writer_versions_are_read_from_committed_writes() {
         rows,
         vec![json!({ "source_id": "default", "adoptions": 2, "paths": ["a.md", "b.md"] })]
     );
-
-    let versions = store.list_recent_writer_versions(7.0).unwrap();
-    let admitters: Vec<&Value> = versions
-        .iter()
-        .filter(|v| v["role"] == "admitter")
-        .collect();
-    assert_eq!(admitters.len(), 1);
-    assert_eq!(admitters[0]["version"], "v-test");
-    assert_eq!(admitters[0]["principal"], "local_cli:parity-writer");
-    assert_eq!(admitters[0]["requests"], 2);
-    let consumers: Vec<&Value> = versions
-        .iter()
-        .filter(|v| v["role"] == "consumer")
-        .collect();
-    assert_eq!(consumers[0]["version"], "v-consumer");
-    assert_eq!(consumers[0]["requests"], 2);
-    assert!(store.list_recent_writer_versions(0.0).unwrap().is_empty());
 }

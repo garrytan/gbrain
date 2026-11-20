@@ -106,7 +106,7 @@ async function targetGrant(tx: SqlEngine, a: WriteAuthority): Promise<(slug: str
  * the page and its targets are what serialize this with publications.
  */
 export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<void> {
-  const skip = (tx: SqlEngine, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
+  const skip = (tx: Pick<BrainEngine, 'completeEffectRow'>, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
   const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [effect.request_id]);
   if (!row || row.state !== 'committed' || !effect.data.slug) return skip(engine, 'invalid_write_request');
   if (skipsGuestNote('remote_links_effect', await isGuestWrite(engine, row.source_id, row.intent))) return skip(engine, 'guest_source');
@@ -151,7 +151,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
  * decided the same way under the lock, once: the effect never retries because the page moved.
  */
 async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffect, row: WriteRequest, range: AppendedRange, hostId: string): Promise<void> {
-  const skip = (tx: SqlEngine, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
+  const skip = (tx: Pick<BrainEngine, 'completeEffectRow'>, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
   const sourceId = effect.source_id;
   const snapshot = await engine.readPageSnapshot(effect.data.slug!, { sourceId });
   if (!snapshot || snapshot.page.id !== effect.data.page_id) return skip(engine, 'superseded');

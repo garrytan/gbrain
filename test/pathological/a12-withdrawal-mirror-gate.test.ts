@@ -124,20 +124,20 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         breakFile(root);
         // The race: Git is claimed behind the failed mirror with W2 next, then retry-effects requeues the mirror
         // (W2's file holds its pre-withdrawal bytes again) before the Git attempt reads the mirror's state.
-        const original = engine.executeRaw;
+        const original = engine.readMirrorGateRows;
         let raced = null as Record<string, string> | null;
-        engine.executeRaw = (async function (this: BrainEngine, sql: string, params?: unknown[]) {
-          if (!raced && /FROM persistence_effects WHERE kind='withdrawal-mirror'/.test(sql)) {
-            const states = Object.fromEntries((await original.call(engine, `SELECT kind,state,data->>'after_slug' AS after FROM persistence_effects WHERE request_id=$1::uuid`,
+        engine.readMirrorGateRows = (async function (this: BrainEngine, requestIds: readonly string[]) {
+          if (!raced) {
+            const states = Object.fromEntries((await engine.executeRaw(`SELECT kind,state,data->>'after_slug' AS after FROM persistence_effects WHERE request_id=$1::uuid`,
               [request.id]) as Array<{ kind: string; state: string; after: string | null }>).map(row => [row.kind, `${row.state}:${row.after}`]));
             if (states.git === `running:${W1}` && !states.embedding?.startsWith('running')) {
               rmSync(join(root, `${W2}.md`), { recursive: true }); writeFileSync(join(root, `${W2}.md`), raw);
               raced = actions(await retryRequestEffects(engine, SOURCE, request.request_id, false, ctx.config));
             }
           }
-          return original.call(this, sql, params);
-        }) as BrainEngine['executeRaw'];
-        try { await expectUnitNotAborted(() => drain(engine, 12)); } finally { engine.executeRaw = original; }
+          return original.call(this, requestIds);
+        }) as BrainEngine['readMirrorGateRows'];
+        try { await expectUnitNotAborted(() => drain(engine, 12)); } finally { engine.readMirrorGateRows = original; }
         expect(raced?.['withdrawal-mirror']).toBe('retry_queued');
         expect(committedActiveClaim(root)).toEqual([]);
         const after = await effectsOf(engine, request.id);
@@ -182,12 +182,12 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         breakFile(root);
         // The other order of the race: the Git attempt reads the failed mirror first, then retry-effects requeues
         // the mirror, so the attempt parks W2 behind it; the mirror then publishes W2 and commits.
-        const original = engine.executeRaw;
+        const original = engine.readMirrorGateRows;
         const retries: Record<string, string>[] = [];
-        engine.executeRaw = (async function (this: BrainEngine, sql: string, params?: unknown[]) {
-          const result = await original.call(this, sql, params);
-          if (!retries.length && /FROM persistence_effects WHERE kind='withdrawal-mirror'/.test(sql)) {
-            const states = Object.fromEntries((await original.call(engine, `SELECT kind,state,data->>'after_slug' AS after FROM persistence_effects WHERE request_id=$1::uuid`,
+        engine.readMirrorGateRows = (async function (this: BrainEngine, requestIds: readonly string[]) {
+          const result = await original.call(this, requestIds);
+          if (!retries.length) {
+            const states = Object.fromEntries((await engine.executeRaw(`SELECT kind,state,data->>'after_slug' AS after FROM persistence_effects WHERE request_id=$1::uuid`,
               [request.id]) as Array<{ kind: string; state: string; after: string | null }>).map(row => [row.kind, `${row.state}:${row.after}`]));
             if (states.git === `running:${W1}` && !states.embedding?.startsWith('running')) {
               rmSync(join(root, `${W2}.md`), { recursive: true }); writeFileSync(join(root, `${W2}.md`), raw);
@@ -195,8 +195,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
             }
           }
           return result;
-        }) as BrainEngine['executeRaw'];
-        try { await expectUnitNotAborted(() => drain(engine, 16)); } finally { engine.executeRaw = original; }
+        }) as BrainEngine['readMirrorGateRows'];
+        try { await expectUnitNotAborted(() => drain(engine, 16)); } finally { engine.readMirrorGateRows = original; }
         expect(retries.map(retry => retry['withdrawal-mirror'])).toEqual(['retry_queued']);
         expect(committedActiveClaim(root)).toEqual([]);
         const after = await effectsOf(engine, request.id);
@@ -281,12 +281,9 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       test(`A-12 run: a run-scoped failure (${injected.name}) reading the mirror's committed targets parks nothing`, async () => {
         await withdrawalBrain(databaseUrl, async ({ engine, root, request }) => {
           breakFile(root);
-          const original = engine.executeRaw;
-          engine.executeRaw = (async function (this: BrainEngine, sql: string, params?: unknown[]) {
-            if (/kind='withdrawal-mirror' AND \(state<>'committed'/.test(sql)) throw injected.error();
-            return original.call(this, sql, params);
-          }) as BrainEngine['executeRaw'];
-          try { await expectUnitNotAborted(() => drain(engine, 12)); } finally { engine.executeRaw = original; }
+          const original = engine.readMirrorGateRows;
+          engine.readMirrorGateRows = (async () => { throw injected.error(); }) as BrainEngine['readMirrorGateRows'];
+          try { await expectUnitNotAborted(() => drain(engine, 12)); } finally { engine.readMirrorGateRows = original; }
           const effects = await effectsOf(engine, request.id);
           expect(effects['withdrawal-mirror'].state).toBe('failed');
           for (const kind of ['git', 'embedding']) expect({ kind, parked: effects[kind].data.parked ?? null }).toEqual({ kind, parked: null });

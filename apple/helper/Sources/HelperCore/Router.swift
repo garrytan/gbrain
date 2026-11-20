@@ -11,17 +11,20 @@ public struct RouterSettings {
     public let sources: [SourceModule]
     public let enabled: Set<String>
     public let version: String
+    public let send: SendService?
 
-    public init(listener: Listener, grants: [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String) {
-        self.init(listener: listener, liveGrants: { grants }, sources: sources, enabled: enabled, version: version)
+    public init(listener: Listener, grants: [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String, send: SendService? = nil) {
+        self.init(listener: listener, liveGrants: { grants }, sources: sources, enabled: enabled, version: version, send: send)
     }
 
-    public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String) {
+    public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String,
+                send: SendService? = nil) {
         self.listener = listener
         self.grants = liveGrants
         self.sources = sources
         self.enabled = enabled
         self.version = version
+        self.send = send
     }
 }
 
@@ -58,17 +61,41 @@ public final class Router {
         }
     }
 
+    public func bodyLimit(path: String) -> Int? {
+        switch path {
+        case SendSignature.route: return 32 * 1024
+        case SendService.adminRoute: return 8 * 1024
+        default: return nil
+        }
+    }
+
     public func handle(_ request: HTTPRequest, peer: UInt32, port: UInt16, requestId: String) -> Routed {
         let source = settings.sources.first { $0.routes.contains(request.path) }
-        let known = request.path == "/health" || request.path == "/v1/sources" || source != nil
+        let posts = [SendSignature.route, SendService.adminRoute]
+        let known = request.path == "/health" || request.path == "/v1/sources" || source != nil || posts.contains(request.path)
         let route = known ? request.path : "unknown"
         func fail(_ problem: Problem) -> Routed {
             Routed(response: .problem(problem, requestId: requestId), route: route, rows: 0)
         }
+        func reply(_ reply: SendReply) -> Routed {
+            switch reply {
+            case .ok(let response): return Routed(response: response, route: route, rows: 0)
+            case .problem(let problem): return fail(problem)
+            }
+        }
         guard admits(peer) else { return fail(.forbiddenSource) }
-        if settings.listener == .loopback {
-            guard request.headers["origin"] == nil else { return fail(.forbiddenOrigin) }
-            guard request.headers["host"] == "127.0.0.1:\(port)" else { return fail(.forbiddenHost) }
+        if case .tailnet = settings.listener {
+            guard request.path == SendSignature.route, let send = settings.send else { return fail(.notFound) }
+            guard request.method == "POST" else { return fail(.methodNotAllowed) }
+            return reply(send.handle(request, peer: peer))
+        }
+        guard request.headers["origin"] == nil else { return fail(.forbiddenOrigin) }
+        guard request.headers["host"] == "127.0.0.1:\(port)" else { return fail(.forbiddenHost) }
+        if request.path == SendSignature.route { return fail(.forbiddenSource) }
+        if request.path == SendService.adminRoute {
+            guard let send = settings.send else { return fail(.notFound) }
+            guard request.method == "POST" else { return fail(.methodNotAllowed) }
+            return reply(send.admin(request))
         }
         guard request.method == "GET" else { return fail(.methodNotAllowed) }
         if request.path == "/health" {

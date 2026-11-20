@@ -1,8 +1,8 @@
 //! Takes and synthesis evidence: the `takes` and `synthesis_evidence` tables of the PGLite engine.
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
-//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, and the
-//! reads of `takes/reads.rs`.
+//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
+//! `takes/reads.rs`, and the reads and the delete of `takes/extract.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -16,8 +16,10 @@
 //! A take records the source of its page (`source_id`) and an evidence row the source of its
 //! synthesis page, so `remove_source_rows` can sweep a deleted source without its pages.
 //!
-//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; the
-//! embeddings family stores the rev with the vector and treats a vector with another rev as stale.
+//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; so does
+//! `addTakesBatch` here (`embeddings::remove_take_vector`, which also raises the vector generation the
+//! warm vector index is keyed by). The embeddings family stores the rev with the vector and treats a
+//! vector with another rev as stale, so a vector written for an older claim never counts.
 //! A claim edited A -> B -> A is then stale, as it is in Postgres (an md5 compare would miss it).
 
 use crate::env::iso;
@@ -28,13 +30,16 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
 use crate::trust::{RowTrust, TrustTable, stamp_row};
+use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod extract;
 mod reads;
 
+pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use reads::{McpResolvedInput, PurgeTakesInput};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
@@ -147,6 +152,61 @@ pub(crate) struct TakeRecord {
     /// them, and omitted while the tier is `unknown` with no origin.
     #[serde(default, skip_serializing_if = "RowTrust::is_empty")]
     pub trust: RowTrust,
+    /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
+    /// while every column is null. [`write_take`] stamps it.
+    #[serde(default, skip_serializing_if = "WriteReceipt::is_empty")]
+    pub receipt: WriteReceipt,
+}
+
+impl TakeRecord {
+    /// The content tuple the attribution trigger compares
+    /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.takes`); `updated_at` and the embedding are projection.
+    fn attribution_content_changed(&self, new: &TakeRecord) -> bool {
+        use crate::write_receipt::float_distinct;
+        let (a, b) = (self, new);
+        (
+            a.id,
+            a.page_id,
+            a.row_num,
+            &a.claim,
+            &a.kind,
+            &a.holder,
+            &a.since_date,
+            &a.until_date,
+            &a.source,
+            a.superseded_by,
+            a.active,
+        ) != (
+            b.id,
+            b.page_id,
+            b.row_num,
+            &b.claim,
+            &b.kind,
+            &b.holder,
+            &b.since_date,
+            &b.until_date,
+            &b.source,
+            b.superseded_by,
+            b.active,
+        ) || (
+            a.resolved_at_us,
+            a.resolved_outcome,
+            &a.resolved_unit,
+            &a.resolved_source,
+            &a.resolved_by,
+            a.created_at_us,
+            &a.resolved_quality,
+        ) != (
+            b.resolved_at_us,
+            b.resolved_outcome,
+            &b.resolved_unit,
+            &b.resolved_source,
+            &b.resolved_by,
+            b.created_at_us,
+            &b.resolved_quality,
+        ) || float_distinct(Some(a.weight), Some(b.weight))
+            || float_distinct(a.resolved_value, b.resolved_value)
+    }
 }
 
 /// One `synthesis_evidence` row (the key holds the three key columns).
@@ -446,7 +506,6 @@ fn list_texts<'a>(name: &'a str, list: &'a Option<Vec<Option<String>>>) -> Vec<(
 // Record access.
 
 /// The take at `id`.
-#[allow(dead_code)]
 pub(crate) fn read_take(read: &dyn KvRead, id: u64) -> Result<Option<TakeRecord>> {
     get_json(read, &take_key(id))
 }
@@ -491,11 +550,21 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
-/// Writes a take's record as it is (its row index never changes: `page_id` and `row_num` are
-/// fixed). A write that changes no trust column (the embedding) uses it; a takes writer uses
-/// [`store_take`].
+/// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),
+/// stamped with the open write's receipt as the PGLite attribution trigger stamps it
+/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. The
+/// trust columns are written as given: a write that changes no trust column (the embedding) uses
+/// it; a takes writer uses [`store_take`].
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    put_json(tx, &take_key(take.id), take)
+    let old = read_take(&*tx, take.id)?;
+    let mut stamped = take.clone();
+    stamped.receipt = WriteReceipt::stamp(
+        old.as_ref().map(|o| &o.receipt),
+        &take.receipt,
+        old.as_ref()
+            .is_some_and(|o| o.attribution_content_changed(take)),
+    )?;
+    put_json(tx, &take_key(take.id), &stamped)
 }
 
 /// Writes `take` with the trust tier and write origin PGLite's `trust_tier_stamp` trigger gives it
@@ -884,6 +953,9 @@ impl Store {
                     }
                     if existing.claim != claim {
                         existing.claim_rev += 1;
+                        // Postgres nulls the embedding in this upsert. Dropping the vector also raises the vector
+                        // generation, so a warm vector index rebuilds instead of ranking the old claim's vector.
+                        crate::embeddings::remove_take_vector(tx, existing.id)?;
                     }
                     existing.claim = claim;
                     existing.kind = kind;
@@ -930,6 +1002,7 @@ impl Store {
                             created_at_us: now,
                             updated_at_us: now,
                             claim_rev: 0,
+                            receipt: WriteReceipt::default(),
                             trust: RowTrust::default(),
                         },
                     )?;
@@ -1268,6 +1341,7 @@ impl Store {
                     created_at_us: now,
                     updated_at_us: now,
                     claim_rev: 0,
+                    receipt: WriteReceipt::default(),
                     trust: RowTrust::default(),
                 },
             )?;
@@ -1584,7 +1658,7 @@ impl Store {
             return Ok(());
         }
         self.write(|tx| {
-            for row_num in wanted {
+            for row_num in wanted.iter().copied() {
                 if let Some(take) = take_at(&*tx, page_id, row_num)? {
                     delete_take(tx, &take)?;
                 }

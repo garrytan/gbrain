@@ -28,7 +28,7 @@ export const PUBLIC_BY_TERMINAL: Readonly<Record<TerminalCategory, PublicCategor
   operator_cancelled: 'superseded', caller_conflict: 'conflict', file_conflict: 'drift', canonical_file_missing: 'file_missing', fence_unrenderable: 'defect',
   writer_guard: 'defect', database_refusal: 'config', owner_exception: 'defect', legacy_publication_refusal: 'superseded',
   sync_fault: 'defect', transport: 'transient', caller_refusal: 'content_refused', gbrain_defect: 'defect', diagnosis_required: 'defect',
-  schema_missing: 'storage', retired_operation: 'superseded',
+  schema_missing: 'storage', retired_operation: 'superseded', needs_engine_upgrade: 'config',
 };
 
 /** Fault codes (holds, run stops, receipts) by name; a test pins that every `SYNC_FAULT_TABLE` code is here. */
@@ -50,7 +50,7 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   write_capacity_backpressure: 'transient', capacity_paused: 'transient', sync_drain_lease_held: 'transient', graduation_in_progress: 'transient',
   storage_error: 'storage', recovery_required: 'storage',
   permission_denied: 'permission',
-  connection_inherited_read_only: 'config',
+  connection_inherited_read_only: 'config', engine_capability_missing: 'config',
   owner_unavailable: 'config', owner_marker_missing: 'config', writer_coordinator_required: 'config', write_quota_exhausted: 'config', write_quota_insufficient: 'config', plan_stale: 'config',
   slug_root_mode_mismatch: 'config', invalid_params: 'config',
   // GBRA-133 (#6712 PR 4b lane F): a file whose text holds NUL bytes, and a committed file whose Git object is gone.

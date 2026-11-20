@@ -27,6 +27,9 @@ const DURABLE = `SELECT set_config('gbrain.persistence_protocol','2',true),set_c
 const DURABLE_IDLE = `SELECT set_config('idle_in_transaction_session_timeout',$3,true),set_config('gbrain.persistence_protocol','2',true),set_config('synchronous_commit','on',true),
     set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain`;
 
+/** Synchronous commit for the rest of the transaction, alone: the statement journal.ts `completeWrite` has always sent. */
+export const SYNCHRONOUS_COMMIT_SQL = "SELECT set_config('synchronous_commit','on',true)";
+
 /** The declaration statement and its parameters. */
 export function persistenceDeclarationStatement(durable?: DurablePersistenceSettings): { sql: string; params: string[] } {
   if (!durable) return { sql: PROTOCOL_ONLY, params: [] };
@@ -42,4 +45,9 @@ export async function declarePersistence(engine: Pick<BrainEngine, 'executeRaw'>
     ? await engine.executeRaw<{ brain: string | null }>(sql, params)
     : await engine.executeRaw<{ brain: string | null }>(sql);
   return row?.brain ?? null;
+}
+
+/** Sends `SYNCHRONOUS_COMMIT_SQL` through `engine.executeRaw`: this transaction's commit waits for the flush. */
+export async function requireSynchronousCommit(engine: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
+  await engine.executeRaw(SYNCHRONOUS_COMMIT_SQL);
 }

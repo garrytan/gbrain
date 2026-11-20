@@ -322,7 +322,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
   const { where, params } = poolPredicate(scope, undefined);
   const n = params.length;
   const cues = await engine.executeRaw<FactCandidate>(
-    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY f.valid_from DESC, f.id DESC) AS call_off_rank
+    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
        FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
          AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))) f
      WHERE f.call_off_rank <= $${n + 4}`,

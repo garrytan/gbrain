@@ -86,9 +86,9 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
     if (m.labelled_only === true) labelledOnly.add(m.id);
   }
   const memo = new Map<string, Promise<string[]>>();
-  const sourcesOf = (grant: PrincipalGrant) => {
-    const key = JSON.stringify([grant.principal.kind, grant.scopes, grant.sources]);
-    if (!memo.has(key)) memo.set(key, credentialReadSources(engine, grant));
+  const sourcesOf = (grant: PrincipalGrant, member: string) => {
+    const key = JSON.stringify([grant.principal.kind, grant.scopes, grant.sources, grant.readShared === true ? member : false]);
+    if (!memo.has(key)) memo.set(key, credentialReadSources(engine, grant, member));
     return memo.get(key)!;
   };
   const credentials: Array<{ member: string; grant: PrincipalGrant }> = [
@@ -100,7 +100,7 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   for (const { member, grant } of credentials) {
     const set = reads.get(member);
     if (!set) continue;
-    for (const s of await sourcesOf(grant)) set.add(s);
+    for (const s of await sourcesOf(grant, member)) set.add(s);
     const priv = privateOf.get(member) ?? new Set<string>();
     privateOf.set(member, priv);
     for (const s of privatePagesSources(grant)) priv.add(s);

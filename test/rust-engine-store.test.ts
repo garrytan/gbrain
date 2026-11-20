@@ -24,6 +24,9 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -136,6 +139,7 @@ describe('Rust engine on the store', () => {
     // findOrphanPages takes no trust floor on Rust: no production caller sends one, so it refuses.
     const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
+    expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
   withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
@@ -201,6 +205,21 @@ describe('Rust engine on the store', () => {
     }
   });
 
+  withAddon('readRemoteForgetTier under the remote floor serves no caller record, a restricted or unrestricted brain and the owner, and refuses labelled-only and folder coverage', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const { ids } = await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const read = () => engine.readRemoteForgetTier({ factId: ids[0]!, sourceId: 'default', remoteFloor: true });
+    const served = { restricted: { restricted: true }, unrestricted: { restricted: false }, owner: { owner: true }, ownerUnrestricted: { owner: true, restricted: false } };
+    for (const [kind, access] of Object.entries(served)) {
+      expect([kind, await withCallerAccess(access, read)]).toEqual([kind, expect.any(String)]);
+    }
+    expect(await read()).toEqual(expect.any(String));
+    // A labelled-only caller or pending folder coverage renders a floor the store has no form for.
+    expect(await code(() => withCallerAccess({ labelledOnly: true }, read))).toBe('engine_capability_missing');
+    expect(await code(() => withCallerAccess({ folderCoverage: [{ source_id: 'default', prefix: 'team/' }] }, read))).toBe('engine_capability_missing');
+  });
+
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
@@ -237,6 +256,15 @@ describe('Rust engine on the store', () => {
     expect((await engine.getChunks('notes/a', { includeUnsealed: true })).map((c) => [c.chunk_text, c.model])).toEqual([['Labeled.', 'm:column']]);
   });
 
+  withAddon('a chunk that carries an image vector refuses chunks, and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const before = await engine.getChunks('notes/a');
+    const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding_image: new Float32Array(4) } as never;
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('engine_capability_missing');
+    expect(await engine.getChunks('notes/a')).toEqual(before);
+  });
+
   withAddon('getStats and getHealth refuse a brain whose config selects another embedding column', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
@@ -264,8 +292,8 @@ describe('Rust engine on the store', () => {
     const [row] = await engine.getRawData('notes/a');
     expect(row!.data).toEqual({ keep: 1, at: '1970-01-01T00:00:00.000Z' });
     expect(row!.fetched_at).toBeInstanceOf(Date);
-    // excludePrivate is served for a caller with no reader grants: a page that is not private keeps its row.
-    expect(await engine.getRawData('notes/a', undefined, { excludePrivate: true })).toEqual([row!]);
+    // excludePrivate applies the page policy: a public page keeps its raw data.
+    expect((await engine.getRawData('notes/a', undefined, { excludePrivate: true })).map((r) => r.data)).toEqual([row!.data]);
     // A size past 2^31 crosses N-API as a double and comes back whole.
     const spec = { page_id: created.id, filename: 'a.png', storage_path: 'f/a.png', content_hash: 'h', size_bytes: 5_000_000_000 };
     expect((await engine.upsertFile(spec)).created).toBe(true);
@@ -367,6 +395,134 @@ describe('Rust store members', () => {
     expect(await code(() => count(brain, ['default'], 2, { ...args, labelLine: line('Da.e') }))).toBe('engine_capability_missing');
     for (const contextLike of ['seg%', '%se_g%', '%a%b%', '%a\\b%']) expect(await code(() => count(brain, ['default'], 2, { ...args, contextLike }))).toBe('engine_capability_missing');
     expect(sent).toHaveLength(2);
+  });
+
+  test('countPurgedPageFacts sends LIMIT cap + 1, counts the first cap rows by class, and refuses a cap that is not an integer', async () => {
+    const sent: unknown[] = [];
+    const brain = { countPurgedPageFacts: async (q: unknown) => { sent.push(q); return [true, false, true]; } };
+    const count = STORE_MEMBERS.countPurgedPageFacts as unknown as (brain: unknown, sourceIds: string[], cap: number) => Promise<unknown>;
+    expect(await count(brain, ['default'], 2)).toEqual({ evidenced: 1, ambiguous: 1, capped: true });
+    expect(await count(brain, ['default'], 3)).toEqual({ evidenced: 2, ambiguous: 1, capped: false });
+    expect(sent[0]).toEqual({ sourceIds: ['default'], limit: 3 });
+    const code = async (run: () => Promise<unknown>) => { try { await run(); return 'ran'; } catch (e) { return (e as { code?: string }).code; } };
+    expect(await code(() => count(brain, ['default'], 1.5))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], -2))).toBe('engine_capability_missing');
+    expect(sent).toHaveLength(2);
+  });
+});
+
+// MCP dispatch decides the caller's access before any work (access/caller.ts). On a Rust brain every read it makes must
+// be a typed member: a raw read the engine refuses is swallowed as "permits nothing" and reads as a false refusal.
+describe('MCP dispatch caller access on a Rust brain', () => {
+  const stdio = (header?: string) => ({ remote: true, transport: 'stdio', sourceId: 'default', ...(header ? { onBehalfOf: { header } } : {}) }) as never;
+  const dispatch = async (engine: RustEngine, op: string, opts: never) => {
+    const out = await dispatchToolCall(engine as never, op, {}, opts);
+    const text = out.content.map(c => c.text).join('\n');
+    let code: unknown;
+    try { code = (JSON.parse(text) as { code?: unknown }).code; } catch { /* a result, not an error */ }
+    return { isError: out.isError === true, code };
+  };
+
+  withAddon('a stdio audience its config mcp.stdio_may_act_for lists passes caller access, and one it does not list is refused', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.setConfig('mcp.stdio_may_act_for', 'guest');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: false, code: undefined });
+    expect(await dispatch(engine, 'whoami', stdio('guest'))).toEqual({ isError: false, code: undefined });
+    // Leak case: the list bounds the audience on Rust as on PGLite; an unlisted entry reads nothing.
+    await engine.setConfig('mcp.stdio_may_act_for', 'member:alice-example');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
+    await engine.unsetConfig('mcp.stdio_may_act_for');
+    expect(await dispatch(engine, 'get_stats', stdio('guest'))).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
+    expect(await dispatch(engine, 'get_stats', stdio())).toEqual({ isError: false, code: undefined });
+  });
+
+  withAddon('an audience of members and groups is checked with no raw read: the store has none, so each entry is unknown', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    await engine.setConfig('mcp.stdio_may_act_for', 'member:alice-example,group:team-a');
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    for (const header of ['member:alice-example', 'group:team-a']) {
+      expect(await dispatch(engine, 'get_stats', stdio(header))).toEqual({ isError: true, code: 'on_behalf_of_unknown_member' });
+    }
+    expect(raw).toEqual([]);
+  });
+});
+
+// `gbrain access member add|list` and `access owner set` read members first (access/members.ts getMember, listMembers).
+// On a Rust brain that read is a typed member, so it answers "no members" instead of stopping on raw SQL.
+describe('access member reads on a Rust brain', () => {
+  withAddon('getMember, memberByEmail and listMembers read no raw SQL and find no member: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    expect(await getMember(engine as never, 'alice-example')).toBeNull();
+    expect(await listMembers(engine as never)).toEqual([]);
+    expect(await listMembers(engine as never, { includeRemoved: true })).toEqual([]);
+    expect(await code(() => memberByEmail(engine as never, 'alice@example.com'))).toBe('not_found');
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the store keeps no tokens or clients', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    expect(await code(() => legacyTokenByName(engine as never, 'laptop'))).toBe('invalid_params');
+    expect(await boundCredentials(engine as never, 'alice-example')).toEqual([]);
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('audienceMemberIds reads no raw SQL and finds no audience member: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const listed: string[][] = [];
+    const list = engine.listAudienceAccessMembers.bind(engine);
+    (engine as unknown as { listAudienceAccessMembers: typeof list }).listAudienceAccessMembers = async () => { const ids = await list(); listed.push(ids); return ids; };
+    expect(await audienceMemberIds(engine as never)).toEqual([]);
+    expect({ raw, listed }).toEqual({ raw: [], listed: [[]] });
+  });
+
+  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity: the store keeps no members', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const read: unknown[][] = [];
+    const live = engine.readLiveMember.bind(engine);
+    (engine as unknown as { readLiveMember: typeof live }).readLiveMember = async (via, key) => { read.push([via, key, await live(via, key)]); return live(via, key); };
+    const identities = {
+      token: await memberIdentityFor(engine as never, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000c1' } }),
+      client: await memberIdentityFor(engine as never, { principal: { kind: 'oauth_client', id: 'client-alice' } }),
+      stdioConfig: await memberIdentityFor(engine as never, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioMember: await stdioMemberIdentity(engine as never, 'alice-example'),
+    };
+    expect(identities).toEqual({ token: [], client: [], stdioConfig: [], stdioMember: [] });
+    expect({ raw, read }).toEqual({
+      raw: [],
+      read: [['legacy_token', '00000000-0000-4000-8000-0000000000c1', null], ['oauth_client', 'client-alice', null],
+        ['stdio_config', 'mcp.stdio_member', null], ['member', 'alice-example', null]],
+    });
   });
 });
 

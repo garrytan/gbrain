@@ -7,7 +7,7 @@
 //! `length` are characters, a key test (`?`) is key presence even for a JSON null, `->>` is `fm_text`,
 //! and every order is bytewise, as PGLite's C.UTF-8 collation orders.
 
-use super::pg_text::{fm_text, jsonb_value};
+use super::pg_text::fm_text;
 use crate::Store;
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
@@ -190,7 +190,7 @@ impl Store {
                     "title": p.title,
                     "body_head": p.compiled_truth.as_deref().map(|t| left(t, 2048)),
                     "tl_head": timeline_head(&p, 1024),
-                    "frontmatter": jsonb_value(&Value::Object(p.frontmatter.clone())),
+                    "frontmatter": crate::jsonb::order(Value::Object(p.frontmatter.clone())),
                 })
             })
             .collect())

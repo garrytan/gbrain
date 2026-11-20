@@ -1,3 +1,4 @@
+import { afterAll, beforeAll } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -83,6 +84,22 @@ export async function withEnv<T>(
       if (stack.length === 0) activeFrames.delete(key);
     }
   }
+}
+
+/**
+ * `withEnv` for a whole file: the overrides apply from the file's first test to its last (beforeAll/afterAll), then
+ * the prior values come back, so nothing leaks to the next file in the shard. For a setting every test in the file
+ * shares, such as GBRAIN_SECRETS_ON_PUSH=refuse in the files that pin today's publish refusals (GST-2988).
+ */
+export function envForFile(overrides: Record<string, string | undefined>): void {
+  let release: (() => void) | undefined;
+  let running: Promise<void> | undefined;
+  beforeAll(async () => {
+    await new Promise<void>(entered => {
+      running = withEnv(overrides, () => new Promise<void>(done => { release = done; entered(); }));
+    });
+  });
+  afterAll(async () => { release?.(); await running; });
 }
 
 /**

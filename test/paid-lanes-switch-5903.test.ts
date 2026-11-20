@@ -39,6 +39,7 @@ const GREEN = {
   FULL_SERIAL: 'success',
   FULL_SLOW: 'success',
   FULL_E2E: 'success',
+  OPENCLAW_SKILL_RESOLVER: 'success',
   FULL_CORPUS: 'false',
   EVENT: 'pull_request',
   GBRAIN_PAID_LANES: '',

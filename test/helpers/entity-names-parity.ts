@@ -8,6 +8,8 @@
  * byte-identical JSON on every engine.
  */
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { LegacyUnscopedRead } from '../../src/core/engine-sql/brands.ts';
+import { readEntityCardRows } from '../../src/core/engine-sql/entity-reads.ts';
 import type { PageType } from '../../src/core/types.ts';
 import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { readCardIdentity } from '../../src/core/verbs/entity-card-identity.ts';
@@ -116,17 +118,22 @@ async function referenceOne(engine: BrainEngine, sourceId: string, name: string,
 /**
  * The plans of the name-lookup reads one `lookupEntityNames` call issues (the
  * candidate arm and the alias resolver's exact-title check), captured from the
- * real calls and explained on `engine` as it stands.
+ * real calls and explained on `engine` as it stands. The candidate arm is the
+ * typed member `readEntityCardRows`, which runs on the engine's own executor,
+ * so for the capture it runs its same engine-sql statement through the spied
+ * `executeRaw`.
  */
 export async function nameLookupPlans(engine: BrainEngine, lookup: () => Promise<unknown>): Promise<Array<{ sql: string; plan: string }>> {
   const captured: Array<{ sql: string; params: unknown[] }> = [];
-  const spy = engine as unknown as { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown> };
+  const spy = engine as unknown as Pick<BrainEngine, 'readEntityCardRows'> & { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown> };
   const raw = spy.executeRaw;
+  const cardRows = spy.readEntityCardRows;
   spy.executeRaw = (sql: string, params?: unknown[]) => {
     if (/lower\((t\.)?title\) = (\$2|a\.alias_norm)/.test(sql)) captured.push({ sql, params: params ?? [] });
     return raw.call(engine, sql, params);
   };
-  try { await lookup(); } finally { spy.executeRaw = raw; }
+  spy.readEntityCardRows = (sourceId, match, opts) => readEntityCardRows(spy as unknown as LegacyUnscopedRead, sourceId, match, opts);
+  try { await lookup(); } finally { spy.executeRaw = raw; spy.readEntityCardRows = cardRows; }
   const plans: Array<{ sql: string; plan: string }> = [];
   for (const { sql, params } of captured) {
     const rows = await engine.executeRaw<Record<string, string>>(`EXPLAIN ${sql}`, params);

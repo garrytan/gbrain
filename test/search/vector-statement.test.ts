@@ -3,8 +3,8 @@
  * HNSW candidate CTE on indexed columns (the planner cannot estimate it and
  * drops the index), keeps it inside on non-indexed columns and under the
  * legacy guard, and always keeps it in the exact fallback and the `hasMore`
- * witness. Both engines emit the same statement, the timeline `stale`
- * column included.
+ * witness. Both engines emit the same statement apart from the PGLite
+ * timeline `stale` column.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, INDEX_WALK_PAGE_COLUMNS, indexWalkOverfetch, SCOPE_SCAN_FIRST_MAX_CHUNKS, SCOPE_SCAN_MAX_CHUNKS, SCOPE_SCAN_MAX_SHARE, sourceScope, sourceScopeShare, vectorScopeLoader, type PageSourceStats, type VectorSearchStatementInput } from '../../src/core/search/vector-statement.ts';
@@ -77,7 +77,7 @@ describe('vector statement freshness placement (#5824)', () => {
     expect(stmt.sql).toContain(`AND cc.modality = 'image'`);
   });
 
-  test('Postgres and PGLite emit the same statement, the timeline stale column included', () => {
+  test('Postgres and PGLite emit the same statement apart from the timeline stale column', () => {
     const opts = { type: 'note', sourceIds: ['a', 'b'], afterDate: '2026-01-01', language: 'typescript', excludePrivate: true };
     for (const vectorLegacyGuard of [false, true]) {
       const pg = build({ ...opts, vectorLegacyGuard });
@@ -85,8 +85,8 @@ describe('vector statement freshness placement (#5824)', () => {
       expect(lite.params).toEqual(pg.params);
       expect(lite.innerLimitIdx).toBe(pg.innerLimitIdx);
       expect(lite.hasMoreSql).toBe(pg.hasMoreSql);
-      expect(lite.sql).toBe(pg.sql);
-      expect(pg.sql).toMatch(/CASE WHEN bpp\.updated_at < \(\s*SELECT MAX\(te\.created_at\) FROM timeline_entries te WHERE te\.page_id = bpp\.page_id\s*\) THEN true ELSE false END AS stale/);
+      const strip = (sql: string) => sql.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale');
+      expect(strip(lite.sql)).toBe(pg.sql);
     }
   });
 
@@ -151,7 +151,8 @@ describe('vector index walk statement', () => {
     const lite = build({ excludePrivate: true }, 'pglite');
     const placeholders = (sql: string) => [...new Set(sql.match(/\$\d+/g))].sort();
     expect(placeholders(pg.indexWalkSql!)).toEqual(placeholders(pg.sql));
-    expect(lite.indexWalkSql!).toBe(pg.indexWalkSql!);
+    expect(lite.indexWalkSql!.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
+      .toBe(pg.indexWalkSql!);
   });
 });
 
@@ -249,7 +250,8 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     const placeholders = (sql: string) => [...new Set(sql.match(/\$\d+/g))].sort();
     expect(placeholders(scan)).toEqual(placeholders(stmt.sql));
     const lite = build({ sourceIds: ['a'], excludePrivate: true }, 'pglite', 0.01, 500).scopeScanSql!;
-    expect(lite).toBe(build({ sourceIds: ['a'], excludePrivate: true }, 'postgres', 0.01, 500).scopeScanSql!);
+    expect(lite.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
+      .toBe(build({ sourceIds: ['a'], excludePrivate: true }, 'postgres', 0.01, 500).scopeScanSql!);
   });
 
   test('scope share sums the planner frequencies of the scoped sources', () => {

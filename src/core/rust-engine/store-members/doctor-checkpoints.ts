@@ -14,7 +14,6 @@ import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-export const readOpCheckpointKeys: Member<'readOpCheckpointKeys'> = async () => null;
 export const listFenceCandidateRecords: Member<'listFenceCandidateRecords'> = async () => [];
 export const listDerivedOriginParks: Member<'listDerivedOriginParks'> = async () => [];
 export const listPurgeParks: Member<'listPurgeParks'> = async () => [];

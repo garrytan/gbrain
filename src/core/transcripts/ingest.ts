@@ -62,6 +62,7 @@ import {
   renderPartContent,
   renderSessionParts,
   transcriptPartId,
+  TRANSCRIPT_TITLE_MAX_CHARS,
   type RedactedSession,
   type RenderedPart,
   type RenderSessionResult,
@@ -346,9 +347,9 @@ export async function runTranscriptsIngest(
           outcome.imperatives = redacted.imperativesFlagged;
           pageCeiling ??= opts.dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
           const stored = opts.dryRun
-            ? { layout: 'single' as const, partTargetBytes: pageCeiling, existingSlug: null }
+            ? { layout: 'single' as const, partTargetBytes: pageCeiling, existingSlug: null, titleOverCap: false }
             : await storedTranscriptLayout(engine, opts.sourceId ?? 'default', session.meta, pageCeiling);
-          const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes });
+          const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes, existing: stored.titleOverCap });
           if (stored.existingSlug) adoptExistingBaseSlug(rendered, stored.existingSlug);
           outcome.baseSlug = rendered.baseSlug;
           outcome.parts = rendered.parts.length;
@@ -703,10 +704,10 @@ const IMPORTER_INGESTED_VIA = 'cli:transcripts-ingest';
  * (or the ceiling, when that is lower) and the current ceiling.
  */
 async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, meta: ParsedSession['meta'], pageCeiling: number):
-  Promise<{ layout: TranscriptLayout; partTargetBytes: number; existingSlug: string | null }> {
+  Promise<{ layout: TranscriptLayout; partTargetBytes: number; existingSlug: string | null; titleOverCap: boolean }> {
   const [first, second] = [transcriptPartId(meta, 1), transcriptPartId(meta, 2)];
-  const rows = await engine.executeRaw<{ slug: string; fid: string; ti: unknown; trusted: boolean }>(
-    `SELECT p.slug, p.frontmatter->>'id' AS fid, p.frontmatter->'transcript_import' AS ti,
+  const rows = await engine.executeRaw<{ slug: string; title: string; fid: string; ti: unknown; trusted: boolean }>(
+    `SELECT p.slug, p.title, p.frontmatter->>'id' AS fid, p.frontmatter->'transcript_import' AS ti,
             CASE WHEN p.revision_write_request_id IS NULL THEN p.ingested_via IS NULL OR p.ingested_via = $4
                  WHEN r.id IS NOT NULL THEN r.principal_kind = 'local_cli' AND r.intent->>'ingested_via' IS NOT DISTINCT FROM $4
                  ELSE p.revision_principal_kind IS NOT DISTINCT FROM 'local_cli' AND p.ingested_via IS NOT DISTINCT FROM $4 END AS trusted
@@ -724,11 +725,12 @@ async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, met
     || (partOne !== undefined && partOne.trusted !== true && row.slug === `${partOne.slug}-p2`)));
   const one = importMeta(partOne);
   const split = partTwo !== undefined || (one !== null && !(Number(one.of) <= 1));
-  if (!split) return { layout: 'single', partTargetBytes: pageCeiling, existingSlug: partOne?.slug ?? null };
+  const titleOverCap = [...(partOne?.title ?? '')].length > TRANSCRIPT_TITLE_MAX_CHARS;
+  if (!split) return { layout: 'single', partTargetBytes: pageCeiling, existingSlug: partOne?.slug ?? null, titleOverCap };
   const floor = Math.min(PART_TARGET_BYTES, pageCeiling);
   const pinned = [one?.part_bytes, importMeta(partTwo)?.part_bytes]
     .find(v => Number.isSafeInteger(v) && (v as number) >= floor && (v as number) <= pageCeiling) as number | undefined;
-  return { layout: 'split', partTargetBytes: pinned ?? floor, existingSlug: partOne?.slug ?? null };
+  return { layout: 'split', partTargetBytes: pinned ?? floor, existingSlug: partOne?.slug ?? null, titleOverCap };
 }
 
 /** Fold one file's adapter diagnostics into its outcome and the run result (drift, skipped lines, truncation). */

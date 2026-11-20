@@ -14,6 +14,8 @@ import type { BrainEngine, FactRow } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
+import { sqlQueryForEngine } from '../sql-query.ts';
+import { sharedReadSources } from '../grants/read-shared.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { calibrationKey } from './supersession-threshold.ts';
@@ -71,6 +73,21 @@ export async function unlinkedNamesakes(engine: BrainEngine, lists: Array<Array<
   const ids = await identityIdsForPages(engine, candidates.map(c => ({ sourceId: c.source_id, slug: c.entity_slug })));
   const groups = new Set(candidates.map(c => ids.get(`${c.source_id}:${c.entity_slug}`) ?? null));
   return groups.size === 1 && !groups.has(null) ? null : candidates;
+}
+
+/**
+ * GST-2898 (D3-B): the one split the read-shared switch creates. A switched key whose write source is outside the
+ * shared set gets both sets of facts, each labelled by its source_id, when the namesakes are exactly its write source
+ * and one shared source; `mergedSources` names the pair. Every other split keeps today's refusal: unscoped keys, keys
+ * writing into a shared source, guest namesakes, two shared namesakes, or a shared set that cannot be read.
+ */
+export async function namesakesOrMerge(ctx: OperationContext, candidates: EntityCandidate[] | null): Promise<{ ambiguousEntity: EntityCandidate[] | null; mergedSources: [string, string] | null }> {
+  const write = ctx.auth?.sourceId;
+  const other = candidates?.length === 2 && candidates.some(c => c.source_id === write) ? candidates.find(c => c.source_id !== write) : undefined;
+  if (!other || !write || ctx.auth?.readShared !== true) return { ambiguousEntity: candidates, mergedSources: null };
+  const shared = await sharedReadSources(sqlQueryForEngine(ctx.engine), ctx.auth.member?.id ?? null).catch(() => null);
+  return shared && !shared.includes(write) && shared.includes(other.source_id)
+    ? { ambiguousEntity: null, mergedSources: [write, other.source_id] } : { ambiguousEntity: candidates, mergedSources: null };
 }
 
 /** The call's arguments without transport metadata, for retry fixes. */
@@ -192,6 +209,8 @@ export interface QuestionRecall {
   /** The source holding the most uncomparable facts, for the `embed --stale --facts` fix. */
   unembeddedSource?: string;
   ambiguousEntity: EntityCandidate[] | null;
+  /** GST-2898: the write source and the shared source whose namesake facts were merged (namesakesOrMerge). */
+  mergedSources?: [string, string];
 }
 
 /** Active facts (all facts with `includeExpired`) ranked by relevance to `question` under recall's read policy and filters. */
@@ -203,13 +222,15 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     ...(input.grep ? { grep: input.grep } : {}),
     ...(input.includeExpired ? { includeExpired: true } : {}),
   };
+  let mergedSources: [string, string] | undefined;
   const empty = (degraded?: FactsDegraded, ambiguousEntity: EntityCandidate[] | null = null): QuestionRecall => ({ rows: [], relevance: new Map(), ambiguousEntity, ...(degraded ? { degraded } : {}) });
   try {
     if (input.entity) {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
       filters.entities = await Promise.all(input.factSources.map(async src => ({ sourceId: src, slug: (await resolveEntitySlug(ctx.engine, src, input.entity!)) ?? input.entity! })));
-      const ambiguous = await unlinkedNamesakes(ctx.engine, [await poolEntityPairs(ctx.engine, scope, filters)]);
-      if (ambiguous) return empty(undefined, ambiguous);
+      const split = await namesakesOrMerge(ctx, await unlinkedNamesakes(ctx.engine, [await poolEntityPairs(ctx.engine, scope, filters)]));
+      if (split.ambiguousEntity) return empty(undefined, split.ambiguousEntity);
+      if (split.mergedSources) mergedSources = split.mergedSources;
     }
   } catch (error) {
     throw rankingUnavailable(input.params, error);
@@ -248,7 +269,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
       relevance: new Map(ranked.map(s => [s.candidate.id, Math.round(s.score * 1e4) / 1e4])),
       ...(weighting ? { weighting: { rank: weighting.rank, factor: weighting.factor } } : {}),
       ...(grouped ? { groupByEntity: true } : {}),
-      ambiguousEntity: null,
+      ambiguousEntity: null, ...(mergedSources ? { mergedSources } : {}),
       ...(scored.length && !ranked.length ? { belowFloor: scored.length } : {}),
       ...(degraded ? { degraded } : {}),
       ...(modelKey && FACT_ADMISSION_FLOOR_EVIDENCE[modelKey] === undefined ? { calibration: { status: 'unmeasured' as const, model_key: modelKey } } : {}),

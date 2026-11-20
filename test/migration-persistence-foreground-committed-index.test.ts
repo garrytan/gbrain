@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { claimHeadStatement, type ClaimHeadSpec } from '../src/core/engine-sql/persistence-claims.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
@@ -96,12 +97,12 @@ for (const backend of testBackends()) describe(`[${backend}] #7649 the foregroun
     let plan = '';
     const original = engine.transactionDirect;
     engine.transactionDirect = ((fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => original.call(engine, async (tx: BrainEngine) => {
-      const raw = tx.executeRaw.bind(tx);
-      tx.executeRaw = (async (sql: string, params?: unknown[], options?: unknown) => {
-        if (!sql.startsWith('WITH waiting AS MATERIALIZED')) return raw(sql, params as never, options as never);
-        plan = (await raw<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, params as never, options as never)).map(row => row['QUERY PLAN']).join('\n');
-        return [];
-      }) as BrainEngine['executeRaw'];
+      // The FIFO head read is the typed selectClaimableWrite member; plan exactly the statement it sends.
+      tx.selectClaimableWrite = (async (spec: ClaimHeadSpec) => {
+        const { sql, params } = claimHeadStatement(spec);
+        plan = (await tx.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, params as never)).map(row => row['QUERY PLAN']).join('\n');
+        return null;
+      }) as BrainEngine['selectClaimableWrite'];
       return fn(tx);
     }, opts as never)) as BrainEngine['transactionDirect'];
     try { expect(await claimNextWrite(engine, host, 30_000, [], [], [], {})).toBeNull(); }

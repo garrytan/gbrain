@@ -30,7 +30,7 @@ export type { CandidateRecord, DerivedOriginPark };
  * src/core/statement-deadline.ts keeps that bound on them (BOUNDED_TYPED_READS).
  */
 export const DOCTOR_CHECKPOINT_MEMBERS: readonly string[] = [
-  'readOpCheckpointKeys', 'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows',
+  'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows',
   'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow',
   'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows',
   'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt',
@@ -70,13 +70,6 @@ export interface FactsAbsorbFailureGroup { source_id: string; reason: string; n:
 
 const parsed = <T>(value: T | string): T => (typeof value === 'string' ? JSON.parse(value) as T : value);
 
-const READ_OP_CHECKPOINT_KEYS_SQL = 'SELECT completed_keys AS keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2';
-
-/** The `completed_keys` of one checkpoint row (the JSON array, or its text on a driver that gives text), or null when there is none. */
-export async function readOpCheckpointKeys(raw: EngineRawRead, op: string, fingerprint: string): Promise<unknown> {
-  const [row] = await raw<{ keys: unknown }>(READ_OP_CHECKPOINT_KEYS_SQL, [op, fingerprint]);
-  return row?.keys ?? null;
-}
 
 const LIST_FENCE_CANDIDATE_RECORDS_SQL = `SELECT c.completed_keys->0 AS record FROM op_checkpoints c
     JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'

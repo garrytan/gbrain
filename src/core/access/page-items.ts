@@ -15,7 +15,7 @@ export type Ref = PageRef | FactRef;
  * One marked item: its own ref, plus the other pages that gate it (a timeline event's page, a link's target and origin).
  * `unknown` marks it unknown whatever its refs decide (a think answer built partly from takes, which carry no page or fact id here).
  */
-export interface Slot { holder: Record<string, unknown>; ref: Ref | null; also?: Ref[]; unknown?: 'not_identified' }
+export interface Slot { holder: Record<string, unknown>; ref: Ref | null; also?: Ref[]; unknown?: 'not_identified'; bodyStrips?: () => Promise<boolean> }
 
 /** What a think answer was built from: every page, take and fact its synthesis retrieved (the trust taint refs). */
 export type RoomEvidence = ReadonlyArray<{ table: 'pages'; sourceId: string; slug: string } | { table: string; id: number }>;
@@ -27,6 +27,24 @@ const ROOM_EVIDENCE = Symbol('gbrain.room_evidence');
 export function keepRoomEvidence<T extends object>(result: T, evidence: RoomEvidence | undefined): T {
   if (evidence) (result as Record<symbol, unknown>)[ROOM_EVIDENCE] = evidence;
   return result;
+}
+const ROOM_BODY = Symbol('gbrain.room_body');
+/**
+ * GST-3058: keeps on a get_page result whether the body it returns holds text a world-only read strips
+ * (remoteReadStrips), as a check the room marker runs only when a room is declared. Unlike keepRoomEvidence the key is
+ * not enumerable, so equality checks ignore it and object spread drops it: attach it to the object the handler returns,
+ * after any spread. A lost check makes the room marker judge the body by the page alone, which is the less strict answer.
+ */
+export function keepRoomBody<T extends object>(result: T, strips: () => Promise<boolean>): T {
+  Object.defineProperty(result, ROOM_BODY, { value: strips, enumerable: false });
+  return result;
+}
+/** The page slot of a get_page result, with its body check (keepRoomBody) when it has one. */
+export function bodyPageSlot(r: unknown, src: string, original: unknown): Slot | null {
+  const slot = pageSlot(r, src);
+  const strips = isObj(original) ? (original as Record<symbol, unknown>)[ROOM_BODY] : undefined;
+  if (slot && typeof strips === 'function') slot.bodyStrips = strips as () => Promise<boolean>;
+  return slot;
 }
 /** A think answer is marked at the strictest class of all its evidence; without recorded evidence, or with a take, it is unknown. */
 export function thinkSlot(r: unknown, original: unknown): Slot | null {

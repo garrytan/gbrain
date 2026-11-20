@@ -56,6 +56,17 @@ export interface TrustProposalFilter {
   limit?: number;
 }
 
+/** The filter of `listPendingContradictions`: a source and a lower bound on the proposal's creation time. */
+export interface PendingContradictionFilter { sourceId?: string; since?: Date }
+
+/** One pending decide proposal with its two facts, as `trust review` lists it. Times and numbers stay as the driver reads them. */
+export interface PendingContradictionRow {
+  id: number | string; source_id: string; sweep_id: string; created_at: string | Date;
+  new_fact_id: number | string; old_fact_id: number | string; new_fact: string; old_fact: string; trust_tier: string;
+  entity_slug: string | null; slug: string | null; claim_metric: string | null; claim_unit: string | null; claim_period: string | null;
+  new_value: number | string | null; old_value: number | string | null;
+}
+
 /** The decider a status change records (`Principal`'s kind and id). */
 export interface TrustProposalDecider { kind: string; id: string }
 
@@ -152,4 +163,20 @@ export async function transitionTrustProposal(exec: SqlExecutor, id: number, fro
       WHERE id = $1 AND status = $2 RETURNING id`,
     [id, from, to, opts.after ? JSON.stringify(opts.after) : null, opts.decidedBy?.kind ?? null, opts.decidedBy?.id ?? null]);
   return rows.length === 1;
+}
+
+/**
+ * The contradictions `trust review` lists: pending `decide_proposals` whose two facts are both active (a decided or
+ * stale pair is not listed), oldest first, at most 1000.
+ */
+export async function listPendingContradictions(exec: LegacyUnscopedRead, filter: PendingContradictionFilter = {}): Promise<PendingContradictionRow[]> {
+  return exec.executeRaw<PendingContradictionRow>(
+    `SELECT p.id, p.source_id, p.sweep_id, p.created_at, p.new_fact_id, p.old_fact_id, n.fact AS new_fact, o.fact AS old_fact, n.trust_tier,
+            n.entity_slug, COALESCE(n.source_markdown_slug, o.source_markdown_slug) AS slug, n.claim_metric, n.claim_unit, n.claim_period,
+            n.claim_value AS new_value, o.claim_value AS old_value
+       FROM decide_proposals p
+       JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id AND n.expired_at IS NULL AND (n.valid_until IS NULL OR n.valid_until > now())
+       JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id AND o.expired_at IS NULL AND (o.valid_until IS NULL OR o.valid_until > now())
+      WHERE p.status = 'pending' AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.created_at >= $2)
+      ORDER BY p.created_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
 }

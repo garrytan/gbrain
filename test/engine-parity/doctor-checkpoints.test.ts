@@ -28,13 +28,12 @@ async function absorb(engine: BrainEngine, source_id: string, summary: string, s
 describe('doctor checkpoint reads', () => {
   parityTest(
     'the op_checkpoints reads find no row on a brain nothing has written to',
-    { methods: ['readOpCheckpointKeys', 'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows',
+    { methods: ['listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows',
       'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow',
       'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows',
       'readDoctorLastKnown'] },
     async (engine) => {
       const empty = {
-        keys: await engine.readOpCheckpointKeys('eligibility-scan', 'cursor'),
         fence: await engine.listFenceCandidateRecords('fence-candidate'),
         fenceScoped: await engine.listFenceCandidateRecords('fence-candidate', ['default']),
         derived: await engine.listDerivedOriginParks('derived-origin-park'),
@@ -52,7 +51,7 @@ describe('doctor checkpoint reads', () => {
         lastKnown: await engine.readDoctorLastKnown(LAST_KNOWN_OP),
       };
       expect(empty).toEqual({
-        keys: null, fence: [], fenceScoped: [], derived: [], purge: [], soak: [], cursors: [], stops: [], stopsScoped: [], headers: [],
+        fence: [], fenceScoped: [], derived: [], purge: [], soak: [], cursors: [], stops: [], stopsScoped: [], headers: [],
         passRow: null, livePasses: [], blocked: [], downgrades: [], held: [], lastKnown: [],
       });
       return empty;

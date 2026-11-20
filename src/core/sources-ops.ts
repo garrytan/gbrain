@@ -61,6 +61,7 @@ import { isSyncStrategy, type SyncStrategy } from './sync.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 import { deleteSourceRow } from './source-delete.ts';
+import { ensureOwnerOnlyMarkTriggersAtRun } from './access/owner-only-marks.ts';
 import { defaultCloneDir, isOwnedClone } from './url-clone.ts';
 import { hookSessionCwd } from './session-cwd.ts';
 import { sourceRecordsRawConfig } from './source-rows.ts';
@@ -414,6 +415,8 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
     const { imessageSourceConfig } = await import('./imessage/source-add.ts');
     await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: null,
       config: imessageSourceConfig(opts.imessage!, opts.federated) });
+    // GST-3032: with a delete trigger missing, removing this source later would leave no marks, so lineage reads closed now.
+    await ensureOwnerOnlyMarkTriggersAtRun(engine, true);
     return;
   }
   const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');

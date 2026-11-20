@@ -1,7 +1,7 @@
 /**
- * The budget meter on the Rust engine (rust/docs/store/jobs-spend.md): the hold's own statements run on the store, the
- * statements that need `mcp_spend_log` or `oauth_clients` are refused, and a refusal inside a transaction rolls the
- * store's writes back with it. Needs the file `bun run rust:build` writes (rust/target/addon) and skips without it.
+ * The budget meter on the Rust engine (rust/docs/store/jobs-spend.md, rust/docs/store/spend-log.md): the holds, the
+ * ledger and the client caps all run on the store, and a refusal inside a transaction rolls the store's writes back
+ * with it (here, the trusted admission recheck refusing after the hold was taken). Needs the file `bun run rust:build` writes (rust/target/addon) and skips without it.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -10,7 +10,8 @@ import { join } from 'node:path';
 import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
-import { reserve, reserveGroup, settle } from '../src/core/minions/budget-meter.ts';
+import { getClientDailyCapCents, reserve, reserveGroup, settle } from '../src/core/minions/budget-meter.ts';
+import { getTodaySpendCents } from '../src/core/spend-log.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -56,19 +57,35 @@ describe('the budget meter on the Rust engine', () => {
     expect(await engine.expireSpendReservations({ budgetKey: 'group:a' })).toBe(0);
   });
 
-  withAddon('settle writes the spend log through a statement the store refuses, and the hold stays open', async () => {
+  withAddon('settle writes the ledger row with the settled hold, once', async () => {
     const engine = await open();
     const hold = await reserveGroup(engine, { budgetKey: 'group:a', capCents: null, estimatedCents: 3, model: 'anthropic:m', provider: 'anthropic' });
-    expect(await refusal(() => settle(engine, hold.reservationId, 1.5))).toBe('engine_capability_missing');
-    // The refused transaction rolled the settle back: the hold is still pending, so this settle is the first one.
-    expect(await engine.settleSpendReservation(hold.reservationId, 1.5)).toMatchObject({ outcome: 'settled', budget_key: 'group:a' });
-    expect(await engine.settleSpendReservation(hold.reservationId, 9)).toEqual({ outcome: 'already_settled' });
+    await settle(engine, hold.reservationId, 1.5);
+    expect(await engine.readGroupSpendTotals('group:a')).toEqual({ committed_cents: 1.5, overdue_cents: 0, live_cents: 0 });
+    await settle(engine, hold.reservationId, 9);
+    expect((await engine.readGroupSpendTotals('group:a')).committed_cents).toBe(1.5);
+    expect(await refusal(() => settle(engine, '00000000-0000-4000-8000-000000000001', 1))).toBe('Error');
   });
 
-  withAddon('a per-client hold is refused at the oauth_clients read and leaves nothing behind', async () => {
+  withAddon('a per-client hold is held against the client cap and counted in the ledger of the day', async () => {
     const engine = await open();
-    const code = await refusal(() => reserve(engine, { clientId: 'c1', capCents: null, estimatedCents: 1, model: 'anthropic:m', provider: 'anthropic' }));
-    expect(code).toBe('engine_capability_missing');
-    expect(await engine.expireSpendReservations({ clientId: 'c1' })).toBe(0);
+    await engine.insertOauthClient({ client_id: 'c1', client_name: 'one', scope: null, budget_usd_per_day: 0.1, bound_tools: null, deleted_at: null });
+    expect(await getClientDailyCapCents(engine, 'c1')).toBe(10);
+    const hold = await reserve(engine, { clientId: 'c1', capCents: null, estimatedCents: 6, model: 'anthropic:m', provider: 'anthropic' });
+    expect(await refusal(() => reserve(engine, { clientId: 'c1', capCents: null, estimatedCents: 6, model: 'anthropic:m', provider: 'anthropic' }))).toBe('BUDGET_EXCEEDED');
+    await settle(engine, hold.reservationId, 6);
+    expect(await getTodaySpendCents(engine, 'c1')).toBe(6);
+  });
+
+  withAddon('a refused admission recheck rolls the hold back with it', async () => {
+    const engine = await open();
+    const code = await refusal(() => reserve(engine, {
+      clientId: 'c1', capCents: null, estimatedCents: 1, model: 'anthropic:m', provider: 'anthropic',
+      validateAdmission: async () => { throw new Error('delegation revoked'); },
+    }));
+    expect(code).toBe('Error');
+    // The hold did not stay: under a cap of zero cents a pending hold of 1 would refuse even free work.
+    const free = await reserve(engine, { clientId: 'c1', capCents: 0, estimatedCents: 0, model: 'anthropic:m', provider: 'anthropic' });
+    expect(free.estimatedCents).toBe(0);
   });
 });

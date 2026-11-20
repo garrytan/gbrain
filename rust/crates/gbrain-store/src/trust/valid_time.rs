@@ -11,11 +11,11 @@
 //! - [`Store::read_cursor_edition`]: whether the page is still at a window cursor's revision, and the
 //!   newest version record at it.
 //!
-//! The store keeps no change reason and never prunes a version, so the pick answers a null reason
-//! and no gap. It reports the history PGLite would have pruned (`history_unpruned`): more large
-//! inline versions than PGLite keeps, a segmented version, or a holding page over the kept count.
-//! The TypeScript member (src/core/rust-engine/store-members/trust-tier-reads.ts) refuses that
-//! history, a caller policy that is not the no-caller one, and a date that is not `YYYY-MM-DD`.
+//! The pick reads each version's change reason (`replacedBecauseSql`), its `successor_pruned` mark
+//! and the page's `version_history_gap_at`, which the store's version prune sets as PGLite's does
+//! (`version_prune.rs`). The TypeScript member
+//! (src/core/rust-engine/store-members/trust-tier-reads.ts) refuses a caller policy that is not the
+//! no-caller one and a date that is not `YYYY-MM-DD`.
 
 use super::TrustTier;
 use crate::Store;
@@ -26,7 +26,7 @@ use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
-use crate::pages::{PageRecord, VersionRecord, read_page_by_id};
+use crate::pages::{VersionRecord, read_page_by_id};
 use crate::sources::read_source;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -95,8 +95,7 @@ pub struct ValidTimePickQuery {
     pub page_id: i64,
     /// `YYYY-MM-DD`.
     pub as_of: String,
-    /// The pick still reports every row's visibility; it only changes which reason counts, and the
-    /// store keeps none.
+    /// The pick still reports every row's visibility; it only changes which reason counts.
     pub exclude_private: bool,
     /// Measure this ordinal instead of picking.
     pub pin_ord: Option<i64>,
@@ -104,9 +103,6 @@ pub struct ValidTimePickQuery {
     pub inline_max_bytes: i64,
     /// The page policy over `p` and the snapshot policy over a version (`facts/privacy.rs`).
     pub policy: PrivacyPolicy,
-    /// PGLite prunes inline versions over this many bytes beyond `prune_kept` of them.
-    pub prune_max_bytes: i64,
-    pub prune_kept: u64,
 }
 
 /// The calendar date a frontmatter value declares (`validDate`): `YYYY-MM-DD`, optionally followed
@@ -174,6 +170,11 @@ struct EditionRow {
     /// Equal for two rows with the same body (`PV_BODY_KEY` / `P_BODY_KEY`).
     body_key: String,
     visible: bool,
+    /// `replacedBecauseSql`: the reason given for the write that replaced the row; always none on
+    /// the current page.
+    reason: Option<String>,
+    /// `page_versions.successor_pruned`; false on the current page.
+    successor_pruned: bool,
     tier: &'static str,
     segmented: bool,
     large: bool,
@@ -213,23 +214,6 @@ fn page_versions(read: &dyn KvRead, page_id: u64) -> Result<Vec<VersionRecord>> 
     }
     out.sort_by_key(|v| v.id);
     Ok(out)
-}
-
-/// `memory/unattributed`, or a slug ending in `/memory/unattributed` (a holding page).
-fn holding_slug(slug: &str) -> bool {
-    slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
-}
-
-/// Whether PGLite would have pruned some of this history (`page-state/versions.ts`).
-fn history_unpruned(page: &PageRecord, versions: &[VersionRecord], q: &ValidTimePickQuery) -> bool {
-    let inline: Vec<&VersionRecord> = versions.iter().filter(|v| !version_segmented(v)).collect();
-    let large = inline
-        .iter()
-        .filter(|v| inline_bytes(v) > q.prune_max_bytes)
-        .count() as u64;
-    large > q.prune_kept
-        || inline.len() < versions.len()
-        || (holding_slug(&page.slug) && inline.len() as u64 > q.prune_kept)
 }
 
 /// The pick order: in force first; the latest in force, else the earliest later; then the most
@@ -297,10 +281,6 @@ impl Store {
         Ok(out)
     }
 
-    /// `pickValidTimeEdition`: `{ row, history_unpruned }`. `row` is null when no page has the id;
-    /// otherwise the pick over the page's versions and the page (its pick columns null when no row
-    /// carries a valid `valid_from`), the competing ordinals, the counts and the page's creation
-    /// time. The reason columns are null and nothing is pruned: the store keeps neither.
     /// The version `version_id` of page `page_id` with the fields an edition reads, or null when the
     /// page keeps no such version.
     pub fn read_page_version_edition(&self, q: &VersionEditionQuery) -> Result<Value> {
@@ -350,6 +330,10 @@ impl Store {
         Ok(json!({ "current": page.knowledge_revision == q.revision, "version_id": version_id }))
     }
 
+    /// `pickValidTimeEdition`: `{ row }`. `row` is null when no page has the id; otherwise the pick
+    /// over the page's retained versions and the page (its pick columns null when no row carries a
+    /// valid `valid_from`), the competing ordinals, the counts, the page's history gap and its
+    /// creation time.
     pub fn pick_valid_time_edition(&self, q: &ValidTimePickQuery) -> Result<Value> {
         let read = self.read()?;
         let Some(page) = u64::try_from(q.page_id)
@@ -358,14 +342,25 @@ impl Store {
             .transpose()?
             .flatten()
         else {
-            return Ok(json!({ "row": null, "history_unpruned": false }));
+            return Ok(json!({ "row": null }));
         };
         let versions = page_versions(&*read, page.id)?;
-        let unpruned = history_unpruned(&page, &versions, q);
         let mut rows: Vec<EditionRow> = versions
             .iter()
-            .map(|v| {
+            .enumerate()
+            .map(|(i, v)| {
                 let segmented = version_segmented(v);
+                // A reader held to world-visible pages sees the reason only when the next version
+                // (over every version, never only the visible ones) is visible too; the last
+                // version's successor is the page, which the caller's own page check covers.
+                let successor_visible = versions.get(i + 1).is_none_or(|n| {
+                    !version_hidden(&page, &n.page_type, &n.frontmatter, &q.policy)
+                });
+                // A pruned successor's visibility can no longer be checked: that reason is withheld.
+                let reason = v
+                    .change_reason
+                    .clone()
+                    .filter(|_| !q.exclude_private || (successor_visible && !v.successor_pruned));
                 EditionRow {
                     version_id: Some(v.id),
                     ord: i64::try_from(v.id).unwrap_or(i64::MAX),
@@ -378,7 +373,9 @@ impl Store {
                         &v.compiled_truth,
                         &v.timeline,
                     ),
-                    visible: !version_hidden(&v.page_type, &v.frontmatter, &q.policy),
+                    visible: !version_hidden(&page, &v.page_type, &v.frontmatter, &q.policy),
+                    reason,
+                    successor_pruned: v.successor_pruned,
                     tier: TrustTier::stored(v.trust_tier.as_deref()).as_str(),
                     segmented,
                     large: !segmented && inline_bytes(v) > q.inline_max_bytes,
@@ -400,6 +397,8 @@ impl Store {
                 &page.timeline,
             ),
             visible: !page_hidden(&*read, &page, &q.policy)?,
+            reason: None,
+            successor_pruned: false,
             tier: TrustTier::stored(page.trust_tier.as_deref()).as_str(),
             segmented,
             large: false,
@@ -467,11 +466,22 @@ impl Store {
             row.insert("valid_from".into(), json!(k.valid_from));
             row.insert("valid_until".into(), json!(k.valid_until));
             row.insert("visible".into(), json!(k.visible));
-            row.insert("successor_pruned".into(), json!(false));
+            row.insert("reason".into(), json!(k.reason));
+            row.insert("successor_pruned".into(), json!(k.successor_pruned));
             row.insert("segmented".into(), json!(k.segmented));
             row.insert(
                 "recorded_since".into(),
                 json!(prev.and_then(|p| p.replaced_at.clone())),
+            );
+            // The reason that introduced the row: the previous row's, unless a prune cut the
+            // previous row's successor, and counted only from a visible row when the read hides
+            // private text.
+            row.insert(
+                "introduced_because".into(),
+                json!(
+                    prev.filter(|p| !p.successor_pruned && (!q.exclude_private || p.visible))
+                        .and_then(|p| p.reason.clone())
+                ),
             );
             row.insert("chosen".into(), json!(chosen));
             row.insert("tier".into(), json!(k.tier));
@@ -505,9 +515,12 @@ impl Store {
             ),
         );
         row.insert("any_filed".into(), json!(rows.iter().any(|r| r.filed)));
-        row.insert("gap_at".into(), Value::Null);
+        row.insert(
+            "gap_at".into(),
+            json!(page.version_history_gap_at_us.map(iso)),
+        );
         row.insert("created_at".into(), json!(iso(page.created_at_us)));
-        Ok(json!({ "row": row, "history_unpruned": unpruned }))
+        Ok(json!({ "row": row }))
     }
 }
 

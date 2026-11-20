@@ -1,7 +1,8 @@
 //! Timeline reads by date (the Life Chronicle reads) and event projections.
 //!
 //! Store methods for getTimelineForDate, getSince, getOnThisDay, getLastSeen,
-//! upsertEventProjection, removeTimelineRows and updateTimelineDetails, and the timeline reads
+//! upsertEventProjection, removeTimelineRows, updateTimelineDetails and
+//! insertCanonicalTimelineRows, and the timeline reads
 //! of `src/core/engine-sql/timeline-reads.ts` (sampleEffectiveDates, sampleEffectiveDateSources,
 //! readMaxTimelineEntryId, listStoredTimelineRowsOrdered, deleteTimelineRows,
 //! storedTimelineRowsByPageIds, countSegmentedTimelinePages, countTimelineCommentMarkupRows,
@@ -116,6 +117,21 @@ impl Brain {
             let rows: Vec<timeline_queries::TimelineDetailRefresh> =
                 required(rows, "updateTimelineDetails rows")?;
             s.update_timeline_details(page_id as i64, &rows)
+        })
+    }
+
+    /// `insertCanonicalTimelineRows(pageId, rows)`: resolves null.
+    #[napi]
+    pub fn insert_canonical_timeline_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<timeline_queries::CanonicalTimelineRow> =
+                required(rows, "insertCanonicalTimelineRows rows")?;
+            s.insert_canonical_timeline_rows(page_id as i64, &rows)
         })
     }
 

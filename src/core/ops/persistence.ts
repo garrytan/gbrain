@@ -8,7 +8,6 @@ import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { publicWriteReceipt, isWriteErrorCode } from '../persistence/types.ts';
 import type { Principal, WriteRequest } from '../persistence/model.ts';
-import type { LocalGrant } from '../persistence/identity.ts';
 import type { WriteHealthFacts } from '../persistence/health.ts';
 
 const RECEIPT_NAMES = ['get_write_request', 'list_write_requests', 'cancel_write_request'] as const;
@@ -75,8 +74,7 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
       `SELECT scopes,revoked_at FROM access_tokens WHERE id=$1${suffix}`, [principal.id]);
     if (!row || row.revoked_at != null || !hasScope(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'], 'write')) throw denied();
   } else if (principal.kind === 'local_cli' || principal.kind === 'local_stdio') {
-    const [row] = await ctx.engine.executeRaw<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>(
-      `SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid${suffix}`, [principal.id]);
+    const row = await ctx.engine.readLocalWriterRow(principal.id, { lock });
     const lane = principal.kind === 'local_cli' ? 'cli' : 'stdio';
     if (!row || row.revoked_at != null || row.lane !== lane || (ctx.remote !== false) !== (lane === 'stdio')
       || !stringArray(row.grant_ceiling?.scopes) || !hasScope(row.grant_ceiling.scopes, 'write')

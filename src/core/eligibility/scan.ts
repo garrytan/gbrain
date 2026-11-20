@@ -57,9 +57,9 @@ export const SCAN_TIERS: readonly TrustTier[] = TRUST_TIERS.filter(t => TRUST_TI
 interface Cursor { detector_version: number; ids: Partial<Record<ScanTable, number>>; until?: Partial<Record<ScanTable, number>>; completed_at?: string }
 
 async function readCursor(engine: Pick<BrainEngine, 'readOpCheckpointKeys'>): Promise<Cursor | null> {
-  const stored = await engine.readOpCheckpointKeys(CHECKPOINT_OP, CHECKPOINT_KEY);
-  const keys = typeof stored === 'string' ? JSON.parse(stored) as unknown : stored;
-  const first = Array.isArray(keys) ? keys[0] as Cursor | undefined : undefined;
+  // The cursor is the first completed key: the stored object's JSON text (jsonb_array_elements_text).
+  const { keys } = await engine.readOpCheckpointKeys(CHECKPOINT_OP, CHECKPOINT_KEY);
+  const first = keys[0] === undefined ? undefined : JSON.parse(keys[0]) as Cursor | undefined;
   return first && typeof first === 'object' && typeof first.detector_version === 'number' ? first : null;
 }
 

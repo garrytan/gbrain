@@ -5,6 +5,7 @@
  *   gbrain access member set <id> --email <addr>|none
  *   gbrain access member link <id>|--email <addr> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
  *   gbrain access member source add|remove|list <member> [<source>]
+ *   gbrain access member handover <member> [--set <group>=<choice>]... [--yes --expect <hash>] [--undo <id>] [--status <id>]
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
@@ -24,6 +25,7 @@ import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
+import { credentialReadSources } from '../core/grants/shared-exposure.ts';
 import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
@@ -69,6 +71,13 @@ Members and groups:
                                              Preview first; removing the last binding makes it readable
                                              again to every attested person whose credential grants it
   gbrain access member source list [<id>]
+  gbrain access member handover <id> [--set <group>=<choice>]... [--yes --expect <hash>]
+                                             After disable or rm: gives pages the member kept to itself to the
+                                             owner (kept=, folder=owner|<member>|everyone|keep; shared=keep|drop;
+                                             source=keep|<member>). Preview first
+  gbrain access member handover <id> --undo <handover id> [--yes --expect <hash>]
+                                             Once the member is enabled again: restores what the handover moved
+  gbrain access member handover --status <handover id>
   gbrain access group add <group> [--members a,b]
   gbrain access group rm <group> [--members a,b] [--yes]
                                              With --members, removes those members; otherwise previews
@@ -248,6 +257,10 @@ export interface AccessCheckResult {
   labelled_only: boolean;
   explanation: string;
   audience?: Array<{ principal: string; covered_by_may_act_for: boolean }>;
+  /** GST-2898: the read-shared switch is on (also read every shared source, now and later). */
+  read_shared: boolean;
+  /** GST-2898: the sources it reads unqualified now, resolved through credentialReadSources (the switch included). */
+  reads_now: string[];
 }
 
 /** Every grant axis and the member identity of one credential, as the verifier and dispatch would see it. */
@@ -264,7 +277,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   } else {
     const client = await readClientGrant(engine, target.client!);
     if (client.revoked) throw opError('client_not_found', `OAuth client "${target.client}" is revoked.`, 'List the clients with gbrain auth clients --json.');
-    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for, reads_unscoped FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
+    row = await engine.readOauthClient(client.clientId) as unknown as Record<string, unknown>;
     grant = grantFromClient(client);
     credential = { kind: 'client', id: client.clientId, name: client.clientName };
   }
@@ -298,7 +311,9 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     grant: { scopes: grant.scopes, sources: grant.sources, takes_holders: grant.takesHolders, private_pages: grant.privatePages,
       operations: grant.allowedOperations ?? 'unrestricted', revision: grant.revision },
     member, identity, may_act_for: mayActFor, verdict, reads_unscoped: readsUnscoped, owner, owner_reads_restricted: ownerReadsRestricted, members_read_lineage: memberLineage, labelled_only: labelledOnly, explanation,
+    read_shared: grant.readShared === true, reads_now: await credentialReadSources(engine, grant, boundId),
   };
+ 
   if (target.as !== undefined) {
     const audience: NonNullable<AccessCheckResult['audience']> = [];
     for (const entry of target.as.split(',').map(s => s.trim()).filter(Boolean)) {
@@ -360,7 +375,8 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id).catch((e: unknown) =>
         [`Could not check which pages naming it no enabled member reads (${e instanceof Error ? e.message : String(e)}); the disable stands. gbrain access who-can-read <slug> shows who reads a page.`]) : [];
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
-        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded]);
+        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded,
+        ...(sub === 'disable' ? [`Give the pages it kept to itself to the owner (preview first): gbrain access member handover ${m.id}`] : [])]);
     }
     case 'set': {
       const email = flagValue(args, '--email');
@@ -376,7 +392,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
         `  Bound credentials (${r.bound_credentials.length}): ${r.bound_credentials.map(c => `${c.kind} ${c.name}`).join(', ') || 'none'}`,
         `  Pages naming it (${r.pages.length}${r.pages_truncated ? '+' : ''}): ${r.pages.map(p => `${p.source_id}:${p.slug}`).join(', ') || 'none'}`,
         `  ${r.note}`,
-        ...(yes ? [] : [`Apply with: gbrain access member rm ${r.member.id} --yes`])]);
+        ...(yes ? [] : [`Hand its pages over first (removing drops its group memberships): gbrain access member handover ${r.member.id}`, `Apply with: gbrain access member rm ${r.member.id} --yes`])]);
     }
     case 'list': {
       const members = await listMembers(engine, { includeRemoved: args.includes('--all') });
@@ -388,8 +404,10 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       return memberLinksCmd(engine, sub, args, json, id);
     case 'source':
       return memberSourceCmd(engine, args, json);
+    case 'handover':
+      return (await import('./access-handover.ts')).handoverCmd(engine, args, json);
     default:
-      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, kind, labelled-only, disable, enable, rm, list, link, unlink, links or source (gbrain access --help).');
+      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, kind, labelled-only, disable, enable, rm, list, link, unlink, links, source or handover (gbrain access --help).');
   }
 }
 
@@ -556,6 +574,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           `  Sources: ${JSON.stringify(r.grant.sources)}`,
           `  Operations: ${r.grant.operations === 'unrestricted' ? 'every operation the scopes allow' : r.grant.operations.length}`,
           `  Private pages: ${r.grant.private_pages}`,
+          `  Reads now: ${r.reads_now.join(', ') || 'nothing'}${r.read_shared ? '  (read-shared on: sources shared later join automatically; guest sources and other members\' own sources never do)' : ''}`,
           `  Member: ${r.member ? `${r.member.id} (${r.member.status})` : 'none'}${r.member?.groups.length ? `  groups: ${r.member.groups.join(', ')}` : ''}${r.labelled_only ? '  labelled-only' : ''}`,
           `  May act for: ${r.may_act_for?.join(', ') ?? 'none'}`,
           ...(r.audience ? [`  Audience: ${r.audience.map(a => `${a.principal}${a.covered_by_may_act_for ? '' : ' (not in may_act_for)'}`).join(', ')}`] : []),

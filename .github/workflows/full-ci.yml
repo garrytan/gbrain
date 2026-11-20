@@ -4,7 +4,9 @@ name: Full CI dispatch
 # pull-request run of Test is the cheap tier, and E2E does not run on pull
 # requests. The full-ci label starts the full profile: this workflow dispatches
 # Test and E2E on the pull request's head branch, the same shape as a push to
-# master, and dispatches again on every later push while the label stays.
+# master, then removes the label once both dispatches were accepted, so a later
+# push does not start a full run nobody asked for. A refused dispatch leaves the
+# label on, visibly. Add the label again at each head you want gated.
 # Applying a label needs triage access or higher, so contributors cannot start
 # it, and a fork's head branch is never dispatched. A thread can do the same by
 # hand before its slot:
@@ -30,6 +32,7 @@ jobs:
     permissions:
       actions: write
       contents: read
+      pull-requests: write
     steps:
       - name: Dispatch Test and E2E on the head
         env:
@@ -37,6 +40,7 @@ jobs:
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           current=$(gh api "repos/$REPO/commits/heads/$BRANCH" --jq .sha)
           if [ "$current" != "$HEAD_SHA" ]; then
@@ -46,3 +50,10 @@ jobs:
           gh workflow run test.yml -R "$REPO" --ref "$BRANCH"
           gh workflow run e2e.yml -R "$REPO" --ref "$BRANCH"
           echo "Dispatched Test and E2E (full profile) on $BRANCH at $HEAD_SHA." >> "$GITHUB_STEP_SUMMARY"
+          if ! removed=$(gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" --silent 2>&1); then
+            case "$removed" in
+              *"(HTTP 404)"*) echo "::notice::The full-ci label was already off this pull request." ;;
+              *) echo "$removed" >&2; exit 1 ;;
+            esac
+          fi
+          echo "Removed the full-ci label: add it again at the next head you want gated." >> "$GITHUB_STEP_SUMMARY"

@@ -31,7 +31,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
 | `--budget-usd N` | unset | Abort before next call's projected cost would exceed cap. Models without a `pricing.ts` entry fail loud rather than silently blowing the budget. |
 | `--source db|fs` | `db` | `fs` is reserved; the runner refuses it and asks for `--source db`. |
 | `--slug-prefix P` | unset | Filter takes to pages whose slug starts with P. |
-| `--models a,b,c` | `openai:gpt-5.2,anthropic:claude-opus-4-7,google:gemini-2.5-flash` | Comma-separated panel. |
+| `--models a,b,c` | `openai:gpt-5.2,anthropic:claude-opus-4-7,google:gemini-3.5-flash-lite` | Comma-separated panel. |
 | `--json` | off | Emit the full receipt to stdout. |
 
 ## Receipt JSON shape (`schema_version: 1`)
@@ -50,7 +50,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
   },
   "prompt_sha8": "abcd1234",
   "models_sha8": "abcd1234",
-  "models": ["openai:gpt-5.2", "anthropic:claude-opus-4-7", "google:gemini-2.5-flash"],
+  "models": ["openai:gpt-5.2", "anthropic:claude-opus-4-7", "google:gemini-3.5-flash-lite"],
   "cycles_run": 3,
   "successes_per_cycle": [3, 3, 2],
   "verdict": "pass",
@@ -69,7 +69,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
   "protocol_version": 2,
   "correction_selection_rule": "corrected_if_valid",
   "corrections": [
-    { "cycle": 0, "modelId": "google:gemini-2.5-flash", "first_error": "incomplete_scores: missing dim(s) [accuracy]", "corrected": "valid" }
+    { "cycle": 0, "modelId": "google:gemini-3.5-flash-lite", "first_error": "incomplete_scores: missing dim(s) [accuracy]", "corrected": "valid" }
   ]
 }
 ```

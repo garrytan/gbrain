@@ -54,8 +54,8 @@ for (const backend of testBackends()) {
     });
 
     const auth = (clientId: string): AuthInfo => ({ token: 't', clientId, scopes: ['read'] });
-    async function call(args: Record<string, unknown>, clientId: string, ceiling: 'verbs' | 'starter' | 'full' = 'full') {
-      const r = await dispatchToolCall(engine, 'request_tools', args, { remote: true, transport: 'http', sourceId: 'default', surfaceCeiling: ceiling, auth: auth(clientId) } as never);
+    async function call(args: Record<string, unknown>, clientId: string, ceiling: 'verbs' | 'starter' | 'full' = 'full', surface?: 'verbs' | 'starter' | 'full') {
+      const r = await dispatchToolCall(engine, 'request_tools', args, { remote: true, transport: 'http', sourceId: 'default', surfaceCeiling: ceiling, auth: auth(clientId), ...(surface ? { surface } : {}) } as never);
       return { isError: r.isError === true, body: JSON.parse(r.content[0]!.text) };
     }
     const surfaceOf = async (clientId: string) =>
@@ -68,7 +68,9 @@ for (const backend of testBackends()) {
       expect(await surfaceOf('gbra449-a')).toEqual({ surface: 'starter', surface_set_by: 'self' });
       const surfaceOnly = await call({ surface: 'starter' }, 'gbra449-b');
       expect(both.body.surface_change).toEqual(surfaceOnly.body);
-      const toolsOnly = await call({ tools: ['search', 'get_page', 'list_pages'] }, 'gbra449-b');
+      // #9669: descriptors follow the surface the client now has; serve-http serves gbra449-b's next request on its new
+      // starter row, so the tools-only call runs there too.
+      const toolsOnly = await call({ tools: ['search', 'get_page', 'list_pages'] }, 'gbra449-b', 'full', 'starter');
       expect(toolNames(both.body)).toEqual(['search', 'get_page', 'list_pages']);
       expect({ ...both.body, surface_change: undefined }).toEqual({ ...toolsOnly.body, surface_change: undefined });
     });

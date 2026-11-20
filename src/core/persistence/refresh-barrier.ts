@@ -19,6 +19,7 @@ import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { readConfigValue } from '../config-values.ts';
+import { overdueDeferredFrom, overdueImportFrom } from '../engine-sql/persistence-owner-scans.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
 const DIFF_TIMEOUT_MS = 30_000;
@@ -110,23 +111,6 @@ const MAX_WAIT_SQL = `COALESCE((SELECT CASE WHEN value ~ '^[1-9][0-9]{0,14}$' TH
 export function refreshBarrierMaxWaitMs(raw: string | undefined): number {
   return raw !== undefined && /^[1-9][0-9]{0,14}$/.test(raw) ? Number(raw) : REFRESH_BARRIER_MAX_WAIT_MS;
 }
-const overdueDeferredFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id
-    JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
-    WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND f.released_at IS NULL AND r.created_at<now()-(${maxWait}*interval '1 millisecond')`;
-/**
- * GST-1623: however often a write is held again (another writer committing to its file faster than sync imports), it waits at
- * most this many wait limits from its admission, and never less than HOLD_CEILING_FLOOR_MS.
- */
-const HOLD_CEILING_LIMITS = 4;
-const HOLD_CEILING_FLOOR_MS = 4 * 60 * 60_000;
-const holdCeiling = (maxWait: string) => `GREATEST(${maxWait}*${HOLD_CEILING_LIMITS},${HOLD_CEILING_FLOOR_MS})`;
-/** A held write past its limit: held longer than the wait limit, or accepted longer ago than the ceiling. */
-const holdOverdue = (maxWait: string) => `(r.updated_at<now()-(${maxWait}*interval '1 millisecond') OR r.created_at<now()-(${holdCeiling(maxWait)}*interval '1 millisecond'))`;
-/** GST-1582: a write held for an import still pending (its refresh, if any, released) whose hold is past its limit. */
-const overdueImportFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
-    WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
-      AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
-      AND ${holdOverdue(maxWait)}`;
 /** The owner's idle probe counts an overdue deferred or import-held write as work, so its expiry runs even when nothing else is queued. */
 export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})
   OR EXISTS (SELECT 1 FROM persistence_requests r ${overdueImportFrom(host, MAX_WAIT_SQL)}))`;
@@ -148,29 +132,23 @@ export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM 
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
   const maxWaitMs = refreshBarrierMaxWaitMs(await readConfigValue(engine, REFRESH_BARRIER_MAX_WAIT_KEY, { signal }));
-  const expired = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueDeferredFrom('$1', '$2::double precision')}
-    ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  const expired = await engine.listOverdueHeldWrites<WriteRequest>(hostId, maxWaitMs, 'refresh', { signal });
   const finished: WriteRequest[] = [];
   for (const row of expired) {
     const done = await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
-      const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);
-      if (!held) return null;
+      if (!await tx.lockOverdueHold({ kind: 'refresh', refreshId: row.deferred_refresh_id ?? null })) return null;
       return completeWrite(tx, row, 'failed', {}, { code: 'refresh_barrier_expired',
         message: `Request ${row.request_id} waited behind refresh ${row.deferred_refresh_id} for more than ${Math.round(maxWaitMs / 1000)} s, and the refresh has not finished, so nothing was applied. Check the refresh with gbrain sources writer status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
     });
     if (done) finished.push(done);
   }
-  const imports = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueImportFrom('$1', '$2::double precision')}
-    ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  const imports = await engine.listOverdueHeldWrites<WriteRequest>(hostId, maxWaitMs, 'import', { signal });
   await afterImportScan?.(imports);
   for (const row of imports) {
     const done = await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
-      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id
-        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from
-          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);
-      if (!held) return null;
+      if (!await tx.lockOverdueHold({ kind: 'import', id: row.id, importFrom: row.deferred_import_from ?? null, maxWaitMs })) return null;
       const waited = `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s`;
       const status = `gbrain sync status --source ${row.source_id} --json`;
       if (row.operation === 'remember') return completeWrite(tx, row, 'conflict', {}, { code: 'source_changed', detail: { origin: PENDING_IMPORT },

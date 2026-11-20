@@ -1,13 +1,14 @@
 /**
  * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
- * sealImportedPage, readLivePageBody, hasSegmentStorage): the reads and writes a page write runs around the page row
- * (engine-sql/write-guards.ts on the SQL engines). The store runs one write transaction at a time, so the advisory
- * locks PGLite takes before it lists origin claims are already held, and `listOriginClaims` takes none.
+ * sealImportedPage, readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
+ * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
+ * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
+ * and `listOriginClaims` takes none.
  *
  * What each member answers and why: rust/docs/store/write-guards.md.
  */
-import type { ImportedPageSeal, LivePageBodyRow, OriginClaimRow, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The page a target names, live or a tombstone. `deleted_at` comes back as a Date, as PGLite returns a timestamptz. */
 export const readPageOrigin: StoreMember<[target: PageOriginTarget], PageOriginRow | null> = async (brain, target) => {
@@ -47,6 +48,18 @@ export const sealImportedPage: StoreMember<[slug: string, seal: ImportedPageSeal
 
 export const readLivePageBody: StoreMember<[slug: string, opts: { sourceId: string }], LivePageBodyRow | null> = (brain, slug, opts) =>
   storeCall({ member: 'readLivePageBody', slug, sourceId: opts.sourceId }, () => brain.readLivePageBody(slug, opts.sourceId));
+
+export const readPageIndexingState: StoreMember<[pageId: number], PageIndexingState | null> = (brain, pageId) =>
+  storeCall({ member: 'readPageIndexingState' }, () => brain.readPageIndexingState(pageId)) as Promise<PageIndexingState | null>;
+/** A page id that is not a positive integer names no page: null, as PGLite's `WHERE id=$1` matches none (a fraction refuses). */
+export const readInlinePageRegions: StoreMember<[pageId: number], InlinePageRegionsRow | null> = async (brain, pageId) => {
+  if (!Number.isSafeInteger(pageId)) refuseMember('readInlinePageRegions', 'a page id that is not an integer');
+  if (pageId < 1) return null;
+  return storeCall({ member: 'readInlinePageRegions' }, () => brain.readInlinePageRegions(pageId));
+};
+
+export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], string | null> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readStoredPageTier', slug, sourceId }, () => brain.readStoredPageTier(sourceId, slug));
 
 /** True once a segment text or a body staging is stored; the store keeps neither until the page-body family lands. */
 export const hasSegmentStorage: StoreMember<[], boolean> = (brain) => storeCall({ member: 'hasSegmentStorage' }, () => brain.hasSegmentStorage());

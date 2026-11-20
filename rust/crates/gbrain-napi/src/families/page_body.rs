@@ -71,6 +71,19 @@ impl Brain {
         })
     }
 
+    /// `readSegmentedEmbedPage({ id } | { sourceId, slug })`: the sealed live segmented page's embed
+    /// fields, or `null`.
+    #[napi]
+    pub fn read_segmented_embed_page<'env>(
+        &self,
+        env: &'env Env,
+        reference: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_embed_page(&required(reference, "readSegmentedEmbedPage ref")?)
+        })
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? }?)`: rows by seq.
     #[napi]
     pub fn read_manifest<'env>(

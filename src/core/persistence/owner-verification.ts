@@ -18,6 +18,7 @@ import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { backgroundOwnerCheck, backgroundOwnerUnverified } from './admission-origin.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 
 /**
  * The owner verification for a binding owned by this host: null when it holds, else why not (with the physical-root
@@ -40,6 +41,7 @@ export function verifyOwnerRoot(binding: Pick<WorktreeBinding, 'worktree_id' | '
 
 /** Refuses a background admission for a source whose owner on this host fails the verification (cached per background run). */
 export async function assertBackgroundOwner(engine: SqlEngine, sourceId: string, ownerStatusFix: (sourceId: string) => Action): Promise<void> {
+  requireManagedPersistence(engine, 'assertBackgroundOwner', 'it verifies the managed worktree owner on this host');
   const refusal = await backgroundOwnerCheck(sourceId, async () => {
     const host = existingHostIdFor(engine);
     const binding = await getWorktreeBinding(engine, sourceId, host);

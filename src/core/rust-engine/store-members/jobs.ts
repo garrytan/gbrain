@@ -1,7 +1,7 @@
 /**
  * Minion queue members (BrainEngine admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob, failJob,
- * reclaimStalledJobs) and the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert). The store
- * keeps the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
+ * reclaimStalledJobs), the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert) and the page
+ * embedding leases (take, renew, release). The store keeps the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
  * the binding as ISO strings and come back as `Date`s, as PGLite returns them.
  */
 import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../../engine.ts';
@@ -51,7 +51,7 @@ function admitError(error: unknown, spec: AdmitJobSpec): unknown {
  * The store runs the whole admission in one write and decides coalesce or release itself (same authority: coalesce a
  * live row, release a dead or cancelled one). A row held under another authority comes back as `conflict`, and the
  * caller's `decide` then throws the refusal PGLite throws. A delegated client's lock runs on the delegated policy handle
- * (../delegated-policy-handle.ts), where its grant read refuses; past it the admission still refuses before anything is
+ * (../delegated-policy-handle.ts), where the grant read goes through readOauthClient; past it the admission still refuses before anything is
  * written, because the lock, the capacity count and the insert would be separate store calls.
  */
 export const admitJob: StoreMember<[spec: AdmitJobSpec, policy: AdmitJobPolicy], AdmitJobResult> = async (brain, spec, policy) => {
@@ -115,6 +115,12 @@ export * from './jobs-wake.ts';
 export * from './jobs-insight.ts';
 // Group C: the spend reservations and the lease-pressure log (engine-sql/jobs-spend.ts).
 export * from './jobs-spend.ts';
+// The spend ledger and the client budgets (engine-sql/spend-log.ts).
+export * from './jobs-spend-log.ts';
+// The oauth_clients table (engine-sql/oauth-clients.ts).
+export * from './jobs-oauth-clients.ts';
+// The access_tokens members (engine-sql/access-tokens.ts).
+export * from './jobs-access-tokens.ts';
 // The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
 export * from './jobs-subagent.ts';
 
@@ -146,6 +152,20 @@ export const deleteCycleLockIfStale: StoreMember<[lockId: string, opts: HolderOp
 export const readCycleLocks: StoreMember<[filter: CycleLockFilter], CycleLockRow[]> = async (brain, filter) => {
   const rows: CycleLockRow[] = await storeCall({ member: 'readCycleLocks' }, () => brain.readCycleLocks(filter));
   return rows.map(r => withDates(r, LOCK_DATES));
+};
+
+// ---------------------------------------------------------------- page embedding leases (page-embedding-lease.ts)
+
+type PageLeaseTake = Parameters<BrainEngine['takePageEmbeddingLease']>[1];
+
+export const takePageEmbeddingLease: StoreMember<[leaseId: string, opts: PageLeaseTake], boolean> = (brain, leaseId, opts) =>
+  storeCall({ member: 'takePageEmbeddingLease' }, () => brain.takePageEmbeddingLease(leaseId, opts));
+
+export const renewPageEmbeddingLease: StoreMember<[leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }], boolean> = (brain, leaseId, opts) =>
+  storeCall({ member: 'renewPageEmbeddingLease' }, () => brain.renewPageEmbeddingLease(leaseId, opts));
+
+export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: { acquisitionToken: string }], void> = async (brain, leaseId, opts) => {
+  await storeCall({ member: 'releasePageEmbeddingLease' }, () => brain.releasePageEmbeddingLease(leaseId, opts));
 };
 
 export const assertCycleLease: StoreMember<[lockId: string, acquisitionToken: string], boolean> = (brain, lockId, acquisitionToken) =>

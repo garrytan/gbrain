@@ -69,12 +69,6 @@ export const listCallerRefusalRows: Member<'listCallerRefusalRows'> = async (bra
 export const countCompactedCallerRefusals: Member<'countCompactedCallerRefusals'> = async (brain, sourceIds, operations) =>
   Number(await storeCall({ member: 'countCompactedCallerRefusals' }, () => brain.countCompactedCallerRefusals(sourceIds, operations)));
 
-export const listRecentWriterVersions: Member<'listRecentWriterVersions'> = async (brain, days) =>
-  await storeCall({ member: 'listRecentWriterVersions' }, () => brain.listRecentWriterVersions(days)) as Awaited<ReturnType<BrainEngine['listRecentWriterVersions']>>;
-
-/** The store keeps no migration cutoff: it is the epoch, so every request counts as after it (as on a brain migrated before its first write). */
-export const readWriterVersionCutoff: Member<'readWriterVersionCutoff'> = async () => '1970-01-01T00:00:00.000Z';
-
 /** The persistence identity as text; the store holds it as the same uuid text. */
 export const readPersistenceBrainIdText: Member<'readPersistenceBrainIdText'> = brain => readPersistenceBrainId(brain);
 

@@ -31,13 +31,13 @@ export function inlineRegionTail(text: string, region: 'truth' | 'timeline'): Re
 }
 
 /** An inline page's stored regions, read raw (no withdrawal overlay), as the append path compares them. */
-export async function inlineRegions(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<{ truth: string; timeline: string }> {
-  const [row] = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>('SELECT compiled_truth, timeline FROM pages WHERE id=$1', [pageId]);
+export async function inlineRegions(engine: Pick<BrainEngine, 'readInlinePageRegions'>, pageId: number): Promise<{ truth: string; timeline: string }> {
+  const row = await engine.readInlinePageRegions(pageId);
   return { truth: row?.compiled_truth ?? '', timeline: row?.timeline ?? '' };
 }
 
 /** get_page body:'none' for an inline page: the digest of its last non-empty region's tail, as tailDigest reports a segmented page's. */
-export async function inlineTailDigest(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, remote: boolean): Promise<{ tail_sha256: string; tail_region: string } | Record<string, never>> {
+export async function inlineTailDigest(engine: Pick<BrainEngine, 'readInlinePageRegions'>, pageId: number, remote: boolean): Promise<{ tail_sha256: string; tail_region: string } | Record<string, never>> {
   const { truth, timeline } = await inlineRegions(engine, pageId);
   const tail = timeline ? inlineRegionTail(timeline, 'timeline') : inlineRegionTail(truth, 'truth');
   return remote && tail.guarded ? {} : { tail_sha256: tailSha256(tail), tail_region: tail.region };

@@ -11,6 +11,7 @@ import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import type { SqlEngine, WriteAuthority } from '../persistence/model.ts';
 import { stringList } from './manifest.ts';
 import type { SharedSkillPolicy, SkillFileClass, StoredSkillFile } from './model.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 const SOURCES_FIX = readFix('Lists the registered sources and whether each is archived.', {
   argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} },
@@ -78,8 +79,9 @@ export async function authorizeSkillRead(ctx: OperationContext, operation: strin
   let liveOperations = auth.allowedOperations;
   let grantRevision = auth.grantRevision;
   if (auth.principal.kind === 'oauth_client') {
-    const [row] = await ctx.engine.executeRaw<{ scope: string; source_id: string; federated_read: string[] | null; allowed_operations: string[] | null; grant_revision: number }>(
-      'SELECT scope,source_id,federated_read,allowed_operations,grant_revision FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL', [auth.principal.id]);
+    const found = await ctx.engine.readOauthClient(auth.principal.id);
+    const row = found && found.deleted_at == null
+      ? requireOauthClientColumns(found, ['scope', 'source_id', 'federated_read', 'allowed_operations', 'grant_revision']) as typeof found & { scope: string; source_id: string } : undefined;
     if (!row || !hasScope(row.scope.split(/\s+/), 'read') || row.allowed_operations != null && !row.allowed_operations.includes(operation)) {
       throw opError('permission_denied', 'The shared skill reader grant was revoked or narrowed.',
         `Client ${auth.principal.id} was deleted or no longer allows ${operation}. Ask the brain host's operator to restore its grant, then reconnect.`,

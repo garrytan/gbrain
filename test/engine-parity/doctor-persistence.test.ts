@@ -67,12 +67,12 @@ describe('doctor persistence reads', () => {
       'listCapacityCounters', 'listLifetimeCounters', 'countPersistenceRequestRows', 'readAdmissionSample', 'listOutstandingHolders',
       'listRunningRequestStalls', 'readMaxRequestSequence', 'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs',
       'listRefusalBreakerRows', 'readCounterDrift', 'readPublicationRefusals', 'listRunningClaimOwners', 'listLocalEditAdoptions',
-      'listCallerRefusalRows', 'countCompactedCallerRefusals', 'listRecentWriterVersions', 'readLiveConsumerSummary',
+      'listCallerRefusalRows', 'countCompactedCallerRefusals', 'readLiveConsumerSummary',
       'countParkedEffects', 'listParkedEffects', 'listGitPushHoldRows', 'listStalledCatchupRows', 'listParkedGroupRows',
       'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects', 'listOrphanBindingRows', 'listWorktreeIds',
       'listSourceBindingsForMovement', 'listOwnerBindings', 'listConsumerOwners', 'listStuckWorktreeRefreshes',
       'listRecentPurgeRequests', 'listDerivationPurgeSweeps', 'listUnboundSourcePages', 'listOverwriteCandidates',
-      'readWriterVersionCutoff', 'readPersistenceBrainIdText', 'listManagedRoots'] },
+      'readPersistenceBrainIdText', 'listManagedRoots'] },
     async (engine) => {
       const answers = {
         capacity: await engine.listCapacityCounters(),
@@ -92,7 +92,6 @@ describe('doctor persistence reads', () => {
         adoptions: await engine.listLocalEditAdoptions(),
         refusals: await engine.listCallerRefusalRows(nulls, OPS),
         compacted: await engine.countCompactedCallerRefusals(nulls, OPS),
-        versions: await engine.listRecentWriterVersions(7),
         consumers: await engine.readLiveConsumerSummary(),
         parked: await engine.countParkedEffects(null),
         parkedRows: await engine.listParkedEffects(null),
@@ -112,7 +111,6 @@ describe('doctor persistence reads', () => {
         unbound: await engine.listUnboundSourcePages(),
         candidates: await engine.listOverwriteCandidates('default', 20, null),
         roots: await engine.listManagedRoots('e0000000-0000-4000-8000-0000000000e1'),
-        cutoffIsSet: Boolean(await engine.readWriterVersionCutoff()),
         brainIdIsText: typeof (await engine.readPersistenceBrainIdText()) !== 'number',
       };
       expect(answers.capacity).toEqual([]);
@@ -122,7 +120,6 @@ describe('doctor persistence reads', () => {
       expect(answers.consumers).toEqual({ live: '0', oldest_hours: null });
       expect(answers.parked).toBe(0);
       expect(answers.staleCounts).toEqual({ count: 0, failed: 0, requeued: 0 });
-      expect(answers.cutoffIsSet).toBe(true);
       return answers;
     },
   );
@@ -168,7 +165,7 @@ describe('doctor persistence reads', () => {
     'the refusal reads separate the database guard, drift receipts and refused caller writes',
     { methods: ['lockPersistenceCounters', 'readSourceMembership', 'insertWriteRequest', 'completeWriteRow', 'readPublicationRefusals',
       'listCallerRefusalRows', 'countCompactedCallerRefusals', 'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs',
-      'listRefusalBreakerRows', 'listLocalEditAdoptions', 'listRecentWriterVersions', 'readMaxRequestSequence'] },
+      'listRefusalBreakerRows', 'listLocalEditAdoptions', 'readMaxRequestSequence'] },
     async (engine) => {
       // Sequences run on across cases on a shared database: read them from the first row this case admits.
       const first = await admitRow(engine, REQ_1, 'notes/a', 'put_page', { expected_revision: 'r1' });
@@ -196,10 +193,6 @@ describe('doctor persistence reads', () => {
         otherMessage: await engine.listRecentDriftReceiptSlugs('default', String(base), 'another message'),
         breaker: (await engine.listRefusalBreakerRows('default', 24, 1, 20)).map(r => ({ slug: r.slug, refusals: Number(r.refusals) })),
         adoptions: await engine.listLocalEditAdoptions(),
-        // Sorted by role: the read orders by last_seen DESC, and the admitter and consumer rows of one request can share
-        // a timestamp, so their order is a tie the engines may break either way.
-        versions: (await engine.listRecentWriterVersions(7)).map(v => ({ role: v.role, version: v.version, requests: Number(v.requests) }))
-          .sort((a, b) => a.role.localeCompare(b.role)),
       };
       expect(answers.recent).toEqual([{ slug: 'notes/b', total: 1 }]);
       return answers;

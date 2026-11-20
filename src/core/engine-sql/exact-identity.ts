@@ -5,7 +5,7 @@
  * Every arm is an equality probe an existing index serves, so the read never
  * scans a source's pages:
  *
- *   title    lower(title) = key             idx_pages_source_title_lower
+ *   title    lower(title) = key             idx_pages_title_lower_hash
  *   basename slug basename = key            idx_pages_slug_basename (the slug
  *                                           grammar already folds accents)
  *   alias    page_aliases.alias_norm = key  the (source_id, alias_norm) indexes
@@ -43,6 +43,8 @@ export interface ExactIdentityStatementOpts {
   types: EntityTypeFilter;
   /** Untrusted caller: quarantined and (with excludePrivate) private pages are never candidates. */
   remote?: { excludePrivate: boolean };
+  /** Probe only the email arms (the owner identity proves a page by its email alone, so title matches never take the limit). */
+  emailsOnly?: boolean;
   limit: number;
 }
 
@@ -73,7 +75,7 @@ function emailArms(sourceIds: string[], emails: string[]): SqlFragment[] {
 
 export function exactIdentityStatement(opts: ExactIdentityStatementOpts): { text: string; params: unknown[] } {
   const { probes, sourceIds } = opts;
-  const arms: SqlFragment[] = [sqlFragment`SELECT p.id FROM pages p
+  const arms: SqlFragment[] = opts.emailsOnly ? [] : [sqlFragment`SELECT p.id FROM pages p
        WHERE p.source_id = ANY(${sourceIds}::text[]) AND lower(p.title) = ANY(${probes.titleKeys}::text[] || lower(${probes.titleRaw}::text))`];
   if (probes.basenames.length) {
     arms.push(sqlFragment`SELECT p.id FROM pages p

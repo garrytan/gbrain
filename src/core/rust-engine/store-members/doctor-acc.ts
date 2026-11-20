@@ -16,7 +16,6 @@ export const isAccessStateUnreadable: Member<'isAccessStateUnreadable'> = async 
 export const listRawOnlyRules: Member<'listRawOnlyRules'> = async () => [];
 export const listAudienceMemberIds: Member<'listAudienceMemberIds'> = async () => [];
 export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = async () => [];
-export const listAccessMemberRows: Member<'listAccessMemberRows'> = async () => [];
 export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async () => [];
 export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async () => [];
 export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async () => [];
@@ -63,18 +62,10 @@ export const listDriftVersionRows: Member<'listDriftVersionRows'> = async (_brai
   pageIds.length === 0 ? [] : refuseMember('listDriftVersionRows', 'the store keeps no write-request attribution of a page version');
 
 // Decide, proposals, chronicle, feedback, belief and volunteer state: none is written on this engine.
-export const listDecideCalibrationRows: Member<'listDecideCalibrationRows'> = async () => [];
-export const listRecentResolvedModels: Member<'listRecentResolvedModels'> = async () => [];
-export const listMixedModelDecisions: Member<'listMixedModelDecisions'> = async () => [];
-export const listDecideSlotUsage: Member<'listDecideSlotUsage'> = async () => [];
-export const readDecideDailySpend: Member<'readDecideDailySpend'> = async () => ({ total: 0, remote: 0 });
-export const listDecideReceiptStats: Member<'listDecideReceiptStats'> = async () => [];
-export const readPendingProposalSummary: Member<'readPendingProposalSummary'> = async () => ({ pending: 0, oldest_hours: null });
 export const readChronicleLedgerStats: Member<'readChronicleLedgerStats'> = async () => AVAILABLE_CHRONICLE_LEDGER_STATS;
 export const readChronicleDuplicateEvents: Member<'readChronicleDuplicateEvents'> = async () => ({ pages: 0, surplus: 0 });
 export const readFeedbackStatus: Member<'readFeedbackStatus'> = async () => ({
   events: 0, ratings_explicit: 0, ratings_cited: 0, weights_total: 0, weights_off_neutral: 0,
   last_rating_at: null, top_client_share_7d: null, lowest: [], highest: [],
 });
-export const listBeliefCoveredSources: Member<'listBeliefCoveredSources'> = async () => [];
 export const listVolunteerChannels: Member<'listVolunteerChannels'> = async () => [];

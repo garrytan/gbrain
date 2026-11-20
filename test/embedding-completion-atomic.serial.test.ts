@@ -69,6 +69,10 @@ function afterVectorCommit(engine: BrainEngine, intervene: () => Promise<void>):
           if (sql.startsWith('UPDATE content_chunks SET')) wrote();
           return result;
         };
+        if (key === 'installChunkEmbeddings') return async (...args: Parameters<BrainEngine['installChunkEmbeddings']>) => {
+          await target.installChunkEmbeddings(...args);
+          wrote();
+        };
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
       },

@@ -43,10 +43,11 @@
  * Entity recall: the `entity` verb's path (includeReferences: referenced_by
  * groups + coverage) has two gates on the same corpus. Ordinary entities keep
  * the p99 < 100ms budget. The hub page carries 10,000 inbound mention links, so
- * its card necessarily enumerates 10,000 referrers; it is gated by a ratio to
+ * its card necessarily enumerates 10,000 referrers. Its referrer work (the hub
+ * card less the card of a company with no referrers) is gated by a ratio to
  * the irreducible enumeration (a distinct-referrer count over the same links)
  * measured in the same process, which cancels runner speed and still trips on
- * per-referrer work (a per-row subquery or hydrating every row reads as 10×+).
+ * per-referrer work (hydrating every referrer row reads 6.8×–7.4×; the ceiling is 6×).
  * The ambient gates below stay on the reference-free path.
  *
  * .slow.test.ts suffix keeps it out of the fast loop (`bun run test:slow`).
@@ -89,12 +90,23 @@ const DELTA_CHANGED_FACTS = 100;
 // regression signal.)
 const RATIO_CEILING = 100;
 const HUB_SLUG = 'companies/hub-company';
+const QUIET_SLUG = 'companies/quiet-company';
 const HUB_LINKS = 10_000;
 const HUB_SAMPLES = 30;
-// Hub card median ≤ 8× the distinct-referrer count's median (measured about 4× on 2026-10-05: hub card p50 ~59ms,
-// count p50 ~14ms on a 4-core cloud machine). Per-referrer regressions read as 10× or more.
-const HUB_RATIO_CEILING = 8;
-// Catastrophe backstop only; the ratio is the gate.
+const HUB_COUNT_REPS = 8;
+// Referrer work ≤ 6× one distinct-referrer count. Referrer work is the hub card less the quiet card (QUIET_SLUG, a
+// company with no referrers): every other read of a card (facts, timeline, resolution, the privacy filters) costs the
+// same on both, so subtracting it leaves the referrer read alone.
+// Calibration 2026-11-18, 4-core cloud machine, thread CPU time: hub card p50 ~108ms, quiet card ~56ms, count ~13.5ms,
+// referrer work 3.7×–4.0× over 6 runs, idle and under an 8-process CPU load. The old gate (whole hub card ≤ 8× the
+// count, wall time) read about 4× when it was calibrated on 2026-10-05 (hub card ~59ms, count ~14ms); the referrer read
+// is still about 4×, but the work every card does has grown since, so the whole card read 7.6×–8.0× idle and 8.3×–8.9×
+// loaded and the gate flaked. The ceiling moved from 8× to 6× with the subtraction, which tightens the gate:
+// hydrating every referrer row reads 6.8×–7.4× on this measurement, idle and loaded (about 11.5× on the old one), and
+// would pass at 8×.
+const HUB_RATIO_CEILING = 6;
+// Catastrophe backstop on the whole hub card. The ratio no longer sees growth in the work every card does; this bound
+// and the ordinary-entity p99 budget do.
 const HUB_ABSOLUTE_CEILING_MS = 1000 * (Number(process.env.GBRAIN_TEST_PERF_BUDGET_MULTIPLIER) || 1);
 
 interface Sample { name: string; wall: number; cpu: number; heapDeltaMB: number; steal: Array<number | null> }
@@ -214,6 +226,7 @@ beforeAll(async () => {
   // case for referenced_by), its referrers spread over five types, and a
   // complete mention status row (the coverage read).
   await engine.putPage(HUB_SLUG, { type: 'company', title: 'Hub Company', compiled_truth: '# Hub Company\n\nSynthetic hub.', frontmatter: {} }, { sourceId: 'default' });
+  await engine.putPage(QUIET_SLUG, { type: 'company', title: 'Quiet Company', compiled_truth: '# Quiet Company\n\nSynthetic company with no referrers.', frontmatter: {} }, { sourceId: 'default' });
   await db.query(
     `UPDATE pages SET type = (ARRAY['ticket','email','meeting','note','contract'])[(id % 5) + 1]
       WHERE id IN (SELECT id FROM pages WHERE slug LIKE 'filler/%' ORDER BY id LIMIT ${HUB_LINKS})`,
@@ -306,37 +319,47 @@ describe('entity verb with referenced_by (entity recall)', () => {
     expect(p99).toBeLessThan(P99_BUDGET_MS);
   }, 300_000);
 
-  it(`${HUB_LINKS}-link hub: card median ≤ ${HUB_RATIO_CEILING}× the distinct-referrer count`, async () => {
+  it(`${HUB_LINKS}-link hub: referrer work ≤ ${HUB_RATIO_CEILING}× the distinct-referrer count`, async () => {
     const countSql = `SELECT count(DISTINCT l.from_page_id)::int AS n FROM links l JOIN pages f ON f.id = l.from_page_id
       WHERE l.to_page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = 'default') AND f.deleted_at IS NULL`;
-    for (let i = 0; i < 5; i++) {
-      await buildEntityCard(engine, 'default', 'Hub Company', opts);
-      await engine.executeRaw(countSql, [HUB_SLUG]);
-    }
-    // Interleave the two measurements so a burst of runner load lands on both.
-    const card: number[] = [];
-    const base: number[] = [];
-    let hubCard: Awaited<ReturnType<typeof buildEntityCard>>['card'];
+    const hubCall = async () => (await buildEntityCard(engine, 'default', 'Hub Company', opts)).card;
+    const quietCall = async () => (await buildEntityCard(engine, 'default', 'Quiet Company', opts)).card;
+    const countCall = async () => { for (let k = 0; k < HUB_COUNT_REPS; k++) await engine.executeRaw(countSql, [HUB_SLUG]); };
+    for (let i = 0; i < 5; i++) { await hubCall(); await quietCall(); await countCall(); }
+    // Each round times the hub card, the quiet card and the count back to back on this thread's CPU (sample(): time
+    // spent off the CPU is not counted, a window the hypervisor stole from is timed again), in a rotating order. The
+    // referrer work of a round is the hub card less the quiet card, and the gate is the median over rounds of that
+    // work divided by one count.
+    let hubCard: Awaited<ReturnType<typeof hubCall>>;
+    let quietCard: Awaited<ReturnType<typeof quietCall>>;
+    const calls = [
+      () => sample('hub card', async () => { hubCard = await hubCall(); }),
+      () => sample('quiet card', async () => { quietCard = await quietCall(); }),
+      () => sample(`referrer count ×${HUB_COUNT_REPS}`, countCall),
+    ];
+    const rounds: Sample[][] = [];
     for (let i = 0; i < HUB_SAMPLES; i++) {
-      let t0 = performance.now();
-      hubCard = (await buildEntityCard(engine, 'default', 'Hub Company', opts)).card;
-      card.push(performance.now() - t0);
-      t0 = performance.now();
-      await engine.executeRaw(countSql, [HUB_SLUG]);
-      base.push(performance.now() - t0);
+      const round: Sample[] = [];
+      for (let j = 0; j < calls.length; j++) { const k = (i + j) % calls.length; round[k] = await calls[k]!(); }
+      rounds.push(round);
     }
-    card.sort((a, b) => a - b);
-    base.sort((a, b) => a - b);
-    const cardP50 = percentile(card, 50);
-    const baseP50 = Math.max(percentile(base, 50), 1);
+    const p50 = (xs: number[]) => percentile([...xs].sort((x, y) => x - y), 50);
+    const ratios = rounds.map(([hub, quiet, count]) => (hub!.cpu - quiet!.cpu) / Math.max(count!.cpu / HUB_COUNT_REPS, 1)).sort((x, y) => x - y);
+    const ratio = percentile(ratios, 50);
+    const hubP50 = p50(rounds.map(r => r[0]!.cpu));
+    const hubWallP50 = p50(rounds.map(r => r[0]!.wall));
     // eslint-disable-next-line no-console
-    console.log(`[entity-recall-perf] hub=${HUB_LINKS} links card p50=${cardP50.toFixed(2)}ms p90=${percentile(card, 90).toFixed(2)}ms ` +
-      `| distinct-referrer count p50=${baseP50.toFixed(2)}ms | ratio=${(cardP50 / baseP50).toFixed(1)}x (ceiling ${HUB_RATIO_CEILING}x)`);
-    // Real work: the hub card carries every referrer in its count and at most 50 rows.
+    console.log(`[entity-recall-perf] hub=${HUB_LINKS} links card cpu p50=${hubP50.toFixed(2)}ms (wall p50=${hubWallP50.toFixed(2)}ms) | quiet card cpu p50=${p50(rounds.map(r => r[1]!.cpu)).toFixed(2)}ms ` +
+      `| distinct-referrer count cpu p50=${p50(rounds.map(r => r[2]!.cpu / HUB_COUNT_REPS)).toFixed(2)}ms ` +
+      `| referrer work=${ratio.toFixed(1)}x (median of ${HUB_SAMPLES} rounds, ${ratios[0]!.toFixed(1)}x..${ratios.at(-1)!.toFixed(1)}x; ceiling ${HUB_RATIO_CEILING}x) ` +
+      `| slowest: ${slowest(rounds.flat())}`);
+    // Real work: the hub card carries every referrer in its count and at most 50 rows; the quiet card has none.
     expect(hubCard?.referenced_by_count).toBe(HUB_LINKS);
     expect(hubCard!.referenced_by!.reduce((n, g) => n + g.rows.length, 0)).toBeLessThanOrEqual(50);
-    expect(cardP50 / baseP50).toBeLessThanOrEqual(HUB_RATIO_CEILING);
-    expect(cardP50).toBeLessThan(HUB_ABSOLUTE_CEILING_MS);
+    expect(quietCard?.entity.slug).toBe(QUIET_SLUG);
+    expect(quietCard?.referenced_by_count ?? 0).toBe(0);
+    expect(ratio).toBeLessThanOrEqual(HUB_RATIO_CEILING);
+    expect(hubWallP50).toBeLessThan(HUB_ABSOLUTE_CEILING_MS);
   }, 300_000);
 });
 

@@ -250,13 +250,28 @@ stay kept to it.
 
 An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
 by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
-(private or not), for its facts and timeline rows, and for pages and facts derived from them: a synthesized concept
-with an input page there, and any page or fact whose recorded derivation inputs reach a row there. None of the
+(private or not), for its facts and timeline rows, and for pages, facts, takes and timeline rows derived from them:
+a synthesized concept with an input page there, and any page, fact, take or timeline row whose recorded derivation
+inputs reach a row there, wherever its page is. A meeting in an owner-only source adds timeline rows only to pages in
+its own source, even with `link_resolution.cross_source` on, and a read that cannot learn the brain's schema version
+treats every row as owner-only once the brain has held owner-only data. None of the
 relaxations above widens it: `--private-pages granted-sources`, `--private-facts granted-sources`,
 `search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
 `visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote
 write into an owner-only source from any credential but the owner's is refused the same way. The rule is worked out
-at read time from the source, so nothing is stored per page and a repo-less brain works the same.
+at read time from the source and works the same on a repo-less brain. Only a delete stores anything: when an owner-only
+source or one of its rows goes, a trigger records the rows derived from it in `owner_only_marks`, so they stay
+owner-only ([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)).
+
+### Keys that read every shared source (`--read-shared on`)
+
+A member's key with a write source of its own reads only the sources its grant lists, unless the read-shared switch is
+on (`gbrain auth rescope --token <name> --read-shared on`, `--client <id>` for an OAuth client). Then it also reads
+`default` and every federated source, now and later, never a guest source or (unless it is the owner's key) another member's own source, and it
+still writes only to its write source. The switch widens which sources the key reaches, not what it reads inside them:
+`visibility: private` pages and private facts stay closed in every source it reaches only through the switch
+(`--private-pages granted-sources` and `--private-facts granted-sources` open only sources the grant lists by id), and
+`readable_by` and folder rules apply as before. `gbrain access check --token <name>` lists what the key reads now.
 
 ### Audience members (`gbrain access member kind`)
 
@@ -310,6 +325,15 @@ owner's row: setting it there, or naming a labelled-only member the owner, is re
 refused (`permission_denied`). `gbrain access member list` and `gbrain access check` show it, `who-can-read` notes
 which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
 binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
+
+### When someone leaves (`gbrain access member handover`)
+
+A disabled or removed member's pages stay labelled with its id, so a page whose `readable_by` names only that member
+is read by no member remotely. `gbrain access member handover <id>` previews giving those pages, and folder rules naming
+only that member, to the owner; pages others read stay as they are, and nothing opens to every reader unless asked
+(`--set kept=everyone`). Apply with `--yes --expect <plan_hash>`; `--undo <handover id>` restores the recorded readers
+once the member is enabled again. Doctor's `access_pages_read_by_nobody` lists pages no enabled member reads. See
+[When someone leaves](member-handover.md).
 
 ### Pages every member's key can read
 

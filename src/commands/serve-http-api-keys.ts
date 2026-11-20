@@ -32,6 +32,8 @@ export interface ApiKeyMintRequest {
   scopes: string[];
   /** undefined = no source grant (the `gbrain auth create` default). */
   sources?: string[];
+  /** GST-2898: also read every shared source, now and later; needs sources. */
+  readShared?: boolean;
   takesHolders: string[];
   defaultsApplied: Array<'scopes' | 'sources' | 'takes_holders'>;
 }
@@ -108,7 +110,15 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
       createFix(['--takes-holders', 'world'], 'Mints the same key with the default world takes holder.'));
   }
   const takesHolders = holdersParam ?? (defaultsApplied.push('takes_holders'), [...API_KEY_DEFAULT_TAKES_HOLDERS]);
-  return { name, scopes, ...(sourcesParam ? { sources: sourcesParam } : {}), takesHolders, defaultsApplied };
+  if (raw.read_shared !== undefined && typeof raw.read_shared !== 'boolean') {
+    throw invalid('read_shared must be true or false.', 'Resubmit with read_shared true (also read every shared source, now and later) or omit it.',
+      'The switch adds every shared source to the key\'s reads; it never changes where the key writes.', listAction('Lists existing keys and their read_shared value.'));
+  }
+  if (raw.read_shared === true && !sourcesParam) {
+    throw invalid('read_shared needs sources: a key with no sources already reads every shared source.', 'Resubmit with sources naming the write source first, or omit read_shared.',
+      'The switch adds shared reads to a key that writes to one named source.', listAction('Lists existing keys and their sources.'));
+  }
+  return { name, scopes, ...(sourcesParam ? { sources: sourcesParam } : {}), ...(raw.read_shared === true ? { readShared: true } : {}), takesHolders, defaultsApplied };
 }
 
 function grantView(row: Record<string, unknown>) {
@@ -120,6 +130,7 @@ function grantView(row: Record<string, unknown>) {
     sources: s.kind === 'default' ? 'default' : s.kind === 'none' ? [] : s.kind === 'scalar' ? [s.writeSource] : [...s.readSources],
     takes_holders: grant.takesHolders ?? ['world'],
     private_pages: grant.privatePages,
+    read_shared: grant.readShared === true,
   };
 }
 
@@ -149,11 +160,12 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
       return;
     }
     try {
-      const minted = await mintLegacyToken(engine, { name: request.name, scopes: request.scopes, takesHolders: request.takesHolders, ...(request.sources ? { sourceGrant: request.sources } : {}) });
+      const minted = await mintLegacyToken(engine, { name: request.name, scopes: request.scopes, takesHolders: request.takesHolders, ...(request.sources ? { sourceGrant: request.sources } : {}), ...(request.readShared ? { readShared: true } : {}) });
       res.json({
         id: minted.id, name: minted.name, token: minted.token,
         scopes_applied: request.scopes,
         sources_applied: request.sources ?? 'default',
+        read_shared: request.readShared === true,
         takes_holders_applied: request.takesHolders,
         defaults_applied: request.defaultsApplied,
       });

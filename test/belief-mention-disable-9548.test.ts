@@ -103,7 +103,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
             await release.promise;
           });
           const disabling = pausing(b.engine, async (tx, member, args) => {
-            if (member === 'executeRaw' && String(args[0]).includes('gbrain.write_sources') && !disablePid) disablePid = await pid(tx);
+            if (member === 'setWriteContext' && !disablePid) disablePid = await pid(tx);
           });
           const watchdog = setTimeout(() => release.resolve(), 30_000);
           const reconcile = runMentionPass(reconciling, { sourceId: b.sourceId });

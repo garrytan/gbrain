@@ -35,7 +35,7 @@ async function guarded<T>(fn: () => Promise<T>): Promise<T> {
 
 /** Sets a legacy token's floor by row id (the mint path already knows the id). */
 export async function setTokenMinTrust(engine: BrainEngine, tokenId: string, tier: TrustTier | null): Promise<void> {
-  await guarded(() => engine.executeRaw('UPDATE access_tokens SET min_trust = $1 WHERE id = $2::uuid', [tier, tokenId]));
+  await guarded(() => engine.setAccessTokenMinTrust(tokenId, tier));
 }
 
 /**
@@ -45,13 +45,9 @@ export async function setTokenMinTrust(engine: BrainEngine, tokenId: string, tie
  */
 export async function setMinTrust(engine: BrainEngine, target: string, tier: TrustTier | null): Promise<MinTrustChange> {
   return guarded(async () => {
-    const [client] = await engine.executeRaw<{ id: string; name: string | null; before: string | null }>(
-      `UPDATE oauth_clients c SET min_trust = $2 FROM (SELECT client_id, min_trust FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL FOR UPDATE) prior
-        WHERE c.client_id = prior.client_id RETURNING c.client_id AS id, c.client_name AS name, prior.min_trust AS before`, [target, tier]);
-    if (client) return { kind: 'oauth_client', id: client.id, name: client.name ?? client.id, before: client.before as TrustTier | null, after: tier };
-    const tokens = await engine.executeRaw<{ id: string; name: string; before: string | null }>(
-      `SELECT id::text AS id, name, min_trust AS before FROM access_tokens
-        WHERE revoked_at IS NULL AND (id::text = $1 OR name = $1)`, [target]);
+    const patched = await engine.patchOauthClient(target, { min_trust: tier }, { live: true });
+    if (patched) return { kind: 'oauth_client', id: patched.row.client_id, name: patched.row.client_name ?? patched.row.client_id, before: patched.before.min_trust as TrustTier | null, after: tier };
+    const tokens = await engine.findActiveAccessTokens(target);
     if (tokens.length > 1) {
       throw opError('invalid_params', `${tokens.length} active tokens are named "${target}".`,
         'Name the token by its id from gbrain auth list instead.');
@@ -62,6 +58,6 @@ export async function setMinTrust(engine: BrainEngine, target: string, tier: Tru
         'List clients with gbrain auth clients and tokens with gbrain auth list, then pass a client id, token id or token name.');
     }
     await setTokenMinTrust(engine, token.id, tier);
-    return { kind: 'legacy_token', id: token.id, name: token.name, before: token.before as TrustTier | null, after: tier };
+    return { kind: 'legacy_token', id: token.id, name: token.name, before: token.min_trust as TrustTier | null, after: tier };
   });
 }

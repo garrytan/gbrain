@@ -145,7 +145,7 @@ const IMAGE_PAGE_COVERAGE_SQL = `SELECT count(*)::int AS image_pages,
        FROM pages p WHERE p.page_kind = 'image' AND p.deleted_at IS NULL`;
 
 const FACTS_PAGE_BODIES_SQL = `SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, left(coalesce(p.compiled_truth, p.truth_lead), 65536) AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id, p.slug`;
+         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`;
 
 const BRACKET_PATH_PAGES_SQL = `SELECT slug, source_id, source_path FROM pages
           WHERE source_path IS NOT NULL AND deleted_at IS NULL

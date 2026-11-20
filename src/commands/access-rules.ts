@@ -338,6 +338,29 @@ export async function currentFolderRules(engine: BrainEngine, sourceId: string):
   return baseRules(engine, sourceId, store, root);
 }
 
+/**
+ * GBRA-582 item 9: writes a rulebook a caller already previewed and the operator approved as a whole (the member
+ * handover), approving the widening half in the same step. The caller refuses first when the source had a change held
+ * before, so the only held change approved here is its own.
+ */
+export async function writeApprovedRules(engine: BrainEngine, sourceId: string, desired: FolderRule[], message: string): Promise<{ result: EditResult; commits: string[] }> {
+  const result = await writeRules(engine, sourceId, desired, { message, json: true });
+  const commits = result.git?.commit ? [result.git.commit] : [];
+  if (!result.held.length) return { result, commits };
+  const plan = await previewApply(engine, sourceId);
+  if (!plan.plan_hash) return { result, commits };
+  const r = await applyApproved(engine, sourceId, { expect: plan.plan_hash });
+  if ((await readAccessStore(engine, sourceId)) === 'git') {
+    const root = await sourcePolicyRoot(engine, sourceId);
+    if (root && isGitWorkTree(root)) {
+      const git = await writeApprovedFile(root, (await getRevision(engine, sourceId, r.revision ?? undefined))?.rules ?? [], message + ' (approved)');
+      if (git.commit) commits.push(git.commit);
+      await syncGitPolicy(engine, sourceId, root);
+    }
+  }
+  return { result: { ...result, applied: true, held: r.held }, commits };
+}
+
 async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
   const sourceId = flag(args, '--source') ?? 'default';
   const yes = args.includes('--yes');

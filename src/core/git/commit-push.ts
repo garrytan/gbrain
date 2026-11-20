@@ -37,10 +37,11 @@ import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } 
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
-import { recordCommit, recordIntent } from './commit-ledger.ts';
+import { pushableHead, recordCommit, recordIntent } from './commit-ledger.ts';
 import { CREDENTIAL_STATE_NAME, credentialRefusal, pushCredentialRefusedError, readCredentialRefusalFile, recordCredentialRefusalFile, type CredentialRefusalState } from './push-credential.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { shellQuote, type Action } from '../agent-output.ts';
+import { shellQuote, type Action, type Notice } from '../agent-output.ts';
+import { onPushMode, redactUnpushed, spoolSealer, type RedactOutcome } from './redact-unpushed.ts';
 import { isSyncable } from '../sync.ts';
 import { untrackAdmitted, untrackTargets, type UntrackPageVerdict } from './untrack-admission.ts';
 export { untrackAdmitted, untrackPageCandidates } from './untrack-admission.ts';
@@ -91,6 +92,9 @@ export interface CommitPushResult {
   superseded_remote_paths?: string[];
   /** A managed canonical worktree: the named paths were committed (or had no change) and nothing was pushed. */
   managed?: true;
+  /** GST-2988 (`secrets.on_push` redact): values that look like secrets in the unpushed commits were replaced by store markers before the push. */
+  redaction?: Pick<RedactOutcome, 'values' | 'rebuilt' | 'old_head' | 'new_head' | 'push_target' | 'backup_ref' | 'held' | 'held_commit' | 'side_refs' | 'unsigned' | 'spooled' | 'map' | 'rules'>;
+  notices?: Notice[];
   /** Managed only: commits on the branch its upstream lacks as last fetched; null when no fetched upstream can be read. */
   unpublished?: number | null;
   /** Managed only: the branch's configured upstream (`origin/main`); null when it names none. */
@@ -1496,14 +1500,30 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     throw busy;
   }
 
+  let redaction: RedactOutcome | undefined;
   const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>, expectRemote?: string) => {
     const requested = existsSync(requestPath);
     rmSync(requestPath, { force: true });
     try {
-      const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
-      const target = start && !isAncestor(root, start, head) ? start : head;
+      let head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
+      const fromHead = !(start && !isAncestor(root, start, head));
+      let target = fromHead ? pushableHead(root, head) : start!;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
-      const published = publish(ctx, target, resolutions, expectRemote, cwd);
+      let published: Published;
+      try {
+        published = publish(ctx, target, resolutions, expectRemote, cwd);
+      } catch (e) {
+        // GST-2988: with secrets.on_push redact (the default), the checked-out branch's unpushed commits are rebuilt with store markers and published.
+        if ((e as { code?: string }).code !== 'publish_secret_found' || !fromHead || elsewhere || onPushMode() !== 'redact') throw e;
+        const base = git(root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim();
+        const outcome = redactUnpushed(root, { base, sealer: spoolSealer(root, null), publishLockHeld: true, lockWaitMs: opts.lockWaitMs, ...(opts.scanTimeoutMs ? { budgetMs: opts.scanTimeoutMs } : {}) });
+        if (!outcome || !('redacted' in outcome)) throw e;
+        redaction = outcome;
+        head = outcome.new_head;
+        target = outcome.push_target;
+        if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
+        published = publish(ctx, target, resolutions, expectRemote, cwd);
+      }
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       rmSync(absGitPath(root, CREDENTIAL_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
@@ -1539,6 +1559,8 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     integrated: published.integrated, confirmed: published.confirmed, checkout: moved.checkout, ...(moved.reason ? { lagging_reason: moved.reason } : {}),
     ...(published.quarantined ? { quarantined: published.quarantined } : {}),
     ...(published.superseded ? { superseded_remote_paths: published.superseded } : {}),
+    ...(redaction ? { redaction: { values: redaction.values, rebuilt: redaction.rebuilt, old_head: redaction.old_head, new_head: redaction.new_head, push_target: redaction.push_target, backup_ref: redaction.backup_ref,
+      held: redaction.held, held_commit: redaction.held_commit, side_refs: redaction.side_refs, unsigned: redaction.unsigned, spooled: redaction.spooled, map: redaction.map, rules: redaction.rules }, ...(redaction.notices.length ? { notices: redaction.notices } : {}) } : {}),
   };
   if (skipped.length) throw skippedPathsError(root, skipped, result);
   return result;

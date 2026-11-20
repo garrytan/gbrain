@@ -175,13 +175,8 @@ export interface FenceHold { source_id: string; kind: FenceGenerationKind; slug:
 
 /** The held fence results of `sources` (one page with `slug`), oldest first. */
 export async function listFenceHolds(db: BrainEngine, sources: readonly string[], slug?: string): Promise<FenceHold[]> {
-  const params: unknown[] = [[...sources], [...FENCE_GENERATION_KINDS]];
-  if (slug !== undefined) params.push(fenceOwnerKey(slug));
-  const rows = await db.executeRaw<{ source_id: string; kind: FenceGenerationKind; owner_key: string; held_reason: HeldReason; held_context: Record<string, unknown> | null; created_at: string }>(
-    `SELECT source_id, kind, owner_key, held_reason, held_context, created_at::text AS created_at FROM derived_generations
-      WHERE source_id = ANY($1::text[]) AND kind = ANY($2::text[]) AND state = 'held'${slug === undefined ? '' : ' AND owner_key = $3'}
-      ORDER BY created_at, id`, params);
-  return rows.map(row => ({ source_id: row.source_id, kind: row.kind, slug: fenceSlugOf(row.owner_key) ?? row.owner_key, reason: row.held_reason,
+  const rows = await db.listFenceHoldRows(sources, FENCE_GENERATION_KINDS, slug === undefined ? undefined : fenceOwnerKey(slug));
+  return rows.map(row => ({ source_id: row.source_id, kind: row.kind as FenceGenerationKind, slug: fenceSlugOf(row.owner_key) ?? row.owner_key, reason: row.held_reason as HeldReason,
     read: String(row.held_context?.read ?? 'absent'), rows: Number(row.held_context?.rows ?? 0), since: row.created_at,
     writer: typeof row.held_context?.writer === 'string' ? row.held_context.writer : null }));
 }

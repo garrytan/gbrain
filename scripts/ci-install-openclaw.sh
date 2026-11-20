@@ -12,7 +12,9 @@
 #     missed the window, so a registry race gets its own longer back-off.
 #
 # Any other failure keeps the generic retries. Nothing else is retried or hidden:
-# after the last attempt the step fails with npm's own log.
+# after the last attempt the step fails with npm's own log. A release that refuses
+# the runner's Node (its preinstall prints "requires Node ...") fails at once with
+# the running Node's version, since no retry can fix it.
 #
 # Environment (defaults are the CI values; the test overrides them):
 #   OPENCLAW_SPEC                   package spec, default openclaw@2026.4.9
@@ -35,6 +37,10 @@ while :; do
   attempt=$((attempt + 1))
   if timeout "$attempt_timeout" npm install -g "$spec" 2>&1 | tee "$log"; then
     exit 0
+  fi
+  if grep -q 'requires Node' "$log"; then
+    echo "::error::openclaw install: $spec does not run on this Node ($(node --version 2>/dev/null || echo 'no node')): $(grep -v 'error command' "$log" | grep -m1 -o 'requires Node.*') Pin a newer Node with actions/setup-node before this step." >&2
+    exit 1
   fi
   if grep -Eq 'npm (error|ERR!) code E(TARGET|404)\b' "$log"; then
     race_failures=$((race_failures + 1))

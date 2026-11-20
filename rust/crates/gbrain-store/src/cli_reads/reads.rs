@@ -18,7 +18,7 @@ use super::pg_text::{
 };
 use crate::alias_fanout_reads::reject_nul;
 use crate::aliases::alias_row_slugs;
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::{read_chunks, read_segment_view};
 use crate::error::{INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -95,7 +95,7 @@ impl<'a> Sources<'a> {
 
 /// Walks the page-id index from `after + 1` in id order until `f` returns false. Ids are read in
 /// slices so the callback can read other records between scans.
-fn pages_after(
+pub(super) fn pages_after(
     read: &dyn KvRead,
     after: i64,
     f: &mut dyn FnMut(PageRecord) -> Result<bool>,
@@ -177,6 +177,8 @@ impl EntityTypeFilter {
 #[serde(default, rename_all = "camelCase")]
 pub struct RemoteCaller {
     pub exclude_private: bool,
+    /// The caller's page policy (`privatePagesFilterForCaller('p')`) when the member serves
+    /// `excludePrivate`. `exclude_private` with no policy refuses.
     pub policy: Option<PrivacyPolicy>,
 }
 
@@ -670,6 +672,7 @@ impl Store {
             {
                 continue;
             }
+            // The privacy filter is a WHERE clause: it runs before LIMIT.
             if let Some(policy) = policy
                 && page_hidden(&*read, &page, policy)?
             {

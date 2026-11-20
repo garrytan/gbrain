@@ -2,8 +2,8 @@
  * BrainEngine parity — versions + raw_files families.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: page version snapshots (create / list / revert), raw sidecar
- *    data and file metadata rows behave identically on every engine arm
+ *  - Contract: page version snapshots (create / list / revert / newest at a tier), raw sidecar
+ *    data and file metadata rows (listFiles' order included) behave identically on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; a Rust arm later through
  *    test/engine-parity/harness.ts).
  *  - Regression: an engine that snapshots the wrong fields, orders history
@@ -21,6 +21,7 @@ import { describe, expect } from 'bun:test';
 import type { FileRow } from '../../src/core/engine.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -99,6 +100,43 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'readLatestVersionIdAtTier answers the page\'s newest version stamped with the tier, or null',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'getPage', 'createVersion', 'readLatestVersionIdAtTier'] },
+    async (engine) => {
+      const body = { type: 'note' as const, title: 'Tiered', compiled_truth: 'Body.', timeline: '' };
+      await engine.putPage('notes/tiered', body);
+      const plain = await engine.createVersion('notes/tiered');
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(
+          ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+          ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'import' })],
+        );
+        await tx.putPage('notes/tiered', { ...body, compiled_truth: 'Curated body.' });
+      });
+      const curatedOne = await engine.createVersion('notes/tiered');
+      const curatedTwo = await engine.createVersion('notes/tiered');
+      await engine.putPage('notes/other', { ...body, title: 'Other' });
+      await engine.createVersion('notes/other');
+      const pageId = (await engine.getPage('notes/tiered'))!.id;
+      const otherId = (await engine.getPage('notes/other'))!.id;
+      const curated = await engine.readLatestVersionIdAtTier(pageId, 'operator_curated');
+      const unknown = await engine.readLatestVersionIdAtTier(pageId, 'unknown');
+      expect(curated).toBe(curatedTwo.id);
+      // putPage may snapshot the prior body too, so the newest unknown version is the plain snapshot or a later one.
+      expect(unknown).not.toBeNull();
+      expect(unknown!).toBeGreaterThanOrEqual(plain.id);
+      expect(unknown!).toBeLessThan(curatedOne.id);
+      return {
+        curatedIsNewest: curated === curatedTwo.id,
+        unknownBeforeCurated: unknown !== null && unknown >= plain.id && unknown < curatedOne.id,
+        agentWritten: await engine.readLatestVersionIdAtTier(pageId, 'agent_written'),
+        otherCurated: await engine.readLatestVersionIdAtTier(otherId, 'operator_curated'),
+        missingPage: await engine.readLatestVersionIdAtTier(pageId + otherId + 1000, 'operator_curated'),
+      };
+    },
+  );
+
+  parityTest(
     'createVersion on a missing page throws; getVersions of a missing page is empty',
     { methods: ['createVersion', 'getVersions'] },
     async (engine) => {
@@ -163,6 +201,134 @@ describe('engine parity: versions', () => {
         defaultPage: defaultPage?.compiled_truth,
         otherPage: otherPage?.compiled_truth,
       };
+    },
+  );
+
+  parityTest(
+    'a change reason stamps the versions after a mark; getVersions reads it as replaced_because',
+    { methods: ['putPage', 'getPage', 'createVersion', 'readLatestVersionId', 'stampVersionChangeReason', 'getVersions'] },
+    async (engine) => {
+      const write = (body: string) => engine.putPage('notes/why', { type: 'note', title: 'Why', compiled_truth: body, timeline: '' });
+      await write('Body one.');
+      const pageId = Number((await engine.getPage('notes/why'))!.id);
+      const none = await engine.readLatestVersionId(pageId);
+      const v1 = await engine.createVersion('notes/why');
+      const latestIsV1 = (await engine.readLatestVersionId(pageId)) === Number(v1.id);
+      const first = await engine.stampVersionChangeReason({ pageId, afterVersionId: 0, reason: 'first edit' });
+      await write('Body two.');
+      const v2 = await engine.createVersion('notes/why');
+      const second = await engine.stampVersionChangeReason({ pageId, afterVersionId: Number(v1.id), reason: 'second edit' });
+      await write('Body three.');
+      const v3 = await engine.createVersion('notes/why', { reason: 'imported reason' });
+      const nothing = await engine.stampVersionChangeReason({ pageId, afterVersionId: Number(v3.id), reason: 'too late' });
+      const missing = { latest: await engine.readLatestVersionId(987_654), stamped: await engine.stampVersionChangeReason({ pageId: 987_654, afterVersionId: 0, reason: 'none' }) };
+      const latestIsV3 = (await engine.readLatestVersionId(pageId)) === Number(v3.id);
+      const history = (await engine.getVersions('notes/why')).map(v => [v.compiled_truth, v.replaced_because ?? null]);
+      expect({ none, latestIsV1, first, second, nothing, latestIsV3 }).toEqual({ none: null, latestIsV1: true, first: 1, second: 1, nothing: 0, latestIsV3: true });
+      expect(history).toEqual([['Body three.', 'imported reason'], ['Body two.', 'second edit'], ['Body one.', 'first edit']]);
+      expect(missing).toEqual({ latest: null, stamped: 0 });
+      return { none, latestIsV1, first, second, nothing, latestIsV3, missing, history, created: [v2, v3].map(v => (v as { change_reason?: string | null }).change_reason ?? null) };
+    },
+  );
+
+  /** A page whose snapshots differ in privacy: private, named readers, world, pinned question, then a world live page. */
+  async function privateHistory(engine: Parameters<Parameters<typeof parityTest>[2]>[0]): Promise<void> {
+    const edits: Array<[string, Record<string, unknown>]> = [
+      ['Private draft', { visibility: 'private' }],
+      ['Team draft', { readable_by: ['alice-example', 'group:team-a'] }],
+      ['World draft', {}],
+      ['Pinned draft', { pinned_question: true }],
+      ['Aliased draft', { access: 'restricted' }],
+    ];
+    for (const [title, frontmatter] of edits) {
+      await engine.putPage('notes/hist', { type: 'note', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+      await engine.createVersion('notes/hist');
+    }
+    await engine.putPage('notes/hist', { type: 'note', title: 'Live', compiled_truth: 'Live.', timeline: '' });
+    await engine.putPage('notes/private-live', { type: 'note', title: 'Shown once', compiled_truth: 'One.', timeline: '' });
+    await engine.createVersion('notes/private-live');
+    await engine.putPage('notes/private-live', { type: 'note', title: 'Now private', compiled_truth: 'Two.', timeline: '', frontmatter: { visibility: 'private' } });
+    await engine.putPage('notes/team-live', { type: 'note', title: 'Team v1', compiled_truth: 'One.', timeline: '' });
+    await engine.createVersion('notes/team-live');
+    await engine.putPage('notes/team-live', { type: 'note', title: 'Team now', compiled_truth: 'Two.', timeline: '', frontmatter: { readable_by: 'alice-example' } });
+  }
+
+  parityTest(
+    'getVersions under excludePrivate hides a hidden live page and every private, pinned or reader-named snapshot',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      await privateHistory(engine);
+      const titles = async (slug: string, opts: { excludePrivate?: boolean; limit?: number; includeBody?: boolean } = {}) =>
+        (await engine.getVersions(slug, opts)).map((v) => v.title);
+      const open = await titles('notes/hist');
+      const hidden = await titles('notes/hist', { excludePrivate: true });
+      const limited = await titles('notes/hist', { excludePrivate: true, limit: 1 });
+      const meta = await titles('notes/hist', { excludePrivate: true, includeBody: false });
+      const privateLive = await titles('notes/private-live', { excludePrivate: true });
+      const teamLive = await titles('notes/team-live', { excludePrivate: true });
+      expect(open).toEqual(expect.arrayContaining(['Private draft', 'Team draft', 'World draft', 'Pinned draft', 'Aliased draft']));
+      expect(hidden).toContain('World draft');
+      expect(hidden).not.toContain('Private draft');
+      expect(hidden).not.toContain('Team draft');
+      expect(hidden).not.toContain('Pinned draft');
+      expect(hidden).not.toContain('Aliased draft');
+      expect(limited).toEqual([hidden[0]]);
+      expect(meta).toEqual(hidden);
+      expect(privateLive).toEqual([]);
+      expect(teamLive).toEqual([]);
+      const reasons = (await engine.getVersions('notes/hist', { excludePrivate: true })).map((v) => v.replaced_because ?? null);
+      return { open, hidden, limited, meta, privateLive, teamLive, reasons };
+    },
+  );
+
+  parityTest(
+    'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
+    { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const slug = 'memory/unattributed';
+      const labels = new Map<string, string>();
+      await engine.putPage(slug, { type: 'note', title: 'Held', compiled_truth: 'Held body.', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      for (let i = 1; i <= 8; i++) labels.set(String((await engine.createVersion(slug, { sourceId: 'default' })).id), `v${i}`);
+      const pageId = Number((await engine.getPage(slug, { sourceId: 'default' }))!.id);
+      const gap = async () => (await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 }))?.gap_at instanceof Date;
+      const kept = async () => (await engine.getVersions(slug, { sourceId: 'default', includeBody: false })).map((v) => labels.get(String(v.id)) ?? 'unlabelled');
+      const gapBefore = await gap();
+      const pruned = await engine.pruneHoldingPageVersions(pageId);
+      const afterFirst = await kept();
+      const again = await engine.pruneHoldingPageVersions(pageId);
+      const unknown = await engine.pruneHoldingPageVersions(987_654);
+      await engine.putPage('notes/few', { type: 'note', title: 'Few', compiled_truth: 'Few.', timeline: '' });
+      await engine.createVersion('notes/few');
+      const fewId = Number((await engine.getPage('notes/few'))!.id);
+      const few = await engine.pruneHoldingPageVersions(fewId);
+      const result = { gapBefore, pruned, afterFirst, again, unknown, few, gapAfter: await gap(), fewVersions: (await engine.getVersions('notes/few')).length };
+      expect(result).toEqual({
+        gapBefore: false, pruned: 3, afterFirst: ['v8', 'v7', 'v6', 'v5', 'v4'], again: 0, unknown: 0, few: 0, gapAfter: true, fewVersions: 1,
+      });
+      return result;
+    },
+  );
+
+  parityTest(
+    'getVersions under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      await privateHistory(engine);
+      const read = (access: Parameters<typeof withCallerAccess>[0], slug = 'notes/hist') => withCallerAccess(access, async () =>
+        (await engine.getVersions(slug, { excludePrivate: true })).map((v) => v.title));
+      const member = await read({ identity: ['member:alice-example', 'group:team-a'], hidePrivate: true });
+      const granted = await read({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      const stranger = await read({ identity: ['member:bob-example'], hidePrivate: true });
+      const memberTeam = await read({ identity: ['member:alice-example'], hidePrivate: true }, 'notes/team-live');
+      const strangerTeam = await read({ identity: ['member:bob-example'], hidePrivate: true }, 'notes/team-live');
+      expect(member).toContain('Team draft');
+      expect(member).not.toContain('Private draft');
+      expect(granted).toContain('Private draft');
+      expect(granted).not.toContain('Pinned draft');
+      expect(stranger).not.toContain('Team draft');
+      expect(memberTeam).toContain('Team v1');
+      expect(strangerTeam).toEqual([]);
+      return { member, granted, stranger, memberTeam, strangerTeam };
     },
   );
 });
@@ -271,6 +437,33 @@ describe('engine parity: raw data + files', () => {
         bob: forBob.map(fileView),
         orphan: fileView(orphan),
         empty: await engine.listFilesForPage(-1),
+      };
+    },
+  );
+
+  // `gbrain files list [slug]` reads listFiles: the census found the Rust engine refused it (its SQL ran through
+  // sqlQueryForEngine). Equal filenames under one slug come back in insertion (id) order on every engine.
+  parityTest(
+    'listFiles lists every file by page slug then filename, or one slug in any source, up to the limit',
+    { methods: ['upsertFile', 'listFiles'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      await engine.upsertFile({ page_slug: 'people/bob', filename: 'b.png', storage_path: 'default/b.png', content_hash: 'h1' });
+      await engine.upsertFile({ source_id: 'work', page_slug: 'people/alice', filename: 'z.png', storage_path: 'work/z.png', content_hash: 'h2', mime_type: 'image/png', size_bytes: 9 });
+      await engine.upsertFile({ filename: 'loose.png', storage_path: 'default/loose.png', content_hash: 'h3' });
+      await engine.upsertFile({ page_slug: 'people/alice', filename: 'a.png', storage_path: 'default/a.png', content_hash: 'h4' });
+      await engine.upsertFile({ source_id: 'work', page_slug: 'people/alice', filename: 'a.png', storage_path: 'work/a.png', content_hash: 'h5' });
+      const paths = (rows: FileRow[]) => rows.map((f) => f.storage_path);
+      const all = await engine.listFiles({ limit: 100 });
+      expect(paths(all)).toEqual(['default/a.png', 'work/a.png', 'work/z.png', 'default/b.png', 'default/loose.png']);
+      const alice = await engine.listFiles({ pageSlug: 'people/alice', limit: 100 });
+      expect(paths(alice)).toEqual(['default/a.png', 'work/a.png', 'work/z.png']);
+      return {
+        all: all.map(fileView),
+        firstTwo: paths(await engine.listFiles({ limit: 2 })),
+        alice: alice.map(fileView),
+        nobody: await engine.listFiles({ pageSlug: 'people/nobody', limit: 100 }),
+        none: await engine.listFiles({ limit: 0 }),
       };
     },
   );

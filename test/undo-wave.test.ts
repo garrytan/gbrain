@@ -34,9 +34,11 @@ interface MockEngineState {
 }
 
 interface SqlCall { sql: string; params: unknown[] }
+interface PurgeCall { waveVersion: string; dryRun: boolean }
 
-function buildMockEngine(state: Partial<MockEngineState>): { engine: BrainEngine; sqls: SqlCall[] } {
+function buildMockEngine(state: Partial<MockEngineState>): { engine: BrainEngine; sqls: SqlCall[]; purges: PurgeCall[] } {
   const sqls: SqlCall[] = [];
+  const purges: PurgeCall[] = [];
   const engine = {
     kind: 'pglite',
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
@@ -61,14 +63,6 @@ function buildMockEngine(state: Partial<MockEngineState>): { engine: BrainEngine
       if (sql.includes('UPDATE take_grade_cache')) {
         return (state.gradeCacheRows ?? []).map(take_id => ({ take_id })) as unknown as T[];
       }
-      // dry-run count: calibration_profiles
-      if (sql.includes('FROM calibration_profiles') && sql.includes('COUNT(*)')) {
-        return [{ count: state.profilesCount ?? 0 } as unknown as T];
-      }
-      // DELETE calibration_profiles RETURNING
-      if (sql.includes('DELETE FROM calibration_profiles')) {
-        return (state.profilesRows ?? []).map(id => ({ id })) as unknown as T[];
-      }
       // dry-run count: take_nudge_log
       if (sql.includes('FROM take_nudge_log') && sql.includes('COUNT(*)')) {
         return [{ count: state.nudgesCount ?? 0 } as unknown as T];
@@ -79,18 +73,23 @@ function buildMockEngine(state: Partial<MockEngineState>): { engine: BrainEngine
       }
       return [];
     },
+    // The profiles purge is a typed member: it returns the dry-run count or the number of rows deleted.
+    async purgeCalibrationProfilesByWave(args: PurgeCall): Promise<number> {
+      purges.push(args);
+      return args.dryRun ? (state.profilesCount ?? 0) : (state.profilesRows ?? []).length;
+    },
     // The take un-resolution runs in a maintenance transaction; the mock is its own transaction engine.
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(engine); },
     // The maintenance attribution reads and sets transaction settings through typed methods; nothing is set yet.
     async readTransactionSettings(names: readonly string[]) { return names.map(() => null); },
     async applyTransactionSettings() {},
   } as unknown as BrainEngine;
-  return { engine, sqls };
+  return { engine, sqls, purges };
 }
 
 describe('undoWave — dry-run posture', () => {
   test('dryRun=true returns counts without UPDATE/DELETE', async () => {
-    const { engine, sqls } = buildMockEngine({
+    const { engine, sqls, purges } = buildMockEngine({
       targetTakeIds: [1, 2, 3],
       resolutionCount: 2,
       gradeCacheCount: 3,
@@ -107,12 +106,14 @@ describe('undoWave — dry-run posture', () => {
     expect(sqls.find(s => s.sql.includes('UPDATE takes'))).toBeUndefined();
     expect(sqls.find(s => s.sql.includes('DELETE FROM'))).toBeUndefined();
     expect(sqls.find(s => s.sql.includes('UPDATE take_grade_cache'))).toBeUndefined();
+    // The profiles purge counted the wave on a dry run, deleting nothing.
+    expect(purges).toEqual([{ waveVersion: 'v0.36.1.0', dryRun: true }]);
   });
 });
 
 describe('undoWave — happy path', () => {
   test('all 4 steps execute + return counts', async () => {
-    const { engine, sqls } = buildMockEngine({
+    const { engine, sqls, purges } = buildMockEngine({
       targetTakeIds: [10, 11, 12],
       revertedTakes: [10, 11], // 12 was overridden by a manual resolve, skipped
       gradeCacheRows: [10, 11, 12],
@@ -128,7 +129,9 @@ describe('undoWave — happy path', () => {
     expect(out.gstack_scrub_attempted).toBe(false); // not opted in
     // Verify wave_version parameter threaded everywhere.
     const insertWaveParams = sqls.filter(s => Array.isArray(s.params) && (s.params as unknown[])[0] === 'v0.36.1.0');
-    expect(insertWaveParams.length).toBeGreaterThan(2);
+    expect(insertWaveParams.length).toBeGreaterThan(1);
+    // ...and into the typed profiles purge.
+    expect(purges).toEqual([{ waveVersion: 'v0.36.1.0', dryRun: false }]);
   });
 
   test('resolved_by filter: UPDATE takes scoped to wave-applied resolutions only', async () => {
@@ -181,16 +184,18 @@ describe('undoWave — empty wave', () => {
 
 describe('undoWave — wave_version parameter is threaded through all queries', () => {
   test('queries use the supplied wave version', async () => {
-    const { engine, sqls } = buildMockEngine({});
+    const { engine, sqls, purges } = buildMockEngine({});
     await undoWave(engine, { waveVersion: 'v0.36.1.0' });
     const waveVersionUsedAsParam0 = sqls.filter(s => s.params[0] === 'v0.36.1.0').length;
-    expect(waveVersionUsedAsParam0).toBeGreaterThanOrEqual(3);
+    expect(waveVersionUsedAsParam0).toBeGreaterThanOrEqual(2);
+    expect(purges.map(p => p.waveVersion)).toEqual(['v0.36.1.0']);
   });
 
   test('different wave versions DO NOT collide', async () => {
-    const { engine, sqls } = buildMockEngine({});
+    const { engine, sqls, purges } = buildMockEngine({});
     await undoWave(engine, { waveVersion: 'v0.37.0.0' });
     expect(sqls.find(s => s.params[0] === 'v0.37.0.0')).toBeDefined();
+    expect(purges.map(p => p.waveVersion)).toEqual(['v0.37.0.0']);
     expect(sqls.find(s => s.params[0] === 'v0.36.1.0')).toBeUndefined();
   });
 });

@@ -4,8 +4,10 @@
  * BrainEngine calls through it (client.ts). The server takes any BrainEngine, so tests can host a PGLite engine as the
  * owner while the Rust store is still being built.
  *
- * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in a FIFO queue; at its
- *   `deadline_at` it ends with `timeout` (queued or running), and a `cancel` frame ends it with nothing more sent.
+ * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in its connection's queue,
+ *   and a free permit goes to the connections in turn (round-robin, FIFO inside one connection), so one client that
+ *   floods the owner does not starve another. At its `deadline_at` a call ends with `timeout` (queued or running), and
+ *   a `cancel` frame ends it with nothing more sent.
  * - Every call runs under its own AbortController: the request signal of the call (request-signal.ts), any
  *   AbortSignal argument the client sent, and the read deadline of the caller are restored in the owner.
  * - A permit is released only when the engine call itself settles, never when its reply is sent early (a timeout or
@@ -101,7 +103,17 @@ export async function serveOwnerEngine(
   const permits = Math.max(1, opts.permits ?? OWNER_IPC_DEFAULT_PERMITS);
   const maxFrameBytes = opts.maxFrameBytes ?? OWNER_IPC_MAX_FRAME_BYTES;
   const wholeOperations = opts.wholeOperations ?? {};
-  const queue: PendingCall[] = [];
+  // One FIFO lane per connection, in turn order: the next permit goes to the first lane, which then moves to the end.
+  const lanes = new Map<object, PendingCall[]>();
+  const nextQueued = (): PendingCall | undefined => {
+    for (const [lane, calls] of lanes) {
+      lanes.delete(lane);
+      const call = calls.shift();
+      if (calls.length) lanes.set(lane, calls);
+      if (call) return call;
+    }
+    return undefined;
+  };
   const sockets = new Set<Socket>();
   let active = 0;
   let closing = false;
@@ -116,8 +128,9 @@ export async function serveOwnerEngine(
   };
 
   const pump = () => {
-    while (active < permits && queue.length) {
-      const call = queue.shift()!;
+    while (active < permits) {
+      const call = nextQueued();
+      if (!call) return;
       if (call.done) continue;
       if (closing) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
       // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
@@ -174,6 +187,7 @@ export async function serveOwnerEngine(
       sockets.delete(socket);
       for (const call of calls.values()) { call.done = true; call.controller.abort(new DOMException('The client closed its connection.', 'AbortError')); }
       calls.clear();
+      lanes.delete(calls);
     });
     readFrames(socket, frame => {
       switch (frame.t) {
@@ -239,7 +253,8 @@ export async function serveOwnerEngine(
       }, ms);
       call.timer.unref?.();
     }
-    queue.push(call);
+    const lane = lanes.get(calls);
+    if (lane) lane.push(call); else lanes.set(calls, [call]);
     pump();
   };
 
@@ -264,17 +279,19 @@ export async function serveOwnerEngine(
 
   return {
     socketPath,
-    stats: () => ({ active, queued: queue.filter(call => !call.done).length, connections: sockets.size }),
+    stats: () => ({ active, queued: [...lanes.values()].reduce((sum, calls) => sum + calls.filter(call => !call.done).length, 0), connections: sockets.size }),
     // Stops new work, aborts every queued and running call, and resolves only when the server is closed AND every
     // engine call that started has settled, so the caller cannot release the owner lock while old work still runs.
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
       const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
-      for (const call of queue) {
-        if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+      for (const calls of lanes.values()) {
+        for (const call of calls) {
+          if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+        }
       }
-      queue.length = 0;
+      lanes.clear();
       for (const socket of sockets) socket.destroy();
       while (running.size) await Promise.allSettled([...running]);
       await serverClosed;

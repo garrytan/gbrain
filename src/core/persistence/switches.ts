@@ -9,7 +9,7 @@
  * without a round trip per write. Config writes are trusted-local only (no
  * remote operation writes config), so a remote caller cannot flip a switch.
  */
-import type { SqlEngine } from './model.ts';
+import type { RawSqlEngine } from './model.ts';
 import { DEFAULT_PREPARATION_POLICY, PREPARATION_BUDGET_CONFIG_KEYS, resolvePreparationPolicy, type PreparationPolicy } from './preparation-budget.ts';
 import { readConfigMap } from '../config-values.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
@@ -73,11 +73,11 @@ export function viewedEngine<T extends object>(engine: T): T { return (views.get
  * The switch snapshot of `engine`'s brain, at most SWITCH_TTL_MS old. A failed read is not kept.
  * `signal` cancels a read this call starts (the consumer's tick reads under its phase deadline).
  */
-export function readWriteSwitches(viewed: SqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitches> {
+export function readWriteSwitches(viewed: RawSqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitches> {
   return readWriteSwitchSnapshot(viewed, opts).then(snapshot => snapshot.switches);
 }
 /** The switches and the preparation budgets of `engine`'s brain, from the same snapshot. */
-export function readWriteSwitchSnapshot(viewed: SqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitchSnapshot> {
+export function readWriteSwitchSnapshot(viewed: RawSqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitchSnapshot> {
   const now = opts.now ?? Date.now;
   const engine = viewedEngine(viewed);
   const held = snapshots.get(engine);
@@ -99,11 +99,11 @@ export function seedWriteSwitchSnapshot(viewed: object, rows: Record<string, str
   snapshots.set(engine, { at: now, generation, read: Promise.resolve(resolve(new Map(Object.entries(rows)))) });
 }
 /** The preparation budgets in effect (defaults when the read fails). */
-export async function readPreparationPolicy(engine: SqlEngine): Promise<PreparationPolicy> {
+export async function readPreparationPolicy(engine: RawSqlEngine): Promise<PreparationPolicy> {
   return readWriteSwitchSnapshot(engine).then(snapshot => snapshot.preparation, () => ({ ...DEFAULT_PREPARATION_POLICY }));
 }
 
-export async function writeSwitchOn(engine: SqlEngine, name: WriteSwitch): Promise<boolean> {
+export async function writeSwitchOn(engine: RawSqlEngine, name: WriteSwitch): Promise<boolean> {
   return (await readWriteSwitches(engine))[name];
 }
 

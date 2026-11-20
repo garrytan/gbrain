@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 300780,
-    "stdoutSha256": "8f97f2de38e80665f2b4290a0c7b3235c552b728d3957ed59861c8c0a49bbc96",
+    "stdoutBytes": 301442,
+    "stdoutSha256": "75d5b3e9ae6e8072f3c5bec08c12f68958e19f3663c1049f59e2569431e07e49",
     "toolNames": [
       "remember",
       "entity",
@@ -99,6 +99,7 @@
       "storage_list",
       "storage_register",
       "storage_update",
+      "reveal_secret",
       "submit_job",
       "get_job",
       "wait_job",
@@ -4760,6 +4761,30 @@
         "scope": "write"
       },
       {
+        "description": "Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation list names reveal_secret and read access to a page holding the marker; every call is audited.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "reveal_secret",
+        "parameters": {
+          "id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Entry id from the marker (ss_ followed by 12 hex).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",
         "idempotent": false,
         "local_only": false,
@@ -6416,7 +6441,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,

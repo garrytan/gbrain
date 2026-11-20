@@ -1,9 +1,9 @@
 /** Writer-version stamps on persistence_requests (migration 178): observation of older writers, not prevention. */
 import { VERSION } from '../../version.ts';
 import { existingHostIdFor, hostIdFor } from './identity.ts';
-import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from './model.ts';
+import type { RawSqlEngine, SqlEngine } from './model.ts';
 import { lacksRawSql } from '../engine-capabilities.ts';
+import type { BrainEngine } from '../engine.ts';
 
 /** Writers older than this may still delete database-only timeline rows during publication. */
 export const WRITER_VERSION_FLOOR = '0.60.5.0';
@@ -46,22 +46,11 @@ export interface ObservedWriterVersion {
   role: 'admitter' | 'consumer'; host_id: string | null; principal: string; version: string | null; version_label: string; last_seen: string | null;
 }
 const iso = (value: unknown) => value === null || value === undefined ? null : new Date(value as string).toISOString();
+const labelled = <R extends { version: string | null }>(row: R) => ({ ...row, version_label: writerVersionLabel(row.version) });
 
 /** Latest admitter and consumer version per host and principal across all retained requests, newest first. */
-export async function listWriterVersions(engine: SqlEngine, limit = 50): Promise<ObservedWriterVersion[]> {
-  const rows = await engine.executeRaw<{ role: 'admitter' | 'consumer'; host_id: string | null; principal: string; version: string | null; last_seen: unknown }>(
-    `SELECT * FROM (
-      SELECT DISTINCT ON (admitter_host_id,principal_kind,principal_id) 'admitter' AS role,admitter_host_id::text AS host_id,
-        principal_kind||':'||principal_id AS principal,admitter_version AS version,created_at AS last_seen
-      FROM persistence_requests ORDER BY admitter_host_id,principal_kind,principal_id,created_at DESC) a
-    UNION ALL SELECT * FROM (
-      SELECT DISTINCT ON (consumer_host_id,principal_kind,principal_id) 'consumer' AS role,consumer_host_id::text AS host_id,
-        principal_kind||':'||principal_id AS principal,consumer_version AS version,COALESCE(published_at,completed_at) AS last_seen
-      FROM persistence_requests WHERE state='committed'
-      ORDER BY consumer_host_id,principal_kind,principal_id,COALESCE(published_at,completed_at) DESC) c
-    ORDER BY last_seen DESC LIMIT $1`, [limit]);
-  return rows.map(row => ({ role: row.role, host_id: row.host_id, principal: row.principal, version: row.version,
-    version_label: writerVersionLabel(row.version), last_seen: iso(row.last_seen) }));
+export async function listWriterVersions(engine: Pick<BrainEngine, 'listWriterVersions'>, limit = 50): Promise<ObservedWriterVersion[]> {
+  return (await engine.listWriterVersions(limit)).map(row => labelled(row));
 }
 
 export interface RecentWriterVersion extends ObservedWriterVersion { requests: number; }
@@ -72,10 +61,8 @@ export interface RecentWriterVersion extends ObservedWriterVersion { requests: n
  * admitted before the cutoff and published after it is judged by its publication. An unstamped consumer's
  * host falls back to the worktree owner, the only host that can publish a filesystem request.
  */
-export async function recentWriterVersions(engine: Pick<BrainEngine, 'listRecentWriterVersions'>, days = 7): Promise<RecentWriterVersion[]> {
-  const rows = await engine.listRecentWriterVersions(days);
-  return rows.map(row => ({ role: row.role, host_id: row.host_id, principal: row.principal, version: row.version,
-    version_label: writerVersionLabel(row.version), last_seen: iso(row.last_seen), requests: Number(row.requests) }));
+export async function recentWriterVersions(engine: Pick<BrainEngine, 'recentWriterVersions'>, days = 7): Promise<RecentWriterVersion[]> {
+  return (await engine.recentWriterVersions(days)).map(row => labelled(row));
 }
 
 /** A writer the segmented-storage gate saw in its window, by the evidence it left. */
@@ -107,12 +94,12 @@ export interface SegmentedGateWriter {
  * ingest-log row (a single-page put on a brain without managed persistence, a run that dies before logging), and
  * one-shot readers and exporters, which write nothing.
  */
-export async function segmentedGateWriters(engine: SqlEngine, days: number, floor: string): Promise<SegmentedGateWriter[]> {
+export async function segmentedGateWriters(engine: RawSqlEngine, days: number, floor: string): Promise<SegmentedGateWriter[]> {
   return (await segmentedGateEvidence(engine, days)).filter(row => !row.segment_reader || writerVersionBelowFloor(row.version, floor));
 }
 
 /** Every writer the gate read in the last `days`, passing or not, grouped as `segmentedGateWriters` groups them. */
-export async function segmentedGateEvidence(engine: SqlEngine, days: number): Promise<SegmentedGateWriter[]> {
+export async function segmentedGateEvidence(engine: RawSqlEngine, days: number): Promise<SegmentedGateWriter[]> {
   // An engine without raw SQL (Rust, D18) has no request journal or ingest log for an older writer to have left rows in.
   if (lacksRawSql(engine)) return [];
   const rows = await engine.executeRaw<Omit<SegmentedGateWriter, 'version_label' | 'last_seen' | 'requests' | 'first_seen'> & { last_seen: unknown; requests: number; first_seen: unknown }>(

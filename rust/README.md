@@ -105,8 +105,8 @@ The rule lives in `crates/gbrain-napi/build.rs`.
 the event loop is never blocked. The records live in a directory (`~/.gbrain/brain.rust/` in the
 design): `FORMAT` (JSON: `format_version`, `engine_abi`, `catalog_version`, `schema_version`,
 `brain_id`, `created_by`) and `records.redb`. The store is `crates/gbrain-store`: redb behind a
-narrow key-value trait (`kv.rs`); only `redb_kv.rs` names redb. This is a bake-off store: keyword
-search is a plain BM25 and is not search parity with PGLite (design D5).
+narrow key-value trait (`kv.rs`); only `redb_kv.rs` names redb. This is a bake-off store: its keyword and title
+search is a port of PostgreSQL's english full-text search and `ts_rank`, and matches PGLite (`docs/store/keyword.md`).
 
 Rules for every method:
 
@@ -119,7 +119,8 @@ Rules for every method:
   while the first is open; nothing is waited for.
 - `FORMAT` is read before the records are opened. A `format_version` this build does not read
   (`addon.formatVersions` lists them) rejects `format_unknown` and nothing is written. A missing
-  `FORMAT` is rebuilt from the records.
+  `FORMAT` is rebuilt from the records. Every format number, its upgrade and what an older build
+  does with a newer brain are in [`docs/store/format.md`](docs/store/format.md).
 
 ### Lifecycle
 
@@ -131,8 +132,10 @@ Rules for every method:
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
 
-`options` is `{ schemaVersion?: number, createdBy?: string }`. `schemaVersion` is what a fresh brain
-stores as config `version`; pass `LATEST_SCHEMA_VERSION`. `close` waits for calls already running,
+`options` is `{ schemaVersion?: number, createdBy?: string, embeddingModel?: string,
+embeddingDimensions?: number, chunkStrategy?: string }`. `schemaVersion` is what a fresh brain
+stores as config `version`; pass `LATEST_SCHEMA_VERSION`. The other three are config entries a fresh
+brain records ([docs/store/config.md](docs/store/config.md)). `close` waits for calls already running,
 then gives up the lock.
 
 ### Methods by family
@@ -177,6 +180,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
+| `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |

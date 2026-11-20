@@ -171,14 +171,4 @@ impl Brain {
             s.count_compacted_caller_refusals(&source_ids, &operations)
         })
     }
-
-    /// `listRecentWriterVersions(days)`.
-    #[napi]
-    pub fn list_recent_writer_versions<'env>(
-        &self,
-        env: &'env Env,
-        days: f64,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_recent_writer_versions(days))
-    }
 }

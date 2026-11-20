@@ -28,7 +28,7 @@ export const DOCTOR_PERSISTENCE_MEMBERS: readonly string[] = [
   'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs', 'readPublicationRefusals', 'countParkedEffects', 'listParkedEffects',
   'listGitPushHoldRows', 'listStalledCatchupRows', 'listParkedGroupRows', 'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects',
   'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'listManagedRoots', 'listUnboundSourcePages',
-  'readWriterVersionCutoff', 'listRecentWriterVersions', 'listRecentPurgeRequests', 'listStuckWorktreeRefreshes',
+  'listRecentPurgeRequests', 'listStuckWorktreeRefreshes',
   'listSourceBindingsForMovement', 'listRunningClaimOwners', 'listOwnerBindings', 'listConsumerOwners', 'listOverwriteCandidates',
   'listCallerRefusalRows', 'countCompactedCallerRefusals', 'listLocalEditAdoptions', 'listDerivationPurgeSweeps',
 ];
@@ -340,30 +340,7 @@ export async function listUnboundSourcePages(raw: EngineRawRead): Promise<Unboun
 
 // ---- writer-version.ts / writer-versions.ts / purge-mirror.ts / worktree-refresh.ts -----------------------------------------------
 
-const WRITER_VERSION_CUTOFF_SQL = `SELECT writer_version_cutoff AS cutoff FROM persistence_brain WHERE singleton=1`;
-/** The writer-version migration cutoff, or null when none is recorded. */
-export async function readWriterVersionCutoff(raw: EngineRawRead): Promise<unknown> {
-  const [row] = await raw<{ cutoff: unknown }>(WRITER_VERSION_CUTOFF_SQL);
-  return row?.cutoff;
-}
-
 export interface RecentWriterVersionRow { role: 'admitter' | 'consumer'; host_id: string | null; principal: string; version: string | null; last_seen: unknown; requests: number }
-const RECENT_WRITER_VERSIONS_SQL = `WITH cutoff AS (SELECT writer_version_cutoff AS at FROM persistence_brain WHERE singleton=1 AND writer_version_cutoff IS NOT NULL),
-    recent AS (SELECT r.*,COALESCE(r.published_at,r.completed_at) AS publication FROM persistence_requests r
-      WHERE r.state='committed' AND COALESCE(r.published_at,r.completed_at)>=now()-($1::double precision*interval '1 day'))
-    SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
-      r.admitter_version AS version,MAX(r.created_at) AS last_seen,COUNT(*)::integer AS requests
-    FROM recent r CROSS JOIN cutoff c WHERE r.created_at>=c.at GROUP BY 2,3,4
-    UNION ALL
-    SELECT 'consumer' AS role,COALESCE(r.consumer_host_id,w.owner_host_id)::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
-      r.consumer_version AS version,MAX(r.publication) AS last_seen,COUNT(*)::integer AS requests
-    FROM recent r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id CROSS JOIN cutoff c WHERE r.publication>=c.at GROUP BY 2,3,4
-    ORDER BY last_seen DESC`;
-/** Committed requests of the last `days`, grouped per role, host, principal and version. */
-export async function listRecentWriterVersions(raw: EngineRawRead, days: number): Promise<RecentWriterVersionRow[]> {
-  return raw<RecentWriterVersionRow>(RECENT_WRITER_VERSIONS_SQL, [days]);
-}
-
 const RECENT_PURGE_REQUESTS_SQL = `SELECT DISTINCT request FROM (
         SELECT request_id::text AS request FROM page_purges WHERE request_id IS NOT NULL AND purged_at > now() - make_interval(days => $1)
         UNION SELECT request_id::text FROM fact_purges WHERE request_id IS NOT NULL AND purged_at > now() - make_interval(days => $1)

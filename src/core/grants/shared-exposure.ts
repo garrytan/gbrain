@@ -32,6 +32,8 @@ import { localFederatedSourceIds, resolveSourceWithTier } from '../source-resolv
 import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
+import { expandReadShared } from './read-shared.ts';
+import { sqlQueryForEngine } from '../sql-query.ts';
 import { brainServes } from '../access/serves.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
@@ -66,9 +68,22 @@ export interface ChatCensus { sources: string[]; chat_pages: number; channels: n
  * federated source (serve-http's noGrantFederatedScope); an unscoped OAuth
  * client reads `default`; a scalar grant its source; a federated grant its
  * read set. A credential without read scope reads nothing.
+ *
+ * GST-2898: the one function that turns a grant into a read set. With the
+ * read-shared switch on, a listed grant (and a client with no list) also reads
+ * the shared set for its bound `member` (grants/read-shared.ts); an unscoped
+ * token already reads the floor, and `none` (also every drifted or malformed
+ * grant) reads nothing whatever the switch says. When the shared set cannot be
+ * read the stored list stands, as the verifiers do.
  */
-export async function credentialReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources'>): Promise<string[]> {
+export async function credentialReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources' | 'readShared'>, member: string | null = null): Promise<string[]> {
   if (!hasScope(grant.scopes, 'read')) return [];
+  const stored = await storedReadSources(engine, grant);
+  if (grant.readShared !== true || grant.sources.kind === 'none' || (grant.sources.kind === 'default' && grant.principal.kind === 'legacy_token')) return stored;
+  return (await expandReadShared(sqlQueryForEngine(engine), stored, member)).sources;
+}
+
+async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>): Promise<string[]> {
   switch (grant.sources.kind) {
     case 'default': return grant.principal.kind === 'legacy_token'
       ? await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default']
@@ -77,6 +92,28 @@ export async function credentialReadSources(engine: BrainEngine, grant: Pick<Pri
     case 'federated': return [...grant.sources.readSources];
     case 'none': return [];
   }
+}
+
+/**
+ * GST-2898: who reads a source once it is federated, for the `sources federate` message: every live token and
+ * OAuth client split into those whose resolved read set (credentialReadSources) now includes it and those whose does
+ * not. Tokens with no source list and switched keys read it; clients with no source list and explicit lists without
+ * the switch do not, unless they name it.
+ */
+export async function federateReaders(engine: BrainEngine, sourceId: string): Promise<{ tokens: { read: string[]; not: string[] }; clients: { read: string[]; not: string[] } }> {
+  const { grantFromTokenRow, grantFromRow, grantFromClient } = await import('./model.ts');
+  const out = { tokens: { read: [] as string[], not: [] as string[] }, clients: { read: [] as string[], not: [] as string[] } };
+  const member = (row: Record<string, unknown>) => typeof row.member_id === 'string' ? row.member_id : null;
+  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY name, id')) {
+    const reads = await credentialReadSources(engine, grantFromTokenRow(row), member(row));
+    out.tokens[reads.includes(sourceId) ? 'read' : 'not'].push(String(row.name));
+  }
+  for (const row of await engine.executeRaw<Record<string, unknown>>("SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_name, client_id")) {
+    const grant = grantFromRow(row);
+    const reads = await credentialReadSources(engine, grantFromClient(grant), member(row));
+    out.clients[reads.includes(sourceId) ? 'read' : 'not'].push(grant.clientName || grant.clientId);
+  }
+  return out;
 }
 
 /** What a local stdio server reads with no per-call source_ids (src/mcp/server.ts resolveMcpStdioSourceScope). */
@@ -228,4 +265,20 @@ export function writeExposureNotice(notice: Notice | null): void {
     const out = renderCliNotices([renderNotice(notice, cliRenderContext())], { json: false, tty: isInteractive(), stdoutIsData: true });
     if (out.stderr) process.stderr.write(out.stderr);
   } catch { /* a warning never breaks the install */ }
+}
+
+/**
+ * GST-2898: what `sources federate` prints after a source becomes federated: the keys that now read it and those
+ * that do not, tokens and clients apart (message only; nothing is rewritten). Empty when the keys cannot be read.
+ */
+export async function federateReaderLines(engine: BrainEngine, id: string): Promise<string[]> {
+  const who = await federateReaders(engine, id).catch(() => null);
+  if (!who) return [];
+  const names = (list: string[]) => list.length ? `${list.slice(0, 8).join(', ')}${list.length > 8 ? ` and ${list.length - 8} more` : ''}` : 'none';
+  const lines = [
+    `  Tokens that read it now (no source list, or read-shared on): ${names(who.tokens.read)}. Tokens that do not (an explicit source list): ${names(who.tokens.not)}.`,
+    `  OAuth clients that read it now (read-shared on, or listing it): ${names(who.clients.read)}. Clients that do not (no source list, or a list without read-shared): ${names(who.clients.not)}.`,
+  ];
+  if (who.tokens.not.length || who.clients.not.length) lines.push('  To add it to a key, run gbrain auth rescope --token <name> --read-shared on (or --client <id>), which also reads every source shared later.');
+  return lines;
 }

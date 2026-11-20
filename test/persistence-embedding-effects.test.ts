@@ -347,9 +347,9 @@ for (const kind of testBackends()) {
       const successor = randomUUID();
       let renewals = 0;
       const observed = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRawDirect') return async (...args: Parameters<BrainEngine['executeRawDirect']>) => {
-          if (args[0].includes('UPDATE persistence_effects SET claim_expires_at')) renewals++;
-          return target.executeRawDirect(...args);
+        if (key === 'renewEffectClaim') return async (...args: Parameters<BrainEngine['renewEffectClaim']>) => {
+          renewals++;
+          return target.renewEffectClaim(...args);
         };
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
@@ -444,9 +444,9 @@ for (const kind of testBackends()) {
             if (boundary === 'policy' && inject && name === 'embedding_disabled') storageFailure();
             return target.getConfig(name);
           };
-          if (key === 'executeRawDirect') return async (...args: Parameters<BrainEngine['executeRawDirect']>) => {
-            if (boundary === 'renewal' && inject && args[0].includes('UPDATE persistence_effects SET claim_expires_at')) storageFailure();
-            return target.executeRawDirect(...args);
+          if (key === 'renewEffectClaim') return async (...args: Parameters<BrainEngine['renewEffectClaim']>) => {
+            if (boundary === 'renewal' && inject) storageFailure();
+            return target.renewEffectClaim(...args);
           };
           const value = Reflect.get(target, key, target);
           return typeof value === 'function' ? value.bind(target) : value;
@@ -558,9 +558,9 @@ for (const kind of testBackends()) {
     if (kind === 'postgres') check('success, provider failure, cancellation and invalid vectors all stop the heartbeat', async () => {
       let renewals = 0;
       const observed = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRawDirect') return async (...args: Parameters<BrainEngine['executeRawDirect']>) => {
-          if (args[0].includes('UPDATE persistence_effects SET claim_expires_at')) renewals++;
-          return target.executeRawDirect(...args);
+        if (key === 'renewEffectClaim') return async (...args: Parameters<BrainEngine['renewEffectClaim']>) => {
+          renewals++;
+          return target.renewEffectClaim(...args);
         };
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;

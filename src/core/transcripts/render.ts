@@ -83,6 +83,19 @@ export const OVERLAP_MESSAGES = 2;
 /** Adapter-schema version stamped into transcript_import frontmatter. */
 export const TRANSCRIPT_IMPORT_VERSION = 1;
 
+/**
+ * #9779: the longest title a transcript page gets, in characters. Some
+ * harnesses report a session's opening text as its title, which can run to
+ * 100 KB; the full text is already in the page body. A longer title is cut at
+ * a codepoint boundary and ends in an ellipsis, so a cut title reads as cut;
+ * a split session's " (part N)" suffix counts toward the cap.
+ * A session whose stored page already has a title over the cap (`existing`,
+ * a page written before the cap) keeps its title as given, so a re-import
+ * never rewrites a page only to shorten its title; a page written under the
+ * cap stays capped.
+ */
+export const TRANSCRIPT_TITLE_MAX_CHARS = 200;
+
 // ── Redaction ────────────────────────────────────────────────────────────────
 
 /** Default user-pattern file — the same convention skillpack harvest uses. */
@@ -361,7 +374,7 @@ export function transcriptPartId(meta: Pick<ParsedSession['meta'], 'harness' | '
  */
 export function renderSessionParts(
   redacted: RedactedSession,
-  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout } = { sourcePath: '' },
+  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout; existing?: boolean } = { sourcePath: '' },
 ): RenderSessionResult {
   const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
   if (!Number.isSafeInteger(partTargetBytes) || partTargetBytes <= 0) {
@@ -416,6 +429,12 @@ export function renderSessionParts(
   }
   const single = (opts.layout ?? 'single') === 'single' && groups.length === 1;
   const title = meta.title?.trim() || `${meta.harness} session ${meta.sessionId.slice(0, 12)}`;
+  const partTitle = (part: number): string => {
+    const suffix = single ? '' : ` (part ${part})`;
+    const cps = [...title];
+    const room = TRANSCRIPT_TITLE_MAX_CHARS - suffix.length;
+    return (cps.length > room && !opts.existing ? cps.slice(0, room - 1).join('').trimEnd() + '…' : title) + suffix;
+  };
 
   const parts: RenderedPart[] = groups.map((group, idx) => {
     const part = idx + 1;
@@ -426,7 +445,7 @@ export function renderSessionParts(
       : new Set(group.filter((b) => redacted.imperativeFlags![b.message]).map((b) => b.message)).size;
     const fm: Record<string, unknown> = {
       type: 'conversation',
-      title: single ? title : `${title} (part ${part})`,
+      title: partTitle(part),
       date: dateIso.slice(0, 10),
       id: frontmatterId,
       transcript_import: {
