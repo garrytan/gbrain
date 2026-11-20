@@ -101,7 +101,7 @@ getPage	pages	yes	140	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	9	no	yes	yes	serves
-putPage	pages	yes	634	yes	yes	yes	serves
+putPage	pages	yes	636	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	25	yes	yes	yes	serves
@@ -214,7 +214,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	47	yes	yes	yes	serves
 sealChunks	chunks	yes	70	no	yes	yes	serves
-getChunks	chunks	yes	48	yes	yes	yes	serves
+getChunks	chunks	yes	50	yes	yes	yes	serves
 getChunkPage	chunks	yes	13	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -538,7 +538,7 @@ insertTopologyChange	persistence_journal	yes	5	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseUnpublishedClaim	persistence_journal	yes	1	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
-hasClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
+hasClaimableWrite	persistence_journal	yes	2	no	yes	yes	serves
 selectClaimableWrite	persistence_journal	yes	1	no	yes	yes	serves
 listHostConsumerRows	persistence_journal	yes	2	no	yes	yes	serves
 probeLiveConsumerRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -553,12 +553,12 @@ listReservationsAfter	persistence_journal	yes	1	no	yes	yes	serves
 listTrueUpRequests	persistence_journal	yes	2	no	yes	yes	serves
 trueUpReservations	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
-listPendingSegmentedProjections	persistence_journal	yes	3	no	yes	yes	serves
-selectProjectionWindowJobs	persistence_journal	yes	6	no	yes	yes	serves
+listPendingSegmentedProjections	persistence_journal	yes	4	no	yes	yes	serves
+selectProjectionWindowJobs	persistence_journal	yes	7	no	yes	yes	serves
 claimSegmentedProjection	persistence_journal	yes	2	no	yes	yes	serves
 renewSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseSegmentedProjectionClaim	persistence_journal	yes	2	no	yes	yes	serves
-deleteProjectionJob	persistence_journal	yes	7	no	yes	yes	serves
+deleteProjectionJob	persistence_journal	yes	9	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	2	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
@@ -581,7 +581,7 @@ failEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 readMirrorGateRows	persistence_journal	yes	1	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
 hasRearmableTargets	persistence_journal	yes	1	no	yes	yes	serves
-probeIdleWork	persistence_journal	yes	1	no	yes	yes	serves
+probeIdleWork	persistence_journal	yes	2	no	yes	yes	serves
 probeNoopEmbeddingSettle	persistence_journal	yes	1	no	yes	yes	serves
 lockNoopEmbeddingWindow	persistence_journal	yes	1	no	yes	yes	serves
 readNoopEmbeddingCandidates	persistence_journal	yes	1	no	yes	yes	serves
@@ -927,7 +927,7 @@ listRequestsCarryingClaim	purge_plan	yes	1	no	yes	yes	serves
 listRequestsHoldingStagings	purge_plan	yes	1	no	yes	yes	serves
 countPurgeProbe	purge_plan	yes	5	no	yes	yes	serves
 listPurgeProbeItems	purge_plan	yes	2	no	yes	yes	serves
-listQueuedPageProjections	projection_rebuild	yes	11	no	yes	yes	serves
+listQueuedPageProjections	projection_rebuild	yes	13	no	yes	yes	serves
 readProjectionJobReason	projection_rebuild	yes	9	no	yes	yes	serves
 readChunkKeepState	projection_rebuild	yes	2	no	yes	yes	serves
 clearUnkeptChunkVectors	projection_rebuild	yes	2	no	yes	yes	serves
@@ -938,7 +938,7 @@ deleteUnkeptChunks	projection_rebuild	yes	1	no	yes	yes	serves
 listStaleChunkVectors	projection_rebuild	yes	1	no	yes	yes	serves
 clearChunkVectors	projection_rebuild	yes	1	no	yes	yes	serves
 countPendingTextChunks	projection_rebuild	yes	2	no	yes	yes	serves
-probeProjectionWindowCandidates	projection_rebuild	yes	2	no	yes	yes	serves
+probeProjectionWindowCandidates	projection_rebuild	yes	3	no	yes	yes	serves
 readProjectionHead	projection_rebuild	yes	6	no	yes	yes	serves
 isDeferredReplacementHeld	projection_rebuild	yes	5	no	yes	yes	serves
 renewDeferredReplacementClaim	projection_rebuild	yes	6	no	yes	yes	serves

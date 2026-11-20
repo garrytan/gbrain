@@ -7,3 +7,4 @@
 - on a Rust brain, the background projection pass no longer stops on the same refusal when it picks the queued pages to rebuild.
 - on a Rust brain, `gbrain export` now writes a frontmatter date as the same ISO date Postgres and PGLite write, instead of `{}`.
 - on a Rust brain, a deferred chunk replacement that its time budget stops now hands the page back to the drain, so the page is sealed on the next pass instead of waiting about a minute for its claim to expire.
+- on a Rust brain, an idle background writer now sees pages waiting for their search passages and builds them at once, as Postgres and PGLite do, instead of only when its idle wait reaches its cap.
