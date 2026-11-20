@@ -690,6 +690,12 @@ export interface ParsedClaudeSession {
    * by automation, not a parser that lost the human side.
    */
   excludedUserLines: number;
+  /**
+   * GST-3216: every user turn came from a record whose `entrypoint` is `cli`, the interactive terminal a person types
+   * into. An SDK or `claude -p` run (`sdk-ts`, `sdk-cli`, ...) or a record with no entrypoint is driven by a
+   * program or another agent, so its user turns stay speaker-unknown.
+   */
+  interactive: boolean;
 }
 
 /**
@@ -714,6 +720,7 @@ export function parseClaudeSessionFile(
   let skippedLines = 0;
   let turnShapedLines = 0;
   let excludedUserLines = 0;
+  const userEntrypoints = new Set<unknown>();
   for (const line of raw.split('\n')) {
     const t = line.trim();
     if (!t) continue;
@@ -736,6 +743,7 @@ export function parseClaudeSessionFile(
     }
     if (e.type === 'user' && (isSkippedTurnEntry(e) || hasNonHumanOrigin(e))) excludedUserLines++;
     if (!turn) continue;
+    if (turn.turn.role === 'user') userEntrypoints.add(e.entrypoint);
     const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
     turns.push({ role: turn.turn.role, text: turn.turn.text, timestamp });
   }
@@ -748,6 +756,7 @@ export function parseClaudeSessionFile(
     skippedLines,
     turnShapedLines,
     excludedUserLines,
+    interactive: userEntrypoints.size === 1 && userEntrypoints.has('cli'),
   };
 }
 

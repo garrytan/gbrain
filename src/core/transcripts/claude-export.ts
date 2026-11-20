@@ -95,6 +95,7 @@ export const claudeExportAdapter: TranscriptAdapter = {
             name: typeof c.name === 'string' ? c.name : null,
             source_path: path,
           },
+          ownerBasis: 'export_user',
         },
         messages,
       };
