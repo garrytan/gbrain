@@ -391,7 +391,7 @@ Eight store methods serve nine members of `engine-sql/facts-repair.ts` (`readRep
 | `listExpiredFactIds` `{ sourceId, ids }` | `listExpiredFactIds` | `[{ id }]` of the named facts of the source that are expired, by id. |
 | `listPagelessEntityFacts` `{ sourceIds }` | `listPagelessEntityFacts` | Per (source, `entity_slug`) with no live page (a soft-deleted page counts as none): `{ source_id, slug, ids, fenced }`. `ids` are the database-only fact ids in id order, `null` when every fact is fence-held; `fenced` is the count of fence-held facts. By (source, slug) in byte order. |
 | `readEntityRehomeState` `{ sourceId, from, to }` | `readEntityRehomeState` | Always one object `{ from_live, to_live, ids }`, `ids` the database-only fact ids keyed under `from`, `null` when none. |
-| `rehomeEntityFacts` `{ sourceId, from, to }` | `rehomeEntityFacts` | Moves the database-only facts keyed under `from` to `to` in one write. A stint key a fact already holds on `to` refuses with `constraint_violation` (`idx_facts_ontology_stint_dedup`) and no fact moves. Answers null. |
+| `rehomeEntityFacts` `{ sourceId, from, to }` | `rehomeEntityFacts` | Moves the database-only facts keyed under `from` to `to` in one write. A stint key a fact already holds on `to` refuses with `constraint_violation` (`idx_facts_ontology_stint_dedup`) and no fact moves; the TypeScript member raises it as Postgres does (see "Unique violations"). Answers null. |
 
 `withdrawal_guard.rs` is `gbrain_preserve_fact_withdrawal` for the rows these two writes (and the ontology repair
 writes) change. A row that is already expired is left alone. Otherwise the earliest withdrawal of the same source and
@@ -662,6 +662,18 @@ opened ids (`gbrain.write_open_facts`). Both napi members take it from the store
 cell at its number with its fact asks for `world`, and a `confirm` or `supersede_fact` proposal
 names it as the related fact, is `pending`, `rejected` or `undone`, and has a `visibility` key in its
 before state (`trust::proposals::held_narrower`, [trust.md](trust.md#trust-proposals-trustproposals)).
+
+## Unique violations
+
+The store refuses a fact write that would duplicate `idx_facts_ontology_stint_dedup` or `idx_facts_fence_key` with
+`constraint_violation` and the Postgres message (`duplicate key value violates unique constraint "<index>"`), and rolls
+the write back. `mapStoreError` (`src/core/rust-engine/store-errors.ts`) turns that refusal into the error Postgres and PGLite
+raise: SQLSTATE `23505` in `code`, the same message, and `schema_name` `public`, `table_name` `facts` and `constraint_name`.
+The CLI text, the `--json` envelope and the MCP error are the same as on the other engines (pinned by
+`test/rust-engine-store-errors.test.ts`; the parity cases are in `test/engine-parity/facts-unique-violation.test.ts`, which
+reaches `rehomeEntityFacts` and `placeRelinkedFact`). Not reproduced: the Postgres `detail` line (`Key (...)=(...)
+already exists.`), which the store does not carry; no CLI, `--json` or MCP output prints it. Other unique indexes stay
+`constraint_violation`.
 
 ## Held fence cells (`facts/held_cells.rs`)
 
