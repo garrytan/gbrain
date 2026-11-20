@@ -732,6 +732,7 @@ test/secret-store.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
+test/serve-http-member-handover.test.ts
 test/serve-http-memory-proposals.test.ts
 test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
