@@ -57,13 +57,13 @@ export async function listFiles(exec: LegacyUnscopedRead, opts: ListFilesOptions
       SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
       FROM files
       WHERE page_slug = ${opts.pageSlug}
-      ORDER BY filename, id
+      ORDER BY filename COLLATE "C", id
       LIMIT ${opts.limit}
     `)
       : await exec.run(sqlFragment`
       SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
       FROM files
-      ORDER BY page_slug, filename, id
+      ORDER BY page_slug COLLATE "C", filename COLLATE "C", id
       LIMIT ${opts.limit}
     `);
     return rows.map(row => fileRow(row));

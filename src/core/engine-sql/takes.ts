@@ -330,9 +330,9 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
       ORDER BY
         ${opts.ungradedFirst ? sqlFragment`EXISTS (SELECT 1 FROM take_grade_cache g WHERE g.take_id = t.id
           AND g.prompt_version = ${opts.ungradedFirst.promptVersion} AND g.judge_model_id = ${opts.ungradedFirst.judgeModelId}),` : sqlFragment``}
-        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND ${opts.oldestFirst ?? false}::boolean THEN t.since_date END ASC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND ${opts.oldestFirst ?? false}::boolean THEN t.since_date COLLATE "C" END ASC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
-        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND NOT ${opts.oldestFirst ?? false}::boolean THEN t.since_date END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND NOT ${opts.oldestFirst ?? false}::boolean THEN t.since_date COLLATE "C" END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST,
         t.id DESC
       LIMIT ${limit} OFFSET ${offset}

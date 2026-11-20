@@ -404,13 +404,13 @@ export async function listRecordMetadataRows(exec: Exec, pageIds: readonly numbe
   const [status, links] = await Promise.all([
     exec.executeRaw<{ id: number; status: unknown }>(`SELECT id, frontmatter->'status' AS status FROM pages WHERE id = ANY($1::int[])`, [[...pageIds]]),
     rows<{ from_id: number; slug: string; link_type: string; since: string | null }>(exec,
-      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug, l.link_type,
+      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug COLLATE "C" AS slug, l.link_type,
               CASE WHEN l.link_type = 'amends' THEN to_char(r.first_start, 'YYYY-MM-DD') END AS since
          FROM links l JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL AND t.source_id = ANY(${[...scope.referrerSources]}::text[])${targetPriv}${targetQuarantine}
          LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id
               AND r.link_type = l.link_type AND r.scope = ${scope.excludePrivate ? 'world' : 'all'}
         WHERE l.from_page_id = ANY(${[...pageIds]}::int[]) AND l.link_type IN ('amends', 'supersedes')${linkPriv}
-        ORDER BY l.from_page_id, t.slug`).catch(() => []),
+        ORDER BY l.from_page_id, t.slug COLLATE "C"`).catch(() => []),
   ]);
   return { status, links };
 }

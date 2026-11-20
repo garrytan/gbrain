@@ -136,7 +136,7 @@ export async function readIdentitySiblingCandidates(exec: LegacyUnscopedRead, so
   const { text, params } = renderFragment(sqlFragment`SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
       WHERE source_id = ${sourceId} AND deleted_at IS NULL AND type = ANY(${[...q.types]}::text[])
         AND (lower(title) = ${q.subject} OR lower(title) LIKE ${like})${priv}${quarantined}
-      ORDER BY slug LIMIT ${limit}`);
+      ORDER BY slug COLLATE "C" LIMIT ${limit}`);
   return exec.executeRaw<SiblingCandidateRow>(text, params);
 }
 
@@ -335,18 +335,18 @@ export async function readTrigramCandidates(exec: LegacyUnscopedRead, sourceId: 
            lower(title) % $2
            OR slug ILIKE '%' || $3 || '%'
          )
-       ORDER BY score DESC, slug ASC
+       ORDER BY score DESC, slug COLLATE "C" ASC
        LIMIT 5`)}`
     : q.arm === 'same_name'
       ? sqlFragment`${trustedSql(`SELECT p.slug, p.title, p.type FROM pages p
           WHERE p.source_id = $1 AND p.deleted_at IS NULL `)}${retirementPrivacySql(q.privacy)} AND NOT ${retired}${trustedSql(`
             AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug COLLATE "C" ASC
           LIMIT 5`)}`
       : sqlFragment`${trustedSql(`SELECT p.slug, p.title, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT `)}${retired} ${retirementPrivacySql(q.privacy)}${trustedSql(`
         AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug COLLATE "C" ASC
       LIMIT 20`)}`;
   const { text, params } = renderFragment(fragment);
   if (params.length !== 0) throw new Error('readTrigramCandidates: a fragment bound a value ahead of the hand-numbered parameters');
@@ -377,7 +377,7 @@ export async function readPrefixCandidates(exec: LegacyUnscopedRead, sourceId: s
          AND p.deleted_at IS NULL
          AND NOT ${retired}
          AND p.slug LIKE ANY(${[...q.patterns]}::text[])
-       ORDER BY connection_count DESC, p.slug ASC
+       ORDER BY connection_count DESC, p.slug COLLATE "C" ASC
        LIMIT 10`
     : sqlFragment`SELECT p.slug,
                 ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${inbound})
@@ -389,7 +389,7 @@ export async function readPrefixCandidates(exec: LegacyUnscopedRead, sourceId: s
            AND p.deleted_at IS NULL
            AND NOT ${retired}
            AND p.slug LIKE ${q.pattern}
-         ORDER BY connection_count DESC, p.slug ASC
+         ORDER BY connection_count DESC, p.slug COLLATE "C" ASC
          LIMIT 5`;
   const { text, params } = renderFragment(fragment);
   return exec.executeRaw<PrefixCandidateRow>(text, params);
@@ -428,6 +428,6 @@ export async function readPrefixTitleMatches(exec: LegacyUnscopedRead, sourceId:
 export async function readNamedEntitySlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[], privacy: ResolverPrivacy): Promise<string[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT p.slug FROM pages p
       WHERE p.source_id = ${sourceId} AND p.deleted_at IS NULL AND NOT ${trustedSql(retiredPageSql('p'))} AND p.slug = ANY(${[...slugs]}::text[]) ${retirementPrivacySql(privacy)}
-      ORDER BY p.slug LIMIT 5`);
+      ORDER BY p.slug COLLATE "C" LIMIT 5`);
   return (await exec.executeRaw<{ slug: string }>(text, params)).map(r => r.slug);
 }

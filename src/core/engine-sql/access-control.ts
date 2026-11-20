@@ -243,8 +243,8 @@ export type AccessCredentialLookup = { tokenName: string } | { memberId: string 
 /** The statements access/members.ts legacyTokenByName and boundCredentials (tokens, then clients) ran through executeRaw. */
 export const ACCESS_CREDENTIAL_SQL = {
   token_by_name: 'SELECT id::text AS id, name FROM access_tokens WHERE name = $1 AND revoked_at IS NULL ORDER BY created_at',
-  tokens_by_member: 'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name',
-  clients_by_member: "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id",
+  tokens_by_member: 'SELECT id::text AS id, name FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL ORDER BY name COLLATE "C"',
+  clients_by_member: "SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE member_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_id COLLATE \"C\"",
 } as const;
 
 /**

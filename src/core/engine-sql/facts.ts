@@ -778,7 +778,7 @@ export async function getFactsHealth(exec: LegacyUnscopedRead, source_id: string
         AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
       GROUP BY entity_slug
-      ORDER BY count DESC, entity_slug ASC
+      ORDER BY count DESC, entity_slug COLLATE "C" ASC
       LIMIT 5
     `)).rows;
     const r = totals[0] ?? {

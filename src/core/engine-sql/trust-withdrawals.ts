@@ -92,7 +92,7 @@ export async function hasFactWithdrawalForSubject(exec: LegacyUnscopedRead, sour
 
 export async function listFactWithdrawalKeys(exec: LegacyUnscopedRead, sourceId: string, limit: number): Promise<WithdrawalKeyRow[]> {
   return exec.executeRaw<WithdrawalKeyRow>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
-      WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [sourceId, limit]);
+      WHERE source_id=$1 ORDER BY visibility COLLATE "C",fact_hash COLLATE "C",subject COLLATE "C" LIMIT $2`, [sourceId, limit]);
 }
 
 export async function readFactCacheWatermark(exec: LegacyUnscopedRead, sourceId: string): Promise<FactCacheWatermarkRow> {

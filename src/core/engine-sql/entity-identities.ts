@@ -146,7 +146,7 @@ export async function listEntityIdentityRows(exec: LegacyUnscopedRead, filter: E
        FROM entity_identities ei
        JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
        ${clause}
-       ORDER BY ei.entity_id, ei.canonical DESC, ei.source_id, p.slug`);
+       ORDER BY ei.entity_id COLLATE "C", ei.canonical DESC, ei.source_id COLLATE "C", p.slug COLLATE "C"`);
   return found.map(r => ({ ...r, confidence: Number(r.confidence), canonical: r.canonical === true }));
 }
 

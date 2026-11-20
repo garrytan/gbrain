@@ -299,6 +299,7 @@ export interface ProjectionWindowRow {
  * budgets (100 recent, 400 window) inlined; the recency lane, then the key window from `cursor`.
  */
 export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
+  // The lane order never reaches output: lane is the literal 'recent' or 'window', which sorts the same in every collation, and the rows feed projection job processing.
   return sqlFragment`WITH ${residentWindowCtesFragment(cursor, retryCooldown)}
     SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
     FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent

@@ -43,6 +43,7 @@ export async function readWriterVersionCutoff(exec: LegacyUnscopedRead): Promise
 }
 
 /** `listWriterVersions`: the text persistence/writer-versions.ts `listWriterVersions` always sent. */
+// The text keys only group, never order output: DISTINCT ON keeps the newest row per group by created_at or publication time, and the final sort is last_seen.
 export const LIST_WRITER_VERSIONS_SQL = `SELECT * FROM (
       SELECT DISTINCT ON (admitter_host_id,principal_kind,principal_id) 'admitter' AS role,admitter_host_id::text AS host_id,
         principal_kind||':'||principal_id AS principal,admitter_version AS version,created_at AS last_seen

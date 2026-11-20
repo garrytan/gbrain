@@ -27,9 +27,9 @@ export async function getTags(
     const privacy = opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('pages')}`) : sqlFragment``;
     const live = opts?.liveOnly ? sqlFragment`AND deleted_at IS NULL` : sqlFragment``;
     const { rows } = await exec.run<{ tag: string }>(sqlFragment`
-      SELECT DISTINCT tag FROM tags
+      SELECT DISTINCT tag COLLATE "C" AS tag FROM tags
       WHERE page_id IN (SELECT id FROM pages WHERE slug = ${slug} AND ${scope} ${privacy} ${live})
-      ORDER BY tag
+      ORDER BY tag COLLATE "C"
     `);
     return rows.map((r) => r.tag);
   }

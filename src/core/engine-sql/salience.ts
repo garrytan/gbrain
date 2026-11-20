@@ -166,7 +166,7 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
          ${excludeBriefings}
          ${sourceCondition} ${readCondition}
        GROUP BY p.id
-       ORDER BY score DESC, p.source_id ASC, p.slug ASC
+       ORDER BY score DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC
        LIMIT ${limit}
     `)).rows;
     return rows.map((r: Record<string, unknown>) => ({
