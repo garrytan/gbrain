@@ -256,3 +256,11 @@ export async function insertSource(exec: SqlExecutor, row: SourceInsert): Promis
          VALUES (${row.id}, ${row.name}, ${row.local_path}, ${jsonbParam(row.config)})
   `);
 }
+
+/** A source id and its incarnation as text (`listSourceIncarnations`). */
+export interface SourceIncarnationListRow { id: string; incarnation: string }
+
+/** The incarnation of each known source of `sourceIds`, in byte order of id (a repair preview hash binds it). */
+export async function listSourceIncarnations(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]> {
+  return exec.executeRaw<SourceIncarnationListRow>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [[...sourceIds]]);
+}

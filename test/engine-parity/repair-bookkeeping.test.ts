@@ -28,6 +28,7 @@ import { connectorCheckpointKeys, connectorIdentity } from '../../src/core/persi
 import {
   aliasProtectedConnectorCheckpoints, deleteOrphanConnectorCheckpoints, loadableConnectorKeys, orphanConnectorCheckpoints,
 } from '../../src/core/persistence/connector-checkpoint-migration.ts';
+import { CONNECTOR_STATE_OP } from '../../src/core/persistence/connector-state.ts';
 import { deleteOrphanBinding, listOrphanBindings } from '../../src/core/persistence/orphan-bindings.ts';
 import { classifyManagedSyncOrphans } from '../../src/core/persistence/managed-sync-orphans.ts';
 import { staleOwnedContent } from '../../src/core/shared-skills/content-freshness.ts';
@@ -79,7 +80,8 @@ const GOOGLE = { kind: 'google', g_account: 'owner@example.invalid', g_services:
 
 describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   parityTest('repair connector-checkpoints keeps a connector source\'s stable and alias rows and a fresh orphan', {
-    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'readPersistenceBrainId'], timeout: 60_000,
+    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'readPersistenceBrainId', 'listConnectorSources',
+      'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await createSource(engine, backend, 'gmail', GOOGLE, '/var/tmp/gbrain-parity-gmail');
     const incarnation = await incarnationOf(engine, 'gmail');
@@ -95,7 +97,8 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   }));
 
   parityTest('connector checkpoint cleanup bounded by a start time deletes an orphan row and retry pointer and keeps the loadable ones', {
-    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'transaction'], timeout: 60_000,
+    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'readOpCheckpointRecord', 'transaction', 'listConnectorSources',
+      'listOrphanConnectorCheckpoints', 'deleteOrphanConnectorCheckpoint'], timeout: 60_000,
   }, async (engine, backend) => {
     await createSource(engine, backend, 'gmail', GOOGLE, '/var/tmp/gbrain-parity-gmail');
     const incarnation = await incarnationOf(engine, 'gmail');
@@ -116,7 +119,7 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   });
 
   parityTest('repair orphan-bindings finds no binding to delete on a brain with sources and no writer bindings', {
-    methods: ['readPersistenceBrainId', 'listAllSources'], timeout: 60_000,
+    methods: ['readPersistenceBrainId', 'listAllSources', 'listOrphanBindings', 'deleteOrphanBinding'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await createSource(engine, backend, 'side', {}, '/var/tmp/gbrain-parity-side');
     const listed = await listOrphanBindings(engine);
@@ -125,7 +128,7 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   }));
 
   parityTest('repair orphan-bindings deletes the bindings of a removed source and of a replaced incarnation, and keeps a live one', {
-    methods: ['readPersistenceBrainId', 'listAllSources'], requires: 'raw_sql', timeout: 60_000,
+    methods: ['readPersistenceBrainId', 'listAllSources', 'listOrphanBindings', 'deleteOrphanBinding'], requires: 'raw_sql', timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await createSource(engine, backend, 'side', {}, '/var/tmp/gbrain-parity-side');
     await createSource(engine, backend, 'kept', {}, '/var/tmp/gbrain-parity-kept');
@@ -143,7 +146,8 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   }));
 
   parityTest('repair loop-facts retires the commitment fact of a closed loop and keeps the fact an open loop still holds', {
-    methods: ['insertFact', 'upsertOpenLoop', 'closeOpenLoop', 'loopFactDrift', 'closedLoopWithActiveFact', 'readPersistenceBrainId'], timeout: 60_000,
+    methods: ['insertFact', 'upsertOpenLoop', 'closeOpenLoop', 'loopFactDrift', 'closedLoopWithActiveFact', 'readPersistenceBrainId',
+      'listSourceIncarnations', 'readLoopFactState', 'expireSourceFactNow'], timeout: 60_000,
   }, async (engine) => withHome(async () => {
     const fact = async (text: string) => Number((await engine.insertFact({ fact: text, kind: 'commitment', entity_slug: null, visibility: 'private',
       source: 'test:repair-parity', embedding: null } as NewFact, { source_id: 'default' })).id);
@@ -198,4 +202,47 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
       owned_root: true, stage: 'complete', status: 'ready', repository_kind: 'content_directory', root: '/var/tmp/gbrain-parity-elsewhere' }));
     return { stale: await staleOwnedContent(engine, ['notes']), ...(await previewThenApply(engine, 'content-receipt-root')) };
   }));
+
+  // Last, and prints no ids: on the Postgres arm the fact and loop ids keep counting across cases, and the loop-facts case prints them.
+  parityTest('the bookkeeping members answer the same when called directly', {
+    methods: ['readSourceIncarnation', 'writeOpCheckpointRecord', 'transaction', 'insertFact', 'upsertOpenLoop', 'listSourceIncarnations',
+      'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint',
+      'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow'], timeout: 60_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'gmail', GOOGLE, '/var/tmp/gbrain-parity-gmail');
+    const [stable] = connectorCheckpointKeys('gmail', await incarnationOf(engine, 'gmail'), connectorIdentity('google', GOOGLE, '/var/tmp/gbrain-parity-gmail'));
+    const orphan = 'a'.repeat(64);
+    await engine.writeOpCheckpointRecord('managed-connector', stable!, [{ generation: 1 }]);
+    await engine.writeOpCheckpointRecord('managed-connector', orphan, [{ generation: 1 }]);
+    const bounds = { before: new Date(Date.now() + 60_000).toISOString(), stateOp: CONNECTOR_STATE_OP };
+    const incarnations = (await engine.listSourceIncarnations(['gmail', 'missing', 'default', 'gmail'])).map(row => row.id);
+    const sources = (await engine.listConnectorSources()).map(row => ({ id: row.id, archived: row.archived, kind: (typeof row.config === 'string' ? JSON.parse(row.config) : row.config)?.kind }));
+    const locked = (await engine.transaction(tx => tx.listConnectorSources({ lock: true }))).map(row => row.id);
+    const found = await engine.listOrphanConnectorCheckpoints([stable!], bounds, 10);
+    const count = await engine.countConnectorCheckpointsKeyed([stable!, orphan, 'b'.repeat(64)]);
+    const kept = await engine.deleteOrphanConnectorCheckpoint(found[0]!, [orphan], bounds);
+    const deleted = await engine.deleteOrphanConnectorCheckpoint(found[0]!, [stable!], bounds);
+    const again = await engine.deleteOrphanConnectorCheckpoint(found[0]!, [stable!], bounds);
+    const bindings = await engine.listOrphanBindings({ limit: 10 });
+    const binding = await engine.deleteOrphanBinding({ source_id: 'gone', source_incarnation: randomUUID() });
+    const factId = Number((await engine.insertFact({ fact: 'send the deck', kind: 'commitment', entity_slug: null, visibility: 'private',
+      source: 'test:repair-parity', embedding: null } as NewFact, { source_id: 'default' })).id);
+    const at = '2026-03-01T10:00:00.000Z';
+    const loopId = Number((await engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'deck', loopType: 'commitment_owed_by_me',
+      counterpartyEmail: 'a@example.com', summary: 'deck', evidence: [], detector: 'manual', factId, lastActivityAt: at, openedAt: at })).id);
+    const state = await engine.readLoopFactState(loopId);
+    const missing = await engine.readLoopFactState(loopId + 1000);
+    const otherSource = await engine.expireSourceFactNow(factId, 'gmail');
+    const expired = await engine.expireSourceFactNow(factId, 'default');
+    const expiredAgain = await engine.expireSourceFactNow(factId, 'default');
+    const after = await engine.readLoopFactState(loopId);
+    return norm({
+      incarnations, sources, locked, found: found.map(row => ({ op: row.op, fingerprint: row.fingerprint, stamped: typeof row.updated_at === 'string' })),
+      count, kept, deleted, again, bindings, binding,
+      state: { loop: state.loop && { idMatches: Number(state.loop.id) === loopId, source_id: state.loop.source_id, status: state.loop.status, factMatches: Number(state.loop.fact_id) === factId },
+        fact: state.fact && { idMatches: Number(state.fact.id) === factId, source_id: state.fact.source_id, expired: state.fact.expired_at !== null, fact: state.fact.fact },
+        shared: state.shared },
+      missing, otherSource, expired, expiredAgain, afterExpired: after.fact?.expired_at !== null,
+    });
+  });
 });

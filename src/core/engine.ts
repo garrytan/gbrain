@@ -70,7 +70,8 @@ import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-s
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, MentionDueQuery, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceIncarnationListRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow } from './engine-sql/repair-bookkeeping.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
   WorktreeBinding,
@@ -1502,6 +1503,24 @@ export interface BrainEngine {
   readOpCheckpointRecord(op: string, fingerprint: string, opts?: { freshWithinDays?: number }): Promise<OpCheckpointRecord | null>;
   /** The parent's records replaced and stamped now, in the caller's transaction; `null` deletes it with its paths. */
   writeOpCheckpointRecord(op: string, fingerprint: string, completedKeys: readonly unknown[] | null): Promise<void>;
+  /** The incarnation of each known source of `sourceIds` as text, in id order (the preview hash of a repair binds it). */
+  listSourceIncarnations(sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]>;
+  /** Writer bindings whose source or incarnation is gone, by source id (repair orphan-bindings, engine-sql/repair-bookkeeping.ts). */
+  listOrphanBindings(opts?: { limit?: number }): Promise<OrphanBinding[]>;
+  /** Deletes one orphan binding when it is still orphaned with no pending request; false when it was kept. */
+  deleteOrphanBinding(binding: Pick<OrphanBinding, 'source_id' | 'source_incarnation'>): Promise<boolean>;
+  /** A loop, its commitment fact and whether another open loop references it; `lock` locks both rows in the caller's transaction. */
+  readLoopFactState(loopId: number, opts?: { lock?: boolean }): Promise<LoopFactState>;
+  /** Expires an active fact of `sourceId` now, `valid_until` clipped to now; false when no active fact matched. */
+  expireSourceFactNow(factId: number, sourceId: string): Promise<boolean>;
+  /** Every connector-kind source, archived ones included; `lock` share-locks them in id order in the caller's transaction. */
+  listConnectorSources(opts?: { lock?: boolean }): Promise<ConnectorSourceRow[]>;
+  /** Connector checkpoint and retry rows whose key is not in `loadable` and that nothing pending references. */
+  listOrphanConnectorCheckpoints(loadable: readonly string[], bounds: OrphanCheckpointBounds, limit: number): Promise<OrphanCheckpointRow[]>;
+  /** How many connector checkpoint and retry rows carry one of `keys` as their key. */
+  countConnectorCheckpointsKeyed(keys: readonly string[]): Promise<number>;
+  /** Deletes one planned orphan checkpoint when the whole orphan test still holds for its stamp; false when it was kept. */
+  deleteOrphanConnectorCheckpoint(row: OrphanCheckpointRow, loadable: readonly string[], bounds: OrphanCheckpointBounds): Promise<boolean>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

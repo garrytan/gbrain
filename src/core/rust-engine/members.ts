@@ -175,6 +175,17 @@ export const RUST_ENGINE_MEMBERS = {
   deleteOpCheckpointPaths: 'persistence_journal',
   readOpCheckpointRecord: 'persistence_journal',
   writeOpCheckpointRecord: 'persistence_journal',
+  // Repair bookkeeping (engine-sql/repair-bookkeeping.ts): source incarnations, writer bindings and connector
+  // checkpoints are persistence_journal's; a loop's fact row and its expiry are facts'.
+  listSourceIncarnations: 'persistence_journal',
+  listOrphanBindings: 'persistence_journal',
+  deleteOrphanBinding: 'persistence_journal',
+  readLoopFactState: 'facts',
+  expireSourceFactNow: 'facts',
+  listConnectorSources: 'persistence_journal',
+  listOrphanConnectorCheckpoints: 'persistence_journal',
+  countConnectorCheckpointsKeyed: 'persistence_journal',
+  deleteOrphanConnectorCheckpoint: 'persistence_journal',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',

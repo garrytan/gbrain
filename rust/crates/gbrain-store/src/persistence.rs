@@ -53,6 +53,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod connector_orphans;
 mod effect_scans;
 mod effect_worker;
 mod effects;
@@ -65,6 +66,7 @@ pub(crate) mod projection_queue;
 mod receipt_list;
 mod topology;
 mod writer_versions;
+pub use connector_orphans::OrphanBounds;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
@@ -271,7 +273,7 @@ fn violation(message: impl Into<String>) -> StoreError {
 }
 
 /// Every request record, in key order. Requests are never deleted on this engine.
-fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
+pub(crate) fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {

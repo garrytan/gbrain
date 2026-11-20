@@ -124,6 +124,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // Op checkpoints, health memo clock, synopsis sources (engine-sql/write-misc.ts; covered by test/engine-parity/write-misc.test.ts)
   'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
   'readOpCheckpointRecord', 'writeOpCheckpointRecord',
+  'listSourceIncarnations', 'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow',
+  'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint',
   'readHealthMemoClock', 'listSynopsisSourceIds',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',
@@ -366,6 +368,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'holdsDatastoreLock',
   // The unscoped executor the write-misc members run through (engine-sql/write-misc.ts).
   'writeMiscReads', 'attributionReads',
+  // The unscoped executor the bookkeeping repair reads run through (engine-sql/repair-bookkeeping.ts).
+  'repairBookkeepingReads',
 ];
 
 /**

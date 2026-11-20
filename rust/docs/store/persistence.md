@@ -147,7 +147,7 @@ that stopped midway resumes with only the pending keys. The parent shares the ho
 (`d 0x02`); a housekeeping op and a resumable op never use the same op name. The child paths sit under
 their parent's op and fingerprint, so deleting a parent deletes its paths in the same write, as the
 `ON DELETE CASCADE` foreign key does. An op, fingerprint or path with a NUL byte refuses with
-`invalid_input`.
+`invalid_argument`.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -157,7 +157,8 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
 | `brain.readOpCheckpointRecord(op, fingerprint, freshWithinDays)` | `{ completed_keys, updated_at, fresh }` or null: the parent's JSON as stored, its stamp in ISO 8601 with milliseconds (truncated, as `to_char(.., 'MS')` truncates), and whether the stamp is within `freshWithinDays` of the store clock (null when not given) | `readOpCheckpointRecord` (the repair cursor, `loadApprovedSet`) |
-| `brain.writeOpCheckpointRecord(op, fingerprint, completedKeys)` | the parent's JSON replaced and stamped now; null deletes the parent and its paths. A payload that is not an array, or that holds NUL in any string or key, refuses with `invalid_input` | `writeOpCheckpointRecord` (the repair cursor, `saveApprovedSet`, `clearApprovedSet`) |
+| `brain.writeOpCheckpointRecord(op, fingerprint, completedKeys)` | the parent's JSON replaced and stamped now; null deletes the parent and its paths. A payload that is not an array, or that holds NUL in any string or key, refuses with `invalid_argument` | `writeOpCheckpointRecord` (the repair cursor, `saveApprovedSet`, `clearApprovedSet`) |
+| `brain.listOrphanConnectorCheckpoints(loadable, before, minAgeDays, stateOp, limit)`, `brain.countConnectorCheckpointsKeyed(keys)`, `brain.deleteOrphanConnectorCheckpoint(op, fingerprint, updatedAt, loadable, before, minAgeDays, stateOp)` | the connector checkpoint parents (`managed-connector`, `managed-connector-retry`) no source can load and no pending connector request names, their count by key, and the delete of one still-orphaned row at an unchanged stamp; `rust/docs/store/repair-bookkeeping.md` | `listOrphanConnectorCheckpoints`, `countConnectorCheckpointsKeyed`, `deleteOrphanConnectorCheckpoint` (`gbrain repair connector-checkpoints`) |
 
 Differences from the SQL engines:
 

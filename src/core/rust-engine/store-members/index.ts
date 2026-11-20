@@ -97,6 +97,7 @@ import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as repairBookkeeping from './repair-bookkeeping.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -148,6 +149,8 @@ export const STORE_MEMBERS = {
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
+  // Repair bookkeeping: source incarnations, writer bindings, loop facts, connector checkpoints (rust/docs/store/repair-bookkeeping.md).
+  ...repairBookkeeping,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

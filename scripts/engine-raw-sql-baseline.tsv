@@ -615,7 +615,7 @@ src/core/persistence/compaction-pass.ts	execute_raw	1
 src/core/persistence/concept-rebuild.ts	execute_raw	12	#9653: the held-concept rebuild's hold, member and stated-row checks run in its purge transaction, next to the engine purge it calls
 src/core/persistence/config-snapshot.ts	execute_raw	2
 src/core/persistence/connector-account-mismatch.ts	execute_raw	2
-src/core/persistence/connector-checkpoint-migration.ts	execute_raw	13
+src/core/persistence/connector-checkpoint-migration.ts	execute_raw	8
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
 src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
@@ -686,7 +686,6 @@ src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
 src/core/persistence/links-preparation.ts	execute_raw	3
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
-src/core/persistence/loop-fact-retirement.ts	execute_raw	5
 src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/managed-sync-orphans.ts	execute_raw	14
@@ -700,7 +699,6 @@ src/core/persistence/onboarding.ts	execute_raw	1
 src/core/persistence/origin-guard.ts	execute_raw	2
 src/core/persistence/origin-index.ts	execute_raw	5
 src/core/persistence/origin-twins.ts	execute_raw	2
-src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/ownership.ts	execute_raw	24
@@ -854,7 +852,6 @@ src/core/repair/frontmatter.ts	execute_raw	8
 src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
 src/core/repair/legacy-twins.ts	execute_raw	8
-src/core/repair/loop-facts.ts	execute_raw	2
 src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	4

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 910/910
+# covered: 919/919
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -65,6 +65,7 @@
 # cli_reads_import: 12/12
 # wanted_links: 2/2
 # write_misc: 36/36
+# repair_bookkeeping: 9/9
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -86,7 +87,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	118	no	yes	yes	serves
+transaction	lifecycle	yes	120	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -114,7 +115,7 @@ listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
-listAllSources	pages	yes	6	no	yes	yes	serves
+listAllSources	pages	yes	8	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	7	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -336,7 +337,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	63	yes	yes	yes	serves
+insertFact	facts	yes	65	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
@@ -390,14 +391,14 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	15	no	yes	yes	serves
-setConfig	config	yes	30	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
 getConfigValues	config	yes	6	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	8	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	14	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
@@ -711,8 +712,8 @@ listWithdrawalSlugs	facts_purge	yes	4	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	5	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	7	no	yes	yes	serves
 listDerivedRows	facts_purge	yes	1	no	yes	yes	serves
-loopFactDrift	facts_repair	yes	2	no	yes	yes	serves
-closedLoopWithActiveFact	facts_repair	yes	2	no	yes	yes	serves
+loopFactDrift	facts_repair	yes	3	no	yes	yes	serves
+closedLoopWithActiveFact	facts_repair	yes	3	no	yes	yes	serves
 listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
 listCapturedFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
@@ -819,8 +820,8 @@ listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	12	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	14	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	8	no	yes	yes	serves
 listOpenLoops	open_loops	yes	3	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
 linkEntityIdentityRow	entity_identities	yes	9	no	yes	yes	serves
@@ -829,7 +830,7 @@ listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
-readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
+readSourceIncarnation	cli_reads_import	yes	8	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
@@ -858,8 +859,8 @@ writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	5	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	4	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	8	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	8	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
@@ -878,6 +879,15 @@ readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
 readFolderAccess	write_misc	yes	4	no	yes	yes	serves
+listSourceIncarnations	repair_bookkeeping	yes	2	no	yes	yes	serves
+listOrphanBindings	repair_bookkeeping	yes	3	no	yes	yes	serves
+deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
+readLoopFactState	repair_bookkeeping	yes	2	no	yes	yes	serves
+expireSourceFactNow	repair_bookkeeping	yes	2	no	yes	yes	serves
+listConnectorSources	repair_bookkeeping	yes	3	no	yes	yes	serves
+listOrphanConnectorCheckpoints	repair_bookkeeping	yes	3	no	yes	yes	serves
+countConnectorCheckpointsKeyed	repair_bookkeeping	yes	2	no	yes	yes	serves
+deleteOrphanConnectorCheckpoint	repair_bookkeeping	yes	2	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

@@ -66,6 +66,27 @@ impl Brain {
         })
     }
 
+    /// `readLoopFactState(loopId)`: resolves `{ loop, fact, shared }` (store `read_loop_fact_state`).
+    #[napi]
+    pub fn read_loop_fact_state<'env>(
+        &self,
+        env: &'env Env,
+        loop_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_loop_fact_state(loop_id))
+    }
+
+    /// `expireSourceFactNow(factId, sourceId)`: resolves whether the active fact was expired.
+    #[napi]
+    pub fn expire_source_fact_now<'env>(
+        &self,
+        env: &'env Env,
+        fact_id: i64,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.expire_source_fact_now(fact_id, &source_id))
+    }
+
     /// `loopFactDrift(sourceIds, loopId | null)`: resolves the closed loops whose commitment fact
     /// is still active and held by no open loop, in id order.
     #[napi]

@@ -62,7 +62,8 @@ import { join } from 'node:path';
 //     contradiction PROPOSAL only when the user runs `gbrain decide proposals
 //     accept|undo <id>` (local CLI); the sweep and the inline fact write path
 //     never call it, so a probe still never mutates (auto-supersession.ts:4).
-//   - persistence/loop-fact-retirement.ts (#5869) — retires a commitment fact
+//   - engine-sql/repair-bookkeeping.ts expireSourceFactNow, called only by
+//     persistence/loop-fact-retirement.ts (#5869) — retires a commitment fact
 //     only when its loop is closed through `loops_close` or `gbrain repair
 //     loop-facts` (expired_at + valid_until with the struck fence row); the
 //     contradiction sweep and probes never call it.
@@ -88,12 +89,12 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/insert-guard-schema.ts',
   'src/core/facts/proposal-supersede.ts',
   'src/core/facts/withdrawal.ts',
+  'src/core/engine-sql/repair-bookkeeping.ts', // the loop-fact retirement expiry (expireSourceFactNow), moved from persistence/loop-fact-retirement.ts
   'src/core/engine-sql/facts-purge.ts', // the withdrawal expiry statement (expireFactsByWithdrawal), moved from facts/withdrawal.ts
   'src/core/facts/withdrawal-schema.ts',
   'src/core/generations/adapters/fact-rows.ts',
   'src/core/persistence/canonical-projections.ts',
   'src/core/persistence/facts-prepare.ts', // #7214: a published supersession closes the retired interval (supersededValidUntil)
-  'src/core/persistence/loop-fact-retirement.ts',
   'src/core/persistence/memory-prepare.ts', // #7214: remember (replaces or cosine) closes the retired interval (supersededValidUntil)
   'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',

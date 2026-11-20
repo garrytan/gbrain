@@ -4,7 +4,8 @@
 //! Members: `upsertOpenLoop`, `listOpenLoops` and `closeOpenLoop` (src/core/loops/loops-store.ts,
 //! SQL in src/core/engine-sql/open-loops.ts), and `closedLoopWithActiveFact` (the `loops_close`
 //! retry read) and `loopFactDrift` (the loop-fact retirement scan), SQL in
-//! src/core/engine-sql/facts-repair.ts. The other loop statements (thread auto-close, the
+//! src/core/engine-sql/facts-repair.ts, and `readLoopFactState` and `expireSourceFactNow` (the
+//! loop-fact retirement publication, SQL in src/core/engine-sql/repair-bookkeeping.ts). The other loop statements (thread auto-close, the
 //! staleness pass and mutes) still run through `executeRaw` and refuse on this engine.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
@@ -473,6 +474,71 @@ impl Store {
         };
         let active = super::read_fact(&*read, fid)?.is_some_and(|f| f.expired_at_us.is_none());
         Ok(active.then(|| json!({ "id": uid, "status": r.status, "fact_id": fact_id })))
+    }
+
+    /// `readLoopFactState(loopId, { lock })` (persistence/loop-fact-retirement.ts): loop `loop_id`
+    /// as `{ id, source_id, status, fact_id }` (null when absent), its commitment fact as `{ id,
+    /// source_id, expired_at, row_num, source_markdown_slug, fact }` (null for a loop with no fact
+    /// or a fact that is gone; `expired_at` ISO text) and `shared`, whether another `open` loop
+    /// names that fact. Postgres's `lock` takes `FOR UPDATE` row locks; here a write transaction
+    /// already holds the store's one writer, so it has no argument.
+    pub fn read_loop_fact_state(&self, loop_id: i64) -> Result<Value> {
+        let read = self.read()?;
+        let row = u64::try_from(loop_id)
+            .ok()
+            .map(|uid| read_row(&*read, uid).map(|r| r.map(|r| (uid, r))))
+            .transpose()?
+            .flatten();
+        let Some((uid, r)) = row else {
+            return Ok(json!({ "loop": null, "fact": null, "shared": false }));
+        };
+        let loop_json = json!({ "id": uid, "source_id": r.source_id, "status": r.status, "fact_id": r.fact_id });
+        let Some(fact_id) = r.fact_id else {
+            return Ok(json!({ "loop": loop_json, "fact": null, "shared": false }));
+        };
+        let fact = match u64::try_from(fact_id) {
+            Ok(fid) => super::read_fact(&*read, fid)?,
+            Err(_) => None,
+        };
+        let shared = all_rows(&*read, "readLoopFactState")?
+            .iter()
+            .any(|(id, o)| *id != uid && o.status == "open" && o.fact_id == Some(fact_id));
+        let fact_json = fact.map(|f| {
+            json!({
+                "id": f.id,
+                "source_id": f.source_id,
+                "expired_at": f.expired_at_us.map(iso),
+                "row_num": f.row_num,
+                "source_markdown_slug": f.source_markdown_slug,
+                "fact": f.fact,
+            })
+        });
+        Ok(json!({ "loop": loop_json, "fact": fact_json, "shared": shared }))
+    }
+
+    /// `expireSourceFactNow(factId, sourceId)`: `UPDATE facts SET expired_at=now(),
+    /// valid_until=LEAST(COALESCE(valid_until, now()), now()) WHERE id=$1 AND source_id=$2 AND
+    /// expired_at IS NULL`, true when that one row changed.
+    pub fn expire_source_fact_now(&self, fact_id: i64, source_id: &str) -> Result<bool> {
+        no_nul("expireSourceFactNow", &[("sourceId", source_id)])?;
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Ok(fid) = u64::try_from(fact_id) else {
+                return Ok(false);
+            };
+            let Some(old) = super::read_fact(tx, fid)? else {
+                return Ok(false);
+            };
+            if old.source_id != source_id || old.expired_at_us.is_some() {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = Some(now);
+            new.valid_until_us = Some(old.valid_until_us.map_or(now, |v| v.min(now)));
+            super::write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
     }
 
     /// `loopFactDrift(sourceIds, loopId)`: the closed (`done` or `dropped`) loops of the sources

@@ -497,8 +497,9 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 ## Open loops (`facts/loops.rs`)
 
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
-`loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
-`loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
+`loops_close` retry read `closedLoopWithActiveFact`, the retirement scan `loopFactDrift` (doctor
+`loop_facts_drift`, `gbrain repair loop-facts`) and the retirement's own read and expiry
+(`readLoopFactState`, `expireSourceFactNow`, `rust/docs/store/repair-bookkeeping.md`). The other loop statements (thread auto-close, the
 staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
 
 | Member | What it does |
@@ -509,6 +510,8 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
 | `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
 | `loopFactDrift` | `{ loop_id, source_id, fact_id, status, slug }` of each `done` or `dropped` row of the named sources (only `loopId` when given) whose fact is in the row's own source, has no `expired_at`, and no `open` row references; `slug` is the fact's `source_markdown_slug`. By id. |
+| `readLoopFactState` | `{ loop, fact, shared }` for `retireLoopFact` and `gbrain repair loop-facts`: the row (`{ id, source_id, status, fact_id }`, NULL when no row has the id), its fact (`{ id, source_id, expired_at, row_num, source_markdown_slug, fact }`, NULL when the row has none or the fact is gone; `expired_at` as ISO text) and whether another `open` row references the fact. The SQL engines take the rows `FOR UPDATE` when asked; the store serializes its writes, so the member ignores the lock. |
+| `expireSourceFactNow` | Expires one fact of the named source that has no `expired_at`: `expired_at` now and `valid_until` the earlier of its value and now (now when NULL), through the fact write path. True when that row changed; false for a missing fact, another source or an expired fact. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes

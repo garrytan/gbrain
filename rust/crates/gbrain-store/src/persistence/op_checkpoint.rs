@@ -245,7 +245,6 @@ pub(crate) fn write_op_checkpoint_record_in(
 }
 
 impl Store {
-    /// `readOpCheckpointKeys(op, fingerprint)`.
     /// `readOpCheckpointRecord(op, fingerprint, { freshWithinDays })`.
     pub fn read_op_checkpoint_record(
         &self,
@@ -266,6 +265,7 @@ impl Store {
         self.write(|tx| write_op_checkpoint_record_in(tx, &*self.env, op, fingerprint, completed))
     }
 
+    /// `readOpCheckpointKeys(op, fingerprint)`.
     pub fn read_op_checkpoint_keys(&self, op: &str, fingerprint: &str) -> Result<Value> {
         read_op_checkpoint_keys_in(&*self.read()?, op, fingerprint)
     }
