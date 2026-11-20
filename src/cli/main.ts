@@ -2763,8 +2763,7 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
       writeCliNotice(migrationsNotice('Schema migrations are pending: another process attempted them but they did not complete within the retry window (usually transient). If it persists, check `gbrain doctor` for stale advisory locks and `gbrain jobs supervisor status` for crashed migration workers.'));
     } else if (result.status === 'error' && !(await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(result.error)) {
       // Non-deadlock error during initSchema. Surface the message and continue;
-      // subsequent operations will resurface the real schema error in context.
-      // A capability refusal (no migrations to run) is no notice: reads refuse typed.
+      // subsequent operations will resurface the real schema error in context. A capability refusal (no migrations to run) is no notice: reads refuse typed.
       writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
