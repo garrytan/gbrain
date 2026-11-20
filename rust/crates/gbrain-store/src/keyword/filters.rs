@@ -234,7 +234,7 @@ impl<'a> PageFilter<'a> {
 
 /// `servedTextProjectionFilter`: the page's text projection is current, or the activation
 /// sentinel.
-pub(super) fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(r) => r == page.knowledge_revision || r == ACTIVATION_SERVED_REVISION,
         None => false,

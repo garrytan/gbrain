@@ -23,7 +23,7 @@ import { installPglite, PGLITE_VERSION } from './lib/pglite-golden.ts';
 const target = resolve(dirname(fileURLToPath(import.meta.url)), '../crates/gbrain-store/src/keyword/parser/charclass.rs');
 const write = process.argv.includes('--write');
 
-const { PGlite } = await import(installPglite());
+const { PGlite } = await import(await installPglite());
 const db = new PGlite();
 const version = (await db.query('select version() as v')).rows[0].v as string;
 if (!version.startsWith('PostgreSQL 18.6 ')) throw new Error(`need PostgreSQL 18.6, got ${version}`);

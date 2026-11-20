@@ -47,6 +47,7 @@ their own page (`page_hidden`; see [salience.md](salience.md#private-pages-exclu
 |---|---|
 | A row is hidden when its provenance page (`source_markdown_slug`, same source) fails the reader check or the privacy check. A row with no page is kept. | `privateFactFilterForCaller`, 1012; `privatePagesFilterForCaller`, 631 |
 | The entity page and, for a row with an entity, the holding page (`memory/unattributed` or `…/memory/unattributed`) must pass the reader check; with `entityPrivacy` they must pass the privacy check too. | `privateEntityFilterForCaller`, 984 |
+| A bare name key (an `entity_slug` with no `/`) is also hidden when the page at `<dir>/<key>` fails the reader or privacy check, for each directory of `NAME_KEY_PAGE_DIRS` (people, companies, hosts, projects, concepts, funds, orgs, organizations). | `NAME_KEY_PAGE_DIRS`, `src/core/entities/basename-dirs.ts` |
 | The shared-held ruling is always passed with no caller record. | `sharedHeldRuledSql`, 996; `callerRelaxesPrivacy`, 1026; `processPrivacyRelaxed`, 1137 |
 | Reader check: a page whose frontmatter has a `readable_by` key is hidden. A page of a plain type passes; any other type passes only when `gbrain_access_origin_restricted` is false. | `privatePagesFilterForCaller`, 631; `gbrain_access_origin_restricted`, `src/core/schema-migrations/v305-access-lineage-designs.ts:42` |
 | `gbrain_access_origin_restricted`: an atom whose `source_slug` page names readers; a question or synthesized concept with a `concept-provenance` / `synthesized_from` input that names readers or whose `source_slug` page does; a `life-chronicle` event whose `event.depth` page names readers; then any `derived_from` page that names readers. | `v305-access-lineage-designs.ts:42-77` |
@@ -180,6 +181,13 @@ then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
   duplicates of the entity move are dropped, `entity_slug` moves, the rows at the new page
   whose `row_num` the old page holds are deleted, the ontology duplicates of the page move are
   dropped, and `source_markdown_slug` moves.
+- `expire_gone_page_facts`: `purgeDeletedPages` calls it in its write, after the page rows are
+  removed, as PGLite's `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`) runs its four
+  updates, in their order: facts filed on a purged page, the slot facts of a filed conversation
+  (dimension, value and status cleared too), facts extracted from the page by a page-extraction
+  source (`mcp:put_page`, `sync:import`, `file_upload`, `code_import`) and filed on no page, and
+  facts about the page that no remaining page row holds. A row is expired (`expired_at` now,
+  `row_num` cleared), never deleted.
 
 ## Group 5: doctor checks (`facts/doctor.rs`)
 
