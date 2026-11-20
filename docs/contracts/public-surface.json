@@ -2488,6 +2488,7 @@
     "bootstrap_cleanup_pending": 14,
     "bootstrap_empty": 1,
     "bootstrap_pending_review": 1,
+    "brain_missing": 1,
     "bridge_ownership_conflict": 1,
     "bucket_not_found": 1,
     "budget_below_recent_runtime": 1,
