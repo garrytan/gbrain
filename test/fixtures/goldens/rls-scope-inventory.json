@@ -3603,6 +3603,17 @@
         ],
         "flagOnScopes": []
       },
+      "listRootPageSlugsAfter#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceChangedPagesAfter#default": {
         "flagOffLanes": [
           "pool"
@@ -7751,6 +7762,7 @@
         "listRestatedPrivateCopies": "none",
         "listResumableRefreshes": "none",
         "listRetiredDeactivations": "none",
+        "listRootPageSlugsAfter": "none",
         "listSessionFactTwins": "none",
         "listSessionFactsForClassification": "none",
         "listSharedSkillPackRoots": "none",

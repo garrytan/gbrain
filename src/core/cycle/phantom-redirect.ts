@@ -779,17 +779,7 @@ export async function runPhantomRedirectPass(
     const held = [...holdSlugs].filter(slug => !slug.includes('/'));
     result.held_legacy_rows = held.length;
     const after = await rotationAfter(engine, PHANTOM_REDIRECT_CURSOR_OP, sourceId) ?? '';
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND slug NOT LIKE '%/%'
-         AND slug <> ALL($3::text[])
-         AND slug COLLATE "C" > $4
-       ORDER BY slug COLLATE "C" ASC
-       LIMIT $2`,
-      [sourceId, limit + 1, held, after],
-    );
+    const rows = (await engine.listRootPageSlugsAfter(sourceId, after, held, limit + 1)).map(slug => ({ slug }));
     result.more_pending = rows.length > limit;
 
     const touchedSet = new Set<string>();

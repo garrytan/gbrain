@@ -1278,6 +1278,18 @@ SELECT source_id, type FROM pairs`],
       ORDER BY updated_at, slug COLLATE "C" LIMIT $4`],
   },
   {
+    from: 'src/core/cycle/phantom-redirect.ts:782 runPhantomRedirectPass, at ab933d52c2',
+    case: { method: 'listRootPageSlugsAfter', variant: 'default', run: e => e.listRootPageSlugsAfter('default', '', ['held'], 3) },
+    texts: [`SELECT slug FROM pages
+       WHERE source_id = $1
+         AND deleted_at IS NULL
+         AND slug NOT LIKE '%/%'
+         AND slug <> ALL($3::text[])
+         AND slug COLLATE "C" > $4
+       ORDER BY slug COLLATE "C" ASC
+       LIMIT $2`],
+  },
+  {
     from: 'src/core/cycle/propose-takes-failures.ts:194 ProposeTakesFailures.settle, at 058fb4a29e (the moved statement now ends in RETURNING id, so the member can say whether it inserted)',
     case: { method: 'recordFailureTombstone', variant: 'default', run: e => e.recordFailureTombstone({ sourceId: 'default', slug: 'notes/a', contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: '(extraction failed: x)', modelId: 'm' }) },
     texts: [`INSERT INTO take_proposals

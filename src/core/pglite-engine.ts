@@ -224,6 +224,7 @@ import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as collateCommandReadsImpl from './engine-sql/collate-command-reads.ts';
 import * as collateCycleWindowImpl from './engine-sql/collate-cycle-window.ts';
 import * as collateIdentityDowngradesImpl from './engine-sql/collate-identity-downgrades.ts';
+import * as collatePhantomRedirectImpl from './engine-sql/collate-phantom-redirect.ts';
 import * as collateTakeProposalsImpl from './engine-sql/collate-take-proposals.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
@@ -1869,6 +1870,7 @@ export class PGLiteEngine implements BrainEngine {
   countPageCarryRows(sourceId: string, slug: string, pageId: number) { return collateIdentityDowngradesImpl.countPageCarryRows(this.rawRead, sourceId, slug, pageId); }
   writeOpCheckpointValues(op: string, fingerprint: string, values: readonly unknown[]) { return collateIdentityDowngradesImpl.writeOpCheckpointValues(this.rawRead, op, fingerprint, values); }
   readOpCheckpointValues(op: string, fingerprint: string) { return collateIdentityDowngradesImpl.readOpCheckpointValues(this.rawRead, op, fingerprint); }
+  listRootPageSlugsAfter(sourceId: string, after: string, exclude: readonly string[], limit: number) { return collatePhantomRedirectImpl.listRootPageSlugsAfter(this.rawRead, sourceId, after, exclude, limit); }
   recordFailureTombstone(input: collateTakeProposalsImpl.FailureTombstoneInput) { return collateTakeProposalsImpl.recordFailureTombstone(this.rawRead, input); }
   listFailureTombstones(sourceId: string, claimPrefix: string) { return collateTakeProposalsImpl.listFailureTombstones(this.rawRead, sourceId, claimPrefix); }
   readCycleListingInstant() { return collateCycleWindowImpl.readCycleListingInstant(this.rawRead); }

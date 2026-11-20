@@ -563,6 +563,7 @@
       "listRestatedPrivateCopies": "out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)",
       "listResumableRefreshes": "out-of-scope:persistence-owner-scans (born in engine-sql/persistence-owner-scans.ts; pinned by test/engine-parity/owner-recovery-scans.test.ts)",
       "listRetiredDeactivations": "out-of-scope:connect-gate (born in engine-sql/connect-gate.ts; pinned by test/engine-parity/connect-gate.test.ts and test/cold-read-folded-statements.test.ts)",
+      "listRootPageSlugsAfter": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "listSessionFactTwins": "out-of-scope:facts-repair (born in engine-sql/facts-repair.ts; pinned by test/engine-parity/facts-repair.test.ts)",
       "listSessionFactsForClassification": "out-of-scope:facts-repair (born in engine-sql/facts-repair.ts; pinned by test/engine-parity/facts-repair.test.ts)",
       "listSharedSkillPackRoots": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/engine-parity/write-misc.test.ts)",

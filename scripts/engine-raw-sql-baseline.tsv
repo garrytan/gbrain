@@ -324,7 +324,7 @@ src/core/cycle/pattern-claim-sources.ts	execute_raw	1
 src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	7
 src/core/cycle/phantom-redirect-managed.ts	execute_raw	6
-src/core/cycle/phantom-redirect.ts	execute_raw	8
+src/core/cycle/phantom-redirect.ts	execute_raw	7
 src/core/cycle/phases/consolidate.ts	execute_raw	9
 src/core/cycle/propose-takes-failures.ts	execute_raw	3
 src/core/cycle/propose-takes.ts	execute_raw	5
@@ -851,7 +851,7 @@ src/core/repair/readers.ts	execute_raw	3
 src/core/repair/receipt-compaction.ts	execute_raw	3
 src/core/repair/redacted-facts.ts	execute_raw	6
 src/core/repair/rename-identity.ts	execute_raw	7
-src/core/repair/rotation.ts	execute_raw	3
+src/core/repair/rotation.ts	execute_raw	1
 src/core/repair/rows-behind.ts	execute_raw	1
 src/core/repair/safe-chunks.ts	execute_raw	1
 src/core/repair/secret-spans.ts	execute_raw	24

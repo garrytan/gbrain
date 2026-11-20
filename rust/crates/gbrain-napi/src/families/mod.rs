@@ -13,6 +13,7 @@ mod cli_sources;
 mod collate_command_reads;
 mod collate_cycle_window;
 mod collate_identity_downgrades;
+mod collate_phantom_redirect;
 mod collate_reads;
 mod collate_take_proposals;
 mod config;

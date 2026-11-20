@@ -819,6 +819,7 @@ export const RUST_ENGINE_MEMBERS = {
   listMarkdownPageSlugs: 'pages',
   readSoftDeletedPageAtOrigin: 'pages',
   listLivePagesAtOrigin: 'pages',
+  listRootPageSlugsAfter: 'pages',
   recordFailureTombstone: 'takes',
   listFailureTombstones: 'takes',
   readCycleListingInstant: 'pages',
