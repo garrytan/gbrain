@@ -51,6 +51,8 @@ export interface ExactIdentityStatementOpts {
   types: EntityTypeFilter;
   /** Untrusted caller: quarantined and (with excludePrivate) private pages are never candidates. */
   remote?: { excludePrivate: boolean };
+  /** Probe only the email arms (the owner identity proves a page by its email alone, so title matches never take the limit). */
+  emailsOnly?: boolean;
   limit: number;
 }
 
@@ -92,7 +94,7 @@ function phoneArms(sourceIds: string[], digits: string[]): SqlFragment[] {
 
 export function exactIdentityStatement(opts: ExactIdentityStatementOpts): { text: string; params: unknown[] } {
   const { probes, sourceIds } = opts;
-  const arms: SqlFragment[] = probes.titleKeys.length || probes.titleRaw ? [sqlFragment`SELECT p.id FROM pages p
+  const arms: SqlFragment[] = !opts.emailsOnly && (probes.titleKeys.length || probes.titleRaw) ? [sqlFragment`SELECT p.id FROM pages p
        WHERE p.source_id = ANY(${sourceIds}::text[]) AND lower(p.title) = ANY(${probes.titleKeys}::text[] || lower(${probes.titleRaw}::text))`] : [];
   if (probes.basenames.length) {
     arms.push(sqlFragment`SELECT p.id FROM pages p
@@ -103,7 +105,7 @@ export function exactIdentityStatement(opts: ExactIdentityStatementOpts): { text
        WHERE a.source_id = ANY(${sourceIds}::text[]) AND a.alias_norm = ANY(${probes.aliasKeys}::text[])`);
   }
   arms.push(...emailArms(sourceIds, probes.emails));
-  if (probes.phones?.length) arms.push(...phoneArms(sourceIds, probes.phones));
+  if (!opts.emailsOnly && probes.phones?.length) arms.push(...phoneArms(sourceIds, probes.phones));
   if (!arms.length) arms.push(sqlFragment`SELECT p.id FROM pages p WHERE false`);
   const privacy = opts.remote?.excludePrivate ? trustedSql(` AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``;
   const remote = opts.remote ? sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))}${privacy}` : sqlFragment``;

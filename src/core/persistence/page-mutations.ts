@@ -37,7 +37,7 @@ import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal, WriteRequest } from './model.ts';
-import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWarning } from './page-input.ts';
+import { normalizeSubagentPageInput, stripPageTextNul, undeclaredPageTypeWarning, type PageTypeWarning } from './page-input.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
@@ -454,6 +454,9 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   // GST-1943: the storage manifest takes page writes only from the storage verbs (and the owner's import of its own commits).
   assertStorageSourceWriter(ctx, sourceId, source.role, { managedFileImport: input.managedFileImport });
+  // A managed file import keeps the file canonical: its content is re-read and compared at preparation.
+  const nulRemoved = input.managedFileImport ? 0 : stripPageTextNul(input.operation, p);
+  if (nulRemoved) ctx.logger?.warn(`[nul_removed] ${input.operation} ${JSON.stringify(String(p.slug))}: removed ${nulRemoved} U+0000 character(s) from the page text; the page is stored without them.`);
   // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
   if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
     p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);

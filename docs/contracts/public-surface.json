@@ -92,6 +92,7 @@
     "gbrain health",
     "gbrain history",
     "gbrain hook",
+    "gbrain identity",
     "gbrain import",
     "gbrain init",
     "gbrain integrations",

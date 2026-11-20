@@ -20,9 +20,9 @@ import type { Action, McpCall } from '../core/agent-output.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
-import { clampSurface, filterOpsForSurface, isReadOnlyOperation, paramCallable, paramCeiling, surfaceWiderThan, type McpSurface } from './surface.ts';
+import { clampSurface, filterOpsForSurface, isReadOnlyOperation, itemParamKeys, paramCallable, paramCeiling, surfaceWiderThan, type McpSurface } from './surface.ts';
 
-export { paramCallable };
+export { itemParamKeys, paramCallable };
 
 const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in the env of this harness\'s MCP server entry for gbrain '
   + '(`claude mcp add gbrain -e GBRAIN_SURFACE=full -- …`, the env table of the Codex server entry, or the plugin\'s GBRAIN_SURFACE setting on launcher installs), '
@@ -153,13 +153,15 @@ export function paramNotOnSurface(op: Operation, params: Record<string, unknown>
     const cap = paramCeiling(op, key, on);
     return cap !== undefined && typeof params[key] === 'number' && params[key] > cap ? cap : undefined;
   };
-  const param = Object.keys(params).find(key => !paramCallable(op, key, surface) || above(key, surface) !== undefined);
+  const inItem = (key: string) => !Object.keys(params).includes(key);
+  const param = Object.keys(params).find(key => !paramCallable(op, key, surface) || above(key, surface) !== undefined)
+    ?? itemParamKeys(op, params).find(key => !paramCallable(op, key, surface));
   if (param === undefined) return null;
   const cap = above(param, surface);
   const target = clampSurface(conn.ceiling ?? 'full', () => {});
   const widen = conn.canWiden && !(conn.readOnly && !isReadOnlyOperation(op)) && surfaceWiderThan(target, surface)
     && paramCallable(op, param, target) && above(param, target) === undefined;
-  const what = cap === undefined ? `parameter ${param} is not on` : `${param} above ${cap} is not on`;
+  const what = cap === undefined ? `parameter ${param}${inItem(param) ? ' (in an item)' : ''} is not on` : `${param} above ${cap} is not on`;
   const message = `${op.name}: ${what} this connection's ${surface} tool surface; nothing was ${op.mutating ? 'written' : 'read'}.`;
   const why = 'The tool surface the brain operator set for this connection limits the parameters it may pass, as well as the tools it may call.';
   const retry = cap === undefined ? `Repeat the call without ${param}` : `Repeat the call with ${param} at most ${cap}`;
