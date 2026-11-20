@@ -739,8 +739,9 @@ each of them with `engine_capability_missing` naming the member until the store 
 
 The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
 `facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each with
-the typed `raw_sql` refusal until the store holds what it reads. None has a Rust implementation yet; the
-parity file `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for every case, and the
+the typed `raw_sql` refusal until the store holds what it reads. Only `readPurgeSourceLocalPath` has a Rust
+implementation (the source record's checkout); the parity file `test/engine-parity/facts-purge-sites.test.ts` stops on
+that refusal for every case, and the
 Postgres text of each statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
 | Member | What it does |
@@ -802,7 +803,11 @@ are compared on empty data only.
 ## Fact purge plan, transaction and segment-storage statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
 
 The statements `facts/purge.ts` ran through `executeRaw` are 35 typed members, so the Rust arm answers each with the
-typed `raw_sql` refusal until the store holds what it reads. None has a Rust implementation yet; the parity file
+typed `raw_sql` refusal until the store holds what it reads. `lockPurgeSource` (the source record's incarnation and
+archived flag; the purge transaction is the store's single writer, so FOR UPDATE changes nothing) and the tombstone
+writes `insertFactPurge` and `insertTakePurge` have Rust implementations. A whole `purge_fact` on the Rust arm admits its
+write request, then stops on the refusal of `listGitEffectsCarryingReason`, and its transaction keeps nothing
+(`test/engine-parity/fact-purge-commit.test.ts`). The parity file
 `test/engine-parity/fact-purge-sites.test.ts` stops on that refusal for every case, and the Postgres text of each
 statement is pinned byte for byte by `test/fact-purge-sites-sql-pin.test.ts`. One statement of `purge.ts` stays a raw
 read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column list and lock clause from its two callers

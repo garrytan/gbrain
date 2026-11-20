@@ -154,6 +154,7 @@ test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/fact-purge-commit.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-relink-attempts.test.ts

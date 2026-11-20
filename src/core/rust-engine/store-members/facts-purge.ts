@@ -6,7 +6,8 @@
  * `listFactsReconcileBacklog`, `settleFactsReconcile` and `selectFactsReconcileDrain` read and write the store's
  * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
- * `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `listSingleFactMetadata` is served by facts-trust-reads.ts. `readPurgeSourceLocalPath` and `lockPurgeSource` read the
+ * source record, as memory-mutation-reads.ts's `readSourceLocalPath` and `readSourceWriteRow` do.
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
  * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
  * (private-provenance.ts).
@@ -102,3 +103,16 @@ export const upsertPagePurges: Member<'upsertPagePurges'> = async (brain, row) =
 
 export const insertTakePurge: Member<'insertTakePurge'> = (brain, row) =>
   storeCall({ member: 'insertTakePurge', sourceId: row.sourceId }, () => brain.insertTakePurge(row));
+
+/** `readPurgeSourceLocalPath`: the source's checkout from the source record, as `readSourceLocalPath` reads it. */
+export const readPurgeSourceLocalPath: Member<'readPurgeSourceLocalPath'> = (brain, sourceId) =>
+  storeCall({ member: 'readPurgeSourceLocalPath' }, () => brain.readSourceLocalPath(sourceId));
+
+/**
+ * `lockPurgeSource`: the source's incarnation and archived flag from the source record. FOR UPDATE changes nothing
+ * here: the purge transaction is the store's single writer, so no other write reaches the source before it ends.
+ */
+export const lockPurgeSource: Member<'lockPurgeSource'> = async (brain, sourceId) => {
+  const row: { incarnation: string; archived: boolean } | null = await storeCall({ member: 'lockPurgeSource' }, () => brain.readSourceWriteRow(sourceId));
+  return row ? { incarnation: row.incarnation, archived: row.archived } : null;
+};
