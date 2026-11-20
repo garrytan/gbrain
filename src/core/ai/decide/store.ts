@@ -271,12 +271,8 @@ export async function dailySpend(engine: BrainEngine, now = Date.now()): Promise
   const day = utcDay(now);
   const cached = spendCache.get(engineKey(engine));
   if (cached && cached.day === day && now - cached.at < SPEND_CACHE_MS) return { total: cached.total, remote: cached.remote };
-  const rows = await engine.executeRaw<{ total: number | string | null; remote: number | string | null }>(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total, COALESCE(SUM(CASE WHEN remote THEN cost_usd ELSE 0 END), 0) AS remote
-       FROM decide_spend WHERE created_at >= $1::timestamptz AND provider LIKE 'typesafe:%'`,
-    [`${day}T00:00:00Z`],
-  );
-  const entry = { day, at: now, total: Number(rows[0]?.total ?? 0), remote: Number(rows[0]?.remote ?? 0) };
+  const spent = await engine.readDecideDailySpend(`${day}T00:00:00Z`);
+  const entry = { day, at: now, total: spent.total, remote: spent.remote };
   spendCache.set(engineKey(engine), entry);
   return { total: entry.total, remote: entry.remote };
 }
@@ -356,12 +352,7 @@ export async function storeQualification(engine: BrainEngine, id: number, q: { a
 }
 
 export async function listCalibrations(engine: BrainEngine, filter: { slot?: DecideSlot; includeRetired?: boolean } = {}): Promise<CalibrationRow[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM decide_calibrations
-      WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
-    [filter.slot ?? null, filter.includeRetired ?? false],
-  );
+  const rows = await engine.listDecideCalibrationRows(filter.slot ?? null, filter.includeRetired ?? false);
   return rows.map(normalizeCalibration);
 }
 
@@ -393,16 +384,7 @@ export interface ReceiptStats {
 }
 
 export async function receiptStats(engine: BrainEngine, opts: { slot?: DecideSlot; sinceHours: number }): Promise<ReceiptStats[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, mode, outcome, error_reason, COUNT(*)::int AS n, AVG(answer_value)::float8 AS avg_value,
-            percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p50_latency,
-            percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p95_latency,
-            COALESCE(SUM(input_tokens), 0)::int AS input_tokens
-       FROM decision_receipts
-      WHERE created_at >= now() - ($1::int * interval '1 hour') AND ($2::text IS NULL OR slot = $2)
-      GROUP BY slot, mode, outcome, error_reason ORDER BY slot, mode, outcome, error_reason`,
-    [opts.sinceHours, opts.slot ?? null],
-  );
+  const rows = await engine.listDecideReceiptStats(opts.sinceHours, opts.slot ?? null);
   return rows.map((r) => ({
     slot: String(r.slot), mode: String(r.mode), outcome: String(r.outcome), error_reason: r.error_reason === null ? null : String(r.error_reason),
     n: Number(r.n), avg_value: toNum(r.avg_value), p50_latency: toNum(r.p50_latency), p95_latency: toNum(r.p95_latency), input_tokens: Number(r.input_tokens),
@@ -413,16 +395,7 @@ export interface SlotUsage { slot: string; decisions: number; rows: number; inpu
 
 /** Per-slot decision counts, tokens, errors and egress refusals over the window (status, doctor, cost estimates). */
 export async function slotUsage(engine: BrainEngine, sinceHours = 24): Promise<SlotUsage[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, COUNT(DISTINCT decision_id)::int AS decisions, COUNT(*)::int AS rows,
-            COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-            SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END)::int AS errors,
-            SUM(CASE WHEN outcome = 'skipped' THEN 1 ELSE 0 END)::int AS skipped,
-            SUM(CASE WHEN error_reason LIKE 'egress%' OR error_reason IN ('denied_source','missing_provenance') THEN 1 ELSE 0 END)::int AS egress
-       FROM decision_receipts WHERE created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot ORDER BY slot`,
-    [sinceHours],
-  );
+  const rows = await engine.listDecideSlotUsage(sinceHours);
   return rows.map((r) => ({ slot: String(r.slot), decisions: Number(r.decisions), rows: Number(r.rows), input_tokens: Number(r.input_tokens), errors: Number(r.errors), skipped: Number(r.skipped), egress: Number(r.egress) }));
 }
 
@@ -463,23 +436,13 @@ export async function replayReceipts(engine: BrainEngine, slot: DecideSlot, sinc
 
 /** Most recent resolved model per (slot) over the window, for alias calibration lookup and drift. */
 export async function recentResolvedModels(engine: BrainEngine, sinceHours = 24): Promise<Array<{ slot: string; provider: string; model_resolved: string; n: number; last_at: string }>> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, provider, model_resolved, COUNT(*)::int AS n, MAX(created_at) AS last_at FROM decision_receipts
-      WHERE model_resolved IS NOT NULL AND created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot, provider, model_resolved ORDER BY MAX(created_at) DESC`,
-    [sinceHours],
-  );
+  const rows = await engine.listRecentResolvedModels(sinceHours);
   return rows.map((r) => ({ slot: String(r.slot), provider: String(r.provider), model_resolved: String(r.model_resolved), n: Number(r.n), last_at: toTime(r.last_at)! }));
 }
 
 /** Decisions whose rows carried more than one resolved model (alias rollout), per slot. */
 export async function mixedModelDecisions(engine: BrainEngine, sinceHours = 24): Promise<Array<{ slot: string; n: number }>> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT slot, COUNT(*)::int AS n FROM decision_receipts
-      WHERE created_at >= now() - ($1::int * interval '1 hour') AND error_reason = 'mixed_model'
-      GROUP BY slot`,
-    [sinceHours],
-  );
+  const rows = await engine.listMixedModelDecisions(sinceHours);
   return rows.map((r) => ({ slot: String(r.slot), n: Number(r.n) }));
 }
 

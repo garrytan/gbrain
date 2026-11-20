@@ -18,9 +18,7 @@ async function runDerivationPurgeSweeps(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   let rows: Array<{ request_id: string | null; source_id: string; stalled: boolean; reason: string | null; pending_reason: string | null; created_at: string }>;
   try {
-    rows = await connectedEngine(ctx).executeRaw(`SELECT r.request_id::text AS request_id, x.source_id, x.stalled_at IS NOT NULL AS stalled, x.stalled_reason AS reason, x.pending_reason,
-        x.created_at::text AS created_at
-      FROM page_segment_derivation_purges x LEFT JOIN persistence_requests r ON r.id = x.request_id ORDER BY x.created_at, x.request_id`);
+    rows = await connectedEngine(ctx).listDerivationPurgeSweeps();
   } catch (error) {
     checks.push(checkError('derivation_purge_sweeps', 'read the recorded derivation sweeps', error));
     return checks;

@@ -62,7 +62,7 @@ struct PageLiveness {
 }
 
 /// Calls `f` with the source of each live page under `prefix` until it returns false.
-fn scan_live_pages(
+pub(super) fn scan_live_pages(
     read: &dyn KvRead,
     prefix: &[u8],
     f: &mut dyn FnMut(&str) -> bool,

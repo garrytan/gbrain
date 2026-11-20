@@ -121,7 +121,7 @@ function makeEngine(opts: { sources?: SourceFixture[]; pageCount?: number } = {}
   }));
   const engine = {
     kind: 'pglite',
-    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    // loadAllSources and countLivePages read typed members.
     listSourceRecords: async () => {
       calls.push('listSourceRecords');
       return sources();

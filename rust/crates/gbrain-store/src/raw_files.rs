@@ -277,6 +277,16 @@ fn collect_values<T: serde::de::DeserializeOwned>(
         .collect()
 }
 
+/// Every `files` row, in file id order.
+pub(crate) fn all_file_records(read: &dyn KvRead) -> Result<Vec<FileRecord>> {
+    let mut files: Vec<FileRecord> = collect_values(read, &[keys::RAW_FILES, FILE])?
+        .into_iter()
+        .map(|(_, f)| f)
+        .collect();
+    files.sort_by_key(|f| f.id);
+    Ok(files)
+}
+
 /// The pages `putRawData` writes to: the page in `source_id` when one is named, else every page
 /// by that slug in any source. Soft-deleted pages count (the PGLite lookup has no `deleted_at`
 /// filter).

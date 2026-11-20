@@ -36,8 +36,8 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
   const docs = 'docs/guides/troubleshooting.md#maintenance-write-drift';
   try {
     const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
-    const [bounds] = await engine.executeRaw<{ top: string | null }>('SELECT max(sequence)::text AS top FROM persistence_requests');
-    const floor = String(Math.max(0, Number(bounds?.top ?? 0) - WINDOW));
+    const top = await engine.readMaxRequestSequence();
+    const floor = String(Math.max(0, Number(top ?? 0) - WINDOW));
     const skips = await readDriftSkips(engine);
     const hostId = existingLocalHostId();
     const rows = [];
@@ -45,18 +45,14 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
     const suppressed: SuppressedWrite[] = [];
     let unchecked = 0;
     const olderUnread: string[] = [];
-    const receiptFilter = `r.source_id=$1 AND r.state='conflict' AND r.error_code='source_changed' AND r.error_message=$3`;
     for (const sourceId of sources) {
       suppressed.push(...await listSuppressedWrites(engine, sourceId));
-      const recent = await engine.executeRaw<{ slug: string; total: number }>(`SELECT slug, count(*) OVER ()::int AS total FROM (
-        SELECT DISTINCT r.slug FROM persistence_requests r WHERE r.sequence > $2::bigint AND ${receiptFilter}) d
-        ORDER BY slug LIMIT ${LIVE_LIMIT}`, [sourceId, floor, FILE_DRIFT_MESSAGE]);
+      const recent = await engine.listRecentDriftReceiptSlugs(sourceId, floor, FILE_DRIFT_MESSAGE);
       // #7145: a drifted page stops adding receipts, so its only receipts can sit below the window; read them under a time bound.
       let older: Array<{ slug: string }> = [];
       if (floor !== '0') {
         try {
-          older = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT r.slug FROM persistence_requests r WHERE r.sequence <= $2::bigint AND ${receiptFilter}
-            ORDER BY r.slug LIMIT ${LIVE_LIMIT + 1}`, [sourceId, floor, FILE_DRIFT_MESSAGE], { timeoutMs: OLDER_READ_MS });
+          older = await engine.listOlderDriftReceiptSlugs(sourceId, floor, FILE_DRIFT_MESSAGE, OLDER_READ_MS);
         } catch (error) {
           if (!isStatementTimeout(error)) throw error;
           olderUnread.push(sourceId);

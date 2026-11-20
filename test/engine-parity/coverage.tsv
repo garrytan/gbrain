@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1025/1032
+# covered: 1163/1170
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -45,6 +45,13 @@
 # cli_reads_ops: 12/12
 # facts_doctor: 11/11
 # embedding_catalog: 5/5
+# doctor_reads: 1/1
+# doctor_derived: 26/26
+# doctor_persistence: 37/37
+# doctor_pages: 19/19
+# doctor_reads_acc: 32/32
+# doctor_checkpoints: 17/17
+# doctor_sources: 6/6
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 11/11
@@ -90,13 +97,13 @@ getPage	pages	yes	115	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	527	yes	yes	yes	serves
+putPage	pages	yes	560	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	8	yes	yes	yes	serves
+deletePage	pages	yes	12	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	156	yes	yes	yes	serves
+softDeletePage	pages	yes	170	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -127,7 +134,7 @@ readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	1	no	yes	yes	serves
 advanceSourceCommit	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
-insertSource	pages	yes	2	no	yes	yes	serves
+insertSource	pages	yes	3	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
 holdPageEmbedding	pages	yes	1	no	yes	yes	serves
 readReasonPurgeTombstones	pages	yes	4	no	yes	yes	serves
@@ -253,7 +260,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	116	yes	yes	yes	serves
+addLink	links	yes	118	yes	yes	yes	serves
 addLinksBatch	links	yes	28	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	15	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -276,7 +283,7 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	5	no	yes	yes	serves
 getSalienceScores	links	yes	7	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
-addTag	tags	yes	18	yes	yes	yes	serves
+addTag	tags	yes	19	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
@@ -290,7 +297,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	43	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	45	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	21	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	7	no	yes	yes	serves
@@ -308,13 +315,13 @@ mergeOntologyFact	ontology	yes	10	no	yes	yes	serves
 getOntology	ontology	yes	5	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	4	no	yes	yes	serves
-putRawData	raw_files	yes	5	yes	yes	yes	serves
+putRawData	raw_files	yes	7	yes	yes	yes	serves
 getRawData	raw_files	yes	5	yes	yes	yes	serves
-upsertFile	raw_files	yes	3	no	yes	yes	serves
+upsertFile	raw_files	yes	5	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	42	yes	yes	yes	serves
+addTakesBatch	takes	yes	44	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
 listTakes	takes	yes	19	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
@@ -327,7 +334,7 @@ supersedeTake	takes	yes	2	no	yes	yes	serves
 resolveTake	takes	yes	13	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
-addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
+addSynthesisEvidence	takes	yes	3	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
 matchTakeRows	takes	yes	1	no	yes	yes	serves
 deleteTakeRows	takes	yes	1	no	yes	yes	serves
@@ -373,7 +380,7 @@ stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
 readManifest	segmented_body	yes	9	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	9	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	13	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	9	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	3	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	9	no	yes	yes	serves
@@ -382,7 +389,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	27	no	yes	yes	serves
+createVersion	versions	yes	28	no	yes	yes	serves
 getVersions	versions	yes	13	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
@@ -390,7 +397,7 @@ countBrainLivePages	stats_ingest	yes	2	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	5	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
-logIngest	stats_ingest	yes	2	no	yes	yes	serves
+logIngest	stats_ingest	yes	4	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	21	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
@@ -403,7 +410,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	21	no	yes	yes	serves
-setConfig	config	yes	31	no	yes	yes	serves
+setConfig	config	yes	32	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -561,15 +568,15 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	35	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	40	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	20	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	38	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	43	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	21	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	14	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	17	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	52	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	55	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -822,6 +829,144 @@ readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
+countPageChildOrphans	doctor_reads	yes	1	no	yes	yes	serves
+readIgnoredPrivacyLabelCounts	doctor_derived	yes	1	no	yes	yes	refuses:health
+countSafeIndexPending	doctor_derived	yes	1	no	yes	yes	serves
+countCredentialProjectionPending	doctor_derived	yes	1	no	yes	yes	refuses:health
+countPagesByTypeAndOwner	doctor_derived	yes	1	no	yes	yes	serves
+listRecordedTombstones	doctor_derived	yes	1	no	yes	yes	serves
+countDerivedVisibility	doctor_derived	yes	1	no	yes	yes	refuses:health
+listUntiledSegmentedPageRows	doctor_derived	yes	1	no	yes	yes	refuses:health
+listTimelineHistoryBatch	doctor_derived	yes	1	no	yes	yes	serves
+listAtomFenceCandidates	doctor_derived	yes	1	no	yes	yes	serves
+readPageCompiledTruths	doctor_derived	yes	1	no	yes	yes	serves
+readEmbeddingBacklogAge	doctor_derived	yes	1	no	yes	yes	refuses:health
+listBudgetLimitedRows	doctor_derived	yes	1	no	yes	yes	serves
+readBudgetHoldAge	doctor_derived	yes	1	no	yes	yes	serves
+listImageAssetFiles	doctor_derived	yes	1	no	yes	yes	serves
+listAmbiguousExtractionInputs	doctor_derived	yes	1	no	yes	yes	serves
+listExtractionInputReceipts	doctor_derived	yes	1	no	yes	yes	refuses:health
+listUnpricedDerivationModels	doctor_derived	yes	1	no	yes	yes	refuses:health
+listRestorableAtomRetirements	doctor_derived	yes	1	no	yes	yes	serves
+countLedgerCoveredAtomRetirements	doctor_derived	yes	1	no	yes	yes	serves
+listLiveGenerationRetirements	doctor_derived	yes	1	no	yes	yes	serves
+listHeldGenerations	doctor_derived	yes	1	no	yes	yes	serves
+listOrphanGenerationCandidates	doctor_derived	yes	1	no	yes	yes	serves
+listOntologyFactCandidates	doctor_derived	yes	1	no	yes	yes	refuses:health
+readAtomProvenanceCounts	doctor_derived	yes	1	no	yes	yes	refuses:health
+readExtractRollup7d	doctor_derived	yes	1	no	yes	yes	serves
+listRecordedHaltReasons7d	doctor_derived	yes	1	no	yes	yes	serves
+listCapacityCounters	doctor_persistence	yes	2	no	yes	yes	serves
+listOutstandingHolders	doctor_persistence	yes	2	no	yes	yes	serves
+countPersistenceRequestRows	doctor_persistence	yes	2	no	yes	yes	serves
+listLifetimeCounters	doctor_persistence	yes	2	no	yes	yes	serves
+readAdmissionSample	doctor_persistence	yes	2	no	yes	yes	serves
+listRunningRequestStalls	doctor_persistence	yes	2	no	yes	yes	serves
+readLiveConsumerSummary	doctor_persistence	yes	1	no	yes	yes	serves
+readCounterDrift	doctor_persistence	yes	2	no	yes	yes	serves
+readMaxRequestSequence	doctor_persistence	yes	3	no	yes	yes	serves
+listRefusalBreakerRows	doctor_persistence	yes	2	no	yes	yes	serves
+listRecentDriftReceiptSlugs	doctor_persistence	yes	2	no	yes	yes	serves
+listOlderDriftReceiptSlugs	doctor_persistence	yes	2	no	yes	yes	serves
+readPublicationRefusals	doctor_persistence	yes	2	no	yes	yes	serves
+countParkedEffects	doctor_persistence	yes	1	no	yes	yes	serves
+listParkedEffects	doctor_persistence	yes	1	no	yes	yes	serves
+listGitPushHoldRows	doctor_persistence	yes	1	no	yes	yes	serves
+listStalledCatchupRows	doctor_persistence	yes	1	no	yes	yes	serves
+listParkedGroupRows	doctor_persistence	yes	1	no	yes	yes	serves
+readStaleEmbeddingCounts	doctor_persistence	yes	1	no	yes	yes	serves
+listStaleEmbeddingEffects	doctor_persistence	yes	1	no	yes	yes	serves
+listOrphanBindingRows	doctor_persistence	yes	1	no	yes	yes	serves
+readPersistenceBrainIdText	doctor_persistence	yes	1	no	yes	yes	serves
+listWorktreeIds	doctor_persistence	yes	1	no	yes	yes	serves
+listManagedRoots	doctor_persistence	yes	1	no	yes	yes	serves
+listUnboundSourcePages	doctor_persistence	yes	1	no	yes	yes	serves
+listRecentWriterVersions	doctor_persistence	yes	2	no	yes	yes	serves
+listRecentPurgeRequests	doctor_persistence	yes	1	no	yes	yes	serves
+listStuckWorktreeRefreshes	doctor_persistence	yes	1	no	yes	yes	serves
+listSourceBindingsForMovement	doctor_persistence	yes	1	no	yes	yes	serves
+listRunningClaimOwners	doctor_persistence	yes	2	no	yes	yes	serves
+listOwnerBindings	doctor_persistence	yes	1	no	yes	yes	serves
+listConsumerOwners	doctor_persistence	yes	1	no	yes	yes	serves
+listOverwriteCandidates	doctor_persistence	yes	1	no	yes	yes	serves
+listCallerRefusalRows	doctor_persistence	yes	2	no	yes	yes	serves
+countCompactedCallerRefusals	doctor_persistence	yes	2	no	yes	yes	serves
+listLocalEditAdoptions	doctor_persistence	yes	2	no	yes	yes	serves
+listDerivationPurgeSweeps	doctor_persistence	yes	1	no	yes	yes	serves
+listOversizedPages	doctor_pages	yes	1	no	yes	yes	serves
+listScraperJunkCandidates	doctor_pages	yes	1	no	yes	yes	serves
+countMarkedPages	doctor_pages	yes	1	no	yes	yes	serves
+countOversizedCorePages	doctor_pages	yes	1	no	yes	yes	serves
+readRawProvenanceGaps	doctor_pages	yes	1	no	yes	yes	serves
+countUnverifiedExtractions	doctor_pages	yes	1	no	yes	yes	serves
+listContentHashDuplicates	doctor_pages	yes	1	no	yes	yes	serves
+countTranscriptImportPages	doctor_pages	yes	1	no	yes	yes	serves
+countPageRows	doctor_pages	yes	1	no	yes	yes	serves
+countPagesBySlugPrefix	doctor_pages	yes	1	no	yes	yes	serves
+countLivePages	doctor_pages	yes	1	no	yes	yes	serves
+readOldestPageCreatedAt	doctor_pages	yes	1	no	yes	yes	serves
+countPageTrustTiers	doctor_pages	yes	1	no	yes	yes	serves
+countPagesWithMentionLinks	doctor_pages	yes	1	no	yes	yes	serves
+countImageModalityMismatches	doctor_pages	yes	1	no	yes	yes	serves
+readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
+listFactsPageBodies	doctor_pages	yes	1	no	yes	yes	serves
+listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
+listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+listPolicySourceIds	doctor_reads_acc	yes	1	no	yes	yes	serves
+isAccessStateUnreadable	doctor_reads_acc	yes	1	no	yes	yes	serves
+listRawOnlyRules	doctor_reads_acc	yes	1	no	yes	yes	serves
+listAudienceMemberIds	doctor_reads_acc	yes	1	no	yes	yes	serves
+listLabelledOnlyMemberIds	doctor_reads_acc	yes	1	no	yes	yes	serves
+listAccessMemberRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listAttestCredentialRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listActiveAccessTokenRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listActiveOauthClientRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listOauthClientAuthShapes	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDanglingFederatedReads	doctor_reads_acc	yes	1	no	yes	yes	serves
+listOrphanWorkspaceSources	doctor_reads_acc	yes	1	no	yes	yes	serves
+listPrivilegedDcrClients	doctor_reads_acc	yes	1	no	yes	yes	serves
+readMcpRequestLogBytes	doctor_reads_acc	yes	1	no	yes	yes	serves
+countMcpRequestLogRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+hasMcpLogRowsPastWindow	doctor_reads_acc	yes	1	no	yes	yes	serves
+readKnowledgeRevisionNotNull	doctor_reads_acc	yes	1	no	yes	yes	serves
+readDriftSchema	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDriftLiveRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDriftVersionRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+originIndexPresent	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDecideCalibrationRows	doctor_reads_acc	yes	1	no	yes	yes	serves
+listRecentResolvedModels	doctor_reads_acc	yes	1	no	yes	yes	serves
+listMixedModelDecisions	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDecideSlotUsage	doctor_reads_acc	yes	1	no	yes	yes	serves
+readDecideDailySpend	doctor_reads_acc	yes	1	no	yes	yes	serves
+listDecideReceiptStats	doctor_reads_acc	yes	1	no	yes	yes	serves
+readChronicleLedgerStats	doctor_reads_acc	yes	1	no	yes	yes	serves
+readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
+readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
+listBeliefCoveredSources	doctor_reads_acc	yes	1	no	yes	yes	serves
+listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
+listFenceCandidateRecords	doctor_checkpoints	yes	1	no	yes	yes	serves
+listDerivedOriginParks	doctor_checkpoints	yes	1	no	yes	yes	serves
+listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves
+readSoakCounterRows	doctor_checkpoints	yes	1	no	yes	yes	serves
+listUnfinishedManagedSyncCursors	doctor_checkpoints	yes	1	no	yes	yes	serves
+listManagedSyncPassStops	doctor_checkpoints	yes	1	no	yes	yes	serves
+listManagedSyncBacklogHeaders	doctor_checkpoints	yes	1	no	yes	yes	serves
+readManagedSyncPassRow	doctor_checkpoints	yes	1	no	yes	yes	serves
+listLiveManagedSyncPassRows	doctor_checkpoints	yes	1	no	yes	yes	serves
+listCheckpointBlockedSources	doctor_checkpoints	yes	1	no	yes	yes	serves
+listOpenIdentityDowngrades	doctor_checkpoints	yes	1	no	yes	yes	serves
+listHeldManagedAtomRows	doctor_checkpoints	yes	1	no	yes	yes	serves
+readDoctorLastKnown	doctor_checkpoints	yes	2	no	yes	yes	serves
+writeDoctorLastKnown	doctor_checkpoints	yes	1	no	yes	yes	serves
+readSyncAdmissionSettingRow	doctor_checkpoints	yes	1	no	yes	yes	serves
+readLatestConnectorReceipt	doctor_checkpoints	yes	1	no	yes	yes	serves
+listFactsAbsorbFailureGroups	doctor_checkpoints	yes	1	no	yes	yes	serves
+readDoctorSources	doctor_sources	yes	1	no	yes	yes	serves
+listGuestSourceRows	doctor_sources	yes	1	no	yes	yes	serves
+listCheckoutRoots	doctor_sources	yes	1	no	yes	yes	serves
+listPendingRoster	doctor_sources	yes	1	no	yes	yes	serves
+listOwnedContentRows	doctor_sources	yes	1	no	yes	yes	serves
+countDefaultSourceFiles	doctor_sources	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	8	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
 deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
@@ -1037,7 +1182,7 @@ recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	4	no	yes	yes	serves
 readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
-logMcpRequest	telemetry	yes	4	no	yes	yes	serves
+logMcpRequest	telemetry	yes	5	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves

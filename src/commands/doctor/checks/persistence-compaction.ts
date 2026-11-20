@@ -21,9 +21,7 @@ const skippedNote = (last: { compacted: number; skipped_by_reason?: Record<strin
 };
 export async function checkPersistenceCompaction(engine: BrainEngine): Promise<Check> {
   try {
-    const [consumers] = await engine.executeRaw<{ live: string; oldest_hours: number | null }>(`SELECT count(DISTINCT host_id)::text AS live,
-        (EXTRACT(EPOCH FROM now()-min(started_at))/3600)::float8 AS oldest_hours
-      FROM persistence_consumers WHERE mode IN ('full','promoted') AND renewed_at > now()-interval '5 minutes'`);
+    const consumers = await engine.readLiveConsumerSummary();
     const staleRaw = Number(await engine.getConfig(COMPACTION_STALE_HOURS_KEY));
     const staleHours = Number.isFinite(staleRaw) && staleRaw > 0 ? staleRaw : DEFAULT_COMPACTION_STALE_HOURS;
     const last = await readLastCompaction(engine);
@@ -57,15 +55,7 @@ export async function checkPersistenceCompaction(engine: BrainEngine): Promise<C
  */
 export async function checkPersistenceCounterDrift(engine: BrainEngine): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<{ key: string; counter: string; req_rows: string; req_bytes: string; topo_rows: string; topo_bytes: string; clamped: string | null }>(`WITH u AS (
-          SELECT 'principal:'||principal_kind||':'||principal_id AS key,'requests' AS kind,terminal_reservation AS bytes FROM persistence_requests
-          UNION ALL SELECT 'principal:local_cli:'||principal_id::text,'topology_changes',terminal_bytes FROM persistence_topology_changes),
-      s AS (SELECT key,count(*) FILTER (WHERE kind='requests') AS req_rows,COALESCE(SUM(bytes) FILTER (WHERE kind='requests'),0) AS req_bytes,
-          count(*) FILTER (WHERE kind='topology_changes') AS topo_rows,COALESCE(SUM(bytes) FILTER (WHERE kind='topology_changes'),0) AS topo_bytes FROM u GROUP BY key),
-      every AS (SELECT * FROM s UNION ALL SELECT 'brain',COALESCE(SUM(req_rows),0),COALESCE(SUM(req_bytes),0),COALESCE(SUM(topo_rows),0),COALESCE(SUM(topo_bytes),0) FROM s)
-      SELECT c.key,c.terminal_bytes::text AS counter,COALESCE(e.req_rows,0)::text AS req_rows,COALESCE(e.req_bytes,0)::text AS req_bytes,
-        COALESCE(e.topo_rows,0)::text AS topo_rows,COALESCE(e.topo_bytes,0)::text AS topo_bytes,(SELECT value FROM config WHERE key=$1) AS clamped
-      FROM persistence_counters c LEFT JOIN every e ON e.key=c.key WHERE c.key='brain' OR c.key LIKE 'principal:%' ORDER BY c.key`, [TRUE_UP_CLAMPED_KEY]);
+    const rows = await engine.readCounterDrift(TRUE_UP_CLAMPED_KEY);
     const clamped = Number(rows[0]?.clamped ?? 0) || 0;
     const drift = rows.map(row => {
       const receipts = Number(row.req_bytes) + Number(row.topo_bytes);

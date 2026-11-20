@@ -236,18 +236,13 @@ export async function skillPreconditionsCheck(
   const ctx: PreconditionContext = {
     async countPages() {
       try {
-        const rows = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM pages');
-        return rows[0]?.n ?? 0;
+        return await engine.countPageRows();
       } catch { return 0; }
     },
     async countPagesInDir(dir: string) {
       const prefix = dir.endsWith('/') ? dir : `${dir}/`;
       try {
-        const rows = await engine.executeRaw<{ n: number }>(
-          `SELECT COUNT(*)::int AS n FROM pages WHERE slug LIKE $1 ESCAPE '\\'`,
-          [`${prefix.replace(/[%_\\]/g, m => `\\${m}`)}%`],
-        );
-        return rows[0]?.n ?? 0;
+        return await engine.countPagesBySlugPrefix(prefix);
       } catch { return 0; }
     },
     async listSourceIds() {
@@ -263,16 +258,7 @@ export async function skillPreconditionsCheck(
       // page. Pre-fix this required a non-default source, so a healthy
       // default-only brain failed `requires: source` forever.
       try {
-        const rows = await engine.executeRaw<{ id: string }>(
-          `SELECT s.id
-             FROM sources s
-            WHERE EXISTS (
-              SELECT 1 FROM pages p
-               WHERE p.source_id = s.id
-                 AND p.deleted_at IS NULL
-            )
-            ORDER BY s.id COLLATE "C"`,
-        );
+        const rows = await engine.readDoctorSources('ids_with_live_pages');
         return rows.map(r => r.id);
       } catch { return []; }
     },

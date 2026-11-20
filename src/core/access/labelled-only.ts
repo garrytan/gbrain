@@ -51,7 +51,7 @@ export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'executeRa
 
 /** The enabled labelled-only members, sorted, each with how many credentials are bound to it (doctor's audit list). */
 export async function labelledOnlyMembers(engine: BrainEngine): Promise<Array<{ id: string; credentials: number }>> {
-  return Promise.all((await labelledOnlyMemberIds(engine)).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
+  return Promise.all((await engine.listLabelledOnlyMemberIds()).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
 }
 
 /** Whether any member carries the grant: the one cheap test a write runs before resolving its writer. Unreadable counts as yes. */

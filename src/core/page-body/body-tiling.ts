@@ -8,7 +8,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import type { ManifestRow } from './types.ts';
-import { liveTilingSql, untiledSql } from './schema.ts';
 
 export interface RowSpan { byteStart: number; byteLen: number }
 
@@ -94,15 +93,9 @@ export interface UntiledPage {
  * from 0, so every read of them refuses page_body_rows_unreadable. One aggregate per page over its live rows, read-only;
  * `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).
  */
-export async function untiledSegmentedPages(engine: Pick<BrainEngine, 'executeRaw'>, opts: { sourceIds?: readonly string[]; slugs?: readonly string[]; limit?: number } = {}):
+export async function untiledSegmentedPages(engine: Pick<BrainEngine, 'listUntiledSegmentedPageRows'>, opts: { sourceIds?: readonly string[]; slugs?: readonly string[]; limit?: number } = {}):
   Promise<UntiledPage[]> {
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; revision: string; body_generation: unknown; body_bytes: unknown;
-    segment_count: number | null; source_path: string | null; n: unknown; covered: unknown; gapless: boolean }>(
-    `SELECT p.id, p.source_id, p.slug, p.knowledge_revision::text AS revision, p.body_generation, p.body_bytes, p.segment_count, p.source_path, t.n, t.covered, t.gapless
-       FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${liveTilingSql('p')}) t
-      WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
-        AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND ${untiledSql('p', 't')}
-      ORDER BY p.source_id, p.slug LIMIT $3`, [opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, opts.limit ?? 1000]);
+  const rows = await engine.listUntiledSegmentedPageRows(opts.sourceIds ?? null, opts.slugs ?? null, opts.limit ?? 1000);
   return rows.map(row => ({ source_id: row.source_id, slug: row.slug, page_id: Number(row.id), revision: row.revision, body_generation: Number(row.body_generation),
     body_bytes: Number(row.body_bytes), segment_count: row.segment_count === null ? null : Number(row.segment_count), source_path: row.source_path,
     rows: Number(row.n), covered_bytes: row.gapless ? Number(row.covered) : null }));

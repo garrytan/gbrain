@@ -30,7 +30,7 @@ src/commands/doctor/checks/graph-embedding.ts	kind_compare	1
 src/commands/doctor/checks/guard-ledger-checks.ts	kind_compare	1
 src/commands/doctor/checks/harness-wiring.ts	kind_compare	3
 src/commands/doctor/checks/keyword-plan.ts	kind_compare	1
-src/commands/doctor/checks/mcp-request-log.ts	kind_compare	4
+src/commands/doctor/checks/mcp-request-log.ts	kind_compare	3
 src/commands/doctor/checks/persistence-consumers.ts	kind_compare	3
 src/commands/doctor/checks/persistence-requests.ts	kind_compare	3
 src/commands/doctor/checks/pglite-worker.ts	kind_compare	2

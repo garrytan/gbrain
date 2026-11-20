@@ -16,6 +16,9 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     readChunkVectorColumn: async () => ({ exists: false, dims: null }),
     // One well-formed unmanaged mode row (#6482), read through the typed import guard method.
     readManagedModeRows: async () => [{ enabled: false }],
+    // No held or capped large pages, as the empty raw budget reads answered before the typed members existed.
+    listBudgetLimitedRows: async () => [],
+    readBudgetHoldAge: async () => undefined,
     // The cycle lock (src/core/db-lock.ts) is always free and always held by us in this single-process mock.
     acquireCycleLock: async (lockId: string) => ({ id: lockId, fence: '1' }),
     refreshCycleLock: async () => true,

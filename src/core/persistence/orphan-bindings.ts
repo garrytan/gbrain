@@ -16,7 +16,7 @@ export interface OrphanBinding {
   pending_requests: number;
 }
 
-const ORPHANS = `SELECT b.source_id, b.source_incarnation::text AS source_incarnation, b.worktree_id::text AS worktree_id,
+export const ORPHANS = `SELECT b.source_id, b.source_incarnation::text AS source_incarnation, b.worktree_id::text AS worktree_id,
     CASE WHEN s.id IS NULL THEN 'source_removed' ELSE 'incarnation_replaced' END AS reason,
     (SELECT COUNT(*)::int FROM persistence_requests r
       WHERE r.source_id = b.source_id AND r.source_incarnation = b.source_incarnation
@@ -25,8 +25,8 @@ const ORPHANS = `SELECT b.source_id, b.source_incarnation::text AS source_incarn
   LEFT JOIN sources s ON s.id = b.source_id
   WHERE s.id IS NULL OR s.incarnation <> b.source_incarnation`;
 
-export async function listOrphanBindings(engine: Pick<BrainEngine, 'executeRaw'>, opts: { limit?: number } = {}): Promise<OrphanBinding[]> {
-  return engine.executeRaw<OrphanBinding>(`${ORPHANS} ORDER BY b.source_id${opts.limit ? ` LIMIT ${Math.floor(opts.limit)}` : ''}`);
+export async function listOrphanBindings(engine: Pick<BrainEngine, 'listOrphanBindingRows'>, opts: { limit?: number } = {}): Promise<OrphanBinding[]> {
+  return engine.listOrphanBindingRows(opts.limit ? Math.floor(opts.limit) : null);
 }
 
 /**

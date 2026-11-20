@@ -56,11 +56,10 @@ export const SCAN_TIERS: readonly TrustTier[] = TRUST_TIERS.filter(t => TRUST_TI
  */
 interface Cursor { detector_version: number; ids: Partial<Record<ScanTable, number>>; until?: Partial<Record<ScanTable, number>>; completed_at?: string }
 
-async function readCursor(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Cursor | null> {
-  const [row] = await engine.executeRaw<{ keys: unknown }>(
-    'SELECT completed_keys AS keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2', [CHECKPOINT_OP, CHECKPOINT_KEY]);
-  const keys = typeof row?.keys === 'string' ? JSON.parse(row.keys) as unknown : row?.keys;
-  const first = Array.isArray(keys) ? keys[0] as Cursor | undefined : undefined;
+async function readCursor(engine: Pick<BrainEngine, 'readOpCheckpointKeys'>): Promise<Cursor | null> {
+  // The cursor is the checkpoint's only key; readOpCheckpointKeys answers each key as its JSON text.
+  const { keys } = await engine.readOpCheckpointKeys(CHECKPOINT_OP, CHECKPOINT_KEY);
+  const first = keys[0] !== undefined ? JSON.parse(keys[0]) as Cursor | undefined : undefined;
   return first && typeof first === 'object' && typeof first.detector_version === 'number' ? first : null;
 }
 
@@ -83,7 +82,7 @@ async function readBaseline(engine: ConfigReader): Promise<Cursor['until'] | nul
 }
 
 /** The cursor that applies to the current detector; an older detector's cursor starts over from the gate's baseline, if any. */
-async function currentCursor(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Cursor> {
+async function currentCursor(engine: Pick<BrainEngine, 'executeRaw' | 'readOpCheckpointKeys'>): Promise<Cursor> {
   const stored = await readCursor(engine).catch(() => null);
   if (stored && stored.detector_version === WRITE_GATE_DETECTOR_VERSION) return stored;
   const until = await readBaseline(engine).catch(() => null);
@@ -186,7 +185,7 @@ export interface TrustScanState { detector_version: number; unscanned: Record<Sc
  * scanned (doctor `trust_scan`): everything before the first run, then the
  * rows between the cursor and the run's id ceiling.
  */
-export async function readTrustScanState(engine: Pick<BrainEngine, 'executeRaw' | 'countUnscannedTrustRows'>): Promise<TrustScanState> {
+export async function readTrustScanState(engine: Pick<BrainEngine, 'executeRaw' | 'readOpCheckpointKeys' | 'countUnscannedTrustRows'>): Promise<TrustScanState> {
   const cursor = await currentCursor(engine);
   const unscanned = {} as Record<ScanTable, number>;
   for (const table of SCAN_TABLES) {

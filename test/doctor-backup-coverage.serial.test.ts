@@ -105,7 +105,7 @@ function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, page
   }));
   return {
     kind: 'pglite',
-    // loadAllSources reads the typed member; the page count still runs executeRaw.
+    // loadAllSources and countLivePages read typed members.
     listSourceRecords: async () => sources(),
     countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     readBrainMaturity() { return readBrainMaturitySql(this as never); },
@@ -222,6 +222,9 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
+        throw new Error('pages unreadable');
+      },
+      countLivePages: async () => {
         throw new Error('pages unreadable');
       },
     } as unknown as BrainEngine;

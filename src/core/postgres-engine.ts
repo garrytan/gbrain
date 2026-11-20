@@ -211,6 +211,13 @@ import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
+import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
+import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
+import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
+import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
+import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
+import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
+import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -1245,6 +1252,146 @@ export class PostgresEngine implements BrainEngine {
   listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.executeRaw.bind(this)); }
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.executeRaw.bind(this), store); }
   countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.executeRaw.bind(this), column); }
+  countPageChildOrphans(target: doctorReadsImpl.PageChildTarget) { return doctorReadsImpl.countPageChildOrphans(this.executeRaw.bind(this), target); }
+
+  // Doctor reads, second set (engine-sql/doctor-derived.ts).
+  readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.executeRaw.bind(this), opts); }
+  countSafeIndexPending(sourceIds?: string[]) { return doctorDerivedImpl.countSafeIndexPending(this.executeRaw.bind(this), sourceIds); }
+  countCredentialProjectionPending(sourceIds?: string[]) { return doctorDerivedImpl.countCredentialProjectionPending(this.executeRaw.bind(this), sourceIds); }
+  countPagesByTypeAndOwner(sourceIds?: string[]) { return doctorDerivedImpl.countPagesByTypeAndOwner(this.executeRaw.bind(this), sourceIds); }
+  listRecordedTombstones(hours: string, released: readonly number[]) { return doctorDerivedImpl.listRecordedTombstones(this.executeRaw.bind(this), hours, released); }
+  countDerivedVisibility(sourceIds: string[], timeoutMs: number) { return doctorDerivedImpl.countDerivedVisibility(this.executeRaw.bind(this), sourceIds, timeoutMs); }
+  listUntiledSegmentedPageRows(sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number) { return doctorDerivedImpl.listUntiledSegmentedPageRows(this.executeRaw.bind(this), sourceIds, slugs, limit); }
+  listTimelineHistoryBatch(sourceIds: string[], afterId: number) { return doctorDerivedImpl.listTimelineHistoryBatch(this.executeRaw.bind(this), sourceIds, afterId); }
+  listAtomFenceCandidates(opts: { sourceIds: string[]; atomId: number | null; after: number; limit: number; timeoutMs?: number }) { return doctorDerivedImpl.listAtomFenceCandidates(this.executeRaw.bind(this), opts); }
+  readPageCompiledTruths(ids: number[], timeoutMs?: number) { return doctorDerivedImpl.readPageCompiledTruths(this.executeRaw.bind(this), ids, timeoutMs); }
+  readEmbeddingBacklogAge(column: string) { return doctorDerivedImpl.readEmbeddingBacklogAge(this.executeRaw.bind(this), column); }
+  listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }) { return doctorDerivedImpl.listBudgetLimitedRows(this.executeRaw.bind(this), opts); }
+  readBudgetHoldAge() { return doctorDerivedImpl.readBudgetHoldAge(this.executeRaw.bind(this)); }
+  listImageAssetFiles() { return doctorDerivedImpl.listImageAssetFiles(this.executeRaw.bind(this)); }
+  listAmbiguousExtractionInputs() { return doctorDerivedImpl.listAmbiguousExtractionInputs(this.executeRaw.bind(this)); }
+  listExtractionInputReceipts() { return doctorDerivedImpl.listExtractionInputReceipts(this.executeRaw.bind(this)); }
+  listUnpricedDerivationModels() { return doctorDerivedImpl.listUnpricedDerivationModels(this.executeRaw.bind(this)); }
+  listRestorableAtomRetirements(sourceIds: string[]) { return doctorDerivedImpl.listRestorableAtomRetirements(this.executeRaw.bind(this), sourceIds); }
+  countLedgerCoveredAtomRetirements(sourceIds: string[]) { return doctorDerivedImpl.countLedgerCoveredAtomRetirements(this.executeRaw.bind(this), sourceIds); }
+  listLiveGenerationRetirements(sourceIds: string[], restoreDays: number) { return doctorDerivedImpl.listLiveGenerationRetirements(this.executeRaw.bind(this), sourceIds, restoreDays); }
+  listHeldGenerations(sourceIds: string[]) { return doctorDerivedImpl.listHeldGenerations(this.executeRaw.bind(this), sourceIds); }
+  listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.executeRaw.bind(this), sourceIds, kind); }
+  listOntologyFactCandidates(sourceIds: string[]) { return doctorDerivedImpl.listOntologyFactCandidates(this.executeRaw.bind(this), sourceIds); }
+  readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.executeRaw.bind(this)); }
+  readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.executeRaw.bind(this), withExpected); }
+  listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.executeRaw.bind(this)); }
+  listCapacityCounters() { return doctorPersistenceImpl.listCapacityCounters(this.executeRaw.bind(this)); }
+  listOutstandingHolders(principal: doctorPersistenceImpl.RequestPrincipal | null) { return doctorPersistenceImpl.listOutstandingHolders(this.executeRaw.bind(this), principal); }
+  countPersistenceRequestRows(estimate: boolean) { return doctorPersistenceImpl.countPersistenceRequestRows(this.executeRaw.bind(this), estimate); }
+  listLifetimeCounters() { return doctorPersistenceImpl.listLifetimeCounters(this.executeRaw.bind(this)); }
+  readAdmissionSample(principal: doctorPersistenceImpl.RequestPrincipal | null) { return doctorPersistenceImpl.readAdmissionSample(this.executeRaw.bind(this), principal); }
+  listRunningRequestStalls(maxClaimMs: number) { return doctorPersistenceImpl.listRunningRequestStalls(this.executeRaw.bind(this), maxClaimMs); }
+  readLiveConsumerSummary() { return doctorPersistenceImpl.readLiveConsumerSummary(this.executeRaw.bind(this)); }
+  readCounterDrift(clampedKey: string) { return doctorPersistenceImpl.readCounterDrift(this.executeRaw.bind(this), clampedKey); }
+  readMaxRequestSequence() { return doctorPersistenceImpl.readMaxRequestSequence(this.executeRaw.bind(this)); }
+  listRefusalBreakerRows(sourceId: string, windowHours: number, threshold: number, limit: number) { return doctorPersistenceImpl.listRefusalBreakerRows(this.executeRaw.bind(this), sourceId, windowHours, threshold, limit); }
+  listRecentDriftReceiptSlugs(sourceId: string, floor: string, message: string) { return doctorPersistenceImpl.listRecentDriftReceiptSlugs(this.executeRaw.bind(this), sourceId, floor, message); }
+  listOlderDriftReceiptSlugs(sourceId: string, floor: string, message: string, timeoutMs: number) { return doctorPersistenceImpl.listOlderDriftReceiptSlugs(this.executeRaw.bind(this), sourceId, floor, message, timeoutMs); }
+  readPublicationRefusals() { return doctorPersistenceImpl.readPublicationRefusals(this.executeRaw.bind(this)); }
+  countParkedEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.countParkedEffects(this.executeRaw.bind(this), sourceIds); }
+  listParkedEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.listParkedEffects(this.executeRaw.bind(this), sourceIds); }
+  listGitPushHoldRows(codes: string[], sourceIds: string[] | null) { return doctorPersistenceImpl.listGitPushHoldRows(this.executeRaw.bind(this), codes, sourceIds); }
+  listStalledCatchupRows(sourceIds: string[] | null, stallMs: number) { return doctorPersistenceImpl.listStalledCatchupRows(this.executeRaw.bind(this), sourceIds, stallMs); }
+  listParkedGroupRows(sourceIds: string[] | null) { return doctorPersistenceImpl.listParkedGroupRows(this.executeRaw.bind(this), sourceIds); }
+  readStaleEmbeddingCounts(sourceIds: string[] | null) { return doctorPersistenceImpl.readStaleEmbeddingCounts(this.executeRaw.bind(this), sourceIds); }
+  listStaleEmbeddingEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.listStaleEmbeddingEffects(this.executeRaw.bind(this), sourceIds); }
+  listOrphanBindingRows(limit: number | null) { return doctorPersistenceImpl.listOrphanBindingRows(this.executeRaw.bind(this), limit); }
+  readPersistenceBrainIdText() { return doctorPersistenceImpl.readPersistenceBrainIdText(this.executeRaw.bind(this)); }
+  listWorktreeIds() { return doctorPersistenceImpl.listWorktreeIds(this.executeRaw.bind(this)); }
+  listManagedRoots(hostId: string | null) { return doctorPersistenceImpl.listManagedRoots(this.executeRaw.bind(this), hostId); }
+  listUnboundSourcePages() { return doctorPersistenceImpl.listUnboundSourcePages(this.executeRaw.bind(this)); }
+  listRecentWriterVersions(days: number) { return doctorPersistenceImpl.listRecentWriterVersions(this.executeRaw.bind(this), days); }
+  listRecentPurgeRequests(days: number, cap: number) { return doctorPersistenceImpl.listRecentPurgeRequests(this.executeRaw.bind(this), days, cap); }
+  listStuckWorktreeRefreshes(minutes: number) { return doctorPersistenceImpl.listStuckWorktreeRefreshes(this.executeRaw.bind(this), minutes); }
+  listSourceBindingsForMovement(sourceIds: string[] | null) { return doctorPersistenceImpl.listSourceBindingsForMovement(this.executeRaw.bind(this), sourceIds); }
+  listRunningClaimOwners(hostId: string) { return doctorPersistenceImpl.listRunningClaimOwners(this.executeRaw.bind(this), hostId); }
+  listOwnerBindings(hostId: string) { return doctorPersistenceImpl.listOwnerBindings(this.executeRaw.bind(this), hostId); }
+  listConsumerOwners(hostIds: string[]) { return doctorPersistenceImpl.listConsumerOwners(this.executeRaw.bind(this), hostIds); }
+  listOverwriteCandidates(sourceId: string, limit: number, slugs: string[] | null) { return doctorPersistenceImpl.listOverwriteCandidates(this.executeRaw.bind(this), sourceId, limit, slugs); }
+  listCallerRefusalRows(sourceIds: string[], operations: string[]) { return doctorPersistenceImpl.listCallerRefusalRows(this.executeRaw.bind(this), sourceIds, operations); }
+  countCompactedCallerRefusals(sourceIds: string[], operations: string[]) { return doctorPersistenceImpl.countCompactedCallerRefusals(this.executeRaw.bind(this), sourceIds, operations); }
+  listLocalEditAdoptions() { return doctorPersistenceImpl.listLocalEditAdoptions(this.executeRaw.bind(this)); }
+  listDerivationPurgeSweeps() { return doctorPersistenceImpl.listDerivationPurgeSweeps(this.executeRaw.bind(this)); }
+  listOversizedPages(minBytes: number) { return doctorPagesImpl.listOversizedPages(this.executeRaw.bind(this), minBytes); }
+  listScraperJunkCandidates(limit: number | null) { return doctorPagesImpl.listScraperJunkCandidates(this.executeRaw.bind(this), limit); }
+  countMarkedPages(marker: doctorPagesImpl.PageMarker) { return doctorPagesImpl.countMarkedPages(this.executeRaw.bind(this), marker); }
+  countOversizedCorePages(maxBytes: number) { return doctorPagesImpl.countOversizedCorePages(this.executeRaw.bind(this), maxBytes); }
+  readRawProvenanceGaps() { return doctorPagesImpl.readRawProvenanceGaps(this.executeRaw.bind(this)); }
+  countUnverifiedExtractions(days: number, sourceId: string | null) { return doctorPagesImpl.countUnverifiedExtractions(this.executeRaw.bind(this), days, sourceId); }
+  listContentHashDuplicates() { return doctorPagesImpl.listContentHashDuplicates(this.executeRaw.bind(this)); }
+  countTranscriptImportPages() { return doctorPagesImpl.countTranscriptImportPages(this.executeRaw.bind(this)); }
+  countPageRows() { return doctorPagesImpl.countPageRows(this.executeRaw.bind(this)); }
+  countPagesBySlugPrefix(prefix: string) { return doctorPagesImpl.countPagesBySlugPrefix(this.executeRaw.bind(this), prefix); }
+  countLivePages() { return doctorPagesImpl.countLivePages(this.executeRaw.bind(this)); }
+  readOldestPageCreatedAt() { return doctorPagesImpl.readOldestPageCreatedAt(this.executeRaw.bind(this)); }
+  countPageTrustTiers() { return doctorPagesImpl.countPageTrustTiers(this.executeRaw.bind(this)); }
+  countPagesWithMentionLinks() { return doctorPagesImpl.countPagesWithMentionLinks(this.executeRaw.bind(this)); }
+  countImageModalityMismatches() { return doctorPagesImpl.countImageModalityMismatches(this.executeRaw.bind(this)); }
+  readImagePageCoverage() { return doctorPagesImpl.readImagePageCoverage(this.executeRaw.bind(this)); }
+  listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.executeRaw.bind(this)); }
+  listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.executeRaw.bind(this)); }
+  listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.executeRaw.bind(this), sourceIds); }
+  listPolicySourceIds() { return doctorAccImpl.listPolicySourceIds(this.executeRaw.bind(this)); }
+  isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.executeRaw.bind(this)); }
+  listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.executeRaw.bind(this)); }
+  listAudienceMemberIds() { return doctorAccImpl.listAudienceMemberIds(this.executeRaw.bind(this)); }
+  listLabelledOnlyMemberIds() { return doctorAccImpl.listLabelledOnlyMemberIds(this.executeRaw.bind(this)); }
+  listAccessMemberRows(includeRemoved: boolean) { return doctorAccImpl.listAccessMemberRows(this.executeRaw.bind(this), includeRemoved); }
+  listAttestCredentialRows() { return doctorAccImpl.listAttestCredentialRows(this.executeRaw.bind(this)); }
+  listActiveAccessTokenRows() { return doctorAccImpl.listActiveAccessTokenRows(this.executeRaw.bind(this)); }
+  listActiveOauthClientRows() { return doctorAccImpl.listActiveOauthClientRows(this.executeRaw.bind(this)); }
+  listOauthClientAuthShapes() { return doctorAccImpl.listOauthClientAuthShapes(this.executeRaw.bind(this)); }
+  listDanglingFederatedReads() { return doctorAccImpl.listDanglingFederatedReads(this.executeRaw.bind(this)); }
+  listOrphanWorkspaceSources(suffix: string) { return doctorAccImpl.listOrphanWorkspaceSources(this.executeRaw.bind(this), suffix); }
+  listPrivilegedDcrClients(scopeRegex: string) { return doctorAccImpl.listPrivilegedDcrClients(this.executeRaw.bind(this), scopeRegex); }
+  readMcpRequestLogBytes() { return doctorAccImpl.readMcpRequestLogBytes(this.executeRaw.bind(this)); }
+  countMcpRequestLogRows(limit: number) { return doctorAccImpl.countMcpRequestLogRows(this.executeRaw.bind(this), 'postgres', limit); }
+  hasMcpLogRowsPastWindow(days: number, keepOperations: readonly string[]) { return doctorAccImpl.hasMcpLogRowsPastWindow(this.executeRaw.bind(this), days, keepOperations); }
+  readKnowledgeRevisionNotNull() { return doctorAccImpl.readKnowledgeRevisionNotNull(this.executeRaw.bind(this)); }
+  readDriftSchema() { return doctorAccImpl.readDriftSchema(this.executeRaw.bind(this)); }
+  listDriftLiveRows(schema: doctorAccImpl.DriftSchema, sourceId: string, at: { after?: number; slug?: string }) { return doctorAccImpl.listDriftLiveRows(this.executeRaw.bind(this), schema, sourceId, at); }
+  listDriftVersionRows(schema: doctorAccImpl.DriftSchema, pageIds: number[]) { return doctorAccImpl.listDriftVersionRows(this.executeRaw.bind(this), schema, pageIds); }
+  originIndexPresent(name: string) { return doctorAccImpl.originIndexPresent(this.executeRaw.bind(this), name); }
+  listDecideCalibrationRows(slot: string | null, includeRetired: boolean) { return doctorAccImpl.listDecideCalibrationRows(this.executeRaw.bind(this), slot, includeRetired); }
+  listRecentResolvedModels(sinceHours: number) { return doctorAccImpl.listRecentResolvedModels(this.executeRaw.bind(this), sinceHours); }
+  listMixedModelDecisions(sinceHours: number) { return doctorAccImpl.listMixedModelDecisions(this.executeRaw.bind(this), sinceHours); }
+  listDecideSlotUsage(sinceHours: number) { return doctorAccImpl.listDecideSlotUsage(this.executeRaw.bind(this), sinceHours); }
+  readDecideDailySpend(sinceIso: string) { return doctorAccImpl.readDecideDailySpend(this.executeRaw.bind(this), sinceIso); }
+  listDecideReceiptStats(sinceHours: number, slot: string | null) { return doctorAccImpl.listDecideReceiptStats(this.executeRaw.bind(this), sinceHours, slot); }
+  readChronicleLedgerStats() { return doctorAccImpl.readChronicleLedgerStats(this.executeRaw.bind(this)); }
+  readChronicleDuplicateEvents() { return doctorAccImpl.readChronicleDuplicateEvents(this.executeRaw.bind(this)); }
+  readFeedbackStatus() { return doctorAccImpl.readFeedbackStatus(this.executeRaw.bind(this)); }
+  listBeliefCoveredSources(coverageKey: string) { return doctorAccImpl.listBeliefCoveredSources(this.executeRaw.bind(this), coverageKey); }
+  listVolunteerChannels(sourceIds: readonly string[] | null) { return doctorAccImpl.listVolunteerChannels(this.executeRaw.bind(this), sourceIds); }
+  listFenceCandidateRecords(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listFenceCandidateRecords(this.executeRaw.bind(this), op, sourceIds); }
+  listDerivedOriginParks(op: string) { return doctorCheckpointsImpl.listDerivedOriginParks(this.executeRaw.bind(this), op); }
+  listPurgeParks(op: string) { return doctorCheckpointsImpl.listPurgeParks(this.executeRaw.bind(this), op); }
+  readSoakCounterRows(op: string, days: readonly string[]) { return doctorCheckpointsImpl.readSoakCounterRows(this.executeRaw.bind(this), op, days); }
+  listUnfinishedManagedSyncCursors() { return doctorCheckpointsImpl.listUnfinishedManagedSyncCursors(this.executeRaw.bind(this)); }
+  listManagedSyncPassStops(sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listManagedSyncPassStops(this.executeRaw.bind(this), sourceIds); }
+  listManagedSyncBacklogHeaders() { return doctorCheckpointsImpl.listManagedSyncBacklogHeaders(this.executeRaw.bind(this)); }
+  readManagedSyncPassRow(op: string, fingerprint: string) { return doctorCheckpointsImpl.readManagedSyncPassRow(this.executeRaw.bind(this), op, fingerprint); }
+  listLiveManagedSyncPassRows(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listLiveManagedSyncPassRows(this.executeRaw.bind(this), op, sourceIds); }
+  listCheckpointBlockedSources(sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listCheckpointBlockedSources(this.executeRaw.bind(this), sourceIds); }
+  listOpenIdentityDowngrades(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listOpenIdentityDowngrades(this.executeRaw.bind(this), op, sourceIds); }
+  listHeldManagedAtomRows(sourceIds: readonly string[] | undefined, excludedRole: string) { return doctorCheckpointsImpl.listHeldManagedAtomRows(this.executeRaw.bind(this), sourceIds, excludedRole); }
+  readDoctorLastKnown(op: string) { return doctorCheckpointsImpl.readDoctorLastKnown(this.executeRaw.bind(this), op); }
+  writeDoctorLastKnown(op: string, rows: readonly doctorCheckpointsImpl.DoctorLastKnownRow[]) { return doctorCheckpointsImpl.writeDoctorLastKnown(this.executeRaw.bind(this), op, rows); }
+  readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.executeRaw.bind(this), key, op, fingerprint); }
+  readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.executeRaw.bind(this)); }
+  listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.executeRaw.bind(this)); }
+  readDoctorSources<V extends doctorSourcesImpl.DoctorSourceVariant>(variant: V, scope?: doctorSourcesImpl.DoctorSourceScope) { return doctorSourcesImpl.readDoctorSources(this.executeRaw.bind(this), variant, scope); }
+  listGuestSourceRows() { return doctorSourcesImpl.listGuestSourceRows(this.executeRaw.bind(this)); }
+  listCheckoutRoots(hostId: string | null) { return doctorSourcesImpl.listCheckoutRoots(this.executeRaw.bind(this), hostId); }
+  listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null) { return doctorSourcesImpl.listPendingRoster(this.executeRaw.bind(this), sourceIds, hostId); }
+  listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean) { return doctorSourcesImpl.listOwnedContentRows(this.executeRaw.bind(this), sourceIds, inheritsPersistence); }
+  countDefaultSourceFiles() { return doctorSourcesImpl.countDefaultSourceFiles(this.executeRaw.bind(this)); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.executeRaw.bind(this), sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }

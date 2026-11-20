@@ -11,7 +11,8 @@ import { statSync } from 'node:fs';
 import { redactConnectionInfo } from '../../core/audit/redact-connection-info.ts';
 import { formatPackBytes, OVERSIZED_PACK_RUNBOOK, schemaPackMaxBytes } from '../../core/schema-pack/loader.ts';
 import { loadActivePackForLocalEngine } from '../../core/schema-pack/best-effort.ts';
-import { WRITER_OWNED_PAGE_SQL, sanitizeTypeForDisplay, storedTypeMissesPack } from '../../core/schema-pack/type-usage.ts';
+import type { PageTypeOwnerRow } from '../../core/engine-sql/doctor-derived.ts';
+import { sanitizeTypeForDisplay, storedTypeMissesPack } from '../../core/schema-pack/type-usage.ts';
 
 // =================================================================
 // v0.39 T7 + T9 — schema-pack doctor checks
@@ -113,16 +114,9 @@ export async function checkSchemaPackConsistency(
   opts: { sourceIds?: string[] } = {},
 ): Promise<Check> {
   const scoped = opts.sourceIds !== undefined;
-  let rows: Array<{ src: string; type: string | null; own: boolean; n: string }>;
+  let rows: PageTypeOwnerRow[];
   try {
-    rows = await engine.executeRaw(
-      `SELECT COALESCE(p.source_id, 'default') AS src, p.type, ${WRITER_OWNED_PAGE_SQL} AS own, COUNT(*)::text AS n
-         FROM pages p
-        WHERE p.deleted_at IS NULL${scoped ? ' AND p.source_id = ANY($1::text[])' : ''}
-        GROUP BY p.source_id, p.type, own
-        ORDER BY p.source_id`,
-      scoped ? [opts.sourceIds] : [],
-    );
+    rows = await engine.countPagesByTypeAndOwner(opts.sourceIds);
   } catch (e) {
     return { name: 'schema_pack_consistency', ...notVerified(e, 'gbrain schema review-orphans') };
   }

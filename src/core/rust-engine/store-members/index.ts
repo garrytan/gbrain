@@ -97,6 +97,13 @@ import { initSchema } from './init-schema.ts';
 import * as accessGrants from './access-grants.ts';
 import * as accessMembers from './access-members.ts';
 import * as sharedSkillMembers from './shared-skill-members.ts';
+import * as doctorReads from './doctor-reads.ts';
+import * as doctorDerived from './doctor-derived.ts';
+import * as doctorPersistence from './doctor-persistence.ts';
+import * as doctorPages from './doctor-pages.ts';
+import * as doctorAcc from './doctor-acc.ts';
+import * as doctorCheckpoints from './doctor-checkpoints.ts';
+import * as doctorSources from './doctor-sources.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -166,6 +173,18 @@ export const STORE_MEMBERS = {
   ...accessMembers,
   // The shared-skill members and delivery batches join_brain, sync_brain_skills and leave_brain use (rust/docs/store/shared-skill-members.md).
   ...sharedSkillMembers,
+  // The statements doctor checks ran through executeRaw (rust/docs/store/cli-reads-doctor.md).
+  ...doctorReads,
+  // The second doctor set: served, answered empty where the store keeps no writer, or left out to refuse (rust/docs/store/cli-reads-doctor-derived.md).
+  ...doctorDerived,
+  // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
+  ...doctorPersistence,
+  ...doctorPages,
+  ...doctorAcc,
+  // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
+  ...doctorCheckpoints,
+  // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).
+  ...doctorSources,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

@@ -143,6 +143,8 @@ function stubEngine(opts: {
     },
     // loadAllSources reads the sources table through the typed member; it counts as one call, as the raw read did.
     listSourceRecords: async () => { opts.onCall?.(); return opts.sources ?? []; },
+    // The live-page count is a typed member too (engine-sql/doctor-pages.ts), one call as the raw read was.
+    countLivePages: async () => { opts.onCall?.(); return opts.pages ?? 0; },
     // The writer-binding read is a typed member too: one call, a row only for a bound source.
     getWorktreeBinding: async (sourceId: string) => {
       opts.onCall?.();
@@ -544,6 +546,8 @@ describe('computeBackupCoverage — pages count unestablished', () => {
         return [];
       },
       listSourceRecords: async () => [],
+      // The typed count hands back the row's n as is: a missing or non-numeric one is an unestablished count.
+      countLivePages: async () => (pagesRows[0] as { n?: number } | undefined)?.n,
     } as unknown as BrainEngine;
   }
 
@@ -819,6 +823,7 @@ describe('computeBackupCoverage: API connector sources', () => {
         return [];
       },
       listSourceRecords: async () => [srcRow('conn-src', join(tmp, 'x'), { config: { kind: 'google' } })],
+      countLivePages: async () => 1,
     } as unknown as BrainEngine;
 
     const s = await computeBackupCoverage(engine, { localGitProbes: true });

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { DOCTOR_PERSISTENCE_MEMBERS } from '../src/core/engine-sql/doctor-persistence.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -152,7 +153,7 @@ for (const kind of testBackends()) {
 
     check('doctor never throws: an unreadable brain reports unknown health', async engine => {
       const broken = new Proxy(engine, { get(target, property) {
-        if (property === 'readWriterVersionCutoff') return async () => { throw new Error('simulated read failure'); };
+        if (property === 'executeRaw' || property === 'readWriterVersionCutoff' || (DOCTOR_PERSISTENCE_MEMBERS as readonly string[]).includes(String(property))) return async () => { throw new Error('simulated read failure'); };
         const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
       } }) as BrainEngine;
       const result = await writerVersionCheck(broken);

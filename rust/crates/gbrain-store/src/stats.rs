@@ -43,14 +43,14 @@ const DAY_US: i64 = 86_400_000_000;
 
 /// What is stored for an ingest log row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct IngestRecord {
-    id: u64,
-    source_id: String,
-    source_type: String,
-    source_ref: String,
-    pages_updated: Value,
-    summary: String,
-    created_at_us: i64,
+pub(crate) struct IngestRecord {
+    pub(crate) id: u64,
+    pub(crate) source_id: String,
+    pub(crate) source_type: String,
+    pub(crate) source_ref: String,
+    pub(crate) pages_updated: Value,
+    pub(crate) summary: String,
+    pub(crate) created_at_us: i64,
 }
 
 impl IngestRecord {
@@ -204,7 +204,7 @@ fn json_has_nul(value: &Value) -> bool {
 }
 
 /// `jsonb` keeps one value per key (the last) and orders keys by length, then bytes.
-fn jsonb_normalize(value: Value) -> Value {
+pub(crate) fn jsonb_normalize(value: Value) -> Value {
     match value {
         Value::Array(items) => Value::Array(items.into_iter().map(jsonb_normalize).collect()),
         Value::Object(map) => {

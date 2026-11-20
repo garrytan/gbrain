@@ -217,6 +217,13 @@ import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
+import * as doctorReadsImpl from './engine-sql/doctor-reads.ts';
+import * as doctorDerivedImpl from './engine-sql/doctor-derived.ts';
+import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
+import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
+import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
+import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
+import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
 import * as factsCycleImpl from './engine-sql/facts-cycle.ts';
@@ -1570,6 +1577,146 @@ export class PGLiteEngine implements BrainEngine {
   listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.rawRead); }
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.rawRead, store); }
   countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.rawRead, column); }
+  countPageChildOrphans(target: doctorReadsImpl.PageChildTarget) { return doctorReadsImpl.countPageChildOrphans(this.rawRead, target); }
+
+  // Doctor reads, second set (engine-sql/doctor-derived.ts).
+  readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }) { return doctorDerivedImpl.readIgnoredPrivacyLabelCounts(this.rawRead, opts); }
+  countSafeIndexPending(sourceIds?: string[]) { return doctorDerivedImpl.countSafeIndexPending(this.rawRead, sourceIds); }
+  countCredentialProjectionPending(sourceIds?: string[]) { return doctorDerivedImpl.countCredentialProjectionPending(this.rawRead, sourceIds); }
+  countPagesByTypeAndOwner(sourceIds?: string[]) { return doctorDerivedImpl.countPagesByTypeAndOwner(this.rawRead, sourceIds); }
+  listRecordedTombstones(hours: string, released: readonly number[]) { return doctorDerivedImpl.listRecordedTombstones(this.rawRead, hours, released); }
+  countDerivedVisibility(sourceIds: string[], timeoutMs: number) { return doctorDerivedImpl.countDerivedVisibility(this.rawRead, sourceIds, timeoutMs); }
+  listUntiledSegmentedPageRows(sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number) { return doctorDerivedImpl.listUntiledSegmentedPageRows(this.rawRead, sourceIds, slugs, limit); }
+  listTimelineHistoryBatch(sourceIds: string[], afterId: number) { return doctorDerivedImpl.listTimelineHistoryBatch(this.rawRead, sourceIds, afterId); }
+  listAtomFenceCandidates(opts: { sourceIds: string[]; atomId: number | null; after: number; limit: number; timeoutMs?: number }) { return doctorDerivedImpl.listAtomFenceCandidates(this.rawRead, opts); }
+  readPageCompiledTruths(ids: number[], timeoutMs?: number) { return doctorDerivedImpl.readPageCompiledTruths(this.rawRead, ids, timeoutMs); }
+  readEmbeddingBacklogAge(column: string) { return doctorDerivedImpl.readEmbeddingBacklogAge(this.rawRead, column); }
+  listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }) { return doctorDerivedImpl.listBudgetLimitedRows(this.rawRead, opts); }
+  readBudgetHoldAge() { return doctorDerivedImpl.readBudgetHoldAge(this.rawRead); }
+  listImageAssetFiles() { return doctorDerivedImpl.listImageAssetFiles(this.rawRead); }
+  listAmbiguousExtractionInputs() { return doctorDerivedImpl.listAmbiguousExtractionInputs(this.rawRead); }
+  listExtractionInputReceipts() { return doctorDerivedImpl.listExtractionInputReceipts(this.rawRead); }
+  listUnpricedDerivationModels() { return doctorDerivedImpl.listUnpricedDerivationModels(this.rawRead); }
+  listRestorableAtomRetirements(sourceIds: string[]) { return doctorDerivedImpl.listRestorableAtomRetirements(this.rawRead, sourceIds); }
+  countLedgerCoveredAtomRetirements(sourceIds: string[]) { return doctorDerivedImpl.countLedgerCoveredAtomRetirements(this.rawRead, sourceIds); }
+  listLiveGenerationRetirements(sourceIds: string[], restoreDays: number) { return doctorDerivedImpl.listLiveGenerationRetirements(this.rawRead, sourceIds, restoreDays); }
+  listHeldGenerations(sourceIds: string[]) { return doctorDerivedImpl.listHeldGenerations(this.rawRead, sourceIds); }
+  listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.rawRead, sourceIds, kind); }
+  listOntologyFactCandidates(sourceIds: string[]) { return doctorDerivedImpl.listOntologyFactCandidates(this.rawRead, sourceIds); }
+  readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.rawRead); }
+  readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.rawRead, withExpected); }
+  listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.rawRead); }
+  listCapacityCounters() { return doctorPersistenceImpl.listCapacityCounters(this.rawRead); }
+  listOutstandingHolders(principal: doctorPersistenceImpl.RequestPrincipal | null) { return doctorPersistenceImpl.listOutstandingHolders(this.rawRead, principal); }
+  countPersistenceRequestRows(estimate: boolean) { return doctorPersistenceImpl.countPersistenceRequestRows(this.rawRead, estimate); }
+  listLifetimeCounters() { return doctorPersistenceImpl.listLifetimeCounters(this.rawRead); }
+  readAdmissionSample(principal: doctorPersistenceImpl.RequestPrincipal | null) { return doctorPersistenceImpl.readAdmissionSample(this.rawRead, principal); }
+  listRunningRequestStalls(maxClaimMs: number) { return doctorPersistenceImpl.listRunningRequestStalls(this.rawRead, maxClaimMs); }
+  readLiveConsumerSummary() { return doctorPersistenceImpl.readLiveConsumerSummary(this.rawRead); }
+  readCounterDrift(clampedKey: string) { return doctorPersistenceImpl.readCounterDrift(this.rawRead, clampedKey); }
+  readMaxRequestSequence() { return doctorPersistenceImpl.readMaxRequestSequence(this.rawRead); }
+  listRefusalBreakerRows(sourceId: string, windowHours: number, threshold: number, limit: number) { return doctorPersistenceImpl.listRefusalBreakerRows(this.rawRead, sourceId, windowHours, threshold, limit); }
+  listRecentDriftReceiptSlugs(sourceId: string, floor: string, message: string) { return doctorPersistenceImpl.listRecentDriftReceiptSlugs(this.rawRead, sourceId, floor, message); }
+  listOlderDriftReceiptSlugs(sourceId: string, floor: string, message: string, timeoutMs: number) { return doctorPersistenceImpl.listOlderDriftReceiptSlugs(this.rawRead, sourceId, floor, message, timeoutMs); }
+  readPublicationRefusals() { return doctorPersistenceImpl.readPublicationRefusals(this.rawRead); }
+  countParkedEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.countParkedEffects(this.rawRead, sourceIds); }
+  listParkedEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.listParkedEffects(this.rawRead, sourceIds); }
+  listGitPushHoldRows(codes: string[], sourceIds: string[] | null) { return doctorPersistenceImpl.listGitPushHoldRows(this.rawRead, codes, sourceIds); }
+  listStalledCatchupRows(sourceIds: string[] | null, stallMs: number) { return doctorPersistenceImpl.listStalledCatchupRows(this.rawRead, sourceIds, stallMs); }
+  listParkedGroupRows(sourceIds: string[] | null) { return doctorPersistenceImpl.listParkedGroupRows(this.rawRead, sourceIds); }
+  readStaleEmbeddingCounts(sourceIds: string[] | null) { return doctorPersistenceImpl.readStaleEmbeddingCounts(this.rawRead, sourceIds); }
+  listStaleEmbeddingEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.listStaleEmbeddingEffects(this.rawRead, sourceIds); }
+  listOrphanBindingRows(limit: number | null) { return doctorPersistenceImpl.listOrphanBindingRows(this.rawRead, limit); }
+  readPersistenceBrainIdText() { return doctorPersistenceImpl.readPersistenceBrainIdText(this.rawRead); }
+  listWorktreeIds() { return doctorPersistenceImpl.listWorktreeIds(this.rawRead); }
+  listManagedRoots(hostId: string | null) { return doctorPersistenceImpl.listManagedRoots(this.rawRead, hostId); }
+  listUnboundSourcePages() { return doctorPersistenceImpl.listUnboundSourcePages(this.rawRead); }
+  listRecentWriterVersions(days: number) { return doctorPersistenceImpl.listRecentWriterVersions(this.rawRead, days); }
+  listRecentPurgeRequests(days: number, cap: number) { return doctorPersistenceImpl.listRecentPurgeRequests(this.rawRead, days, cap); }
+  listStuckWorktreeRefreshes(minutes: number) { return doctorPersistenceImpl.listStuckWorktreeRefreshes(this.rawRead, minutes); }
+  listSourceBindingsForMovement(sourceIds: string[] | null) { return doctorPersistenceImpl.listSourceBindingsForMovement(this.rawRead, sourceIds); }
+  listRunningClaimOwners(hostId: string) { return doctorPersistenceImpl.listRunningClaimOwners(this.rawRead, hostId); }
+  listOwnerBindings(hostId: string) { return doctorPersistenceImpl.listOwnerBindings(this.rawRead, hostId); }
+  listConsumerOwners(hostIds: string[]) { return doctorPersistenceImpl.listConsumerOwners(this.rawRead, hostIds); }
+  listOverwriteCandidates(sourceId: string, limit: number, slugs: string[] | null) { return doctorPersistenceImpl.listOverwriteCandidates(this.rawRead, sourceId, limit, slugs); }
+  listCallerRefusalRows(sourceIds: string[], operations: string[]) { return doctorPersistenceImpl.listCallerRefusalRows(this.rawRead, sourceIds, operations); }
+  countCompactedCallerRefusals(sourceIds: string[], operations: string[]) { return doctorPersistenceImpl.countCompactedCallerRefusals(this.rawRead, sourceIds, operations); }
+  listLocalEditAdoptions() { return doctorPersistenceImpl.listLocalEditAdoptions(this.rawRead); }
+  listDerivationPurgeSweeps() { return doctorPersistenceImpl.listDerivationPurgeSweeps(this.rawRead); }
+  listOversizedPages(minBytes: number) { return doctorPagesImpl.listOversizedPages(this.rawRead, minBytes); }
+  listScraperJunkCandidates(limit: number | null) { return doctorPagesImpl.listScraperJunkCandidates(this.rawRead, limit); }
+  countMarkedPages(marker: doctorPagesImpl.PageMarker) { return doctorPagesImpl.countMarkedPages(this.rawRead, marker); }
+  countOversizedCorePages(maxBytes: number) { return doctorPagesImpl.countOversizedCorePages(this.rawRead, maxBytes); }
+  readRawProvenanceGaps() { return doctorPagesImpl.readRawProvenanceGaps(this.rawRead); }
+  countUnverifiedExtractions(days: number, sourceId: string | null) { return doctorPagesImpl.countUnverifiedExtractions(this.rawRead, days, sourceId); }
+  listContentHashDuplicates() { return doctorPagesImpl.listContentHashDuplicates(this.rawRead); }
+  countTranscriptImportPages() { return doctorPagesImpl.countTranscriptImportPages(this.rawRead); }
+  countPageRows() { return doctorPagesImpl.countPageRows(this.rawRead); }
+  countPagesBySlugPrefix(prefix: string) { return doctorPagesImpl.countPagesBySlugPrefix(this.rawRead, prefix); }
+  countLivePages() { return doctorPagesImpl.countLivePages(this.rawRead); }
+  readOldestPageCreatedAt() { return doctorPagesImpl.readOldestPageCreatedAt(this.rawRead); }
+  countPageTrustTiers() { return doctorPagesImpl.countPageTrustTiers(this.rawRead); }
+  countPagesWithMentionLinks() { return doctorPagesImpl.countPagesWithMentionLinks(this.rawRead); }
+  countImageModalityMismatches() { return doctorPagesImpl.countImageModalityMismatches(this.rawRead); }
+  readImagePageCoverage() { return doctorPagesImpl.readImagePageCoverage(this.rawRead); }
+  listFactsPageBodies() { return doctorPagesImpl.listFactsPageBodies(this.rawRead); }
+  listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.rawRead); }
+  listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.rawRead, sourceIds); }
+  listPolicySourceIds() { return doctorAccImpl.listPolicySourceIds(this.rawRead); }
+  isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.rawRead); }
+  listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.rawRead); }
+  listAudienceMemberIds() { return doctorAccImpl.listAudienceMemberIds(this.rawRead); }
+  listLabelledOnlyMemberIds() { return doctorAccImpl.listLabelledOnlyMemberIds(this.rawRead); }
+  listAccessMemberRows(includeRemoved: boolean) { return doctorAccImpl.listAccessMemberRows(this.rawRead, includeRemoved); }
+  listAttestCredentialRows() { return doctorAccImpl.listAttestCredentialRows(this.rawRead); }
+  listActiveAccessTokenRows() { return doctorAccImpl.listActiveAccessTokenRows(this.rawRead); }
+  listActiveOauthClientRows() { return doctorAccImpl.listActiveOauthClientRows(this.rawRead); }
+  listOauthClientAuthShapes() { return doctorAccImpl.listOauthClientAuthShapes(this.rawRead); }
+  listDanglingFederatedReads() { return doctorAccImpl.listDanglingFederatedReads(this.rawRead); }
+  listOrphanWorkspaceSources(suffix: string) { return doctorAccImpl.listOrphanWorkspaceSources(this.rawRead, suffix); }
+  listPrivilegedDcrClients(scopeRegex: string) { return doctorAccImpl.listPrivilegedDcrClients(this.rawRead, scopeRegex); }
+  readMcpRequestLogBytes() { return doctorAccImpl.readMcpRequestLogBytes(this.rawRead); }
+  countMcpRequestLogRows(limit: number) { return doctorAccImpl.countMcpRequestLogRows(this.rawRead, 'pglite', limit); }
+  hasMcpLogRowsPastWindow(days: number, keepOperations: readonly string[]) { return doctorAccImpl.hasMcpLogRowsPastWindow(this.rawRead, days, keepOperations); }
+  readKnowledgeRevisionNotNull() { return doctorAccImpl.readKnowledgeRevisionNotNull(this.rawRead); }
+  readDriftSchema() { return doctorAccImpl.readDriftSchema(this.rawRead); }
+  listDriftLiveRows(schema: doctorAccImpl.DriftSchema, sourceId: string, at: { after?: number; slug?: string }) { return doctorAccImpl.listDriftLiveRows(this.rawRead, schema, sourceId, at); }
+  listDriftVersionRows(schema: doctorAccImpl.DriftSchema, pageIds: number[]) { return doctorAccImpl.listDriftVersionRows(this.rawRead, schema, pageIds); }
+  originIndexPresent(name: string) { return doctorAccImpl.originIndexPresent(this.rawRead, name); }
+  listDecideCalibrationRows(slot: string | null, includeRetired: boolean) { return doctorAccImpl.listDecideCalibrationRows(this.rawRead, slot, includeRetired); }
+  listRecentResolvedModels(sinceHours: number) { return doctorAccImpl.listRecentResolvedModels(this.rawRead, sinceHours); }
+  listMixedModelDecisions(sinceHours: number) { return doctorAccImpl.listMixedModelDecisions(this.rawRead, sinceHours); }
+  listDecideSlotUsage(sinceHours: number) { return doctorAccImpl.listDecideSlotUsage(this.rawRead, sinceHours); }
+  readDecideDailySpend(sinceIso: string) { return doctorAccImpl.readDecideDailySpend(this.rawRead, sinceIso); }
+  listDecideReceiptStats(sinceHours: number, slot: string | null) { return doctorAccImpl.listDecideReceiptStats(this.rawRead, sinceHours, slot); }
+  readChronicleLedgerStats() { return doctorAccImpl.readChronicleLedgerStats(this.rawRead); }
+  readChronicleDuplicateEvents() { return doctorAccImpl.readChronicleDuplicateEvents(this.rawRead); }
+  readFeedbackStatus() { return doctorAccImpl.readFeedbackStatus(this.rawRead); }
+  listBeliefCoveredSources(coverageKey: string) { return doctorAccImpl.listBeliefCoveredSources(this.rawRead, coverageKey); }
+  listVolunteerChannels(sourceIds: readonly string[] | null) { return doctorAccImpl.listVolunteerChannels(this.rawRead, sourceIds); }
+  listFenceCandidateRecords(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listFenceCandidateRecords(this.rawRead, op, sourceIds); }
+  listDerivedOriginParks(op: string) { return doctorCheckpointsImpl.listDerivedOriginParks(this.rawRead, op); }
+  listPurgeParks(op: string) { return doctorCheckpointsImpl.listPurgeParks(this.rawRead, op); }
+  readSoakCounterRows(op: string, days: readonly string[]) { return doctorCheckpointsImpl.readSoakCounterRows(this.rawRead, op, days); }
+  listUnfinishedManagedSyncCursors() { return doctorCheckpointsImpl.listUnfinishedManagedSyncCursors(this.rawRead); }
+  listManagedSyncPassStops(sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listManagedSyncPassStops(this.rawRead, sourceIds); }
+  listManagedSyncBacklogHeaders() { return doctorCheckpointsImpl.listManagedSyncBacklogHeaders(this.rawRead); }
+  readManagedSyncPassRow(op: string, fingerprint: string) { return doctorCheckpointsImpl.readManagedSyncPassRow(this.rawRead, op, fingerprint); }
+  listLiveManagedSyncPassRows(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listLiveManagedSyncPassRows(this.rawRead, op, sourceIds); }
+  listCheckpointBlockedSources(sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listCheckpointBlockedSources(this.rawRead, sourceIds); }
+  listOpenIdentityDowngrades(op: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listOpenIdentityDowngrades(this.rawRead, op, sourceIds); }
+  listHeldManagedAtomRows(sourceIds: readonly string[] | undefined, excludedRole: string) { return doctorCheckpointsImpl.listHeldManagedAtomRows(this.rawRead, sourceIds, excludedRole); }
+  readDoctorLastKnown(op: string) { return doctorCheckpointsImpl.readDoctorLastKnown(this.rawRead, op); }
+  writeDoctorLastKnown(op: string, rows: readonly doctorCheckpointsImpl.DoctorLastKnownRow[]) { return doctorCheckpointsImpl.writeDoctorLastKnown(this.rawRead, op, rows); }
+  readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string) { return doctorCheckpointsImpl.readSyncAdmissionSettingRow(this.rawRead, key, op, fingerprint); }
+  readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.rawRead); }
+  listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.rawRead); }
+  readDoctorSources<V extends doctorSourcesImpl.DoctorSourceVariant>(variant: V, scope?: doctorSourcesImpl.DoctorSourceScope) { return doctorSourcesImpl.readDoctorSources(this.rawRead, variant, scope); }
+  listGuestSourceRows() { return doctorSourcesImpl.listGuestSourceRows(this.rawRead); }
+  listCheckoutRoots(hostId: string | null) { return doctorSourcesImpl.listCheckoutRoots(this.rawRead, hostId); }
+  listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null) { return doctorSourcesImpl.listPendingRoster(this.rawRead, sourceIds, hostId); }
+  listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean) { return doctorSourcesImpl.listOwnedContentRows(this.rawRead, sourceIds, inheritsPersistence); }
+  countDefaultSourceFiles() { return doctorSourcesImpl.countDefaultSourceFiles(this.rawRead); }
   upsertFactRelinkAttempt(sourceId: string, attempt: factRelinkImpl.FactRelinkAttempt, opts: factRelinkImpl.FactRelinkUpsertOpts = {}) { return factRelinkImpl.upsertFactRelinkAttempt(this.engineSql, sourceId, attempt, opts); }
   listFactRelinkOutcomes(sourceId: string, factIds: number[], outcomes: string[]) { return factRelinkImpl.listFactRelinkOutcomes(this.rawRead, sourceId, factIds, outcomes); }
   deleteFactRelinkMemos(sourceId: string, tier: string, targetSlug: string) { return factRelinkImpl.deleteFactRelinkMemos(this.engineSql, sourceId, tier, targetSlug); }

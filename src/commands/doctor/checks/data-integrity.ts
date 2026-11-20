@@ -188,13 +188,7 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
   // surface the gap so operators can run `gbrain backfill modality`.
   progress.heartbeat('cross_modal_modality_backfill');
   try {
-    const mismatchRows = await engine.executeRaw<{ count: string | number }>(
-      `SELECT COUNT(*)::text AS count FROM content_chunks
-       WHERE embedding_image IS NOT NULL
-         AND chunk_source = 'image_asset'
-         AND (modality IS NULL OR modality != 'image')`,
-    );
-    const mismatch = parseInt(String(mismatchRows[0]?.count ?? '0'), 10);
+    const mismatch = await engine.countImageModalityMismatches();
     if (mismatch === 0) {
       checks.push({
         name: 'cross_modal_modality_backfill',

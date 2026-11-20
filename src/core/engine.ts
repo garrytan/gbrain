@@ -24,6 +24,13 @@ import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './eng
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
+import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
+import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
+import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
+import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
+import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
+import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
+import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from './engine-sql/fact-relink-writes.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
@@ -5048,4 +5055,289 @@ export interface BrainEngine {
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */
   settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
+
+  // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
+  /** Rows of a page-child relation (`<table>.<column>`) whose page row is gone; a NULL reference of a SET NULL column is not one. */
+  countPageChildOrphans(target: DoctorReadsSql.PageChildTarget): Promise<number>;
+
+  // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
+  /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */
+  readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }): Promise<DoctorDerivedSql.IgnoredPrivacyLabelRow[]>;
+  /** Live pages of unarchived sources chunked below the safe-chunk fence: the ones a repair rebuilds and the ones it keeps. */
+  countSafeIndexPending(sourceIds?: string[]): Promise<DoctorDerivedSql.RebuildableCounts>;
+  /** Live pages whose text projection is behind and whose body holds a private key block: rebuildable and kept. */
+  countCredentialProjectionPending(sourceIds?: string[]): Promise<DoctorDerivedSql.RebuildableCounts>;
+  /** Live pages per source and stored type, split by whether gbrain writers wrote them. */
+  countPagesByTypeAndOwner(sourceIds?: string[]): Promise<DoctorDerivedSql.PageTypeOwnerRow[]>;
+  /** Expired tombstones of a source the belief ledger records, in scan order. */
+  listRecordedTombstones(hours: string, released: readonly number[]): Promise<DoctorDerivedSql.RecordedTombstoneRow[]>;
+  /** The derived-page visibility counts of `sourceIds` under a statement deadline. */
+  countDerivedVisibility(sourceIds: string[], timeoutMs: number): Promise<DoctorDerivedSql.DerivedVisibilityCounts>;
+  /** Live segmented pages of unarchived sources whose live generation rows do not tile the body. */
+  listUntiledSegmentedPageRows(sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number): Promise<DoctorDerivedSql.UntiledPageRow[]>;
+  /** The next 200 inline pages after `afterId` carrying a timeline row no event page owns. */
+  listTimelineHistoryBatch(sourceIds: string[], afterId: number): Promise<DoctorDerivedSql.TimelineHistoryPageRow[]>;
+  /** One keyset batch of world atoms whose source page names a facts or takes fence. */
+  listAtomFenceCandidates(opts: { sourceIds: string[]; atomId: number | null; after: number; limit: number; timeoutMs?: number }): Promise<DoctorDerivedSql.AtomFenceCandidateRow[]>;
+  /** The compiled text of pages by id. */
+  readPageCompiledTruths(ids: number[], timeoutMs?: number): Promise<Array<{ id: number; body: string | null }>>;
+  /** Age of the oldest live chunk with no vector in `column`, the chunks with no pending-since stamp, and whether the oldest predates the backfill. */
+  readEmbeddingBacklogAge(column: string): Promise<DoctorDerivedSql.EmbeddingBacklogAgeRow | undefined>;
+  /** Held and capped large pages with chunks still waiting for `column`, by source, state and reason. */
+  listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }): Promise<DoctorDerivedSql.BudgetLimitedRow[]>;
+  /** How many applying budget holds are older than a day, and the oldest update time. */
+  readBudgetHoldAge(): Promise<DoctorDerivedSql.BudgetHoldAge | undefined>;
+  /** The first 1000 image file rows with their source root and page source path. */
+  listImageAssetFiles(): Promise<DoctorDerivedSql.ImageAssetFileRow[]>;
+  /** Conversation pages held for an undetected format (at most 20, newest first) with the total. */
+  listAmbiguousExtractionInputs(): Promise<DoctorDerivedSql.AmbiguousExtractionRow[]>;
+  /** Page extraction receipts that read only part of their input, by pipeline and kind. */
+  listExtractionInputReceipts(): Promise<DoctorDerivedSql.ExtractionReceiptRow[]>;
+  /** Models whose derivation receipts say they had no price, with pipelines and pages. */
+  listUnpricedDerivationModels(): Promise<DoctorDerivedSql.UnpricedModelRow[]>;
+  /** Restorable re-extraction retirements no live generation ledger records, per source. */
+  listRestorableAtomRetirements(sourceIds: string[]): Promise<DoctorDerivedSql.RestorableAtomRetirementRow[]>;
+  /** Restorable re-extraction retirements a live generation ledger records. */
+  countLedgerCoveredAtomRetirements(sourceIds: string[]): Promise<number>;
+  /** Live generations that retired items within the last `restoreDays` days, by source and kind. */
+  listLiveGenerationRetirements(sourceIds: string[], restoreDays: number): Promise<DoctorDerivedSql.GenerationRetirementRow[]>;
+  /** Held derived generations by source, kind and reason. */
+  listHeldGenerations(sourceIds: string[]): Promise<DoctorDerivedSql.HeldGenerationRow[]>;
+  /** Pages a create member wrote for an activation that never happened and no live generation owns. */
+  listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.OrphanGenerationCandidateRow[]>;
+  /** Facts the ontology fence step moved, with withdrawn, consolidated and duplicate verdicts. */
+  listOntologyFactCandidates(sourceIds: string[]): Promise<DoctorDerivedSql.OntologyFactRow[]>;
+  /** The atom provenance drift counts (none when the aggregate returned no row). */
+  readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
+  /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
+  readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
+  /** The recorded halt reasons of the 7-day extract rollup, per kind and reason. */
+  listRecordedHaltReasons7d(): Promise<DoctorDerivedSql.RecordedHaltReasonRow[]>;
+  // Doctor persistence reads (engine-sql/doctor-persistence.ts): the statements the persistence checks ran through executeRaw.
+  /** Every counter row of the brain and of each principal, in key order. */
+  listCapacityCounters(): Promise<DoctorPersistenceSql.CapacityCounterRow[]>;
+  /** The three sources holding the most outstanding slots (of one principal when given), most stalled (ten minutes or older) first. */
+  listOutstandingHolders(principal: DoctorPersistenceSql.RequestPrincipal | null): Promise<DoctorPersistenceSql.OutstandingHolderRow[]>;
+  /** Rows in `persistence_requests`: the planner's estimate (Postgres, `estimate`) or the exact count. */
+  countPersistenceRequestRows(estimate: boolean): Promise<{ rows: string } | undefined>;
+  /** The lifetime request ids of the brain and of each principal, in key order. */
+  listLifetimeCounters(): Promise<DoctorPersistenceSql.LifetimeCounterRow[]>;
+  /** Admissions inside the last 7 days among the newest 10,000 (of one principal when given), and the oldest of those. */
+  readAdmissionSample(principal: DoctorPersistenceSql.RequestPrincipal | null): Promise<DoctorPersistenceSql.AdmissionSample | undefined>;
+  /** The oldest 100 running requests with their claim state, age, root progress inside `maxClaimMs` and the queue behind them. */
+  listRunningRequestStalls(maxClaimMs: number): Promise<DoctorPersistenceSql.RunningRequestStallRow[]>;
+  /** Hosts with a live full or promoted consumer heartbeat (renewed in the last 5 minutes) and the age of the oldest. */
+  readLiveConsumerSummary(): Promise<DoctorPersistenceSql.LiveConsumerSummary | undefined>;
+  /** Each terminal-bytes counter beside the receipts and topology changes it should equal, and the true-up clamp setting. */
+  readCounterDrift(clampedKey: string): Promise<DoctorPersistenceSql.CounterDriftRow[]>;
+  /** The newest request sequence, or null on an empty journal. */
+  readMaxRequestSequence(): Promise<string | null>;
+  /** Maintenance submit_job slugs refused `threshold` times or more with the same write and code inside `windowHours`. */
+  listRefusalBreakerRows(sourceId: string, windowHours: number, threshold: number, limit: number): Promise<DoctorPersistenceSql.RefusalBreakerRow[]>;
+  /** Slugs with a source_changed receipt after sequence `floor` (up to 100), with the total of them. */
+  listRecentDriftReceiptSlugs(sourceId: string, floor: string, message: string): Promise<Array<{ slug: string; total: number }>>;
+  /** Slugs with a source_changed receipt at or below sequence `floor` (up to 101), under a `timeoutMs` bound. */
+  listOlderDriftReceiptSlugs(sourceId: string, floor: string, message: string, timeoutMs: number): Promise<Array<{ slug: string }>>;
+  /** Writes in the last 7 days the database refused: by the managed-writer guard, by another trigger, and unclassified P0001. */
+  readPublicationRefusals(): Promise<DoctorPersistenceSql.PublicationRefusalRow | undefined>;
+  /** Effects that recorded a parked target and are not settled (of `sourceIds` when given). */
+  countParkedEffects(sourceIds: string[] | null): Promise<number>;
+  /** The first 20 parked effects with their request, and whether the binding they were parked under is gone. */
+  listParkedEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.ParkedEffectRow[]>;
+  /** Held Git effects per source and worktree: retrying and parked counts, the codes of `codes` that hold them and the oldest request. */
+  listGitPushHoldRows(codes: string[], sourceIds: string[] | null): Promise<DoctorPersistenceSql.GitPushHoldRow[]>;
+  /** Queued writer_busy effects per source: how many waited longer than `stallMs`, how many are busy, since when, and the most retries. */
+  listStalledCatchupRows(sourceIds: string[] | null, stallMs: number): Promise<DoctorPersistenceSql.StalledCatchupRow[]>;
+  /** Parked Git targets per source, error code and former binding. */
+  listParkedGroupRows(sourceIds: string[] | null): Promise<DoctorPersistenceSql.ParkedGroupRow[]>;
+  /** Committed writes' stale queued or failed embedding effects: all, the failed, and the retry-queued. */
+  readStaleEmbeddingCounts(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingCounts>;
+  /** The first 10 stale embedding effects. */
+  listStaleEmbeddingEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingEffectRow[]>;
+  /** Source bindings whose source is gone or was re-created, by source id, up to `limit` when given. */
+  listOrphanBindingRows(limit: number | null): Promise<DoctorPersistenceSql.OrphanBindingRow[]>;
+  /** The persistence identity as text, or null when the schema has no `persistence_brain` row. */
+  readPersistenceBrainIdText(): Promise<string | null>;
+  /** Every managed worktree id. */
+  listWorktreeIds(): Promise<string[]>;
+  /** The local paths of the active sources and of the worktrees `hostId` binds. */
+  listManagedRoots(hostId: string | null): Promise<DoctorPersistenceSql.ManagedRootRow[]>;
+  /** Sources with live database-only pages: the page count, whether the source has a binding, and its local path. */
+  listUnboundSourcePages(): Promise<DoctorPersistenceSql.UnboundSourcePageRow[]>;
+  /** Committed requests of the last `days`, grouped per role, host, principal and version. */
+  listRecentWriterVersions(days: number): Promise<DoctorPersistenceSql.RecentWriterVersionRow[]>;
+  /** Request ids of the page, fact and take purges of the last `days` (up to `cap`). */
+  listRecentPurgeRequests(days: number, cap: number): Promise<string[]>;
+  /** Active worktree refreshes older than `minutes`. */
+  listStuckWorktreeRefreshes(minutes: number): Promise<DoctorPersistenceSql.StuckWorktreeRefreshRow[]>;
+  /** Every active source's binding with its worktree owner (of `sourceIds` when given). */
+  listSourceBindingsForMovement(sourceIds: string[] | null): Promise<DoctorPersistenceSql.MovementBindingRow[]>;
+  /** The first 500 running claims that carry an owner, on worktrees `hostId` owns or on no worktree. */
+  listRunningClaimOwners(hostId: string): Promise<DoctorPersistenceSql.RunningClaimOwnerRow[]>;
+  /** Worktree bindings owned by a host other than `hostId`. */
+  listOwnerBindings(hostId: string): Promise<DoctorPersistenceSql.OwnerBindingRow[]>;
+  /** The newest consumer heartbeat of each of `hostIds`. */
+  listConsumerOwners(hostIds: string[]): Promise<DoctorPersistenceSql.ConsumerOwnerRow[]>;
+  /** Page versions a managed import archived under a database write, newest first (up to `limit`), narrowed to `slugs` when given. */
+  listOverwriteCandidates(sourceId: string, limit: number, slugs: string[] | null): Promise<Array<Record<string, unknown>>>;
+  /** The caller writes of `sourceIds` a managed-writer guard or a file drift refused, with the intent's pin and revision state, by sequence. */
+  listCallerRefusalRows(sourceIds: string[], operations: string[]): Promise<DoctorPersistenceSql.CallerRefusalRow[]>;
+  /** The refused receipts of `sourceIds` that compaction already emptied. */
+  countCompactedCallerRefusals(sourceIds: string[], operations: string[]): Promise<number>;
+  /** Per source, the put_page writes committed in the last 24 hours that adopted a local edit, and the paths. */
+  listLocalEditAdoptions(): Promise<DoctorPersistenceSql.LocalEditAdoptionRow[]>;
+  /** The recorded derivation-result sweeps of fact purges, oldest first. */
+  listDerivationPurgeSweeps(): Promise<DoctorPersistenceSql.DerivationPurgeSweepRow[]>;
+  // Doctor page reads (engine-sql/doctor-pages.ts): the page-table statements doctor checks ran through executeRaw.
+  /** Live pages without an `embed_skip` marker whose body and timeline are over `minBytes` bytes, largest first (at most 101). */
+  listOversizedPages(minBytes: number): Promise<DoctorPagesSql.OversizedPageRow[]>;
+  /** Live pages with title, body and timeline heads and frontmatter, newest update first (`limit` of them), or all of them (`null`). */
+  listScraperJunkCandidates(limit: number | null): Promise<DoctorPagesSql.ScraperJunkRow[]>;
+  /** Live pages whose frontmatter holds the key `marker` (`quarantine` or `content_flag`). */
+  countMarkedPages(marker: DoctorPagesSql.PageMarker): Promise<number>;
+  /** Live `always_load` pages stored in segments with more than `maxBytes` body bytes. */
+  countOversizedCorePages(maxBytes: number): Promise<number>;
+  /** Synthesized pages with no raw trace, raw data, evidence or exemption: their count and five slugs. */
+  readRawProvenanceGaps(): Promise<DoctorPagesSql.RawProvenanceGaps>;
+  /** Live unverified auto-extracted pages created more than `days` days ago (in `sourceId` when given). */
+  countUnverifiedExtractions(days: number, sourceId: string | null): Promise<number>;
+  /** Groups of live pages sharing a content hash within a source (at most 51). */
+  listContentHashDuplicates(): Promise<DoctorPagesSql.ContentHashDuplicateRow[]>;
+  /** Live conversation pages imported from a transcript. */
+  countTranscriptImportPages(): Promise<number>;
+  /** Every page row, soft-deleted pages included. */
+  countPageRows(): Promise<number>;
+  /** Page rows (soft-deleted included) whose slug starts with `prefix`, taken literally. */
+  countPagesBySlugPrefix(prefix: string): Promise<number>;
+  /** Live page rows. */
+  countLivePages(): Promise<number>;
+  /** The earliest `created_at` of any page row (soft-deleted included), or null. */
+  readOldestPageCreatedAt(): Promise<string | Date | null>;
+  /** Page rows per stored `trust_tier`. */
+  countPageTrustTiers(): Promise<DoctorPagesSql.TrustTierCount[]>;
+  /** Live pages with at least one outgoing `mentions` link. */
+  countPagesWithMentionLinks(): Promise<number>;
+  /** Image-asset chunks with an image vector whose modality is not `image`. */
+  countImageModalityMismatches(): Promise<number>;
+  /** Live image pages, those with no image vector and those with no recorded `source_path`. */
+  readImagePageCoverage(): Promise<DoctorPagesSql.ImagePageCoverage>;
+  /** Live `facts` pages in (source, slug) order with the bounded body prefix. */
+  listFactsPageBodies(): Promise<DoctorPagesSql.FactsPageBody[]>;
+  /** Live pages whose `source_path` has a bracket or a control character. */
+  listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
+  /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
+  listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  // Doctor reads, second set (engine-sql/doctor-acc.ts): the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer statements doctor checks ran through executeRaw.
+  /** Sources that hold folder access state, by id. */
+  listPolicySourceIds(): Promise<string[]>;
+  /** Whether the database role cannot read the folder access tables (row-level security hides them). */
+  isAccessStateUnreadable(): Promise<boolean>;
+  /** Folder and page rules that do not cover the pages derived from their pages, by source and rule id. */
+  listRawOnlyRules(): Promise<DoctorAccSql.RawOnlyRuleRow[]>;
+  /** Enabled members marked as an audience, by id. */
+  listAudienceMemberIds(): Promise<string[]>;
+  /** Enabled members that carry the labelled-only grant, by id. */
+  listLabelledOnlyMemberIds(): Promise<string[]>;
+  /** Every access member row with its groups, removed members only with `includeRemoved`. */
+  listAccessMemberRows(includeRemoved: boolean): Promise<DoctorAccSql.Row[]>;
+  /** Active tokens and live OAuth clients that carry an attest actor, as JSON rows. */
+  listAttestCredentialRows(): Promise<DoctorAccSql.AttestCredentialRow[]>;
+  /** Active (not revoked) API token rows, oldest first. */
+  listActiveAccessTokenRows(): Promise<DoctorAccSql.Row[]>;
+  /** OAuth client rows not deleted, by id. */
+  listActiveOauthClientRows(): Promise<DoctorAccSql.Row[]>;
+  /** Every OAuth client's id, auth method and secret hash. */
+  listOauthClientAuthShapes(): Promise<DoctorAccSql.OauthClientAuthShape[]>;
+  /** Federated read grants of live OAuth clients that name no source. */
+  listDanglingFederatedReads(): Promise<DoctorAccSql.DanglingFederatedRead[]>;
+  /** Derived-workspace sources (id ending in `suffix`) with no path, pages, facts or live client naming them. */
+  listOrphanWorkspaceSources(suffix: string): Promise<Array<{ id: string }>>;
+  /** Live clients that look self-registered with a scope matching `scopeRegex`; null when the grant audit schema is absent. */
+  listPrivilegedDcrClients(scopeRegex: string): Promise<DoctorAccSql.PrivilegedDcrClient[] | null>;
+  /** What the MCP request log occupies, in bytes (the engine's own measure). */
+  readMcpRequestLogBytes(): Promise<number>;
+  /** The MCP request log's row count: an estimate on Postgres, a count bounded to `limit` rows elsewhere. */
+  countMcpRequestLogRows(limit: number): Promise<number>;
+  /** Whether a request older than `days` days that retention would delete (operation not in `keepOperations`) is waiting. */
+  hasMcpLogRowsPastWindow(days: number, keepOperations: readonly string[]): Promise<boolean>;
+  /** `pages.knowledge_revision`: null when absent, else whether the column is NOT NULL (the revision backfill finished). */
+  readKnowledgeRevisionNotNull(): Promise<boolean | null>;
+  /** Which columns the provenance drift scan can read: trust tiers, then write attribution. */
+  readDriftSchema(): Promise<DoctorAccSql.DriftSchema>;
+  /** One batch of a source's live pages after page id `at.after`, or the page at `at.slug`, with the writer of its revision. */
+  listDriftLiveRows(schema: DoctorAccSql.DriftSchema, sourceId: string, at: { after?: number; slug?: string }): Promise<DoctorAccSql.DriftLiveRow[]>;
+  /** The versions of the given pages, oldest first, with the writer of each. */
+  listDriftVersionRows(schema: DoctorAccSql.DriftSchema, pageIds: number[]): Promise<DoctorAccSql.DriftVersionRow[]>;
+  /** Whether the index `name` exists (the origin index read on a non-Postgres engine). */
+  originIndexPresent(name: string): Promise<boolean>;
+  /** Decide calibration rows (`slot` null for every slot), retired ones only with `includeRetired`. */
+  listDecideCalibrationRows(slot: string | null, includeRetired: boolean): Promise<DoctorAccSql.Row[]>;
+  /** Resolved models of the decide receipts in the trailing window, newest first. */
+  listRecentResolvedModels(sinceHours: number): Promise<DoctorAccSql.Row[]>;
+  /** Decisions per slot whose receipts failed on mixed resolved models in the trailing window. */
+  listMixedModelDecisions(sinceHours: number): Promise<DoctorAccSql.Row[]>;
+  /** Per-slot decision counts, tokens, errors and egress refusals in the trailing window. */
+  listDecideSlotUsage(sinceHours: number): Promise<DoctorAccSql.Row[]>;
+  /** TypeSafe decide spend since `sinceIso`, in total and from remote callers. */
+  readDecideDailySpend(sinceIso: string): Promise<{ total: number; remote: number }>;
+  /** Decide receipt counts and latency per slot, mode, outcome and error reason in the trailing window (`slot` null for every slot). */
+  listDecideReceiptStats(sinceHours: number, slot: string | null): Promise<DoctorAccSql.Row[]>;
+  /** Life Chronicle ledger rollups of the automatic rows. */
+  readChronicleLedgerStats(): Promise<DoctorAccSql.ChronicleLedgerStats>;
+  /** Pages holding live events a newer chronicle extraction did not produce, and how many such events. */
+  readChronicleDuplicateEvents(): Promise<DoctorAccSql.ChronicleDuplicateEvents>;
+  /** Retrieval feedback counts, last rating time, the busiest client's share and the lowest and highest page weights. */
+  readFeedbackStatus(): Promise<DoctorAccSql.FeedbackStatusRow>;
+  /** Sources with a coverage event (`subject_key = coverageKey`) in their current incarnation, by id. */
+  listBeliefCoveredSources(coverageKey: string): Promise<string[]>;
+  /** Context-volunteer events of the last 7 days per channel; null `sourceIds` reads the whole brain. */
+  listVolunteerChannels(sourceIds: readonly string[] | null): Promise<DoctorAccSql.VolunteerChannelRow[]>;
+  // Doctor checkpoint reads (engine-sql/doctor-checkpoints.ts): the op_checkpoints and ingest_log statements doctor ran through executeRaw.
+  /** The fence candidate records of live source incarnations (one source's when `sourceIds` is given), by fingerprint. */
+  listFenceCandidateRecords(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.CandidateRecord[]>;
+  /** Every derived-origin park whose page is still a tombstone, oldest first. */
+  listDerivedOriginParks(op: string): Promise<DoctorCheckpointsSql.DerivedOriginPark[]>;
+  /** Every purge-failure record whose tombstone still exists as recorded, by fingerprint. */
+  listPurgeParks(op: string): Promise<DoctorCheckpointsSql.PurgeParkRow[]>;
+  /** The sync soak counter record of each of the given UTC days (a day with none is absent). */
+  readSoakCounterRows(op: string, days: readonly string[]): Promise<Array<Record<string, unknown>>>;
+  /** The fingerprints of unfinished managed-sync cursors that no newer failure row explains. */
+  listUnfinishedManagedSyncCursors(): Promise<string[]>;
+  /** The managed-sync failure rows of live source incarnations that have no cursor row (the stops a pass left). */
+  listManagedSyncPassStops(sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.ManagedSyncPassStopRow[]>;
+  /** The headers of unfinished managed-sync cursors of registered sources. */
+  listManagedSyncBacklogHeaders(): Promise<DoctorCheckpointsSql.ManagedSyncBacklogHeader[]>;
+  /** One managed-sync pass row (record, write time and the engine clock at the read), or null when there is none. */
+  readManagedSyncPassRow(op: string, fingerprint: string): Promise<DoctorCheckpointsSql.ManagedSyncPassRowRecord | null>;
+  /** The pass rows of the sources' live incarnations (every source when `sourceIds` is omitted). */
+  listLiveManagedSyncPassRows(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.LiveManagedSyncPassRowRecord[]>;
+  /** The non-archived sources whose unfinished managed-sync cursor waits at its checkpoint step. */
+  listCheckpointBlockedSources(sourceIds?: readonly string[]): Promise<string[]>;
+  /** The open identity-downgrade records (no disposition, old page still soft-deleted by that sync), oldest first, with the live slugs at the new path. */
+  listOpenIdentityDowngrades(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.OpenIdentityDowngradeRow[]>;
+  /** The held managed-atom rows of the sources' current incarnations that no later run completed, excluding sources of role `excludedRole`. */
+  listHeldManagedAtomRows(sourceIds: readonly string[] | undefined, excludedRole: string): Promise<DoctorCheckpointsSql.HeldManagedAtomRow[]>;
+  /** The stored doctor last-known entries of one op: the entry name and its value. */
+  readDoctorLastKnown(op: string): Promise<Array<{ fingerprint: string; entry: unknown }>>;
+  /** Upserts one doctor last-known row per entry (the fingerprint is the entry name). */
+  writeDoctorLastKnown(op: string, rows: readonly DoctorCheckpointsSql.DoctorLastKnownRow[]): Promise<void>;
+  /** The sync-admission setting: the config value at `key` and the dating row's value and `set_at` (null when none). */
+  readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string): Promise<DoctorCheckpointsSql.SyncAdmissionSettingRecord>;
+  /** The summary of the newest connector receipt in the ingest log, or null when there is none. */
+  readLatestConnectorReceipt(): Promise<string | null>;
+  /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
+  listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  // Doctor reads over `sources` (engine-sql/doctor-sources.ts).
+  /** The rows of one doctor `sources` read (`variant` names the statement; `scope` confines it to some ids or one source). */
+  readDoctorSources<V extends DoctorSourcesSql.DoctorSourceVariant>(variant: V, scope?: DoctorSourcesSql.DoctorSourceScope): Promise<DoctorSourcesSql.DoctorSourceRows[V][]>;
+  /** Sources whose config says guest or that have a guest_sources row, with writers and ceiling; throws the missing-table error behind the guest-notes migration. */
+  listGuestSourceRows(): Promise<DoctorSourcesSql.GuestSourceRow[]>;
+  /** Live sources' checkout roots, and the roots the host's worktree bindings hold (none on an engine without managed persistence). */
+  listCheckoutRoots(hostId: string | null): Promise<DoctorSourcesSql.CheckoutRootRow[]>;
+  /** The sources whose commits sync, with their last commit, managed flag and this host's root; `sourceIds` null reads every source. */
+  listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null): Promise<DoctorSourcesSql.PendingRosterRow[]>;
+  /** gbrain-owned content sources with their shared-skills receipt, owner binding and queued work (none on an engine without managed persistence). */
+  listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean): Promise<DoctorSourcesSql.OwnedContentRow[]>;
+  /** Live pages of the `default` source and how many of them record a source path. */
+  countDefaultSourceFiles(): Promise<DoctorSourcesSql.DefaultSourceFiles>;
 }

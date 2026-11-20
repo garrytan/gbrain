@@ -172,6 +172,48 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countStaleFactEmbeddings'],
   // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
   embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
+  // doctor_reads: the statements doctor checks ran through executeRaw (engine-sql/doctor-reads.ts)
+  doctor_reads: ['countPageChildOrphans'],
+  // doctor_derived: the derived-state reads doctor checks, repair scans and the purge ran through executeRaw (engine-sql/doctor-derived.ts)
+  doctor_derived: [
+    'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner',
+    'listRecordedTombstones', 'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch', 'listAtomFenceCandidates',
+    'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'listBudgetLimitedRows', 'readBudgetHoldAge', 'listImageAssetFiles',
+    'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements',
+    'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations',
+    'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'readExtractRollup7d', 'listRecordedHaltReasons7d',],
+  // doctor_persistence: the persistence statements doctor checks ran through executeRaw (engine-sql/doctor-persistence.ts)
+  doctor_persistence: [
+    'listCapacityCounters', 'listOutstandingHolders', 'countPersistenceRequestRows', 'listLifetimeCounters',
+    'readAdmissionSample', 'listRunningRequestStalls', 'readLiveConsumerSummary', 'readCounterDrift',
+    'readMaxRequestSequence', 'listRefusalBreakerRows', 'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs',
+    'readPublicationRefusals', 'countParkedEffects', 'listParkedEffects', 'listGitPushHoldRows',
+    'listStalledCatchupRows', 'listParkedGroupRows', 'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects',
+    'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'listManagedRoots',
+    'listUnboundSourcePages', 'listRecentWriterVersions', 'listRecentPurgeRequests',
+    'listStuckWorktreeRefreshes', 'listSourceBindingsForMovement', 'listRunningClaimOwners', 'listOwnerBindings',
+    'listConsumerOwners', 'listOverwriteCandidates', 'listCallerRefusalRows', 'countCompactedCallerRefusals',
+    'listLocalEditAdoptions', 'listDerivationPurgeSweeps',
+  ],
+  // doctor_pages: the page-table statements doctor checks ran through executeRaw (engine-sql/doctor-pages.ts)
+  doctor_pages: ['listOversizedPages', 'listScraperJunkCandidates', 'countMarkedPages', 'countOversizedCorePages', 'readRawProvenanceGaps', 'countUnverifiedExtractions', 'listContentHashDuplicates', 'countTranscriptImportPages', 'countPageRows', 'countPagesBySlugPrefix', 'countLivePages', 'readOldestPageCreatedAt', 'countPageTrustTiers', 'countPagesWithMentionLinks', 'countImageModalityMismatches', 'readImagePageCoverage', 'listFactsPageBodies', 'listBracketPathPages', 'listSlugPathCandidates'],
+  // doctor_reads_acc: the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer reads (engine-sql/doctor-acc.ts)
+  doctor_reads_acc: [
+    'listPolicySourceIds', 'isAccessStateUnreadable', 'listRawOnlyRules',
+    'listAudienceMemberIds', 'listLabelledOnlyMemberIds', 'listAccessMemberRows',
+    'listAttestCredentialRows', 'listActiveAccessTokenRows', 'listActiveOauthClientRows',
+    'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listOrphanWorkspaceSources',
+    'listPrivilegedDcrClients', 'readMcpRequestLogBytes', 'countMcpRequestLogRows',
+    'hasMcpLogRowsPastWindow', 'readKnowledgeRevisionNotNull', 'readDriftSchema',
+    'listDriftLiveRows', 'listDriftVersionRows', 'originIndexPresent',
+    'listDecideCalibrationRows', 'listRecentResolvedModels', 'listMixedModelDecisions',
+    'listDecideSlotUsage', 'readDecideDailySpend', 'listDecideReceiptStats',
+    'readChronicleLedgerStats', 'readChronicleDuplicateEvents',
+    'readFeedbackStatus', 'listBeliefCoveredSources', 'listVolunteerChannels'],
+  // doctor_checkpoints: the op_checkpoints and ingest_log reads doctor checks ran through executeRaw (engine-sql/doctor-checkpoints.ts)
+  doctor_checkpoints: ['listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows', 'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow', 'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows', 'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt', 'listFactsAbsorbFailureGroups'],
+  // doctor_sources: the doctor reads over sources (engine-sql/doctor-sources.ts)
+  doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'listOwnedContentRows', 'countDefaultSourceFiles'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],
