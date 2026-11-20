@@ -100,7 +100,7 @@ getPage	pages	yes	139	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	618	yes	yes	yes	serves
+putPage	pages	yes	619	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -422,7 +422,7 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	101	yes	yes	yes	serves
-insertFacts	facts	yes	140	no	yes	yes	serves
+insertFacts	facts	yes	141	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	62	no	yes	yes	serves
 listFactsByEntity	facts	yes	35	yes	yes	yes	serves
@@ -1080,10 +1080,10 @@ factReadableUnder	memory_mutation_reads	yes	1	no	yes	yes	serves
 readRemoteForgetTier	memory_mutation_reads	yes	2	no	yes	yes	serves
 readForgetTarget	memory_mutation_reads	yes	2	no	yes	yes	serves
 isFactEntityUnbacked	memory_mutation_reads	yes	1	no	yes	yes	serves
-readLinkedFactCopies	memory_mutation_reads	yes	2	no	yes	yes	serves
-hasHiddenFactCopy	memory_mutation_reads	yes	2	no	yes	yes	serves
+readLinkedFactCopies	memory_mutation_reads	yes	3	no	yes	yes	serves
+hasHiddenFactCopy	memory_mutation_reads	yes	3	no	yes	yes	serves
 ownerReachesFact	memory_mutation_reads	yes	2	no	yes	yes	serves
-readFactWithdrawalClaim	memory_mutation_reads	yes	4	no	yes	yes	serves
+readFactWithdrawalClaim	memory_mutation_reads	yes	5	no	yes	yes	serves
 readWithdrawalDiscovery	withdrawal_discovery	yes	7	no	yes	yes	serves
 listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
@@ -1209,7 +1209,7 @@ listAccessRules	write_misc	yes	1	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	no	0	no	-	-	-
-applyAccessRuleChanges	write_misc	yes	4	no	yes	yes	serves
+applyAccessRuleChanges	write_misc	yes	5	no	yes	yes	serves
 restampAccessWindow	write_misc	yes	1	no	yes	yes	serves
 finishAccessRestamp	write_misc	yes	1	no	yes	yes	serves
 insertAccessPolicyRevision	write_misc	yes	3	no	yes	yes	serves

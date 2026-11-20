@@ -181,7 +181,8 @@ pub(crate) fn hidden_by_private_provenance(
 /// remote provenance floor, `remoteProvenanceFloorSql`, for a caller that is not labelled-only),
 /// which judges no entity or holding page. A missing page hides nothing. `restricted` is the
 /// caller record's flag: false (a brain that holds no member-access restrictions) renders the
-/// member-access part as `page_readers IS NULL AND folder_rule_ids IS NULL`, with no origin test.
+/// member-access part as `page_readers IS NULL AND folder_rule_ids IS NULL`, with no origin test:
+/// a page that names readers or that a folder rule stamps fails it, whatever the rule covers.
 /// Both forms end with the page owner-only test in the policy's form.
 pub(crate) fn hidden_by_provenance_page(
     read: &dyn KvRead,
@@ -222,7 +223,9 @@ fn hidden_by_provenance_page_with(
             true,
         )?
     } else {
-        !names_readers(&page) && !owner_only.page_hidden(read, &page, policy.owner_only)?
+        !names_readers(&page)
+            && stamped_rules(read, &page)?.is_empty()
+            && !owner_only.page_hidden(read, &page, policy.owner_only)?
     };
     Ok(!(access && privacy_allows(read, &page, policy.honor_aliases)?))
 }
