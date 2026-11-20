@@ -19,7 +19,7 @@ import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import {
   ACCESS_RESTRICTIONS_KEY, MEMBERS_READ_LINEAGE_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, readRemotePolicyNow,
-  REMOTE_PRIVATE_PAGES_KEY, REQUESTER_SCOPE_ENFORCE_KEY, schemaVersionNow, SERVES_KEY, SERVES_SINCE_KEY,
+  REMOTE_PRIVATE_PAGES_KEY, REQUESTER_SCOPE_ENFORCE_KEY, schemaVersionNow, HONOR_ALIASES_KEY, readHonorAliases, SERVES_KEY, SERVES_SINCE_KEY,
 } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -63,5 +63,16 @@ describe('engine parity: remote read policy', () => {
       membersReadLineage: true, serves: { several: true, from: 'config', since: Date.parse('2026-01-02T03:04:05Z') / 1000, enforce: false },
     });
     return set;
+  });
+  parityTest('readHonorAliases reads visibility.honor_aliases: unset honors the aliases, false/off opts out', {
+    methods: ['setConfig', 'getConfig'],
+  }, async (engine) => {
+    const read = { unset: await readHonorAliases(engine) } as Record<string, boolean>;
+    for (const value of [' Off ', 'false', 'true']) {
+      await engine.setConfig(HONOR_ALIASES_KEY, value);
+      read[value] = await readHonorAliases(engine);
+    }
+    expect(read).toEqual({ unset: true, ' Off ': false, false: false, true: true });
+    return read;
   });
 });

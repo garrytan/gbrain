@@ -2,7 +2,8 @@
  * GBRA-283 B3a (N2): visibility.honor_aliases and search.remote_private_pages are per engine for engines opened from
  * settings. Inside such an engine's scope its own setting decides (one brain's setting never decides another's), and
  * the process-wide sets that the CLI's lean-private rule reads never hold an embedded engine, so a per-call engine is
- * not retained after it closes. The CLI keeps its process-wide behaviour.
+ * not retained after it closes. The CLI keeps its process-wide behaviour. An engine that refuses the setting read throws
+ * its refusal out of readHonorAliases; a plain read error keeps the last value.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -13,6 +14,8 @@ import {
   currentCallerAccess, isPrivacyPrivatePage, readHonorAliases, remotePrivacyRelaxed,
 } from '../src/core/search/private-visibility.ts';
 import { waitFor } from './helpers/wait-for.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 const settings = (): EngineSettings => ({ embedded_core: true, engine: 'pglite', database: {}, host: { id: randomUUID() } });
 const aliased = { type: 'note', frontmatter: { access: 'private' } };
@@ -90,4 +93,17 @@ describe('per-engine alias and privacy policy', () => {
     await waitFor(() => { Bun.gc(true); return refs.some(ref => ref.deref() === undefined); }, { timeoutMs: 10_000, intervalMs: 50, label: 'a closed engine collected' });
     expect(refs.filter(ref => ref.deref() !== undefined).length).toBeLessThan(refs.length);
   }, 120_000);
+  test('an engine that refuses the honor_aliases read throws its refusal; a plain read error keeps the last value', async () => {
+    let fail: unknown = null;
+    let value: string | null = 'false';
+    const engine = { getConfig: async () => { if (fail) throw fail; return value; } } as unknown as BrainEngine;
+    expect(await readHonorAliases(engine)).toBe(false);
+    fail = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    expect(await readHonorAliases(engine)).toBe(false);
+    fail = capabilityMissing('config', 'getConfig');
+    const refused = await readHonorAliases(engine).then(() => null, (e: unknown) => e);
+    expect((refused as { code?: string } | null)?.code).toBe('engine_capability_missing');
+    fail = null; value = null;
+    expect(await readHonorAliases(engine)).toBe(true);
+  });
 });

@@ -34,6 +34,7 @@ import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
 import { readConfigRows, type ConfigReader } from '../config-values.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -839,7 +840,11 @@ function honorAliases(): boolean {
   return honorAliasEngines.size > 0 || aliasOptOutEngines.size === 0;
 }
 
-/** Reads this brain's `visibility.honor_aliases` into the process setting (an embedded engine's: its own); true unless it is false/0/off/no. Unreadable keeps the last value. */
+/**
+ * Reads this brain's `visibility.honor_aliases` into the process setting (an embedded engine's: its own); true unless it
+ * is false/0/off/no. A read error keeps the last value (true when there is none: aliases stay private), but an engine
+ * that refuses the read throws its refusal, so a privacy read never runs on a setting that engine cannot report.
+ */
 export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
   try {
     const optOut = ALIAS_OPT_OUT_VALUES.includes((await engine.getConfig(HONOR_ALIASES_KEY))?.trim().toLowerCase() ?? '');
@@ -851,7 +856,8 @@ export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
     (optOut ? aliasOptOutEngines : honorAliasEngines).add(engine);
     (optOut ? honorAliasEngines : aliasOptOutEngines).delete(engine);
     return !optOut;
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     const embedded = embeddedKey(engine);
     return embedded ? embeddedPolicy.get(embedded)?.honorAliases ?? true : !aliasOptOutEngines.has(engine);
   }
