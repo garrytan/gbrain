@@ -384,7 +384,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	20	no	yes	yes	serves
-setConfig	config	yes	36	no	yes	yes	serves
+setConfig	config	yes	37	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -790,7 +790,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	86	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	87	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves

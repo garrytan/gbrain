@@ -21,7 +21,7 @@
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parityArms } from './harness.ts';
@@ -30,6 +30,7 @@ import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../help
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../../src/core/engine-sql/persistence-journal.ts';
+import { activatePersistence } from '../../src/core/persistence/activation.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
 import { atomRetirementsSql, ATOM_REEXTRACT_RETIRED_BY } from '../../src/core/persistence/atom-retirement-hold.ts';
@@ -398,6 +399,22 @@ describe('topology status and blocker lists sort source ids by byte', () => {
     const roots = report.retired_worktrees.find(entry => entry.id === worktrees.get('ab'))!.roots;
     expect(roots.filter(root => root.startsWith('/collate/'))).toEqual(BYTE_IDS.map(path => `/collate/${path}`));
     return { blockers, roots: roots.length };
+  }));
+
+  parityTest('activation lists database-only sources by byte source id, with the lock query left in plain id order', {
+    methods: ['executeRaw', 'setConfig'], requires: 'raw_sql',
+  }, async (engine) => inHome(async (home) => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.setConfig('sync.write_through', 'false');
+    for (const id of MIXED_SRC) {
+      const root = join(home, 'roots', id);
+      mkdirSync(root, { recursive: true });
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, root]);
+    }
+    const report = await activatePersistence(engine, { confirmQuiesced: true, dryRun: true });
+    const listed = (report.database_only_sources ?? []).filter(id => (MIXED_SRC as readonly string[]).includes(id));
+    expect(listed).toEqual([...BYTE_SRC]);
+    return listed;
   }));
 
   parityTest('graduationBlockers names the byte-first source of a foreign worktree and lists dangling OAuth clients by byte client id', {
