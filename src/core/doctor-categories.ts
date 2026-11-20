@@ -488,6 +488,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #7117: the content-drift sweep's latest batch failed.
   'content_drift_sweep',
   'connector_account_mismatch',
+  // GST-3216: owner identifiers and the owner page (doctor/checks/owner-identity.ts).
+  'owner_identity',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.
   'legacy_job_authority',
   // F3: legacy tokens on the JSONB-only grant shape (info) and grant drift (warn).

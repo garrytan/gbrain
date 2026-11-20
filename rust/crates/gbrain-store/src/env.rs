@@ -127,6 +127,47 @@ pub fn parse_iso(text: &str) -> Option<i64> {
     Some(((days * 86_400 + hh * 3600 + mm * 60 + ss) * 1_000_000) + frac)
 }
 
+/// The time Postgres's `now()` gives inside the store write transaction that runs on this thread:
+/// read from the store's `Env` once, the first time a write asks, and the same for the rest of the
+/// transaction, as `now()` is the transaction's start time. `Store::write` opens it; a hook that
+/// stamps a row (`persistence::queue_page_projection`) reads it with `transaction_now`, so the
+/// page write paths do not carry an `Env` for it. A transaction that never asks reads no time.
+pub(crate) mod transaction_clock {
+    use super::Env;
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    /// The open transaction's environment and, once read, its time.
+    type Clock = Option<(Arc<dyn Env>, Option<i64>)>;
+
+    thread_local! {
+        static CLOCK: RefCell<Clock> = const { RefCell::new(None) };
+    }
+
+    /// Restores the clock of the enclosing scope when the write transaction ends.
+    pub(crate) struct Scope(Clock);
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            let outer = self.0.take();
+            CLOCK.with(|c| *c.borrow_mut() = outer);
+        }
+    }
+
+    pub(crate) fn open(env: Arc<dyn Env>) -> Scope {
+        Scope(CLOCK.with(|c| c.borrow_mut().replace((env, None))))
+    }
+
+    /// `now()` of the open write transaction, or `None` outside one.
+    pub(crate) fn transaction_now() -> Option<i64> {
+        CLOCK.with(|c| {
+            let mut c = c.borrow_mut();
+            let (env, now) = c.as_mut()?;
+            Some(*now.get_or_insert_with(|| env.now_micros()))
+        })
+    }
+}
+
 // Howard Hinnant's civil calendar algorithms.
 fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let z = z + 719_468;

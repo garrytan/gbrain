@@ -57,7 +57,7 @@ async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[
         AND f.source != ALL($3::text[])
         ${visibility}
         AND ${projectionEligibleSql('facts', 'f', { floor: opts.minTrust })}
-      ORDER BY f.valid_from DESC, f.id DESC
+      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
       LIMIT ${SAVED_FACTS_COLLAPSE_WINDOW}`,
     [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
   return (await collapseFactReads(engine, rows.map(r => ({ ...r, id: Number(r.id) })))).slice(0, limit);
