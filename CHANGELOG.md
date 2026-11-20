@@ -10,6 +10,31 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.750.0] - 2026-11-20
+
+**`gbrain check-resolvable` stops reporting three kinds of false alarm on large skill trees, and its `--fix --dry-run` preview now proposes only edits for findings the same run reports (GST-3155).**
+
+### Fixed
+- A bolded bullet in a workspace `AGENTS.md` such as `- **memory**: search first` is no longer read as a routing row for a skill named `memory`, so it no longer shows up as `missing_file skills/memory/SKILL.md`. A list row there still routes when `skills/<name>/SKILL.md` exists, and list rows in `skills/RESOLVER.md` always count.
+- A skill whose folder name differs from the `name:` in its frontmatter is no longer reported as `orphan_trigger`: the check now finds it in manifest.json by its path as well as its name.
+- A manifest.json entry whose SKILL.md was deleted is reported once as `missing_file` naming manifest.json, instead of `unreachable`.
+- `gbrain check-resolvable --fix` applies only the DRY replacements its report lists. It no longer inserts brain-first callouts, which only `gbrain doctor --fix` reports and repairs. A DRY replacement also stops at headings and code fences, so one matched line no longer replaces the whole section around it.
+
+**Fact reads now treat an employer, city or role as ended once a newer one is saved, everywhere the query facts block already did.**
+
+<!-- behavior-change: slot_ends_every_reader_gst3170 -->
+
+### Fixed
+- Recall, the entity card, hot memory, an entity's saved facts, search's saved-fact matches and local `gbrain recall` end a slot value (employer, city, role) when a later value for the same slot is saved, as the query facts block already did. The end is derived when the facts are read, from the facts that reader can see, so a fact hidden from a reader (another member's private fact, a flagged or quarantined one, one below the trust floor) never ends a fact it can see. Nothing is stored. A read with a limit still fills it after dropping ended values, and the entity card's fact count leaves them out.
+
+**A conversation fact the speaker asked to keep quiet is now saved private.**
+
+<!-- behavior-change: keep_quiet_private_gst3170 -->
+
+### Fixed
+- When someone in a conversation says "keep this quiet for now, but ...", "off the record", "don't tell anyone" or opens a sentence with "between us,", the fact that restates that claim is saved private instead of shared, so other members' credentials and unbound tokens no longer read it. The brain owner reads it exactly as before. The match is made on that window's messages, in English and never on an assistant's reply; the extraction prompt is unchanged, and the page's other facts keep their visibility. A claim that was forgotten or purged earlier stays out, as before. A cue in one extraction window does not reach a fact extracted from a neighbouring window.
+- An operator-run `gbrain repair open-facts` on the conversation lane can widen a keep-quiet fact back to world, so read its preview first.
+
 ## [0.60.749.0] - 2026-11-20
 
 **Companies that are plainly the same company in two sources are now linked by sync, and a reject keeps them apart for good.**
