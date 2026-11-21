@@ -14,6 +14,7 @@
 //! An entry written at a generation above the call's is never overwritten or deleted: an older read
 //! does not undo a newer one. See rust/docs/store/seed.md.
 
+mod allocators;
 mod fingerprints;
 mod remove_core;
 mod remove_history;
@@ -21,6 +22,7 @@ mod remove_ops;
 #[cfg(test)]
 mod tests;
 
+pub use allocators::AllocatorCheck;
 pub use fingerprints::{FactFingerprints, fact_fingerprints};
 
 use super::decode::Row;
@@ -179,6 +181,7 @@ fn entries_in(
     relation: &str,
     lo: Option<&[u8]>,
     hi: Option<&[u8]>,
+    limit: Option<usize>,
 ) -> Result<Vec<(Vec<u8>, Entry)>> {
     let prefix = digest_prefix(relation);
     let start = digest_key(relation, lo.unwrap_or_default());
@@ -188,13 +191,13 @@ fn entries_in(
     };
     let mut out = Vec::new();
     let mut failure = None;
-    if start < end {
+    if start < end && limit != Some(0) {
         read.scan(&start, &end, false, &mut |k, v| {
             match Entry::decode(v) {
                 Ok(entry) => out.push((k[prefix.len()..].to_vec(), entry)),
                 Err(e) => failure = Some(e),
             }
-            failure.is_none()
+            failure.is_none() && limit.is_none_or(|limit| out.len() < limit)
         })?;
     }
     failure.map_or(Ok(out), Err)
@@ -321,6 +324,23 @@ pub struct IntervalDigest {
     pub digest: String,
 }
 
+/// One digest entry as `relationEntries` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EntryInfo {
+    /// The sort key, hex.
+    pub sort: String,
+    /// The row digest, hex.
+    pub digest: String,
+    pub generation: u64,
+}
+
+/// The most entries one `relationEntries` call returns.
+pub const MAX_ENTRIES: u64 = 5000;
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// The digest of entries in sort order.
 fn interval_digest(entries: &[(Vec<u8>, Entry)]) -> IntervalDigest {
     let mut hasher = Sha256::new();
@@ -331,11 +351,7 @@ fn interval_digest(entries: &[(Vec<u8>, Entry)]) -> IntervalDigest {
     }
     IntervalDigest {
         rows: entries.len() as u64,
-        digest: hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect(),
+        digest: to_hex(&hasher.finalize()),
     }
 }
 
@@ -567,7 +583,7 @@ impl Store {
         let given: BTreeSet<&Vec<u8>> = digests.iter().map(|d| &d.sort).collect();
         self.write_as(seed_trust(), |tx| {
             check_seed(&*tx, seed_id)?;
-            for (sort, _) in entries_in(&*tx, relation, lo.as_deref(), hi.as_deref())? {
+            for (sort, _) in entries_in(&*tx, relation, lo.as_deref(), hi.as_deref(), None)? {
                 if !given.contains(&sort) {
                     apply.delete(tx, &sort, &Identity::new())?;
                 }
@@ -593,8 +609,45 @@ impl Store {
         let (lo, hi) = (parse_bound("lo", lo)?, parse_bound("hi", hi)?);
         let read = self.read()?;
         check_seed(&*read, seed_id)?;
-        let entries = entries_in(&*read, relation, lo.as_deref(), hi.as_deref())?;
+        let entries = entries_in(&*read, relation, lo.as_deref(), hi.as_deref(), None)?;
         Ok(interval_digest(&entries))
+    }
+
+    /// `relationEntries(seedId, relation, lo, hi, limit)`: the digest entries with a sort key in
+    /// `[lo, hi)`, in sort order, at most `limit` (1 to [`MAX_ENTRIES`]). Read only.
+    pub fn relation_entries(
+        &self,
+        seed_id: &str,
+        relation: &str,
+        lo: Option<&str>,
+        hi: Option<&str>,
+        limit: u64,
+    ) -> Result<Vec<EntryInfo>> {
+        check_seed_id(seed_id)?;
+        relation_spec(relation)?;
+        if !(1..=MAX_ENTRIES).contains(&limit) {
+            return Err(invalid(format!(
+                "shadow_follow: limit must be a whole number from 1 to {MAX_ENTRIES}"
+            )));
+        }
+        let (lo, hi) = (parse_bound("lo", lo)?, parse_bound("hi", hi)?);
+        let read = self.read()?;
+        check_seed(&*read, seed_id)?;
+        let entries = entries_in(
+            &*read,
+            relation,
+            lo.as_deref(),
+            hi.as_deref(),
+            Some(limit as usize),
+        )?;
+        Ok(entries
+            .into_iter()
+            .map(|(sort, entry)| EntryInfo {
+                sort: to_hex(&sort),
+                digest: to_hex(&entry.digest),
+                generation: entry.generation,
+            })
+            .collect())
     }
 
     /// [`Store::import_relation`] that also stores a digest entry per row (generation 0), for rows
@@ -670,7 +723,7 @@ fn drop_dependent_entries(tx: &mut dyn KvWrite, parent: &str, rows: &[Identity])
     };
     for (dependent, links) in *dependents {
         let mut doomed = Vec::new();
-        for (sort, entry) in entries_in(&*tx, dependent, None, None)? {
+        for (sort, entry) in entries_in(&*tx, dependent, None, None, None)? {
             // `takes` names its parent by two columns together; the others by any one of them.
             let together = *dependent == "synthesis_evidence" && parent == "takes";
             let matches = |row: &Identity| {

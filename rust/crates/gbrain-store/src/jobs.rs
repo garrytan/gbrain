@@ -272,6 +272,13 @@ pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()>
     Ok(())
 }
 
+/// The last value of the sequence `name` (0 when it has not been used), read only.
+pub(crate) fn read_seq(read: &dyn KvRead, name: &str) -> Result<i64> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    Ok(get_json::<i64>(read, &k)?.unwrap_or(0))
+}
+
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {

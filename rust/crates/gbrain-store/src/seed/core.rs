@@ -355,10 +355,13 @@ fn import_chunk(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<
     let id = row.req_id("id")?;
     let page_id = row.req_id("page_id")?;
     require_page(&*tx, page_id)?;
+    // A chunk the store does not hold still used its id on the primary: the counter passes it.
     if row.value("retired_generation").is_some() {
+        raise_counter(tx, crate::chunks::NEXT_CHUNK_ID, id)?;
         return Ok(Outcome::Dropped("retired_chunk"));
     }
     if row.value("body_generation").is_some() || row.value("occurrence_id").is_some() {
+        raise_counter(tx, crate::chunks::NEXT_CHUNK_ID, id)?;
         return Ok(Outcome::Dropped("segment_chunk"));
     }
     let chunk_index = row
