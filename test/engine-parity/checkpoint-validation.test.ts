@@ -16,6 +16,10 @@
  *    a worktree binding is claimed through `worktreeClaimStore`. A Rust brain keeps no managed worktree (a request cannot
  *    name one), so the worktree-bound cases require `managed_persistence` and stop on that typed refusal there; the case
  *    with no worktree-bound receipt runs on all three arms.
+ *
+ * Rust known stop (every worktree-bound case): lane 5 owns managed persistence on Rust (the managed-persistence plan).
+ * Until it lands, the Rust branches below stay. Loss row (Rust capability-loss list, until then):
+ *   - Rust brain cannot hold worktree-bound requests; managed_persistence (owner lane 5, managed-persistence plan)
  */
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
