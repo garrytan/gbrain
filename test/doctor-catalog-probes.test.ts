@@ -27,6 +27,7 @@ import { describe, expect } from 'bun:test';
 import { parityArms } from './engine-parity/harness.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { reportsCapability } from '../src/core/rust-engine/store-members/catalog.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../src/commands/doctor/context.ts';
 import { functionSearchPathEntry } from '../src/commands/doctor/checks/function-search-path.ts';

@@ -169,8 +169,11 @@ Reserved tags:
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
-| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
+| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
+| reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
+| embedding_holds, a page's `page_embedding_budget` state and reason | `2` | `EMBEDDING_HOLD` | yes (a hard page delete removes it) |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -189,6 +192,7 @@ in its module header:
 | `0x08` | `TELEMETRY_RETRIEVAL_WEIGHT` | `retrieval_weights` |
 | `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
 | `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
+| `0x0B` | `TELEMETRY_CHAT_USAGE` | `chat_usage_log` |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
@@ -955,6 +959,16 @@ Facts and their supersession chains.
     FTS language and the `CORRECTION_CUE` cue only. Pinned by `test/engine-parity/facts-trust-owner.test.ts`.
     `listExtractorFactsForClassification` (`store-members/facts-repair.ts`, `facts/extractor_classify.rs`) reads its
     receipts from the write journal's committed requests. Pinned by `test/engine-parity/facts-repair.test.ts`.
+    The four repair previews that list facts (`gbrain repair consolidate-ties`, `facts-rehome`, `ontology-facts` and `duplicate-facts`)
+    read through `listClosedConsolidationTies`, `listPagelessEntityFacts`, `listOntologyFactCandidates` and `listDuplicateFactRows`
+    (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
+    `test/engine-parity/repair-facts-previews.test.ts`.
+    The previews of `fact-claim-dates` (`listFactsOnValidDay`), `url-clone-fences` (`readLivePageByPath`) and `purged-page-facts`
+    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. The applies of
+    `captured-facts`, `url-clone-fences` and `purged-page-facts` stop on a Rust brain by name (`engine_capability_missing`, raw_sql:
+    "repair captured-facts page write", "repair url-clone-fences page write", "repair purged-page-facts expire") before their first
+    write, until the page write door and the fact expiry move to typed members. Pinned by `test/engine-parity/repair-facts-previews-2.test.ts`.
+    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. `visibility` (except its `facts` class) and `open-facts` stop by name before any read (`engine_capability_missing`, raw_sql: "repair visibility privacy scan", "repair open-facts privacy scan"), as their reads build privacy predicates the store does not carry; the applies of `facts-home` and `visibility` stop at "repair facts-home page write" and "repair visibility page write". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

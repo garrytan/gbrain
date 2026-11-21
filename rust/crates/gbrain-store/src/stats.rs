@@ -593,6 +593,9 @@ impl Store {
                 ("summary", &summary),
             ],
         )?;
+        if let Some(version) = &input.writer_version {
+            no_nul("logIngest", &[("writer_version", version)])?;
+        }
         let pages_updated: Value = serde_json::from_str(pages_json).map_err(|e| {
             StoreError::new(INVALID_ARGUMENT, format!("logIngest: pages_updated: {e}"))
         })?;

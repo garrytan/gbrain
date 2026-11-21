@@ -49,6 +49,22 @@ export async function writeOpCheckpointKeys(direct: Direct, op: string, fingerpr
   );
 }
 
+/**
+ * Replaces a checkpoint parent's JSON records and stamps it now, or with `null` deletes the parent (its paths go with it
+ * by the foreign key). Unlike the statements above it runs on `executeRaw`, so it joins the caller's transaction: the
+ * preview-approval clear runs inside the legacy-job cancel's transaction (minions/legacy-cancel.ts).
+ */
+export async function writeOpCheckpointRecord(exec: Pick<BrainEngine, 'executeRaw'>, op: string, fingerprint: string,
+  completedKeys: readonly unknown[] | null): Promise<void> {
+  if (completedKeys === null) {
+    await exec.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [op, fingerprint]);
+    return;
+  }
+  await exec.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
+  [op, fingerprint, JSON.stringify(completedKeys)]);
+}
+
 /** Creates the parent with no keys or stamps it now, then adds each path not yet banked; one statement. */
 export async function appendOpCheckpointPaths(direct: Direct, op: string, fingerprint: string, paths: string[]): Promise<void> {
   await direct.executeRawDirect(APPEND_PATHS_SQL, [op, fingerprint, paths]);

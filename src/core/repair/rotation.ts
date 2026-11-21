@@ -32,6 +32,5 @@ export function rotationKeyOf(sourceId: string, key: string): string {
 
 /** The brain id a handler's apply stores its rotation under. */
 export async function rotationBrain(engine: BrainEngine): Promise<string> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  return brain?.brain_id ?? 'host';
+  return (await engine.readPersistenceBrainId().catch(() => null)) ?? 'host';
 }

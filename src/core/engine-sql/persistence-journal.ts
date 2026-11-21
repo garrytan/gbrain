@@ -229,6 +229,12 @@ export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string,
   return row ?? null;
 }
 
+/** The requests admitted under any of the client request ids `requestIds`, any principal, by sequence. */
+export async function listWriteRequestsByRequestIds(exec: LegacyUnscopedRead, requestIds: readonly string[]): Promise<WriteRequest[]> {
+  if (!requestIds.length) return [];
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=ANY($1::uuid[]) ORDER BY sequence', [[...requestIds]]);
+}
+
 /** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
 export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
 /** The progress columns of request `id` (the wait loop's poll). */

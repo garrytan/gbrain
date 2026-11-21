@@ -115,6 +115,13 @@ export const listWriteRequestRows: StoreMember<[principalKind: string, principal
 export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
 
+/** The requests admitted under any of the client request ids `requestIds`, by sequence. */
+export const listWriteRequestsByRequestIds: StoreMember<[requestIds: readonly string[]], WriteRequest[]> = async (brain, requestIds) => {
+  if (!requestIds.length) return [];
+  const rows = await storeCall({ member: 'listWriteRequestsByRequestIds' }, () => brain.listWriteRequestsByRequestIds([...requestIds])) as unknown[];
+  return rows.map(row => requestRow<WriteRequest>(row)!);
+};
+
 /**
  * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
  * stored row. `signal` changes nothing, as for readWriteRequestById.

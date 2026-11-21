@@ -10,6 +10,9 @@
  *
  * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
  * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
+ * The store keeps no decision evidence and no automatic company groups yet, and its key rows carry no page id,
+ * generation, creation time or group: listEntityKeyRows refuses, listIdentityDecisions reads every decision's evidence
+ * as null (none kept), and applyIdentityDecisions refuses an upsert that carries evidence or a company sweep's plan.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -87,9 +90,11 @@ export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKey
     tokens: opts.tokens ? { values: [...opts.tokens.values], fields: [...opts.tokens.fields] } : null,
   }));
 
-/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
-export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
-  storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions());
+/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. No evidence is kept. */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async (brain) => {
+  const read = await storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions()) as IdentityDecisionsRead;
+  return { ...read, decisions: read.decisions.map(d => ({ ...d, evidence: d.evidence ?? null })) };
+};
 
 /** The members whose page the no-caller page policy (`privatePagesFilterFragment`) hides. */
 export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {

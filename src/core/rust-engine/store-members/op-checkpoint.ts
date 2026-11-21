@@ -7,6 +7,7 @@
 import { MARKDOWN_CHUNKER_VERSION } from '../../chunkers/recursive.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from '../../engine-sql/sync-pass-pages.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { OpCheckpointRecord } from '../../engine-sql/write-misc.ts';
 
 /**
  * The op's completed keys: the child paths in path order, then the parent's array, each key once. `corruptParent` is
@@ -54,6 +55,19 @@ export const readSyncImportPageRows: StoreMember<[q: SyncImportPageQuery, window
     'ids' in window ? { ids: [...window.ids] } : { after: window.after, limit: window.limit }));
 
 
+/**
+ * A checkpoint parent whose keys are JSON records (the repair cursor, the preview-approval sets), or null; its stamp in
+ * ISO 8601 with milliseconds, and `fresh` against the store clock when `freshWithinDays` is given.
+ */
+export const readOpCheckpointRecord: StoreMember<[op: string, fingerprint: string, opts?: { freshWithinDays?: number }], OpCheckpointRecord | null> =
+  (brain, op, fingerprint, opts) => storeCall({ member: 'readOpCheckpointRecord' }, () =>
+    brain.readOpCheckpointRecord(op, fingerprint, opts?.freshWithinDays ?? null));
+
+/** The parent's records replaced and stamped now; `null` deletes the parent and its paths. */
+export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: string, completedKeys: readonly unknown[] | null], void> =
+  async (brain, op, fingerprint, completedKeys) => {
+    await storeCall({ member: 'writeOpCheckpointRecord' }, () => brain.writeOpCheckpointRecord(op, fingerprint, completedKeys));
+  };
 /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
 export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
   storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));

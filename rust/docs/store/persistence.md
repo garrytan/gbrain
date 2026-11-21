@@ -56,6 +56,7 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.insertWriteRequestGroup(rows)` | the stored `WriteRequest`s in order, each inserted and charged as `insertWriteRequest` does, all in one store write: a refusal at any row keeps no row and no charge | `insertWriteRequestGroup` (journal.ts `admitWriteGroupInTransaction`) |
 | `brain.readWriteRequest({ kind, id }, requestId)` | the `WriteRequest` or `null` | `readWriteRequest` |
 | `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById`, `lockWriteRequest`, `readWriteRequestProgress` (the TS member picks the nine progress columns from this row) |
+| `brain.listWriteRequestsByRequestIds(requestIds)` | the `WriteRequest` rows admitted under any of the client request ids, any principal, by sequence; `invalid_argument` for an id that is not a uuid | `listWriteRequestsByRequestIds` |
 | `brain.countOutstandingBySource(principalKind, principalId)` | `[{ source_id, n }]`: one row per source that holds requests of the principal in state `queued`, `deferred`, `running` or `recovering`. The most requests come first; a tie is in byte order of the source id, as Postgres sorts `COLLATE "C"` | `countOutstandingBySource` |
 | `brain.readWorktreeAdmission({ worktreeId, sourceId, sourceIncarnation, topologyGeneration })` | `{ worktree, refresh, bound }`. `worktree` is `{ state, owner_epoch }` (the epoch as text) from the worktree row, or null when no row has the id; `refresh` is the worktree's refresh in an active state (`draining`, `fenced`, `merged`, `syncing`, `recovery_required`) or null; `bound` is whether the source's binding names this incarnation, worktree and topology generation (a null generation binds nothing). The ids must be uuids; a generation that is not a Postgres integer refuses with the integer syntax or range message | `readWorktreeAdmission` |
 | `brain.completeSyncedRefresh(refreshId)` | `true` when the refresh was `syncing` and none of its member sources still differs from its target head, and is now `completed`. The store keeps no `last_commit`, so a stored member source always differs | `completeSyncedRefresh` |
@@ -163,6 +164,7 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.completeHousekeepingTurn({ op, hostId })` | marks a leased turn done; any other row is left as it is | `completeHousekeepingTurn` |
 | `brain.readReceiptBudget(retentionKey, floorDays)` | `{ retention, used, cutoff }`: the config value, the brain counter's terminal bytes, and now minus `floorDays` | `readReceiptBudget` |
 | `brain.listCompactableReceipts(retentionDays)` | compactable receipts completed more than `retentionDays` ago that are not an unresolved caller refusal, oldest first, at most 100. The open-sync-cursor and newest-sync-receipt exclusions never match (no managed-sync rows, no worktree) | `listCompactableReceipts` |
+| `brain.readReceiptCompactionWindow(hours)`, `brain.listReceiptCompactionCandidates(states, cutoff, maxSequence)`, `brain.countKeptFailedReceipts(cutoff)` | the `repair receipt-compaction` reads: now minus `hours` as a UTC ISO time with microseconds and the newest request sequence as text (null on an empty journal); the receipts in `states` with no recovery, not compacted, completed before `cutoff`, at or below `maxSequence` and with every effect committed, leaving out a receipt of a managed-sync run whose cursor is not done or a pass whose outcome is `open`, oldest first; and the count of failed, conflicted and cancelled receipts before `cutoff`. The newest-sync-receipt exclusion never matches (no worktree). Compacting a receipt stays raw SQL, so an apply with a candidate stops on `raw_sql` | `readReceiptCompactionWindow`, `listReceiptCompactionCandidates`, `countKeptFailedReceipts` |
 | `brain.listReservationsAfter(after, limit)` | `{ id, sequence, compacted }` past `after`, in sequence order | `listReservationsAfter` |
 | `brain.listTrueUpRequests(ids)` | the terminal requests among `ids`, in no set order, with `effect_bytes` (the request's effect rows summed as `EFFECT_BYTES_SQL` sums them, as text) and `unfinished` (an effect is `queued` or `running`) | `listTrueUpRequests` |
 | `brain.trueUpReservations(rows)` | the bytes given back, as text. Each `{ id, old, kept, effects }` whose request still reserves `old`, still has `effects` effect bytes and has no `queued` or `running` effect now reserves `kept`. The freed bytes, summed per counter (the brain and the request's principal), leave the counters that exist, clamped at zero; each clamped counter adds one to config `persistence.true_up.clamped`. A changed or unknown request changes nothing. `invalid` for a malformed id or effect byte count | `trueUpReservations` |
@@ -201,7 +203,7 @@ that stopped midway resumes with only the pending keys. The parent shares the ho
 (`d 0x02`); a housekeeping op and a resumable op never use the same op name. The child paths sit under
 their parent's op and fingerprint, so deleting a parent deletes its paths in the same write, as the
 `ON DELETE CASCADE` foreign key does. An op, fingerprint or path with a NUL byte refuses with
-`invalid_input`.
+`invalid_argument`.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -212,12 +214,17 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
 | `brain.readOpCheckpointRecords(op, fingerprints)` | each found parent's first completed key (`completed_keys->0`), null for an empty array, in the order named; a fingerprint with no parent adds nothing, and one named twice is read once | `readOpCheckpointRecords` (`readSyncImportProvenances`) |
 | `brain.writeOpCheckpointRecords(op, rows)` | each row's parent set to `[record]`, stamped now; the paths stay. A record with a NUL in a string or object key refuses the whole batch with `invalid_input`, writing nothing | `writeOpCheckpointRecords` (`recordSyncImportProvenances`) |
+| `brain.readOpCheckpointRecord(op, fingerprint, freshWithinDays)` | `{ completed_keys, updated_at, fresh }` or null: the parent's JSON as stored, its stamp in ISO 8601 with milliseconds (truncated, as `to_char(.., 'MS')` truncates), and whether the stamp is within `freshWithinDays` of the store clock (null when not given) | `readOpCheckpointRecord` (the repair cursor, `loadApprovedSet`) |
+| `brain.writeOpCheckpointRecord(op, fingerprint, completedKeys)` | the parent's JSON replaced and stamped now; null deletes the parent and its paths. A payload that is not an array, or that holds NUL in any string or key, refuses with `invalid_argument` | `writeOpCheckpointRecord` (the repair cursor, `saveApprovedSet`, `clearApprovedSet`) |
+| `brain.listOrphanConnectorCheckpoints(loadable, before, minAgeDays, stateOp, limit)`, `brain.countConnectorCheckpointsKeyed(keys)`, `brain.deleteOrphanConnectorCheckpoint(op, fingerprint, updatedAt, loadable, before, minAgeDays, stateOp)` | the connector checkpoint parents (`managed-connector`, `managed-connector-retry`) no source can load and no pending connector request names, their count by key, and the delete of one still-orphaned row at an unchanged stamp; `rust/docs/store/repair-bookkeeping.md` | `listOrphanConnectorCheckpoints`, `countConnectorCheckpointsKeyed`, `deleteOrphanConnectorCheckpoint` (`gbrain repair connector-checkpoints`) |
 | `brain.purgeStaleCheckpoints(ttlDays)` | how many parents it deleted: each `d 0x02` parent (housekeeping turns included) stamped more than `ttlDays` days ago that no exemption keeps, with its paths. The exemptions read the rows as they were before the purge. A `ttlDays` that is not a finite number refuses with `invalid_input` | `purgeStaleCheckpoints` (the cycle's purge phase, `bookkeeping-gc.ts`) |
 
 Differences from the SQL engines:
 
 - The SQL read names no order; the store lists the paths in path order. `resumeFilter` and every caller
   use the keys as a set.
+- `fresh` compares the stamp with the store clock; Postgres compares it with `now()`, the start of
+  the reading transaction.
 - The purge keeps the exemptions whose data the store has: the ops never purged, the sync delete
   tombstone and identity downgrade while their page has the recorded `deleted_at` (read as
   `::timestamptz` reads the writers' text: ISO with `Z`, or the Postgres jsonb form with the
@@ -302,6 +309,7 @@ Differences from the SQL engines:
   Two concurrent hold writes of one path are not serialized; the summary counts stay right because
   each adjustment is a compare-and-replace.
 - `read_at` of a pass row is the process clock at the read; the SQL engines use the database clock.
+
 ## Commit notifier
 
 The resident commit notifier's host lease, host source list, per-source rows and freshness reads
@@ -405,6 +413,17 @@ stored on a refusal.
 `brain.readRequestEffects(requestId, kind)` resolves `{ kind, state, error_code, outcome, recovering }` for
 each stored effect of the request in kind order, or only its `kind` effect when one is named (`readRequestEffects`,
 the reads a write receipt makes). A request id that is not a uuid refuses with the uuid syntax message.
+
+`brain.listEmbeddingCandidates(sourceIds, neverRetried)` resolves the embedding effects `gbrain repair
+embedding-effects` settles, in effect id order, as `{ effect_id, source_id, slug, request_id, state, attempts,
+chars }` (`listEmbeddingCandidates`, embedding_candidates.rs). A candidate belongs to a committed request on one
+of `sourceIds`, or on a source that is gone or has a new incarnation; it has no recovery and no execution token;
+and it failed, or it is queued and was last updated over an hour ago or carries `repair_requeued_at`. A failed
+effect whose code is in `neverRetried` is left out, and so is a failed effect with no code, as the SQL `NOT (...
+IN ...)` drops it. `chars` is the `compiled_truth` plus `timeline` length of the effect's `page_id`, the sum over its
+`targets` (a target named twice counts twice), or the sum over the source's live pages; 0 when no page matches.
+The repair's settle step stays on raw SQL, so a candidate here stops the repair's apply on the `raw_sql`
+refusal; an empty list previews and applies as Postgres does.
 
 The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
 exists, and the write's reservation stays charged until the effect ends.

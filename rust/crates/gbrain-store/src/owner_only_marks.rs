@@ -10,8 +10,8 @@
 //!
 //! What SQL marks that this store has no table for stays unmarked: `derivation_inputs` descendants, takes and timeline rows
 //! of the page, facts, and the row-security and unguarded marks. Nothing here marks on a link delete or a source config
-//! change, because SQL has no trigger on `links` and its sources trigger marks only a source that is deleted. The Rust engine
-//! serves no source delete (`cascade.rs`): core removes each page of the source through `pages::remove_page` first, and the
+//! change, because SQL has no trigger on `links` and its sources trigger marks only a source that is deleted. The source
+//! delete (`sources::archive`) removes each page of the source through `pages::remove_page` first, and the
 //! source is still owner-only then, so each page goes through `mark_before_delete`.
 
 use crate::Result;

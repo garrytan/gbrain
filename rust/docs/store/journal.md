@@ -97,7 +97,7 @@ open item of the capability flip, not served yet:
 | `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No request-recovery writer has landed. A worktree-bound page write refuses at admission (`managed_persistence` is held), so no request row exists for this read to see. |
 | `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
 
-The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
+The request members (`readWriteRequest`, `readWriteRequestById`, `listWriteRequestsByRequestIds`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`, the grouped admission
 `insertWriteRequestGroup` (one `brain.insertWriteRequestGroup` store write, in item order; a refusal keeps no row) and its
 replay read `readWriteRequestsByRequestIds` (one `brain.readWriteRequest` per distinct id, letter case folded)), the claim upkeep

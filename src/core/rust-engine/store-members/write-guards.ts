@@ -1,6 +1,6 @@
 /**
  * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
- * sealImportedPage, readLivePageBody, readLiveStoredBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
+ * sealImportedPage, detachPageOrigin, readPageDatabaseOnlyReason, bumpPageKnowledgeRevision, removePageFrontmatterKeys, setPageType, readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
  * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
  * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
  * and `listOriginClaims` takes none.
@@ -73,3 +73,31 @@ export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], s
 
 /** True once a segment text or a body staging is stored; the store keeps neither until the page-body family lands. */
 export const hasSegmentStorage: StoreMember<[], boolean> = (brain) => storeCall({ member: 'hasSegmentStorage' }, () => brain.hasSegmentStorage());
+
+/** A page id that is not a positive integer names no page: nothing changes, as PGLite's `WHERE id=$1` matches none. */
+const pageIdOf = (member: string, pageId: number): number | null => {
+  if (!Number.isSafeInteger(pageId)) refuseMember(member, 'a page id that is not an integer');
+  return pageId < 1 ? null : pageId;
+};
+
+export const detachPageOrigin: StoreMember<[pageId: number, reason: string], void> = async (brain, pageId, reason) => {
+  const id = pageIdOf('detachPageOrigin', pageId);
+  if (id !== null) await storeCall({ member: 'detachPageOrigin' }, () => brain.detachPageOrigin(id, reason));
+};
+
+export const readPageDatabaseOnlyReason: StoreMember<[sourceId: string, slug: string], string | null> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readPageDatabaseOnlyReason', slug, sourceId }, () => brain.readPageDatabaseOnlyReason(sourceId, slug));
+
+export const bumpPageKnowledgeRevision: StoreMember<[pageId: number], void> = async (brain, pageId) => {
+  const id = pageIdOf('bumpPageKnowledgeRevision', pageId);
+  if (id !== null) await storeCall({ member: 'bumpPageKnowledgeRevision' }, () => brain.bumpPageKnowledgeRevision(id));
+};
+
+export const removePageFrontmatterKeys: StoreMember<[sourceId: string, pageId: number, keys: readonly string[]], void> = async (brain, sourceId, pageId, keys) => {
+  const id = pageIdOf('removePageFrontmatterKeys', pageId);
+  if (id !== null) await storeCall({ member: 'removePageFrontmatterKeys', sourceId }, () => brain.removePageFrontmatterKeys(sourceId, id, [...keys]));
+};
+
+export const setPageType: StoreMember<[sourceId: string, slug: string, type: string], void> = async (brain, sourceId, slug, type) => {
+  await storeCall({ member: 'setPageType', slug, sourceId }, () => brain.setPageType(sourceId, slug, type));
+};

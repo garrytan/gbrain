@@ -465,9 +465,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
+      // canonical_content_writes is gone from this list: the owned-content read is a typed member on Rust, and a Rust
+      // brain has no writer-owned source yet, so the check skips as it does on this PGLite brain.
       // shared_skills_sources is gone from this list: the source view reads readSourceState, which Rust serves, so
       // with no opted-out or parked source the check returns nothing, as it does on PGLite.
-      onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
+      onlyRust: ['checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
         'quarantined_changes', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
@@ -476,6 +478,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
+      // child_table_orphans is gone from this list: the page child counts are typed members on Rust
+      // (engine-sql/repair-page-reads.ts), so the check passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
       // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
       // entity_duplicates is gone from this list: a Rust brain serves listEntityKeyRows, so the check answers as it does

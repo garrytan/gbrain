@@ -329,6 +329,15 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// The number of files of source `source_id` (the delete preview's `files` count).
+pub(crate) fn source_file_count(read: &dyn KvRead, source_id: &str) -> Result<u64> {
+    let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;
+    Ok(files
+        .iter()
+        .filter(|(_, f)| f.source_id == source_id)
+        .count() as u64)
+}
+
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
 /// the files of that source, with their page index entries.
 #[cfg_attr(not(test), allow(dead_code))]

@@ -243,8 +243,7 @@ const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcom
 export async function ghostFileBacked(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<boolean> {
   const recorded = (await readSyncImportProvenance(engine, ghost.source_id, owner.source_incarnation, ghost.page_id))?.revision;
   if (recorded === ghost.revision) return true;
-  const [page] = await engine.executeRaw<{ request_id: string | null; source_path: string | null; updated_ms: number }>(
-    'SELECT revision_write_request_id::text AS request_id, source_path, (extract(epoch FROM updated_at) * 1000)::float8 AS updated_ms FROM pages WHERE id=$1 AND knowledge_revision::text=$2', [ghost.page_id, ghost.revision]);
+  const page = (await engine.listRepairScanPages(ghost.source_id, { ids: [ghost.page_id] })).find(row => row.revision === ghost.revision);
   if (!page) return false;
   const [hit] = page.request_id ? await readRevisionAttestations(engine, ghost.source_id, owner.source_incarnation,
     [{ pageId: ghost.page_id, requestId: page.request_id, revision: ghost.revision, sourcePath: page.source_path ?? ghost.path }]) : [];

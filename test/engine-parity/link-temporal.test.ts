@@ -50,6 +50,8 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { primeRelationSemantics } from '../../src/core/link-semantics-pack.ts';
 import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { operations } from '../../src/core/operations.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -566,6 +568,42 @@ describe('engine parity: link temporal state', () => {
       let bad: unknown = null;
       try { await hop(ALICE, 'object', { status: 'live', asOf: '2020-13-45' }); } catch (e) { bad = e instanceof TypeError ? 'TypeError' : String(e); }
       expect(bad).toBe('TypeError');
+      return out;
+    },
+  );
+
+  // The bench attendance stage's read shape (GBrain-Evals N12): get_links and get_backlinks with only a slug, which read
+  // with the default live relationship filter, a keyset page and a count of the hidden rows; then the same operations
+  // with status and as_of over Alice's dated works_at links. The pages are written through engine members: the bench
+  // writes them with put_page, whose automatic link preparation (src/core/persistence/links-preparation.ts) still reads
+  // through executeRaw and stops on raw_sql on Rust before any link is read.
+  parityTest(
+    'get_links and get_backlinks with only a slug, status all and as_of answer the same on every engine',
+    { methods: ['putPage', 'addLink', 'getLinks', 'getBacklinks', 'replaceDerivedLinks', 'readPageSnapshot'] },
+    async (engine) => {
+      const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+        logger: { info() {}, warn() {}, error() {}, debug() {} } } as unknown as OperationContext;
+      const op = async (name: string, p: Record<string, unknown>) => operations.find(o => o.name === name)!.handler(ctx, p);
+      type Row = { from_slug?: string; to_slug?: string; link_type?: string; status?: string };
+      const view = (rows: unknown) => sorted((rows as Row[]).map(l => `${l.from_slug}>${l.to_slug}:${l.link_type}:${l.status ?? '-'}`));
+      await engine.putPage('people/bob-example', page('Bob Example', { type: 'person' }));
+      await engine.putPage('meetings/2026-04-03', page('Weekly sync', { type: 'meeting' }));
+      await engine.addLink('people/bob-example', 'meetings/2026-04-03', 'attended the weekly sync', 'attended', 'manual');
+      await publishAlice(engine);
+      const out = {
+        meetingOut: view(await op('get_links', { slug: 'meetings/2026-04-03' })),
+        meetingIn: view(await op('get_backlinks', { slug: 'meetings/2026-04-03' })),
+        bobIn: view(await op('get_backlinks', { slug: 'people/bob-example' })),
+        aliceLive: view(await op('get_links', { slug: ALICE })),
+        aliceAll: view(await op('get_links', { slug: ALICE, status: 'all' })),
+        alice2020: view(await op('get_links', { slug: ALICE, as_of: '2020-06-01' })),
+        acmeIn: view(await op('get_backlinks', { slug: ACME, status: 'all' })),
+      };
+      // The bench reads the attendee's edge as a backlink of the meeting.
+      expect(out.meetingIn).toEqual(['people/bob-example>meetings/2026-04-03:attended:-']);
+      expect(out.aliceLive).toEqual([`${ALICE}>${WIDGET}:works_at:-`]);
+      expect(out.aliceAll).toEqual([`${ALICE}>${ACME}:works_at:ended`, `${ALICE}>${WIDGET}:works_at:live`]);
+      expect(out.alice2020).toEqual([`${ALICE}>${ACME}:works_at:live`]);
       return out;
     },
   );

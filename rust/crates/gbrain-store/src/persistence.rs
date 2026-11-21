@@ -65,10 +65,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod checkpoint_rows;
+mod connector_orphans;
 mod dream_reads;
 mod effect_scans;
 mod effect_worker;
 mod effects;
+mod embedding_candidates;
+mod git_holds;
 mod housekeeping;
 mod idle_probe;
 #[cfg(test)]
@@ -80,7 +83,9 @@ mod owner_scans;
 pub(crate) mod projection_queue;
 mod projection_rebuild;
 mod purge_effects;
+mod receipt_compaction;
 mod receipt_list;
+mod sync_orphan_reads;
 mod sync_pass_pages;
 mod sync_run_reads;
 mod topology;
@@ -92,6 +97,7 @@ mod worktree_rows;
 mod worktrees;
 mod write_claim_terms;
 mod writer_versions;
+pub use connector_orphans::OrphanBounds;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
 pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
@@ -101,6 +107,9 @@ pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
+pub(crate) use op_checkpoint::{
+    delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
@@ -120,6 +129,7 @@ pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
 pub use worktree_admission::WorktreeAdmissionKey;
+pub(crate) use worktrees::remove_source_binding_in;
 pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
@@ -282,7 +292,7 @@ fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
     record.extra.get(column).is_none_or(Value::is_null)
 }
 
-fn extra_bool(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_bool(record: &RequestRecord, column: &str) -> bool {
     record
         .extra
         .get(column)
@@ -321,7 +331,7 @@ fn violation(message: impl Into<String>) -> StoreError {
 }
 
 /// Every request record, in key order. Requests are never deleted on this engine.
-fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
+pub(crate) fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
@@ -1476,6 +1486,21 @@ impl Store {
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the request row or `None`.
     pub fn read_write_request_by_id(&self, id: &str) -> Result<Option<Value>> {
         Ok(request_by_id(&*self.read()?, id)?.map(|r| r.to_row()))
+    }
+
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows whose client request id is
+    /// one of `request_ids`, by sequence. A malformed id refuses, as the SQL's `::uuid[]` cast does.
+    pub fn list_write_requests_by_request_ids(&self, request_ids: &[String]) -> Result<Vec<Value>> {
+        let mut wanted = std::collections::BTreeSet::new();
+        for id in request_ids {
+            wanted.insert(uuid_param(id, "requestIds")?);
+        }
+        let mut rows: Vec<RequestRecord> = all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| wanted.contains(&r.request_id.to_lowercase()))
+            .collect();
+        rows.sort_by_key(|r| r.sequence);
+        Ok(rows.iter().map(RequestRecord::to_row).collect())
     }
 
     /// `insertWriteRequest(row)`: the stored request row.

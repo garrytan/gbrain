@@ -64,6 +64,7 @@ import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-jour
 import * as holdStore from '../engine-sql/sync-hold-store.ts';
 import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
 export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
+import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/git-holds.ts';
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
@@ -383,7 +384,7 @@ const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
  * when a newer run already wrote this path's hold.
  */
-export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
+export async function writeGitHold(tx: Exec & Pick<BrainEngine, 'readOpCheckpointRecord'>, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
   await lockSummary(tx, input.source_id, input.incarnation);
   const existing = await readRow(tx, input.source_id, input.incarnation, input.path);
   if (existing && existing.observed_at > input.observed_at) return 'skipped';
@@ -1169,16 +1170,14 @@ export async function readSyncConversions(engine: HoldStore, sourceIds: string[]
   return out;
 }
 
-/** `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. */
-export async function requestGitHoldRetry(engine: Exec, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,'paths',$4::text::jsonb,'requested_at',now())))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,
-      'paths',(SELECT COALESCE(jsonb_agg(DISTINCT p),'[]'::jsonb) FROM (
-        SELECT jsonb_array_elements_text(COALESCE(op_checkpoints.completed_keys->0->'paths','[]'::jsonb)) AS p
-        UNION SELECT jsonb_array_elements_text($4::text::jsonb)) paths),
-      'requested_at',now())),updated_at=now()`,
-  [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation), sourceId, JSON.stringify(paths), incarnation]);
+/**
+ * `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. The request
+ * keeps each path once, in byte order, stamped now.
+ */
+export async function requestGitHoldRetry(engine: Exec & Partial<Pick<BrainEngine, 'requestGitHoldRetry'>>, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
+  const requestedAt = new Date().toISOString();
+  if (engine.requestGitHoldRetry) await engine.requestGitHoldRetry(sourceId, incarnation, paths, requestedAt);
+  else await requestGitHoldRetryOver(engine, sourceId, incarnation, paths, requestedAt);
 }
 
 export async function readGitHoldRetryPaths(engine: RetryReader, sourceId: string, incarnation: string): Promise<string[]> {

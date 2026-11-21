@@ -10,14 +10,17 @@ and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserv
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
-| `n created_at id` | `{ id, source_id, source_type, source_ref, pages_updated, summary, created_at_us }` (JSON) | one `ingest_log` row |
+| `n created_at id` | `{ id, source_id, source_type, source_ref, pages_updated, summary, created_at_us, writer_version, writer_host_id, writer_segment_reader }` (JSON) | one `ingest_log` row |
 
 `created_at` is the row's microsecond timestamp as 8 bytes big-endian with the sign bit flipped,
 so the byte order is the numeric order. `id` is 8 bytes big-endian from the `M next_ingest_log_id`
 counter. One reverse scan of `n` reads `ORDER BY created_at DESC`; rows with the same microsecond
 come back newer id first (PGLite leaves that tie unordered). The table has no foreign key in
 PGLite, so deleting a page or a source leaves the log alone here too. `pages_updated` is stored as
-PGLite's `jsonb` holds it: object keys sorted by length, then by bytes.
+PGLite's `jsonb` holds it: object keys sorted by length, then by bytes. The writer stamp (`writer_version`,
+`writer_host_id`, `writer_segment_reader`, migration v254) is what the segmented-storage gate reads
+(persistence.md, "Writer versions"); a row stored before the store kept it reads as unstamped and
+without the mark, as an older binary's row reads on Postgres. `getIngestLog` does not return it.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

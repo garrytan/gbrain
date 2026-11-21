@@ -48,6 +48,8 @@ pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+/// Postgres `md5(text)`, for the timeline retraction check's version digests.
+pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
@@ -55,6 +57,7 @@ pub mod generations;
 mod held_cells;
 pub mod holding_purges;
 mod kept_rows;
+pub mod label_repair;
 pub mod loops;
 pub(crate) mod page_purges;
 pub use page_purges::PagePurgeUpsert;
@@ -68,8 +71,11 @@ pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod repair_home;
+pub mod repair_previews;
 pub mod saved_match;
 pub mod take_purges;
+pub mod text_repair;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
@@ -220,7 +226,8 @@ impl FactRecord {
 
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
-    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
+    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store has no such setting (its withdrawal
+    /// ledger, trust/withdrawals.rs, writes no fact row).
     fn attribution_content_changed(&self, new: &FactRecord) -> bool {
         use crate::write_receipt::float_distinct;
         let a = self;

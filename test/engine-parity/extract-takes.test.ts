@@ -79,7 +79,7 @@ async function takeProposals(engine: BrainEngine, claimOf: Map<number, string>) 
  * the `recordDerivationEdges` call of `recordTaintEdges` after it; the
  * refusal is rethrown so the harness counts the case as stopped. Any other failure, or a finish, fails the case.
  */
-async function atFenceGeneration<T>(backend: string, fn: () => Promise<T>): Promise<T> {
+async function atDerivationEdges<T>(backend: string, fn: () => Promise<T>): Promise<T> {
   if (backend !== 'rust') return fn();
   let value: T;
   try {
@@ -92,7 +92,7 @@ async function atFenceGeneration<T>(backend: string, fn: () => Promise<T>): Prom
     }
     throw error;
   }
-  throw new Error(`the takes re-extract finished, but publishFenceGeneration has no typed member yet (${JSON.stringify(value).slice(0, 200)})`);
+  throw new Error(`the takes re-extract finished, but recordDerivationEdges has no store member on this branch yet (${JSON.stringify(value).slice(0, 200)})`);
 }
 
 const summary = (r: Awaited<ReturnType<typeof extractTakesFromDb>>) => ({ scanned: r.pagesScanned, withTakes: r.pagesWithTakes, upserted: r.takesUpserted,
@@ -101,7 +101,7 @@ const summary = (r: Awaited<ReturnType<typeof extractTakesFromDb>>) => ({ scanne
 describe('engine parity: the takes re-extract write', () => {
   parityTest('extractTakesFromDb projects a page fence, prunes and replaces the rows that left it, and keeps a more trusted take with a contest', {
     methods: ['putPage', 'listAllPageRefs', 'getPage', 'addTakesBatch', 'listActiveTakesForPages', 'readRowTrustRows', 'listTrustProposals'],
-  }, async (engine, backend) => atFenceGeneration(backend, async () => {
+  }, async (engine, backend) => atDerivationEdges(backend, async () => {
     const page = await engine.putPage(SLUG, { type: 'person', title: 'Takes Example', compiled_truth: FIRST, timeline: '' });
     const first = summary(await extractTakesFromDb(engine, {}));
     const afterFirst = await storedTakes(engine, page.id);
@@ -135,7 +135,7 @@ describe('engine parity: the takes re-extract write', () => {
 
   parityTest('extractTakesFromFs projects the checkout\'s fences onto their pages, skips a page not in the brain and a quarantined page', {
     methods: ['putPage', 'listActiveTakesForPages', 'readRowTrustRows'],
-  }, async (engine, backend) => atFenceGeneration(backend, async () => {
+  }, async (engine, backend) => atDerivationEdges(backend, async () => {
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-parity-extract-takes-'));
     try {
       mkdirSync(join(repo, 'people'), { recursive: true });

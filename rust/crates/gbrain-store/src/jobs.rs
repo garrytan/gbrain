@@ -93,6 +93,7 @@ pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
+pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};

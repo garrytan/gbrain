@@ -60,6 +60,9 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod orphans;
+pub use orphans::AliasTarget;
+
 const SLUG_ALIAS: u8 = 0x01;
 const PAGE_ALIAS: u8 = 0x02;
 const PAGE_ALIAS_BY_SLUG: u8 = 0x03;

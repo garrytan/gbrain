@@ -61,12 +61,13 @@ export function requireManagedPersistence(engine: object, step: string, why: str
 }
 
 /**
- * The named refusal of a step that runs its rows through raw SQL (the refresh writer) on an engine without `raw_sql`
- * (the Rust engine). The step calls it first, so nothing of it ran. PGLite, Postgres and transaction handles pass. The
- * member text is `step: why`.
+ * The named refusal of a step that still runs raw SQL (a repair's page or fact write, a privacy scan, a twin fold, the
+ * refresh writer), on an engine without `raw_sql` (the Rust engine). The step calls it before it reads or writes, so
+ * `step` names what did not run. PGLite, Postgres and transaction handles (no capability set) pass, so no SQL engine
+ * path raises it. `capability` names a narrower missing family when there is one; `outcome` says what already ran.
  */
-export function requireRawSql(engine: object, step: string, why: string): void {
-  if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', `${step}: ${why}`);
+export function requireRawSql(engine: object, step: string, opts: { capability?: Capability; outcome?: CapabilityOutcome } = {}): void {
+  if (!reports(engine, 'raw_sql')) throw capabilityMissing(opts.capability ?? 'raw_sql', step, opts.outcome);
 }
 
 /**

@@ -162,6 +162,10 @@ pub(crate) struct PageRecord {
     pub source_kind: Option<String>,
     #[serde(default)]
     pub source_uri: Option<String>,
+    /// Why the page is database-only (`pages.database_only_reason`): `detached`, `origin_twin`, .. `None` is NULL,
+    /// and what a record written before the store kept the column reads as. Not part of `to_page`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_only_reason: Option<String>,
     #[serde(default)]
     pub ingested_via: Option<String>,
     #[serde(default)]
@@ -192,6 +196,14 @@ pub(crate) struct PageRecord {
     /// before it, and omitted while every column is null. [`write_page`] stamps it.
     #[serde(default, skip_serializing_if = "ActorColumns::is_empty")]
     pub revision_receipt: RevisionReceipt,
+}
+
+/// The `database_only_reason` markers a `putPage` that names a file clears (PGLite `putPage`'s `CASE`).
+fn clears_database_only(reason: Option<&str>) -> bool {
+    matches!(
+        reason,
+        Some("detached" | "origin_twin" | "mirror_read_only")
+    )
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -1272,6 +1284,7 @@ pub(crate) fn put_page_in(
             import_filename: input.import_filename.clone(),
             source_kind: input.source_kind.clone(),
             source_uri: input.source_uri.clone(),
+            database_only_reason: None,
             ingested_via: input.ingested_via.clone(),
             ingested_at_us: provenance.then_some(now),
             tags: Vec::new(),
@@ -1323,6 +1336,15 @@ pub(crate) fn put_page_in(
                 source_path: input.source_path.clone().or(old.source_path.clone()),
                 source_kind: input.source_kind.clone().or(old.source_kind.clone()),
                 source_uri: input.source_uri.clone().or(old.source_uri.clone()),
+                // PGLite's `putPage` drops the detached, origin twin and read-only mirror markers once the write
+                // names a file again.
+                database_only_reason: if input.source_path.is_some()
+                    && clears_database_only(old.database_only_reason.as_deref())
+                {
+                    None
+                } else {
+                    old.database_only_reason.clone()
+                },
                 ingested_via: input.ingested_via.clone().or(old.ingested_via.clone()),
                 ingested_at_us: if provenance {
                     Some(now)

@@ -172,6 +172,7 @@ counter is `M next_facts_id`.
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
 | `F 0x0C source content_hash` | JSON: `slug`, `request_id`, `purged_at_us` | One `page_purges` row (primary key `(source_id, content_hash)`); `facts/page_purges.rs`. |
+| `F 0x10 source kind value` | `SuppressionRecord` (JSON: `id`, `created_at_us`) | One `loop_suppressions` row (unique `(source_id, kind, value)`); `facts/loops/mutes.rs`. Its counter is `M next_loop_suppressions_id`. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
 | `F 0x10 source subject claim_hash` | `TakePurgeRecord` (JSON: `request_id`, `purged_at_us`) | One `take_purges` row (primary key `(source_id, subject, claim_hash)`); `facts/take_purges.rs`. |
 
@@ -380,7 +381,19 @@ upsert, so the `BEFORE INSERT` trigger fires even when the page already holds th
 | `loopFactDrift` | Closed loops whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop of the named sources whose fact is in its own source with no `expired_at` and no `open` loop references it, by id |
 | `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
 | `countLabelFacts` | The bounded count of evidenced label facts. | Served: the active facts of `segmentSource` whose context holds the `%text%` of `contextLike`, on a live page whose body or timeline has a line that opens with `**`, a label, any `[[:space:]]` and `:**` (ASCII case folding; `[[:space:]]` is the musl `iswspace` set PGLite reads, where Postgres on glibc also counts U+1680), on a page no active `extractor_version=N`-stamped audit fact decided, unsuperseded and no row's successor, named by no loop and covered by no withdrawal. The store counts up to `cap + 1` and the member caps it. `store-members/label-line.ts` reads the label line into its literal labels; any other pattern, a context pattern other than `%text%` and a cap that is not an integer refuse |
+| `listLabelFactCandidates` / `listSegmentedLabelPages` / `hasActiveAuditMarker` | The `repair conversation-labels` preview reads: each candidate with its evidence, the segmented census and the decided-page check. | Served from `facts/label_repair.rs`: the label line is read as in `countLabelFacts`; candidates by (source, page bytes, id), sources in byte order. Pinned by `tests/label_repair_reads.rs` |
 | `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Served from `facts/extractor_classify.rs`: the facts of the sources whose `source` starts with `cli:extract-conversation-facts`, expired, with no `row_num`, a `source_markdown_slug` (of `slug` when set) and no `retired: conversation-labels` in `context`. `page_id` / `page_deleted` name the provenance page, live or soft-deleted; `withdrawn` is a withdrawal of the source at the fact's visibility with either fingerprint under `*` or the fact's entity; `active_duplicate` is an active row of the page with the same visibility, fingerprint and entity; `fence_history` is any row of the page from another source. `receipt` / `receipt_consumer` are the `request_id` and `consumer_version` of the write journal's lowest-sequence `committed` request of the page whose `completed_at` is the fact's `expired_at`; the read writes nothing there. `expired_at` is UTC microsecond text. By source id, page slug, id |
+| `listClosedConsolidationTies` | Active typed facts consolidation closed at their own instant, with the facts of their take that state the same claim then. | Served from `facts/repair_previews.rs`: no `expired_at`, a claim metric, an entity, `consolidated_into` set and `valid_until` equal to `valid_from`; `partners` are the other facts of the source in the same take with the same metric, unit and period (`IS NOT DISTINCT FROM`) and `valid_from`, or null for none. `valid_from` is `timestamptz::text` in UTC. By (source, id) |
+| `listPagelessEntityFacts` | Every entity slug with no live page: its database-only fact ids and its fenced fact count. | Served: facts with an entity grouped by (source, slug); `ids` are the rows with no `row_num` (null for none), `fenced` counts the rest; a slug whose page row is live is dropped, a soft-deleted page does not count. By (source, slug) in byte order (Postgres orders in the database collation: the same for lowercase slugs) |
+| `listOntologyFactCandidates` | Ontology rows with the fence step's signature and their withdrawn, consolidated and duplicate flags. | Served: facts with a dimension, an entity and a `source`, that are not a conversation-extractor slot, with a `row_num` or a `source_markdown_slug` other than `source`. `withdrawn` is the extractor read's rule (either fingerprint, subject `*` or the entity); `duplicate` is another row with the same entity, dimension, value hash, `source_markdown_slug = source` and `valid_from`. `expired_at` is the UTC microsecond text. By id across the sources |
+| `listDuplicateFactRows` | Active facts that share a source, visibility, speaker and fingerprint with another such fact. | Served: no `expired_at`, no `superseded_by`, `valid_until` unset or after the store clock's now, `source` not in `excludedSources`; the fenced flag is a `row_num`, a page slug and a `source` that does not start with `cli:`. Groups order by (source, visibility, fingerprint, speaker) in byte order, rows by fenced first, `created_at`, id. The statement's extra `created_at` and `n` columns are not part of the row |
+| `listFactsOnValidDay` | The unexpired facts of a source whose `valid_from` falls on a UTC day. | Served from `facts/repair_previews.rs`: no `expired_at` and the UTC date of `valid_from` equal to `day` (a `YYYY-MM-DD` real date: any other spelling refuses, where the SQL's `$2::date` reads more). `valid_from` is `timestamptz::text` in UTC and `valid_until_day` the UTC day of `valid_until`. By id |
+| `readLivePageByPath` | The live page of a source recorded at a `source_path` (the lowest id), or null. | Served from `write_guards.rs` through the live-origin index: the live pages of the source whose origin is `path`; an empty path is never an origin, so reads null (the SQL would match an empty `source_path`) |
+| `listPurgedPageFactCandidates` | The gone-page facts of the sources (or of `ids`) with the exclusion flags and the purge evidence the `purged-page-facts` classification reads. | Served from `facts/repair.rs`: the filter of `countPurgedPageFacts` with no exclusion applied; `withdrawn`, `superseded`, `referenced` (another fact's `superseded_by` names it), `open_loop` and `purged` (a `page_purges` record of the head at or after `created_at`) are flags. The ledger has no writer on Rust, so `purged` is false. By (source, page head, id) in byte order |
+| `listFactsHomeCandidates` | The unexpired facts of a source with no fence position (ontology rows too), with whether the entity has a live and a soft-deleted page. | Served from `facts/repair_home.rs`: by entity (a fact with no entity first), then id; `valid_from` and `valid_until` are ISO text the member turns into dates |
+| `listHeldHomeRows` | The unexpired fence rows held on a holding page of the source that name an entity which is not a holding slug, with whether the entity has a live page, the `created_at` second and whether the row is over `days` days old. | Served from `facts/repair_home.rs`: the holding page must have a page row (live or deleted), as the SQL's subquery reads `pages` unfiltered; `days` counts 24-hour days from the store's clock and must be a whole number. By entity, then id |
+| `listOrphanedFenceRows` | The unexpired fence rows of a source whose page is not live, with that page's slug. | Served from `facts/repair_home.rs`: by id |
+| `readFactSnapshots` | The named facts of a source as the 27-column `jsonb_build_object` snapshot. | Served from `facts/repair_home.rs`: times are the text `jsonb` gives a `timestamptz` (`2026-02-03T10:11:12.345+00:00`); `lock` (FOR UPDATE, a SQL transaction only) refuses on Rust. By id |
 | `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Served: the active facts of a page-extraction source (`mcp:put_page`, `sync:import`, `file_upload`, `code_import`) filed on no page, whose context head (the text before the first ` — `) is not empty, holds no `[[:space:]]` (the musl set PGLite reads, where Postgres on glibc also counts U+1680) and names no page row, live or soft-deleted, of the fact's source. A fact counts when its head holds a `/` (ambiguous) or a `page_purges` row of its source names the head at or after its `created_at` (evidenced), and no withdrawal, successor, referring row or loop holds it. The store lists up to `cap + 1` and the member caps and counts them; a cap that is not an integer refuses |
 | `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Served: per fact id the newest `fenceKind` generation of the sources (not `held`, owner `page:<slug>`, `slug` when set) whose retired item has an object preimage with an `id`, a `row_num` and no `expired_at`; listed when the fact, in the same source, is expired, has no `row_num`, has the preimage's `fact` and `visibility` and is not a conversation extractor's. `withdrawn` applies `withdrawalCoversFactSql` to the source's withdrawals at the current fingerprint (the store's only withdrawal writer keys by it, so it holds no v1 key); `active_duplicate` is an active row on the page with the same fingerprint and entity and a compatible attribution. By (source, slug) byte order (the SQL pins `COLLATE "C"`), then id |
 
@@ -563,9 +576,11 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 ## Open loops (`facts/loops.rs`)
 
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
-`loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
-`loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
-staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
+`loops_close` retry read `closedLoopWithActiveFact`, the retirement scan `loopFactDrift` (doctor
+`loop_facts_drift`, `gbrain repair loop-facts`) and the retirement's own read and expiry
+(`readLoopFactState`, `expireSourceFactNow`, `rust/docs/store/repair-bookkeeping.md`). Mutes and the
+thread verdict are in `facts/loops/mutes.rs` (below). The staleness pass and the sender list still run
+through `executeRaw`, so they refuse on this engine.
 
 | Member | What it does |
 |---|---|
@@ -575,6 +590,8 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
 | `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
 | `loopFactDrift` | `{ loop_id, source_id, fact_id, status, slug }` of each `done` or `dropped` row of the named sources (only `loopId` when given) whose fact is in the row's own source, has no `expired_at`, and no `open` row references; `slug` is the fact's `source_markdown_slug`. By id. |
+| `readLoopFactState` | `{ loop, fact, shared }` for `retireLoopFact` and `gbrain repair loop-facts`: the row (`{ id, source_id, status, fact_id }`, NULL when no row has the id), its fact (`{ id, source_id, expired_at, row_num, source_markdown_slug, fact }`, NULL when the row has none or the fact is gone; `expired_at` as ISO text) and whether another `open` row references the fact. The SQL engines take the rows `FOR UPDATE` when asked; the store serializes its writes, so the member ignores the lock. |
+| `expireSourceFactNow` | Expires one fact of the named source that has no `expired_at`: `expired_at` now and `valid_until` the earlier of its value and now (now when NULL), through the fact write path. True when that row changed; false for a missing fact, another source or an expired fact. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
@@ -589,6 +606,31 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
+
+### Mutes and the thread verdict (`facts/loops/mutes.rs`)
+
+The `loop_suppressions` table and the open-loop statements `gbrain loops mute`, `gbrain loops unmute`
+and the Gmail thread verdict run (`engine-sql/loop-mutes.ts`). loops-store.ts lower-cases each mute
+value before it reaches a member.
+
+| Member | What it does |
+|---|---|
+| `addLoopSuppression` | Writes the `(source, kind, value)` row; a row that exists stays as it is. `kind` other than `sender` or `thread` refuses `constraint_violation`; an unknown source refuses `source_not_found`. |
+| `removeLoopSuppression` | Deletes that row; the number deleted (0 or 1). |
+| `listLoopSuppressions` | `{ kind, value }` of each mute of the source, by kind, then value. The SQL read has no order; loops-store.ts puts them in sets. |
+| `listMuteRecheckThreads` | `{ thread_id, page_slug }` for each thread with a row whose `closed_by` is `mute_recheck`, with the greatest page slug of its rows (byte order). By thread id. |
+| `closeMutedLoops` | The ids of the `unanswered_inbound` rows the mute covers that are open or `mute_recheck`; with `apply`, closes them as `dropped` by `muted`. Ascending. |
+| `requeueMutedLoops` | `{ id, thread_id }` of the `muted` rows the mute covers that no other mute of the source covers; with `apply`, sets `closed_by` to `mute_recheck`, or to `unmuted` for a row with no thread. By id. |
+| `closeThreadLoops` | Closes the `deterministic_thread` rows of the thread that are open or `mute_recheck` (only the `only` loop types when given) as `done` by `closedBy`, now; the number closed. |
+| `settleMuteRecheck` | Sets `closed_by` to `unmuted` on the thread's `mute_recheck` rows; the number settled. |
+
+- A sender mute matches `counterparty_email` byte for byte. A thread mute matches the row's
+  `thread_id` lowered one code point at a time, as Postgres `lower()` does (`pg_lower_char`), then
+  compared byte for byte. Thread ids match the thread byte for byte.
+- Every add takes an id from the counter, also one that lands on an existing row, as `nextval` does
+  before `ON CONFLICT`. A refused add takes none.
+- `apply: false` reads only. `apply: true` reads and writes in one transaction.
+- Deleting a source removes its mutes (`ON DELETE CASCADE`).
 
 ## The fence guard's reads (`facts/fence.rs`)
 

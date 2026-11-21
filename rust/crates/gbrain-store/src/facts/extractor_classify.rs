@@ -89,7 +89,7 @@ fn receipts(
 }
 
 /// The fact's withdrawal: either fingerprint, at its visibility, under `*` or its entity.
-fn withdrawn(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(super) fn withdrawn(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let subject = row.entity_slug.as_deref().unwrap_or("*");
     for hash in [fact_fingerprint(&row.fact), fact_fingerprint_v1(&row.fact)] {
         if withdrawal_hash_under(read, &row.source_id, &row.visibility, Some(subject), &hash)? {

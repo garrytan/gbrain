@@ -328,6 +328,11 @@ pub(crate) fn in_links(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecord
     indexed_links(read, &keys::link_to_prefix(page_id))
 }
 
+/// The links whose `origin_page_id` is `page_id`, in id order.
+pub(crate) fn origin_page_links(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecord>> {
+    indexed_links(read, &keys::link_origin_prefix(page_id))
+}
+
 /// `ON DELETE CASCADE` for `from_page_id` / `to_page_id` and `ON DELETE SET NULL` for
 /// `origin_page_id`. Clearing an origin that makes a link equal to another link fails with
 /// `constraint_violation`, as Postgres does (`23505`), and the delete rolls back.

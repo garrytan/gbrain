@@ -235,6 +235,18 @@ impl Brain {
         self.run(env, move |s| s.read_write_request_by_id(&id))
     }
 
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows by sequence.
+    #[napi]
+    pub fn list_write_requests_by_request_ids<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_write_requests_by_request_ids(&request_ids)
+        })
+    }
+
     /// `insertWriteRequest(row)`: the stored row (`WriteRequestInsert`).
     #[napi]
     pub fn insert_write_request<'env>(
@@ -657,6 +669,20 @@ impl Brain {
         })
     }
 
+    /// `listEmbeddingCandidates(sourceIds, neverRetried)`: the stale queued and failed embedding
+    /// effects `gbrain repair embedding-effects` settles, in effect id order.
+    #[napi]
+    pub fn list_embedding_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        never_retried: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_embedding_candidates(&source_ids, &never_retried)
+        })
+    }
+
     /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or `null`.
     #[napi]
     pub fn select_claimable_effect<'env>(
@@ -852,6 +878,37 @@ impl Brain {
         retention_days: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_compactable_receipts(retention_days))
+    }
+
+    #[napi]
+    pub fn read_receipt_compaction_window<'env>(
+        &self,
+        env: &'env Env,
+        hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_receipt_compaction_window(hours))
+    }
+
+    #[napi]
+    pub fn list_receipt_compaction_candidates<'env>(
+        &self,
+        env: &'env Env,
+        states: Vec<String>,
+        cutoff: String,
+        max_sequence: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_receipt_compaction_candidates(&states, &cutoff, &max_sequence)
+        })
+    }
+
+    #[napi]
+    pub fn count_kept_failed_receipts<'env>(
+        &self,
+        env: &'env Env,
+        cutoff: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_kept_failed_receipts(&cutoff))
     }
 
     /// `readWriterVersionCutoff()`: the brain's creation time as ISO text, or `null`.

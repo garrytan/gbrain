@@ -1,3 +1,4 @@
+import { lacksRawSql } from '../engine-capabilities.ts';
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
@@ -116,6 +117,9 @@ export async function runResidentProjectionInvocation(engine: BrainEngine, hostI
   // Wave B: queued segmented pages are rebuilt first, through their own route (one segment batch at a time).
   const startedAt = now();
   await rebuildPendingSegmentedProjections(engine, pages, { deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now });
+  // The inline page rebuild still reads and writes the queue through raw SQL: an engine without it (Rust) leaves those
+  // rows queued for an engine that has it, instead of refusing on every tick.
+  if (lacksRawSql(engine)) return { rebuilt: 0, superseded: 0 };
   return rebuildPendingPageProjections(engine, pages, { deadlineMs: Math.max(0, RESIDENT_PROJECTION_BUDGET_MS - (now() - startedAt)), now, retryCooldown: true,
     window: residentProjectionCursor(engine) });
 }
