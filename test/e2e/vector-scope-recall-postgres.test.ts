@@ -19,11 +19,13 @@ import { randomUUID } from 'node:crypto';
 import postgres from '#postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
-import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_SCAN_FIRST_MAX_CHUNKS, sourceScope, type PageSourceStats, type VectorScope } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_SCAN_FIRST_MAX_CHUNKS, sourceScope, type PageSourceStats, type VectorScope, type VectorSearchStatement } from '../../src/core/search/vector-statement.ts';
 import * as vectorPool from '../../src/core/search/vector-pool.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 import { hasDatabase } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import type { VectorPoolAttempt } from '../../src/core/search/vector-pool.ts';
+import { planNodes, type PlanNode } from '../helpers/vector-index-walk-fixture.ts';
 
 const DIM = 1024;
 const MODEL = 'voyage:voyage-4';
@@ -152,6 +154,53 @@ async function firstAttempts(opts: SearchOpts): Promise<string[]> {
       }
     }, 120_000);
   }
+
+  test('#9531: a real server-cancelled scope scan falls to HNSW with scoped recall intact', async () => {
+    const opts: SearchOpts = { embeddingColumn: column, sourceId: 'b16', excludePrivate: true, limit: LIMIT };
+    type Query = (tx: ReturnType<typeof postgres>, sql: string, bound: Parameters<ReturnType<typeof postgres>['unsafe']>[1]) => Promise<Record<string, unknown>[]>;
+    type AttemptEngine = { runVectorAttempt: (form: (manifest: boolean) => VectorSearchStatement, attempt: VectorPoolAttempt, iterative: boolean, opts: SearchOpts | undefined, query: Query) => Promise<Record<string, unknown>[]> };
+    const target = engine as unknown as AttemptEngine;
+    const original = target.runVectorAttempt;
+    const attempts: string[] = [], cancellations: string[] = [];
+    const plans: PlanNode[] = [];
+    target.runVectorAttempt = function (form, attempt, iterative, searchOpts, query) {
+      const kind = attempt.scopeScan ? 'scan' : attempt.indexWalk ? 'walk' : 'pool';
+      attempts.push(kind);
+      // Delay only the exact scan under a short real server timeout. This
+      // deterministically models its exhausted attempt budget, not cold-disk latency.
+      return original.call(this, form, attempt.scopeScan ? { ...attempt, remainingMs: 50 } : attempt, iterative, searchOpts, async (tx, sql, bound) => {
+        if (attempt.scopeScan) await tx.unsafe('SELECT pg_sleep(0.2)');
+        if (attempt.indexWalk) {
+          const [row] = await tx.unsafe(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, bound);
+          plans.push((row['QUERY PLAN'] as Array<{ Plan: PlanNode }>)[0]!.Plan);
+        }
+        return query(tx, sql, bound);
+      }).catch(error => {
+        if (attempt.scopeScan) cancellations.push(error.code);
+        throw error;
+      });
+    };
+    try {
+      for (const embedding of queries.slice(0, 3)) {
+        attempts.length = 0;
+        const truth = await exactPages(embedding, opts);
+        const hits = await engine.searchVector(embedding, opts);
+        expect(attempts).toEqual(['scan', 'walk']);
+        expect(hits).toHaveLength(LIMIT);
+        expect(hits.every(hit => hit.source_id === 'b16')).toBe(true);
+        expect(hits.filter(hit => truth.includes(hit.page_id)).length / truth.length).toBeGreaterThanOrEqual(0.9);
+      }
+      expect(cancellations).toEqual(['57014', '57014', '57014']);
+      expect(plans).toHaveLength(3);
+      for (const plan of plans) {
+        const nodes = planNodes(plan);
+        expect(nodes.some(node => node['Index Name'] === 'idx_chunks_embedding')).toBe(true);
+        expect(nodes.some(node => node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'content_chunks')).toBe(false);
+      }
+    } finally {
+      target.runVectorAttempt = original;
+    }
+  }, 120_000);
 
   test('a mid-size scope clustered away from the query: the walk comes back short and the scope scan answers exactly', async () => {
     const opts: SearchOpts = { embeddingColumn: column, sourceId: TOPIC_SOURCE };
