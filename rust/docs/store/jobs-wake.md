@@ -63,8 +63,8 @@ Under the jobs tag `keys::JOBS` (`m`). Integers are big-endian, signed ones with
   `openWakeWatch` and a `queueWakeForget` that finds a forget pending spend a value on both.
 - The wake tables have no foreign keys: deleting a job, a write request or a member changes nothing here, and a watch
   whose job is gone is due ("gone").
-- `queueWakeForget` with a member id: the SQL queues it only when that member is not live in `access_members`. This
-  store keeps no access members, so the test is true and the forget queues.
+- `queueWakeForget` with a member id queues only when no member with that id is left that is not removed, as the SQL's
+  `access_members` test ([access-members.md](access-members.md)).
 - Three reads had no `ORDER BY` and gained one so the engines agree: the cron list by name, the doctor's `unregistered`
   names and the counts by state and error, all in byte order (`COLLATE "C"` on Postgres, a small change there).
   `claimWakeForgets` does not specify the order of its rows on SQL; this store returns them by id.

@@ -38,15 +38,14 @@ export async function setMemberLabelledOnly(engine: BrainEngine, rawId: unknown,
   }
   if (on && await ownerMemberId(engine) === member.id) throw labelledOnlyOwnerError(member.id, 'grant');
   if (member.labelled_only === on) return { member, changed: false };
-  await engine.executeRaw('UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, on]);
+  await engine.setAccessMemberLabelledOnly(member.id, on);
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
 /** The enabled labelled-only members, sorted; empty when none. */
-export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
-  const rows = await engine.executeRaw<{ id: string }>(
-    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
-  return rows.map(r => r.id);
+export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'readAccessMembers'>): Promise<string[]> {
+  const rows = await engine.readAccessMembers({ includeRemoved: false });
+  return rows.filter(r => r.labelled_only === true && r.disabled_at == null).map(r => r.id);
 }
 
 /** The enabled labelled-only members, sorted, each with how many credentials are bound to it (doctor's audit list). */
@@ -68,10 +67,16 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'> | Pick<BrainEngine, 'readAccessMembers' | 'getConfig'>, identities: readonly (readonly string[])[]): Promise<boolean> {
   const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
   if (!members.length) return false;
   try {
+    if ('readAccessMembers' in engine) {
+      // The typed reads of the statement below: a member of `members` with the grant that is not the owner (btrim of spaces).
+      const owner = (await engine.getConfig(OWNER_MEMBER_KEY))?.replace(/^ +| +$/g, '');
+      for (const id of members) if (id !== owner && (await engine.readAccessMembers({ id }))[0]?.labelled_only === true) return true;
+      return false;
+    }
     return (await engine.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
       AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [members, OWNER_MEMBER_KEY])).length > 0;
   } catch {

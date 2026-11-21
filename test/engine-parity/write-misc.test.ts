@@ -16,12 +16,13 @@
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
  *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, access tokens, notifier state, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
+ *    Rust store keeps no skillpacks, chronicle state, notifier state, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
  *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). It keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
  *    since the store lists them in path order and the SQL engines in no stated order.
  */
 import { describe, expect } from 'bun:test';
+import { isCapabilityMissing } from '../../src/core/rust-engine/errors.ts';
 import type { FolderAccessRows } from '../../src/core/engine-sql/access-control.ts';
 import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
@@ -443,6 +444,7 @@ describe('engine parity: write misc', () => {
     return { unset, stored, other };
   });
 
+  // Rust arm: a known stop until row 32a-2 serves the credential reads (pinned in access-members.test.ts).
   parityTest('readMayActFor permits nothing for a token or a client with no live row', { methods: ['readMayActFor'] }, async (engine) => {
     const token = await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000aa');
     const client = await engine.readMayActFor('oauth_client', 'client-absent');
@@ -451,7 +453,7 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: a revoked token or a deleted client must permit nothing, and one credential's list never answers for
-  // another. The Rust store keeps no tokens or clients (null above), so the token write stops on the raw_sql refusal.
+  // another. The Rust store refuses a token's or client's list (row 32a-2), and the token write stops on the raw_sql refusal.
   parityTest('readMayActFor reads only the live row it names: a revoked token, a deleted client and another credential permit nothing', { methods: ['readMayActFor'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, may_act_for, revoked_at) VALUES
@@ -460,7 +462,7 @@ describe('engine parity: write misc', () => {
          ('00000000-0000-4000-8000-0000000000a3', 'bare', 'h3', NULL, NULL)`).then(() => null, (e: unknown) => e);
     if (backend === 'rust') {
       expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')).toBeNull();
+      expect(isCapabilityMissing(await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1').catch((e: unknown) => e))).toBe(true);
       throw write;
     }
     expect(write).toBeNull();
@@ -489,8 +491,8 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: only enabled, untombstoned members answer, each with its own groups only, and only existing groups;
-  // a member id never matches as a group or a group id as a member. The Rust store keeps no members or groups (empty
-  // above), so the member write stops on the raw_sql refusal.
+  // a member id never matches as a group or a group id as a member. The raw-SQL seed stops on the Rust arm;
+  // access-members.test.ts writes members through the typed members on every arm.
   parityTest('readAudiencePrincipals answers only enabled members with their own groups and only existing groups', { methods: ['readAudiencePrincipals'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_members (id, disabled_at, tombstoned_at) VALUES
@@ -525,7 +527,7 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a removed (tombstoned) member is filtered out of the list in the statement unless asked for; each row
   // carries only its own groups; an id matches exactly one member, never a group id, another case or an injected
-  // predicate. The Rust store keeps no members (empty above), so the member write stops on the raw_sql refusal.
+  // predicate. The raw-SQL seed stops on the Rust arm; access-members.test.ts writes members through typed members.
   parityTest('readAccessMembers lists live members with their own groups, removed ones only when asked, and matches ids exactly', { methods: ['readAccessMembers'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_members (id, display_name, email, kind, labelled_only, disabled_at, tombstoned_at) VALUES
@@ -568,6 +570,7 @@ describe('engine parity: write misc', () => {
     return { live, all, byId, byEmail };
   });
 
+  // Rust arm: a known stop until row 32a-2 serves the credential reads (pinned in access-members.test.ts).
   parityTest('readAccessCredentials finds no token by name and no credential bound to a member on a brain with none', { methods: ['readAccessCredentials'] }, async (engine) => {
     const answers = {
       byName: await engine.readAccessCredentials({ tokenName: 'laptop' }),
@@ -579,7 +582,7 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a revoked token and a deleted client never answer; a token name matches only tokens with exactly that
   // name (never a client's name, another case or an injected predicate); a member binding answers only that member's
-  // credentials. The Rust store keeps no tokens or clients (empty above), so the token write stops on the raw_sql refusal.
+  // credentials. The Rust store refuses the credential reads (row 32a-2), and the token write stops on the raw_sql refusal.
   parityTest('readAccessCredentials answers only live credentials with the exact token name or member binding', { methods: ['readAccessCredentials'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
@@ -590,7 +593,7 @@ describe('engine parity: write misc', () => {
          ('00000000-0000-4000-8000-0000000000b5', 'shared', 'h5', NULL, '2026-01-04T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
     if (backend === 'rust') {
       expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.readAccessCredentials({ memberId: 'alice-example' })).toEqual([]);
+      expect(isCapabilityMissing(await engine.readAccessCredentials({ memberId: 'alice-example' }).catch((e: unknown) => e))).toBe(true);
       throw write;
     }
     expect(write).toBeNull();
@@ -632,7 +635,7 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: only enabled, untombstoned members of kind audience answer; a person, a disabled audience member and a
-  // removed one never do. The Rust store keeps no members (empty above), so the member write stops on the raw_sql refusal.
+  // removed one never do. The raw-SQL seed stops on the Rust arm; access-members.test.ts writes members through typed members.
   parityTest('listAudienceAccessMembers lists only enabled, untombstoned audience members, by id', { methods: ['listAudienceAccessMembers'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_members (id, kind, disabled_at, tombstoned_at) VALUES
@@ -675,8 +678,8 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a disabled or removed (tombstoned) member never answers, by any route; a live member carries only its own
   // groups; an id matches exactly one member, never a group id, another case or an injected predicate; a revoked token and
-  // a deleted client name no one; the stdio config value is edge-trimmed. The Rust store keeps no members (empty above),
-  // so the member write stops on the raw_sql refusal.
+  // a deleted client name no one; the stdio config value is edge-trimmed. The raw-SQL seed stops on the Rust arm;
+  // access-members.test.ts writes members through typed members.
   parityTest('readLiveMember answers only an enabled, untombstoned member with its own groups, through live bindings', { methods: ['readLiveMember'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_members (id, kind, disabled_at, tombstoned_at) VALUES

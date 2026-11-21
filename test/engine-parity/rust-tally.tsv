@@ -1,5 +1,6 @@
 file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
+test/engine-parity/access-members.test.ts	9	4
 test/engine-parity/access-reports.test.ts	6	1
 test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
@@ -150,7 +151,7 @@ test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
 test/engine-parity/write-attribution.test.ts	5	2
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	33	16
+test/engine-parity/write-misc.test.ts	31	18
 test/engine-parity/write-outcome-order.test.ts	1	0
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0

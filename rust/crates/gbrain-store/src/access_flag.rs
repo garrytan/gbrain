@@ -23,8 +23,8 @@
 //! on every write of a page that has `readable_by`. The flag is sticky, so the two differ only
 //! after an operator unsets the flag by hand, and then the store sets it again sooner.
 //!
-//! The other trigger, `access_members_mark_restricted`, has no store half: the store keeps no
-//! access members. See `rust/docs/store/access-flag.md`.
+//! The other trigger, `access_members_mark_restricted`, is the member insert of
+//! `access_members.rs`, which sets the flag in the same write. See `rust/docs/store/access-flag.md`.
 
 use crate::error::{INVALID_STATE, Result, StoreError};
 use crate::keys;

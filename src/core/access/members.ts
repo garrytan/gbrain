@@ -182,15 +182,6 @@ export async function memberIdentity(engine: BrainEngine, raw: unknown): Promise
   return { member: member.id, groups: member.groups, identity: identityFor(member.id, member.groups) };
 }
 
-async function ensureGroups(engine: BrainEngine, groups: readonly string[]): Promise<string[]> {
-  const created: string[] = [];
-  for (const g of groups) {
-    const rows = await engine.executeRaw<{ id: string }>('INSERT INTO access_groups (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id', [g]);
-    if (rows.length) created.push(g);
-  }
-  return created;
-}
-
 /** The one active legacy token named `name`; refuses none or several. */
 export async function legacyTokenByName(engine: BrainEngine, name: string): Promise<CredentialRef> {
   const rows = await engine.readAccessCredentials({ tokenName: name });
@@ -222,20 +213,15 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
   if (email !== null) await assertEmailFree(engine, email, id);
   const bindTarget = opts.bindToken ? await legacyTokenByName(engine, opts.bindToken) : null;
   await opts.beforeWrite?.();
-  let created: string[] = [];
-  await engine.transaction(async tx => {
-    await tx.executeRaw('INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', [id, opts.name ?? null, email, kind]);
-    created = await ensureGroups(tx, groups);
-    for (const g of groups) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [g, id]);
-    if (bindTarget) await tx.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id::text = $1', [bindTarget.id, id]);
-  }).catch(error => refuseEmailRace(engine, error, email, id));
-  return { member: (await getMember(engine, id))!, groups_created: created, bound: bindTarget };
+  const spec = { id, displayName: opts.name ?? null, email, kind, groups, bindTokenId: bindTarget?.id ?? null };
+  const { groupsCreated } = await engine.insertAccessMember(spec).catch(error => refuseEmailRace(engine, error, email, id));
+  return { member: (await getMember(engine, id))!, groups_created: groupsCreated, bound: bindTarget };
 }
 
 async function setDisabled(engine: BrainEngine, rawId: unknown, disabled: boolean): Promise<MemberRecord> {
   const member = await existingMember(engine, rawId, disabled ? 'disabled' : 'enabled');
   if (member.status === 'removed') throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; enabling it would hand its history back.');
-  await engine.executeRaw(`UPDATE access_members SET disabled_at = ${disabled ? 'COALESCE(disabled_at, now())' : 'NULL'}, updated_at = now() WHERE id = $1`, [member.id]);
+  await engine.setAccessMemberDisabled(member.id, disabled);
   return (await getMember(engine, member.id))!;
 }
 
@@ -249,8 +235,8 @@ export async function setMemberEmail(engine: BrainEngine, rawId: unknown, rawEma
   const email = rawEmail === null ? null : assertMemberEmail(rawEmail);
   if (email === member.email) return { member, changed: false };
   if (email !== null) await assertEmailFree(engine, email, member.id);
-  const updated = await engine.executeRaw<{ id: string }>('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL RETURNING id', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
-  if (!updated.length) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
+  const updated = await engine.setAccessMemberEmail(member.id, email).catch(error => refuseEmailRace(engine, error, email, member.id));
+  if (!updated) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
@@ -281,7 +267,7 @@ export async function setMemberKind(engine: BrainEngine, rawId: unknown, rawKind
   const member = await existingMember(engine, id, 'changed');
   if (member.status === 'removed') throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed.');
   if (member.kind === kind) return { member, changed: false };
-  await engine.executeRaw('UPDATE access_members SET kind = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, kind]);
+  await engine.setAccessMemberKind(member.id, kind);
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
@@ -301,9 +287,7 @@ export async function boundCredentials(engine: BrainEngine, id: string): Promise
 
 /** Pages whose readers name `principal` (member:<id> or group:<g>), bounded. */
 async function pagesNaming(engine: BrainEngine, principal: string): Promise<{ pages: PageRef[]; truncated: boolean }> {
-  const rows = await engine.executeRaw<PageRef>(
-    `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id, slug LIMIT ${PREVIEW_PAGE_LIMIT + 1}`, [principal]);
+  const rows = await engine.listPagesNamingReader(principal);
   return { pages: rows.slice(0, PREVIEW_PAGE_LIMIT), truncated: rows.length > PREVIEW_PAGE_LIMIT };
 }
 
@@ -322,10 +306,7 @@ export async function removeMember(engine: BrainEngine, rawId: unknown): Promise
     await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
     return preview;
   }
-  await engine.transaction(async tx => {
-    await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), email = NULL, updated_at = now() WHERE id = $1', [preview.member.id]);
-    await tx.executeRaw('DELETE FROM access_group_members WHERE member_id = $1', [preview.member.id]);
-  });
+  await engine.tombstoneAccessMember(preview.member.id);
   await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
 }
@@ -333,11 +314,7 @@ export async function removeMember(engine: BrainEngine, rawId: unknown): Promise
 export interface GroupRecord { id: string; members: string[] }
 
 export async function listGroups(engine: BrainEngine, id?: string): Promise<GroupRecord[]> {
-  const rows = await engine.executeRaw<{ id: string; members: string[] }>(
-    `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
-     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     ${id ? 'WHERE g.id = $1' : ''} GROUP BY g.id ORDER BY g.id`, id ? [id] : []);
-  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+  return engine.readAccessGroups(id || null);
 }
 
 async function existingGroup(engine: BrainEngine, raw: unknown): Promise<GroupRecord> {
@@ -354,18 +331,14 @@ export async function addGroup(engine: BrainEngine, rawId: unknown, members: rea
     const rec = await existingMember(engine, m, 'added to a group');
     if (rec.status === 'removed') throw retired(rec.id, 'Add a new member id instead.', 'A removed member cannot join a group.');
   }
-  let created = false;
-  await engine.transaction(async tx => {
-    created = (await ensureGroups(tx, [id])).length > 0;
-    for (const m of members) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, m]);
-  });
+  const created = await engine.addAccessGroupMembers(id, members);
   return { group: (await listGroups(engine, id))[0]!, created };
 }
 
 /** Removes `members` from an existing group. */
 export async function removeGroupMembers(engine: BrainEngine, rawId: unknown, members: readonly string[]): Promise<GroupRecord> {
   const group = await existingGroup(engine, rawId);
-  for (const m of members) await engine.executeRaw('DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2', [group.id, assertAccessId(m)]);
+  await engine.removeAccessGroupMembers(group.id, members.map(m => assertAccessId(m)));
   return (await listGroups(engine, group.id))[0]!;
 }
 
@@ -379,7 +352,7 @@ export async function previewRemoveGroup(engine: BrainEngine, rawId: unknown): P
 
 export async function removeGroup(engine: BrainEngine, rawId: unknown): Promise<GroupRemovalPreview> {
   const preview = await previewRemoveGroup(engine, rawId);
-  await engine.executeRaw('DELETE FROM access_groups WHERE id = $1', [preview.group.id]);
+  await engine.deleteAccessGroup(preview.group.id);
   return preview;
 }
 

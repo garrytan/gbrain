@@ -130,7 +130,7 @@ impl Store {
         };
         let owner_only_source = source_owner_only(&*read, source_id)?;
         Ok(WriteVisibilityProbe {
-            any_labelled: false,
+            any_labelled: crate::access_members::any_labelled_only(&*read)?,
             identity_may_open,
             owner_only_source,
             owner_only_any,

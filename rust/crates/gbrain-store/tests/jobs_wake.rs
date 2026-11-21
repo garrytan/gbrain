@@ -548,7 +548,7 @@ fn a_watch_ended_by_unwatch_loses_its_lease_and_a_forget_for_a_member_queues_her
         !b.settle_wake_watch(&settle(id, &lease, "delivered", json!({})))
             .unwrap()
     );
-    // This store keeps no access members, so the SQL's "no live member" test is true here.
+    // No member "m-1" exists, so the SQL's "no live member" test is true here.
     b.queue_wake_forget(&user(5), Some("m-1")).unwrap();
     b.queue_wake_forget(&user(5), None).unwrap();
     assert_eq!(b.count_pending_wake_forgets().unwrap(), 1);

@@ -2972,6 +2972,28 @@
           "*"
         ]
       },
+      "listPagesNamingReader#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listPagesNamingReader#live": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPendingSegmentedProjections#default": {
         "flagOffLanes": [
           "pool"
@@ -3686,6 +3708,28 @@
         "flagOnScopes": []
       },
       "readAccessCredentials#token-name": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessGroups#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessGroups#by-id": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5791,6 +5835,7 @@
         "abortPurgedStagings": "none",
         "acquireCycleLock": "none",
         "activeEmbeddingColId": "none",
+        "addAccessGroupMembers": "none",
         "addCodeEdges": "none",
         "addJobTokens": "none",
         "addLink": "none",
@@ -5944,6 +5989,7 @@
         "decideWriteGateHold": "none",
         "declarePersistence": "none",
         "delayActiveJob": "none",
+        "deleteAccessGroup": "none",
         "deleteChunks": "none",
         "deleteChunksExcept": "none",
         "deleteChunksForPages": "none",
@@ -6140,6 +6186,7 @@
         "holdSchemaMigrationLock": "none",
         "inboundLinkCoverage": "none",
         "initSchema": "none",
+        "insertAccessMember": "none",
         "insertAccessToken": "none",
         "insertCalibrationProfile": "none",
         "insertCanonicalTimelineRows": "none",
@@ -6367,6 +6414,7 @@
         "listPagelessEntityFacts": "none",
         "listPages": "direct",
         "listPagesForPurgeRewrite": "none",
+        "listPagesNamingReader": "none",
         "listPagesTitledIn": "none",
         "listPendingContradictions": "none",
         "listPendingSegmentedProjections": "none",
@@ -6584,6 +6632,7 @@
         "rankEntities": "none",
         "rawTransaction": "none",
         "readAccessCredentials": "none",
+        "readAccessGroups": "none",
         "readAccessMembers": "none",
         "readAccessStateUnreadable": "none",
         "readAccessTokenWriteGrant": "none",
@@ -6836,6 +6885,7 @@
         "releaseSegmentedProjectionClaim": "none",
         "releaseUnpublishedClaim": "none",
         "releaseWatchdogClaim": "none",
+        "removeAccessGroupMembers": "none",
         "removeLink": "none",
         "removeLinksByPagesAndSource": "none",
         "removeManualLinkTransitions": "none",
@@ -6908,6 +6958,10 @@
         "selectClaimableWrite": "none",
         "selectFactsReconcileDrain": "none",
         "selectProjectionWindowJobs": "none",
+        "setAccessMemberDisabled": "none",
+        "setAccessMemberEmail": "none",
+        "setAccessMemberKind": "none",
+        "setAccessMemberLabelledOnly": "none",
         "setAccessTokenMinTrust": "none",
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
@@ -6967,6 +7021,7 @@
         "takePageEmbeddingLease": "none",
         "telemetryRead": "none",
         "timelineRead": "none",
+        "tombstoneAccessMember": "none",
         "transaction": "none",
         "transactionDirect": "none",
         "transactionOn": "none",

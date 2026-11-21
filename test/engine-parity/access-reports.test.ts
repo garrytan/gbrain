@@ -20,9 +20,9 @@
  *    run on the SQL engines only, and the reads-privacy parity case stops at its member writes on Rust.
  *  - Seam: none. Pages, sources and config are written through typed members and the harness fixtures; the folder
  *    rule case uses the harness restrictFolder fixture, which stops on the Rust arm's raw_sql refusal (no rule store).
- *  - Known losses on Rust (docs/designs/RUST_ENGINE.md, "Open before rust can be selected"): member writes and
- *    gbrain access serves several. The last describe pins their exact refusal text, so a pin fails when Rust stops
- *    refusing and its row must leave the table.
+ *  - Known loss on Rust (docs/designs/RUST_ENGINE.md, "Open before rust can be selected"): gbrain access serves
+ *    several. The last describe pins its exact refusal text, so the pin fails when Rust stops refusing and its row
+ *    must leave the table. Member writes are served (test/engine-parity/access-members.test.ts).
  */
 import { describe, expect, test } from 'bun:test';
 import { archiveSource, createSource, parityArms, resetArm, restrictFolder, type ParityBackend } from './harness.ts';
@@ -31,7 +31,6 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OpenPageCount } from '../../src/core/engine-sql/access-setup.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { openPages, readOpenPages } from '../../src/core/access/open-pages.ts';
-import { addMember } from '../../src/core/access/members.ts';
 import { whoCanRead } from '../../src/commands/access.ts';
 import { labelSeveral, servesStatus } from '../../src/commands/access-serves.ts';
 import { openSharedPagesEntry } from '../../src/commands/doctor/checks/open-shared-pages.ts';
@@ -221,7 +220,7 @@ describe('the reports built on the count, on a brain with no member', () => {
   });
 });
 
-describe('the Rust arm still refuses member writes and gbrain access serves several', () => {
+describe('the Rust arm still refuses gbrain access serves several', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin the exact refusal:
   // each pin fails when Rust stops refusing, and its loss row must then leave docs/designs/RUST_ENGINE.md.
   const RAW_SQL_REFUSAL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
@@ -233,14 +232,6 @@ describe('the Rust arm still refuses member writes and gbrain access serves seve
       return { code: (error as { code?: string }).code, message: (error as Error).message };
     }
   };
-
-  test('loss: member writes (gbrain access member add) stop on the raw_sql refusal', async () => {
-    const rust = arms().find((arm) => arm.backend === 'rust');
-    if (!rust) return;
-    await resetArm(rust);
-    expect(await refusal(() => addMember(rust.engine, 'alice-example'))).toEqual({ code: 'engine_capability_missing', message: RAW_SQL_REFUSAL });
-    expect(await rust.engine.listActiveAccessMembers()).toEqual([]);
-  });
 
   test('loss: gbrain access serves several stops on the raw_sql refusal, in its preview and with --yes', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');

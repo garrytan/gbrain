@@ -57,6 +57,8 @@ export async function ownerView(engine: BrainEngine): Promise<OwnerView> {
     const { member } = await memberIdentity(engine, raw);
     return { owner: member, bound_credentials: await boundCredentials(engine, member), reads_restricted };
   } catch (e) {
+    // An engine that cannot read the member or its credentials refuses; it never reports a live owner as inactive.
+    if ((e as { code?: unknown } | null)?.code === 'engine_capability_missing') throw e;
     return { owner: null, inactive: { value: raw, reason: e instanceof Error ? e.message : String(e) }, bound_credentials: [], reads_restricted };
   }
 }
@@ -151,8 +153,10 @@ export function labelledOnlyOwnerError(member: string, via: 'grant' | 'owner'): 
  */
 export async function setOwner(engine: BrainEngine, raw: unknown): Promise<OwnerView> {
   const { member } = await memberIdentity(engine, raw);
-  const [row] = await engine.executeRaw<{ labelled_only: boolean }>('SELECT labelled_only FROM access_members WHERE id = $1', [member]);
+  const [row] = await engine.readAccessMembers({ id: member });
   if (row?.labelled_only === true) throw labelledOnlyOwnerError(member, 'owner');
+  // Read before the write: an engine that cannot list the credentials the view shows refuses with nothing written.
+  await boundCredentials(engine, member);
   await engine.setConfig(OWNER_MEMBER_KEY, member);
   return ownerView(engine);
 }

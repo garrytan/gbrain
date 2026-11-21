@@ -180,6 +180,58 @@ export async function listAudienceAccessMembers(exec: MemberLookupRead): Promise
   return (await exec.executeRaw<{ id: string }>(AUDIENCE_KIND_MEMBERS_SQL)).map(r => r.id);
 }
 
+/** A group and its member ids, by member id. */
+export interface AccessGroupRow { id: string; members: string[] }
+
+/**
+ * The statements access/members.ts listGroups ran through executeRaw: every group, or the one group `$1` names, each
+ * spelled out as one literal (the engine-sql dynamic-SQL guard).
+ */
+export const ACCESS_GROUP_SQL = {
+  all: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+      GROUP BY g.id ORDER BY g.id COLLATE "C"`,
+  by_id: `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id COLLATE "C"`,
+} as const;
+
+/**
+ * Every access group with its member ids, by id; or, given an id, the one group with exactly that id (never a member
+ * id, another case or an injected predicate). A group with no members carries none.
+ */
+export async function readAccessGroups(exec: MemberLookupRead, id: string | null): Promise<AccessGroupRow[]> {
+  const rows = id === null ? await exec.executeRaw<AccessGroupRow>(ACCESS_GROUP_SQL.all) : await exec.executeRaw<AccessGroupRow>(ACCESS_GROUP_SQL.by_id, [id]);
+  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+}
+
+/** A page by slug and source. */
+export interface PageNamingReaderRow { slug: string; source_id: string }
+
+/** The most pages listPagesNamingReader returns: access/members.ts pagesNaming shows 50 and reads one more to see a cut. */
+export const PAGES_NAMING_READER_LIMIT = 51;
+
+/** The statement access/members.ts pagesNaming ran through executeRaw, spelled out as one literal (LIMIT is PAGES_NAMING_READER_LIMIT). */
+export const PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 51`;
+
+/** The most live pages listPagesNamingReader returns: access-read-by-nobody.ts checks 200 and reads one more to see a cut. */
+export const LIVE_PAGES_NAMING_READER_LIMIT = 201;
+
+/** The statement access-read-by-nobody.ts pagesReadByNobodyNaming ran through executeRaw (LIMIT is LIVE_PAGES_NAMING_READER_LIMIT). */
+export const LIVE_PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`;
+
+/**
+ * The pages, in every source and by (source, slug), whose normalized readers (`gbrain_access_readers`) name exactly
+ * `principal` (`member:<id>` or `group:<id>`), at most PAGES_NAMING_READER_LIMIT of them. Soft-deleted pages count, as
+ * before. `live` leaves soft-deleted pages out and returns at most LIVE_PAGES_NAMING_READER_LIMIT.
+ */
+export async function listPagesNamingReader(exec: MemberLookupRead, principal: string, opts: { live?: boolean } = {}): Promise<PageNamingReaderRow[]> {
+  const rows = await exec.executeRaw<PageNamingReaderRow>(opts.live ? LIVE_PAGES_NAMING_READER_SQL : PAGES_NAMING_READER_SQL, [principal]);
+  return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
+}
+
 /**
  * How a live member is named: by its id, by the member config mcp.stdio_member names (`key` is the config key), or by
  * the binding of an active legacy token (`key` is the token id) or of an OAuth client that is not deleted (the client id).

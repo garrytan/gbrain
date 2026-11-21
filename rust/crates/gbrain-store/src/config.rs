@@ -1,6 +1,7 @@
 //! The config table: string keys to string values. Mirrors `getConfig`, `setConfig`,
 //! `unsetConfig`, `listConfigKeys` and `getAllConfig` of the PGLite engine.
 
+use crate::access_members::config_serves_refresh;
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
 use crate::{Store, keys};
@@ -66,19 +67,23 @@ impl Store {
     }
 
     /// Sets `key`, replacing any value. Mirrors `setConfig`.
-    pub fn set_config(&self, key: &str, value: &str) -> Result<()> {
-        let key = config_key(key)?;
-        self.write(|tx| tx.put(&key, value.as_bytes()))
+    pub fn set_config(&self, name: &str, value: &str) -> Result<()> {
+        let key = config_key(name)?;
+        self.write(|tx| {
+            tx.put(&key, value.as_bytes())?;
+            config_serves_refresh(self, tx, name)
+        })
     }
 
     /// Removes `key`; returns how many rows were removed (0 or 1). Mirrors `unsetConfig`.
-    pub fn unset_config(&self, key: &str) -> Result<u32> {
-        let key = config_key(key)?;
+    pub fn unset_config(&self, name: &str) -> Result<u32> {
+        let key = config_key(name)?;
         self.write(|tx| {
             if tx.get(&key)?.is_none() {
                 return Ok(0);
             }
             tx.delete(&key)?;
+            config_serves_refresh(self, tx, name)?;
             Ok(1)
         })
     }

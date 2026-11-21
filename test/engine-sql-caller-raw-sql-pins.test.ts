@@ -378,6 +378,82 @@ const PINS: Pin[] = [
     case: { method: 'countLineageClosingRules', variant: 'default', run: e => e.countLineageClosingRules(['default:r1'], 'default') },
     texts: ["SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)"],
   },
+  {
+    from: 'src/core/access/members.ts:226-229 addMember at 8d2e667543 (the member, its groups and its group members, one transaction; ensureGroups at :188)',
+    case: { method: 'insertAccessMember', variant: 'groups', run: e => e.insertAccessMember({ id: 'alice-example', displayName: 'Alice', email: null, kind: 'person', groups: ['team-a'], bindTokenId: null }) },
+    texts: ['INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', 'INSERT INTO access_groups (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id',
+      'INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING'],
+  },
+  ...([true, false] as const).map(disabled => ({
+    from: `src/core/access/members.ts:238 setDisabled at 8d2e667543 (${disabled ? 'disable' : 'enable'})`,
+    case: { method: 'setAccessMemberDisabled', variant: disabled ? 'disable' : 'enable', run: (e: Parameters<SqlCase['run']>[0]) => e.setAccessMemberDisabled('alice-example', disabled) },
+    texts: [`UPDATE access_members SET disabled_at = ${disabled ? 'COALESCE(disabled_at, now())' : 'NULL'}, updated_at = now() WHERE id = $1`],
+  })),
+  {
+    from: 'src/core/access/members.ts:252 setMemberEmail at 8d2e667543',
+    case: { method: 'setAccessMemberEmail', variant: 'default', run: e => e.setAccessMemberEmail('alice-example', 'a@example.com') },
+    texts: ['UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL RETURNING id'],
+  },
+  {
+    from: 'src/core/access/members.ts:284 setMemberKind at 8d2e667543',
+    case: { method: 'setAccessMemberKind', variant: 'default', run: e => e.setAccessMemberKind('alice-example', 'audience') },
+    texts: ['UPDATE access_members SET kind = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/labelled-only.ts:41 setMemberLabelledOnly at 8d2e667543',
+    case: { method: 'setAccessMemberLabelledOnly', variant: 'default', run: e => e.setAccessMemberLabelledOnly('alice-example', true) },
+    texts: ['UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/members.ts:326-327 removeMember at 8d2e667543 (one transaction)',
+    case: { method: 'tombstoneAccessMember', variant: 'default', run: e => e.tombstoneAccessMember('alice-example') },
+    texts: ['UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), email = NULL, updated_at = now() WHERE id = $1',
+      'DELETE FROM access_group_members WHERE member_id = $1'],
+  },
+  {
+    from: 'src/core/access/members.ts:358-360 addGroup at 8d2e667543 (one transaction; ensureGroups at :188)',
+    case: { method: 'addAccessGroupMembers', variant: 'default', run: e => e.addAccessGroupMembers('team-a', ['alice-example']) },
+    texts: ['INSERT INTO access_groups (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id', 'INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING'],
+  },
+  {
+    from: 'src/core/access/members.ts:368 removeGroupMembers at 8d2e667543 (one statement per member)',
+    case: { method: 'removeAccessGroupMembers', variant: 'default', run: e => e.removeAccessGroupMembers('team-a', ['alice-example', 'bob-example']) },
+    texts: ['DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2', 'DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2'],
+  },
+  {
+    from: 'src/core/access/members.ts:382 removeGroup at 8d2e667543',
+    case: { method: 'deleteAccessGroup', variant: 'default', run: e => e.deleteAccessGroup('team-a') },
+    texts: ['DELETE FROM access_groups WHERE id = $1'],
+  },
+  // Equivalent, not verbatim (the next four): the old-line statements add COLLATE "C" to every ORDER BY, so groups,
+  // group members and pages come in byte order on every engine whatever the database collation.
+  {
+    from: 'src/core/access/members.ts:336-340 listGroups at 8d2e667543 (every group)',
+    case: { method: 'readAccessGroups', variant: 'all', run: e => e.readAccessGroups(null) },
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+      GROUP BY g.id ORDER BY g.id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/access/members.ts:336-340 listGroups at 8d2e667543 (one group)',
+    case: { method: 'readAccessGroups', variant: 'by-id', run: e => e.readAccessGroups('team-a') },
+    texts: [`SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id COLLATE "C") FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
+     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
+     WHERE g.id = $1 GROUP BY g.id ORDER BY g.id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/access/members.ts:304-306 pagesNaming at 8d2e667543',
+    case: { method: 'listPagesNamingReader', variant: 'default', run: e => e.listPagesNamingReader('member:alice-example') },
+    texts: [`SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 51`],
+  },
+  {
+    // Also the column order: the caller selected `source_id, slug`; the rows are read by name.
+    from: 'src/commands/access-read-by-nobody.ts:44-46 pagesReadByNobodyNaming at 8d2e667543',
+    case: { method: 'listPagesNamingReader', variant: 'live', run: e => e.listPagesNamingReader('member:alice-example', { live: true }) },
+    texts: [`SELECT slug, source_id FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
+     ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 201`],
+  },
 ];
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */

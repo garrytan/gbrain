@@ -1013,16 +1013,21 @@ impl Store {
         })
     }
 
-    /// `queueWakeForget`: queue a forget of `wake_user` unless one is already pending. The
-    /// `access_members` check of the SQL (`memberId` queues only when that member is not live) is
-    /// true here: this store keeps no access members, so a given member id is never live.
-    pub fn queue_wake_forget(&self, wake_user: &str, _member_id: Option<&str>) -> Result<()> {
+    /// `queueWakeForget`: queue a forget of `wake_user` unless one is already pending, and, given a
+    /// `memberId`, only when no member with that id is still there (removed members do not count),
+    /// as the SQL's `access_members` check.
+    pub fn queue_wake_forget(&self, wake_user: &str, member_id: Option<&str>) -> Result<()> {
         no_nul("wake_forgets.wake_user", wake_user)?;
         if !lower_hex(wake_user, 32) {
             return Err(violation("wake_forgets", "wake_user"));
         }
         self.write(|tx| {
             let now = self.env.now_micros();
+            if let Some(member) = member_id
+                && crate::access_members::member_not_removed(&*tx, member)?
+            {
+                return Ok(());
+            }
             let id = next_seq(tx, "wake_forget")?;
             if tx.get(&pending_key(wake_user))?.is_some() {
                 return Ok(());

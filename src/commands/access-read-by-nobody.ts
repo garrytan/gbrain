@@ -41,9 +41,7 @@ export function readByNobodyNote(entry: { slug: string; source_id: string; reade
 
 /** Pages whose readable_by names `memberId` that no enabled member reads remotely now (checked with who-can-read). */
 export async function pagesReadByNobodyNaming(engine: BrainEngine, memberId: string): Promise<{ pages: PageRef[]; truncated: boolean }> {
-  const rows = await engine.executeRaw<PageRef>(
-    `SELECT source_id, slug FROM pages WHERE deleted_at IS NULL AND frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id, slug LIMIT ${DISABLE_CHECK_LIMIT + 1}`, [`member:${memberId}`]);
+  const rows = await engine.listPagesNamingReader(`member:${memberId}`, { live: true });
   const pages: PageRef[] = [];
   for (const row of rows.slice(0, DISABLE_CHECK_LIMIT)) {
     const [entry] = await whoCanRead(engine, row.slug, row.source_id);
