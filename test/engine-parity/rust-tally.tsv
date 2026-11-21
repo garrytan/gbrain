@@ -97,7 +97,7 @@ test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	28	1
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	32	0
+test/engine-parity/timeline.test.ts	33	0
 test/engine-parity/transaction-settings.test.ts	9	1
 test/engine-parity/traversal-cache.test.ts	5	2
 test/engine-parity/trust-fence.test.ts	4	0
@@ -113,7 +113,7 @@ test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
 test/engine-parity/versions-raw.test.ts	12	0
 test/engine-parity/wanted-links.test.ts	5	0
-test/engine-parity/write-attribution.test.ts	4	2
+test/engine-parity/write-attribution.test.ts	5	0
 test/engine-parity/write-guards.test.ts	10	0
 test/engine-parity/write-misc.test.ts	42	17
 test/engine-parity/write-request-cancel.test.ts	2	0

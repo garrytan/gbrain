@@ -46,8 +46,7 @@ version snapshot copies from a page with no tier.
 
 | Member | Answer on this engine | Why |
 | --- | --- | --- |
-| `readWriteAttributionNames(ids)` | requests and writers from the two methods; `clients: []`, `tokens: []` | |
-| `readWriteAttributionNames` with an OAuth client id or a legacy token id | refuses with `engine_capability_missing` | The store keeps no `oauth_clients` or `access_tokens` table. An empty answer would say "no name" for a client that may exist on the brain the token came from. |
+| `readWriteAttributionNames(ids)` | requests and writers from the two methods; clients from `listOauthClients` and tokens from `listAccessTokens`, kept by exact id | The store keeps no join, so it reads the client and token rows (revoked ones included) and filters them. |
 | `readPageRevisionAttribution`, `readOldestVersionAttribution` | the method | |
 | `readVersionAttributions(refs)` | the method, each version under its `page_id` | The store keys versions by page. |
 | `readRowAttribution(target)` | the method; the fact's `excludePrivate` becomes the store privacy policy | A policy the store cannot judge refuses (`storePrivacyPolicy`). |

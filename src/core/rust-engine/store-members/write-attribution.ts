@@ -3,9 +3,8 @@
  * engine-sql/write-attribution.ts), served by gbrain-store `write_attribution`. Every page, version, fact, take and
  * timeline write on the store stamps the receipts PGLite's attribution triggers stamp, so the reads answer the same rows.
  *
- * The store keeps no `oauth_clients` or `access_tokens` table, so a name read for an OAuth client or legacy token
- * refuses with engine_capability_missing instead of answering no name. Takes keep no trust tier or write origin and
- * read the column defaults. What each member answers: rust/docs/store/write_attribution.md.
+ * A name read for an OAuth client or legacy token reads the store's own client and token rows. Takes keep no trust
+ * tier or write origin and read the column defaults. What each member answers: rust/docs/store/write_attribution.md.
  */
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -13,21 +12,30 @@ import type {
 } from '../../engine-sql/write-attribution.ts';
 import { privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 
-/** Names requests and local writers; an OAuth client or legacy token id refuses (the store keeps neither table). */
+/**
+ * Names requests, OAuth clients, legacy tokens and local writers. Clients and tokens are read from the store's own rows
+ * (revoked ones included) and kept when their id matches exactly, as `client_id = ANY` and `id::text = ANY` match.
+ */
 export const readWriteAttributionNames: StoreMember<[ids: WriteAttributionNameIds], WriteAttributionNames> = async (brain, ids) => {
   const member = 'readWriteAttributionNames';
-  if (ids.oauthClientIds.length) refuseMember(member, 'OAuth client names: the store keeps no oauth_clients table');
-  if (ids.legacyTokenIds.length) refuseMember(member, 'legacy token names: the store keeps no access_tokens table');
-  const [requests, writers] = await Promise.all([
+  const named = async (wanted: string[], read: () => Promise<unknown>, idKey: string, nameKey: string) => {
+    if (!wanted.length) return [];
+    const keep = new Set(wanted);
+    const rows = await storeCall({ member }, read) as Array<Record<string, unknown>>;
+    return rows.filter(row => keep.has(String(row[idKey]))).map(row => ({ id: String(row[idKey]), name: String(row[nameKey]) }));
+  };
+  const [requests, clients, tokens, writers] = await Promise.all([
     ids.requestIds.length
       ? storeCall({ member }, () => brain.readWriteRequestAttributions([...ids.requestIds])) as Promise<WriteRequestAttributionRow[]> : [],
+    named(ids.oauthClientIds, () => brain.listOauthClients(), 'client_id', 'client_name'),
+    named(ids.legacyTokenIds, () => brain.listAccessTokens(), 'id', 'name'),
     ids.localWriterIds.length
       ? storeCall({ member }, () => brain.readLocalWriterLanes([...ids.localWriterIds])) as Promise<Array<{ id: string; lane: string }>> : [],
   ]);
-  return { requests: requests.map(r => withDates(r, ['completed_at'])), clients: [], tokens: [], writers };
+  return { requests: requests.map(r => withDates(r, ['completed_at'])), clients, tokens, writers };
 };
 
 export const readPageRevisionAttribution: StoreMember<[pageId: number], PageRevisionAttributionRow | null> = (brain, pageId) =>
