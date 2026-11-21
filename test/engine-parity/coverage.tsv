@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/369
+# covered: 344/386
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -47,6 +47,9 @@
 # alias_fanout_reads: 4/4
 # cli_reads_export: 9/12
 # jobs_health: 8/8
+# minion_status: 11/11
+# embedding_catalog: 5/5
+# fence_holds: 1/1
 # trust_tier_reads: 1/3
 # withdrawal_discovery: 1/1
 # belief_reads: 0/1
@@ -74,7 +77,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	49	yes	yes	yes	serves
+softDeletePage	pages	yes	50	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -112,7 +115,7 @@ slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
 generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
-upsertChunks	chunks	yes	21	yes	yes	yes	serves
+upsertChunks	chunks	yes	24	yes	yes	yes	serves
 sealChunks	chunks	yes	15	no	yes	yes	serves
 getChunks	chunks	yes	25	yes	yes	yes	serves
 getChunkPage	chunks	yes	9	no	yes	yes	serves
@@ -198,8 +201,8 @@ upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	no	0	no	-	-	-
-addTakesBatch	takes	yes	23	yes	yes	yes	serves
-updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
+addTakesBatch	takes	yes	24	yes	yes	yes	serves
+updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
 listTakes	takes	yes	13	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
@@ -223,7 +226,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	27	yes	yes	yes	serves
+insertFact	facts	yes	28	yes	yes	yes	serves
 insertFacts	facts	yes	14	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	9	no	yes	yes	serves
@@ -410,6 +413,23 @@ listPrivateQueueHealth	jobs_health	yes	2	no	yes	yes	serves
 readWedgeSignals	jobs_health	yes	2	no	yes	yes	serves
 readOldestWaitingAge	jobs_health	yes	2	no	yes	yes	serves
 listStuckActiveJobsByName	jobs_health	yes	2	no	yes	yes	serves
+readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
+countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
+readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
+readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
+countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
+readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves
+countRecentCompletedJobs	minion_status	yes	1	no	yes	yes	serves
+listRecentFailedJobErrors	minion_status	yes	1	no	yes	yes	serves
+readQueuedPageChars	minion_status	yes	1	no	yes	yes	serves
+readSourceJobCounts	minion_status	yes	1	no	yes	yes	serves
+readEmbedBackfillBySource	minion_status	yes	1	no	yes	yes	serves
+readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	refuses:raw_sql
+readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+listFenceHoldRows	fence_holds	yes	1	no	yes	yes	refuses:raw_sql
 listVersionTrustTiers	trust_tier_reads	no	0	no	-	-	-
 listVersionReasonWriters	trust_tier_reads	no	0	no	-	-	-
 listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql

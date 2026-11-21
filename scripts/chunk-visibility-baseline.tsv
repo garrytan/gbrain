@@ -3,7 +3,7 @@ src/commands/code-def.ts	2
 src/commands/code-refs.ts	1
 src/commands/config.ts	1
 src/commands/doctor/checks/calibration.ts	1
-src/commands/doctor/checks/data-integrity.ts	2
+src/commands/doctor/checks/data-integrity.ts	1
 src/commands/doctor/checks/embedding-health.ts	2
 src/commands/doctor/checks/extraction-sync.ts	1
 src/commands/doctor/checks/graph-embedding.ts	1

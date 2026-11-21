@@ -26,9 +26,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -40,9 +42,11 @@
         "signature+includeNullSignature": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -56,9 +60,11 @@
         "signature+sourceId": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -88,9 +94,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -122,9 +130,11 @@
         "sourceIds+excludePrivate": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -207,9 +217,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -230,9 +242,11 @@
         "excludePrivate": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -253,9 +267,11 @@
         "includeEmbedding": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -276,9 +292,11 @@
         "includeUnsealed": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -299,9 +317,11 @@
         "requireSafeChunks": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -322,9 +342,11 @@
         "sourceIds": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -392,9 +414,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "event": "begin",
@@ -425,9 +449,11 @@
         "sourceId": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "event": "begin",
@@ -461,9 +487,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "event": "begin",
@@ -497,9 +525,11 @@
         "sourceId+includeNullSignature": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "event": "begin",
@@ -560,9 +590,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -578,9 +610,11 @@
         "sourceIds": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -600,9 +634,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -618,9 +654,11 @@
         "sourceId": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -637,9 +675,11 @@
         "updated_desc": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -653,9 +693,11 @@
         "updated_desc+cursor": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -675,9 +717,11 @@
         "updated_desc+sourceId": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -692,9 +736,11 @@
         "updated_desc+sourceId+cursor": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -717,9 +763,11 @@
         "full": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -745,9 +793,11 @@
         "full+sourceIds": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -778,9 +828,11 @@
         "ops": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -1019,9 +1071,11 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
@@ -1033,9 +1087,11 @@
         "signature": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
+            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
           },
           {
             "lane": "pool",
