@@ -288,14 +288,13 @@ impl Store {
                 {
                     return Ok(None);
                 }
-                // The store keeps no take trust_tier or write_origin: the tier reads the column
-                // default `unknown` and the origin NULL.
+                // The take's stored trust_tier and write_origin, as `store_take` stamped them.
                 Ok(Some(row_json(
                     t.id,
                     &t.receipt,
                     t.created_at_us,
-                    row_tier(None),
-                    None,
+                    row_tier(t.trust.trust_tier.as_deref()),
+                    t.trust.write_origin.as_ref(),
                 )))
             }
             RowAttributionTarget::Timeline {
@@ -457,6 +456,49 @@ mod tests {
         );
         assert_eq!(read(false, "alt", "people/a"), None);
         assert_eq!(read(false, "default", "people/b"), None);
+    }
+
+    #[test]
+    fn a_take_reads_the_trust_tier_and_write_origin_its_write_stamped() {
+        use crate::write_trust::{WRITE_ORIGIN, WRITE_TRUST_TIER};
+        let store = store();
+        act(&store, R1, "w1");
+        let page = put(&store, "people/a", "one");
+        let names = [
+            WRITE_REQUEST,
+            WRITE_PRINCIPAL_KIND,
+            WRITE_PRINCIPAL_ID,
+            WRITE_TRUST_TIER,
+            WRITE_ORIGIN,
+        ]
+        .map(String::from);
+        let values = [
+            R1,
+            "local_cli",
+            "w1",
+            "agent_written",
+            r#"{"channel":"mcp","tool":"t"}"#,
+        ]
+        .map(String::from);
+        store.apply_write_trust(&names, &values).unwrap();
+        let take: TakeInput = serde_json::from_value(json!({
+            "page_id": page, "row_num": 1, "claim": "c", "kind": "take", "holder": "garry", "weight": 0.5, "active": true,
+        }))
+        .unwrap();
+        store.add_takes_batch(&[take]).unwrap();
+        let row = store
+            .read_row_attribution(&RowAttributionTarget::Take {
+                page_id: page,
+                row_num: 1,
+                holders: None,
+                owner_only: OwnerOnlyForm::Off,
+            })
+            .unwrap()
+            .unwrap();
+        // The stored tier and origin, not the column default `unknown` and NULL.
+        assert_eq!(row["trust_tier"], "agent_written");
+        assert_eq!(row["write_origin"]["channel"], "mcp");
+        assert_eq!(row["write_origin"]["tool"], "t");
     }
 
     #[test]

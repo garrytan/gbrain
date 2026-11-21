@@ -58,8 +58,6 @@ version snapshot copies from a page with no tier.
 
 ## Known gaps
 
-- Takes keep no trust tier or write origin: a take reads `unknown` and `null`. PGLite reads `unknown` too for a take
-  that no trusted writer stamped.
 - PGLite's attribution trigger exempts a withdrawal stamp (`gbrain.fact_withdrawal_stamp`) from the content check.
   The store keeps no withdrawal ledger, so it does not model that exemption. It stamps `last_write_*` when the fact's
   content columns change (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`), and no parity case covers a withdrawal.
