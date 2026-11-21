@@ -126,6 +126,9 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return { spent, batches, stored, counters };
   });
 
+  // Named Rust stop: markCompacted seeds through executeRaw, which the Rust engine refuses. The typed compaction writer
+  // compactReceipt (persistence/journal.ts) is owned by lane 7 (a22a4d34); when it lands, seed through it and this case
+  // goes equal on Rust.
   parityTest('the write journal reads see seeded batch requests: spent ids, unsettled and failed batches in order, stored entries and counters', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction',
       'findSpentConversationRequest', 'listConversationBatchRequests', 'readStoredConversationEntry', 'readPrincipalCounters'],
@@ -578,6 +581,10 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return out;
   });
 
+  // Named Rust stop: restrictFolder (harness.ts) seeds the folder rule through executeRaw, which the Rust engine refuses.
+  // origin/rust-engine/access-rule-writes-3 f659822218 seeds Rust through putAccessPolicyState and
+  // putAccessPendingCoverage (store is_folder_restricted, access_rules.rs) and reaches main through lane 2's
+  // cli-members-next; then Rust listEntityHintPages reads is_folder_restricted and this case goes equal.
   parityTest('listEntityHintPages reads the live pages of the slugs with their retired and folder-restricted flags', {
     methods: ['putPage', 'softDeletePage', 'listEntityHintPages'],
   }, async (engine, backend) => {

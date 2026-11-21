@@ -32,6 +32,8 @@ import { pageMeta, publishSegmentedPage, segmentText, sha256 } from '../helpers/
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../../src/core/facts/conversation-publication.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -471,6 +473,42 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     };
     expect(answers).toEqual({ all: ['ctx one', 'ctx two'], afterFirst: ['ctx two'], afterAll: [], beliefs: [] });
     return answers;
+  });
+
+  // Named Rust stop: the purge dry run refuses first on countPurgeVersionsCarryingClaim, served by lane 3's purge-sweep
+  // commit 77bea7e975 (not on this base). The next stop is listBeliefEventsForPurgeProbe, which stays refused on Rust
+  // (an empty answer would report belief_events clean on a store that records them); lane 3 serves it as a keyset read
+  // of belief_events. Whichever lands second unpins this case.
+  parityTest('purge_fact gives CLI and MCP callers the same belief_events and fact_context reports when the brain records no belief events', {
+    methods: ['insertFact', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const target = await fact(engine, 'Alice likes oolong tea', { entity_slug: 'people/alice', context: 'said at lunch' });
+    const quoting = await fact(engine, 'Bob met Alice', { entity_slug: 'people/bob', context: 'Bob said alice likes oolong tea at lunch' });
+    const call = async (name: string, params: Record<string, unknown>, remote: boolean) => {
+      const res = await dispatchToolCall(engine, name, params, { remote });
+      const text = res.content[0]!.text!;
+      // A refused CLI call ends the case with its error envelope (an engine refusal stops the Rust arm by name).
+      if (!remote && res.isError === true) throw Object.assign(new Error(text), JSON.parse(text) as Record<string, unknown>);
+      return { isError: res.isError === true, text };
+    };
+    try {
+      const mcp = await call('purge_fact', { id: target, dry_run: true }, true);
+      const dry = JSON.parse((await call('purge_fact', { id: target, dry_run: true }, false)).text) as Record<string, unknown>;
+      const run = await call('purge_fact', { id: target, confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: REQ }, false);
+      const stores = (JSON.parse(run.text) as { stores: { store: string }[] }).stores;
+      const out = {
+        mcp: { isError: mcp.isError, code: (JSON.parse(mcp.text) as { error?: string; code?: string }).code ?? (JSON.parse(mcp.text) as { error?: string }).error },
+        // The receipt text, with the generated id of the quoting fact named by relation.
+        cli: { isError: run.isError, ledger: JSON.stringify(stores.filter(s => s.store === 'belief_events' || s.store === 'fact_context')).replaceAll(`"f${quoting}"`, '"f<quoting>"') },
+      };
+      expect(out.cli.isError).toBe(false);
+      expect(JSON.parse(out.cli.ledger)).toEqual([{ store: 'belief_events', status: 'not_present', removed: 0 },
+        expect.objectContaining({ store: 'fact_context', status: 'out_of_scope', reason: 'source_prose', remaining: 1, items: ['f<quoting>'] })]);
+      return out;
+    } finally {
+      await disposePersistenceConsumer(engine).catch(() => undefined);
+    }
   });
 
   parityTest('listPageSourcePathsForPurge lists the distinct relative file paths of pages and their versions, skipping absolute and parent paths', {

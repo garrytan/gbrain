@@ -1085,8 +1085,8 @@ are compared on empty data only.
 
 Served on Rust: `readPurgeSourceLocalPath`, `readPurgeReceiptSourcePath` (both the store's `readSourceLocalPath`),
 `listSegmentedPageBodies`, `listSegmentedVersionBodies`, `listFactContextsForPurgeProbe`,
-`listPageSourcePathsForPurge`, `countLegacyDerivedPages`, `vacuumPurgedTables`, `listPageProseHits` and
-`countPurgeFingerprintResidue`.
+`listPageSourcePathsForPurge`, `countLegacyDerivedPages`, `vacuumPurgedTables`, `listPageProseHits`,
+`countPurgeFingerprintResidue` and `listNearestFactsForPurge`.
 
 - `listSegmentedPageBodies` and `listSegmentedVersionBodies` read a body as segmented when the page or version
   records segmented storage; a negative or fractional limit refuses before the call.
@@ -1099,7 +1099,13 @@ Served on Rust: `readPurgeSourceLocalPath`, `readPurgeReceiptSourcePath` (both t
 - `countPurgeFingerprintResidue` counts takes on pages of the source whose slug is the subject (or any page for
   `*`), with no active or expiry filter, as the SQL has none.
 - `vacuumPurgedTables` has nothing to compact and resolves once the store is open; `withQueryCache` changes nothing.
-- `listBeliefEventsForPurgeProbe` is not served: the store keeps no `belief_events`.
+- `listNearestFactsForPurge` ranks the source's facts (expired ones too) that hold a vector of the model by cosine
+  distance to the target, NaN after every number and equal distances by id, and keeps five. `contains_claim` is
+  `strpos(gbrain_fact_normalize(fact), gbrain_fact_normalize(claim)) > 0`, so an empty claim is in every fact. A
+  vector of another width refuses, as `<=>` refuses it, and the caller reports the probe skipped.
+- `listBeliefEventsForPurgeProbe` is not served and refuses by name. An empty answer would let a purge receipt report
+  `belief_events` clean on a store that records belief events, so the probe fails closed until the store reads
+  `belief_events` in keyset pages.
 
 ### Purge journal statements (`facts/purge_journal.rs`, family `facts_purge_journal`)
 
@@ -1144,8 +1150,7 @@ the claim candidates and the rows that hold a claim inside and outside the sweep
 - Two parity cases match PGLite: empty batches, and kept, swept, object-key, receipt and near-miss rows walked
   whole and in batches of two through the cursor.
 
-Not served yet: `listBeliefEventsForPurgeProbe` (the store keeps no `belief_events`) and `listNearestFactsForPurge`
-(a vector read).
+Not served yet: `listBeliefEventsForPurgeProbe` (it refuses by name; see the purge receipt reads above).
 
 ### Claim conflicts, contested proposals, live entity page and gone-page expiry (`facts/rest_sites.rs`, family `facts_rest`)
 

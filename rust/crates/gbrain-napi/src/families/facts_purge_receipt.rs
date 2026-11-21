@@ -13,7 +13,8 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::purge::SourceArgs;
 use gbrain_store::facts::purge_receipt::{
-    FactContextsQuery, PageSourcePathsQuery, ProseHitsQuery, ResidueQuery, SegmentedBodiesQuery,
+    FactContextsQuery, NearestPurgeQuery, PageSourcePathsQuery, ProseHitsQuery, ResidueQuery,
+    SegmentedBodiesQuery,
 };
 
 #[napi]
@@ -54,6 +55,20 @@ impl Brain {
         self.run(env, move |s| {
             let a: FactContextsQuery = required(args, "listFactContextsForPurgeProbe args")?;
             s.list_fact_contexts_for_purge_probe(&a)
+        })
+    }
+
+    /// `listNearestFactsForPurge({ embedding, sourceId, model, fact })`: resolves the five nearest
+    /// `{ id, similarity, contains_claim }` rows (`similarity` is the text `NaN` for a NaN).
+    #[napi]
+    pub fn list_nearest_facts_for_purge<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: NearestPurgeQuery = required(args, "listNearestFactsForPurge args")?;
+            s.list_nearest_facts_for_purge(&a)
         })
     }
 

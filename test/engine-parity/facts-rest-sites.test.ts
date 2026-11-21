@@ -689,6 +689,11 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  // Named Rust design stop, no divergence row: readFactsFtsIndexState and swapFactsFtsIndex read and rename a Postgres
+  // catalog index (pg_index), and the Rust store keeps one keyword index under one STORE_LANGUAGE, so the swap to another
+  // language refuses. No production Rust caller exists: only ensureFactsFtsIndex calls the pair, from the PGLite and
+  // Postgres ensureFactsKeywordIndex and migration v237; on Rust, reindex-search-vector takes ensureFactsKeywordIndex
+  // (link-temporal.ts), and initSchema runs no migrations.
   parityTest('readFactsFtsIndexState reads the keyword index and swapFactsFtsIndex swaps the built one into place (ensureFactsFtsIndex)', {
     methods: ['readFactsFtsIndexState', 'swapFactsFtsIndex', 'transaction'],
   }, async (engine) => {

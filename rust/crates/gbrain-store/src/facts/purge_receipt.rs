@@ -19,6 +19,9 @@
 //!   `pages` store reads live pages only; the chunk, version and timeline-entry stores join pages
 //!   without a `deleted_at` test, as the SQL does. A NULL column (a segmented page or version) holds
 //!   no needle; an empty needle is in every other column, as `strpos(x, '') = 1`.
+//! - `listNearestFactsForPurge(embedding, sourceId, model, fact)`: the five facts of the source
+//!   (expired ones too) with a vector of `model`, nearest the target vector first, each
+//!   `{ id, similarity, contains_claim }`.
 //! - `countPurgeFingerprintResidue(sourceId, factHash, subject)`: `{ facts, takes }`, the facts of the
 //!   source with the fingerprint, about `subject` (`*` for any) and not an outcome marker, and the
 //!   takes on the source's pages with the fingerprint, on the page `subject` (`*` for any). Neither
@@ -27,12 +30,13 @@
 //! `readPurgeSourceLocalPath` and `readPurgeReceiptSourcePath` are the store's
 //! `readSourceLocalPath` (memory_mutation_reads.rs).
 
+use super::embedding::{cosine_distance, parse_vector, to_halfvec};
 use crate::Store;
 use crate::chunks::read_chunks;
 use crate::cli_reads::pg_text::pg_lower;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::purge::outcome_marker;
-use crate::facts::{fact_fingerprint, source_rows};
+use crate::facts::{fact_fingerprint, fact_normalize, invalid, source_rows};
 use crate::generations::hop_limit;
 use crate::keys;
 use crate::kv::scan_prefix;
@@ -117,6 +121,16 @@ fn dream_generated(page: &PageRecord) -> bool {
         Some(Value::String(s)) => s == "true",
         _ => false,
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct NearestPurgeQuery {
+    /// The purge target's vector literal (`loadPurgeTarget`), cast to `halfvec`.
+    pub embedding: String,
+    pub source_id: String,
+    pub model: String,
+    pub fact: String,
 }
 
 impl Store {
@@ -314,6 +328,64 @@ impl Store {
             })
             .count();
         Ok(json!({ "facts": facts, "takes": takes }))
+    }
+
+    /// `listNearestFactsForPurge(embedding, sourceId, model, fact)`: the five facts of the source,
+    /// expired ones too, with a vector of `model`, nearest the target first (NaN after every
+    /// number, equal distances by id). `contains_claim` is
+    /// `strpos(gbrain_fact_normalize(fact), gbrain_fact_normalize($4)) > 0`; an empty claim is in
+    /// every fact, as `strpos` finds it at 1. A vector of another width fails, as `<=>` does, and
+    /// the caller reports the probe skipped.
+    pub fn list_nearest_facts_for_purge(&self, q: &NearestPurgeQuery) -> Result<Vec<Value>> {
+        const OP: &str = "listNearestFactsForPurge";
+        no_nul(
+            OP,
+            &[
+                ("sourceId", q.source_id.as_str()),
+                ("model", q.model.as_str()),
+                ("fact", q.fact.as_str()),
+            ],
+        )?;
+        let target = to_halfvec(&parse_vector(&q.embedding)?, None)?;
+        let claim = fact_normalize(&q.fact);
+        let read = self.read()?;
+        let mut ranked: Vec<(f64, u64, bool)> = Vec::new();
+        for row in source_rows(&*read, &q.source_id)? {
+            let Some(vector) = row.embedding.as_deref() else {
+                continue;
+            };
+            if row.embedding_model.as_deref() != Some(q.model.as_str()) {
+                continue;
+            }
+            if vector.len() != target.len() {
+                return Err(invalid(format!(
+                    "{OP}: different halfvec dimensions {} and {}",
+                    vector.len(),
+                    target.len()
+                )));
+            }
+            let contains = fact_normalize(&row.fact).contains(&claim);
+            ranked.push((cosine_distance(vector, &target), row.id, contains));
+        }
+        ranked.sort_by(|(da, a, _), (db, b, _)| {
+            da.is_nan()
+                .cmp(&db.is_nan())
+                .then(da.total_cmp(db))
+                .then(a.cmp(b))
+        });
+        Ok(ranked
+            .iter()
+            .take(5)
+            .map(|&(distance, id, contains)| {
+                let similarity = 1.0 - distance;
+                let similarity = if similarity.is_nan() {
+                    json!("NaN")
+                } else {
+                    json!(similarity)
+                };
+                json!({ "id": id, "similarity": similarity, "contains_claim": contains })
+            })
+            .collect())
     }
 }
 

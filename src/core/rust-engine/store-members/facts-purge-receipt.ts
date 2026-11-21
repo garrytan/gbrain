@@ -5,7 +5,9 @@
  * `readPurgeSourceLocalPath` and `readPurgeReceiptSourcePath` read the source's checkout through the store's
  * `readSourceLocalPath`. `vacuumPurgedTables` has nothing to compact in a store and resolves once the store is open. A
  * number that PGLite binds as `LIMIT` or `int[]` and the store cannot read the same way (a fraction, a negative limit)
- * refuses rather than guess at PGLite's cast error.
+ * refuses rather than guess at PGLite's cast error. `listNearestFactsForPurge` is the probe's vector read.
+ * `listBeliefEventsForPurgeProbe` stays refused: an empty answer would make a purge receipt report `belief_events`
+ * clean on a store that records belief events (lane 3 serves it as a keyset read of `belief_events`).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -53,3 +55,11 @@ export const listPageProseHits: Member<'listPageProseHits'> = (brain, store, sou
 
 export const countPurgeFingerprintResidue: Member<'countPurgeFingerprintResidue'> = (brain, sourceId, factHash, subject) =>
   storeCall({ member: 'countPurgeFingerprintResidue' }, () => brain.countPurgeFingerprintResidue({ sourceId, factHash, subject }));
+
+/** The store answers a NaN similarity as the text `NaN`; Postgres and PGLite return the float8 NaN. */
+export const listNearestFactsForPurge: Member<'listNearestFactsForPurge'> = async (brain, embedding, sourceId, model, fact) => {
+  const rows: Array<{ id: number; similarity: number | 'NaN'; contains_claim: boolean }> = await storeCall(
+    { member: 'listNearestFactsForPurge', sourceId }, () => brain.listNearestFactsForPurge({ embedding, sourceId, model, fact }));
+  return rows.map((r) => ({ ...r, similarity: r.similarity === 'NaN' ? Number.NaN : r.similarity }));
+};
+

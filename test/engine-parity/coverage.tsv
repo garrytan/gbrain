@@ -413,7 +413,7 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	114	yes	yes	yes	serves
+insertFact	facts	yes	115	yes	yes	yes	serves
 insertFacts	facts	yes	140	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	76	no	yes	yes	serves
@@ -867,10 +867,10 @@ listSegmentedPageBodies	facts_purge	yes	1	no	yes	yes	serves
 listSegmentedVersionBodies	facts_purge	yes	1	no	yes	yes	serves
 setPurgeProbeTimeout	facts_purge	yes	2	no	yes	yes	serves
 probePurgeDerivations	facts_purge	yes	2	no	yes	yes	serves
-listBeliefEventsForPurgeProbe	facts_purge	yes	2	no	yes	yes	refuses:facts
-listFactContextsForPurgeProbe	facts_purge	yes	1	no	yes	yes	serves
+listBeliefEventsForPurgeProbe	facts_purge	yes	3	no	yes	yes	refuses:facts
+listFactContextsForPurgeProbe	facts_purge	yes	2	no	yes	yes	serves
 listPageSourcePathsForPurge	facts_purge	yes	1	no	yes	yes	serves
-listNearestFactsForPurge	facts_purge	yes	1	no	yes	yes	refuses:facts
+listNearestFactsForPurge	facts_purge	yes	1	no	yes	yes	serves
 countLegacyDerivedPages	facts_purge	yes	1	no	yes	yes	serves
 vacuumPurgedTables	facts_purge	yes	1	no	yes	yes	serves
 listPageProseHits	facts_purge	yes	1	no	yes	yes	serves
