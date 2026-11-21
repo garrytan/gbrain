@@ -942,6 +942,90 @@ describe('engine parity: pages', () => {
     },
   );
 
+  parityTest(
+    'listEntityKeyRows narrows to members and to pages with a token value, and names each page\'s identity and generation',
+    { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityKeyRows'] },
+    async (engine) => {
+      const company = (title: string, frontmatter: Record<string, unknown>): PageInput => ({ type: 'company', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+      await seed(engine, [
+        ['companies/acme-example', company('Acme Example', { website: ' HTTPS://www.Acme-Example.com/about?x=1 ', linkedin: 'https://linkedin.com/company/acme-co/' })],
+        ['companies/widget-co', company('Widget Co', { github: ['https://github.com/widget-login/repo', null], handle: '@widget', employees: 42 })],
+        ['people/alice-example', { ...ALICE, frontmatter: { linkedin: 'linkedin.com/in/alice-example?trk=1' } }],
+      ]);
+      await engine.linkEntityIdentityRow({ entityId: 'group/acme', slug: 'companies/acme-example', sourceId: 'default', confidence: 1, establishedBy: 'manual', canonical: true });
+      const all = { types: ['company', 'person'], keys: ['website'], limit: 10 };
+      const slugs = async (extra: object) => (await engine.listEntityKeyRows({ ...all, ...extra })).map(r => r.slug);
+      const tokens = (values: string[], fields: string[]) => slugs({ tokens: { values, fields } });
+      const out = {
+        members: await slugs({ members: [{ source_id: 'default', slug: 'companies/widget-co' }, { source_id: 'default', slug: 'companies/missing' }] }),
+        noMembers: await slugs({ members: [] }),
+        host: await tokens(['acme-example.com'], ['website']),
+        company: await tokens(['acme-co'], ['linkedin']),
+        profile: await tokens(['alice-example'], ['linkedin']),
+        login: await tokens(['widget-login'], ['github']),
+        handle: await tokens(['widget'], ['handle']),
+        number: await tokens(['42'], ['employees']),
+        wrongField: await tokens(['acme-example.com'], ['linkedin']),
+        none: await tokens([], ['website']),
+        identities: (await engine.listEntityKeyRows(all)).map(r => [r.slug, r.identity, r.keys]),
+      };
+      const before = (await engine.listEntityKeyRows(all)).map(r => [r.slug, r.page_id, r.generation, r.created_at] as const);
+      await seed(engine, [['companies/widget-co', company('Widget Co', { github: 'https://github.com/widget-login', employees: 43 })]]);
+      const after = (await engine.listEntityKeyRows(all)).map(r => [r.slug, r.page_id, r.generation, r.created_at] as const);
+      const generation = before.map(([slug, id, gen, at], i) => [slug, after[i]![1] === id, after[i]![2] === gen, after[i]![3] === at, typeof gen === 'number']);
+      expect(out.members).toEqual(['companies/widget-co']);
+      expect(out.noMembers).toEqual([]);
+      expect([out.host, out.company, out.profile, out.login, out.handle, out.number]).toEqual([
+        ['companies/acme-example'], ['companies/acme-example'], ['people/alice-example'], ['companies/widget-co'], ['companies/widget-co'], ['companies/widget-co']]);
+      expect([out.wrongField, out.none]).toEqual([[], []]);
+      expect(generation).toEqual([
+        ['companies/acme-example', true, true, true, true], ['companies/widget-co', true, false, true, true], ['people/alice-example', true, true, true, true]]);
+      return { ...out, generation };
+    },
+  );
+  parityTest(
+    'applyIdentityDecisions keeps a decision\'s evidence and writes, skips and removes the company sweep\'s automatic groups',
+    { methods: ['putPage', 'softDeletePage', 'listEntityKeyRows', 'applyIdentityDecisions', 'listIdentityDecisions'] },
+    async (engine) => {
+      const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'];
+      await seed(engine, names.map(n => [`companies/${n}-example`, { ...ACME, title: `${n} Example` }] as [string, PageInput]));
+      const read = async () => new Map((await engine.listEntityKeyRows({ types: ['company'], keys: [], limit: 50 })).map(r => [r.slug.slice(10, 11), r]));
+      let rows = await read();
+      const member = (n: string) => ({ source_id: 'default', page_id: rows.get(n)!.page_id, generation: rows.get(n)!.generation });
+      const group = (entity_id: string, members: string[]) => ({ entity_id, canonical_page_id: rows.get(members[0]!)!.page_id, members: members.map(member) });
+      const plan = [group('auto/ab', ['a', 'b']), group('auto/cd', ['c', 'd']), group('auto/ef', ['e', 'f']), group('auto/gh', ['g', 'h']), group('auto/ij', ['i', 'j'])];
+      await seed(engine, [['companies/d-example', { ...ACME, title: 'd Example', compiled_truth: 'Changed after the sweep read it.' }]]);
+      const first = await engine.applyIdentityDecisions({ auto: { link: plan, unlink: [] } });
+      const again = await engine.applyIdentityDecisions({ auto: { link: [group('auto/ab', ['a', 'b'])], unlink: [] } });
+      rows = await read();
+      const linked = names.map(n => [n, rows.get(n)!.identity]);
+      const ref = (n: string) => ({ source_id: 'default', slug: `companies/${n}-example` });
+      const decision = (decision_id: string, verdict: 'same' | 'different', members: string[], evidence?: string[]) => ({
+        decision_id, verdict, members: members.map(ref), group_id: null, entity_id: verdict === 'same' ? `dedupe/${decision_id}` : null,
+        canonical: verdict === 'same' ? ref(members[0]!) : null, decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const,
+        home_source_id: null, git_blob: null, ...(evidence ? { evidence } : {}),
+      });
+      const decided = await engine.applyIdentityDecisions({ upsert: [
+        decision('0000000000000001', 'different', ['a', 'b'], ['fp-a', 'fp-b']),
+        decision('0000000000000002', 'same', ['i', 'k']),
+        decision('0000000000000003', 'different', ['c', 'k'], []),
+      ] });
+      await engine.softDeletePage('companies/f-example');
+      const swept = await engine.applyIdentityDecisions({ auto: { link: [], unlink: ['auto/gh'] } });
+      rows = await read();
+      const after = names.filter(n => rows.has(n)).map(n => [n, rows.get(n)!.identity]);
+      const decisions = (await engine.listIdentityDecisions()).decisions.map(d => [d.decision_id, d.verdict, d.evidence]);
+      expect(first.auto).toEqual({ linked: 4, unlinked: 0, skipped: 1 });
+      expect(again.auto).toEqual({ linked: 0, unlinked: 0, skipped: 0 });
+      expect(decided.auto).toBeUndefined();
+      expect(swept.auto).toEqual({ linked: 0, unlinked: 2, skipped: 0 });
+      expect(decisions).toEqual([['0000000000000001', 'different', ['fp-a', 'fp-b']], ['0000000000000002', 'same', null], ['0000000000000003', 'different', null]]);
+      expect(after.filter(([, id]) => id !== null)).toEqual([
+        ['i', { entity_id: 'dedupe/0000000000000002', established_by: 'dedupe:confirm' }], ['k', { entity_id: 'dedupe/0000000000000002', established_by: 'dedupe:confirm' }]]);
+      return { first, again, linked, decided, swept, after, decisions };
+    },
+  );
+
   parityTest('bumpPageRetrievals stamps the most-linked page once per 5 minutes and staleBias then prefers a never-retrieved page',
     { methods: ['bumpPageRetrievals', 'listPrefixSampledPages'] }, async (engine) => {
       await seed(engine, [['wiki/vc/linked', NOTE], ['wiki/vc/quiet', NOTE], ['notes/a', NOTE]]);

@@ -19,10 +19,14 @@ use crate::cli_reads::pg_text::timestamptz_text;
 use crate::entity_identities::{
     IdentityRecord, all_records, group_key, group_pages, record, row_key,
 };
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::kv::{KvRead, scan_prefix};
+use crate::identity_auto::{
+    AutoPlan, KeyTokens, Members, generation, link_planned, page_matches_tokens, unlink_broken,
+    unlink_covered,
+};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::read_source;
 use crate::{Store, keys, put_json};
@@ -55,6 +59,10 @@ struct ReviewRecord {
     origin: String,
     home_source_id: Option<String>,
     git_blob: Option<String>,
+    /// On a "different" decision: each member's fingerprint when it was recorded; none when no
+    /// fingerprint was kept (a record written before the column existed reads as none).
+    #[serde(default)]
+    evidence: Option<Vec<String>>,
 }
 
 impl ReviewRecord {
@@ -85,6 +93,12 @@ pub struct EntityKeyRowsOpts {
     pub keys: Vec<String>,
     pub after: Option<MemberRef>,
     pub limit: i64,
+    /// Narrows the read to these pages.
+    #[serde(default)]
+    pub members: Option<Vec<MemberRef>>,
+    /// Narrows the read to pages one of whose `fields` values reads as one of the token values.
+    #[serde(default)]
+    pub tokens: Option<KeyTokens>,
 }
 
 /// One decision of `applyIdentityDecisions({ upsert })`; `decided_at` null takes now.
@@ -102,6 +116,9 @@ pub struct DecisionInput {
     pub origin: String,
     pub home_source_id: Option<String>,
     pub git_blob: Option<String>,
+    /// Stored when it is not empty, else none.
+    #[serde(default)]
+    pub evidence: Option<Vec<String>>,
 }
 
 /// `applyIdentityDecisions(input)`.
@@ -111,6 +128,8 @@ pub struct ApplyDecisions {
     pub upsert: Vec<DecisionInput>,
     pub remove: Vec<String>,
     pub expect_revision: Option<String>,
+    /// The company sweep's plan (`identity_auto`); the result carries `auto` only when it is given.
+    pub auto: Option<AutoPlan>,
 }
 
 fn review_key(decision_id: &str) -> Vec<u8> {
@@ -188,6 +207,30 @@ impl Store {
         if let Some(after) = &opts.after {
             reject_nul(MEMBER, [after.source_id.as_str(), after.slug.as_str()])?;
         }
+        if let Some(members) = &opts.members {
+            reject_nul(
+                MEMBER,
+                members
+                    .iter()
+                    .flat_map(|m| [m.source_id.as_str(), m.slug.as_str()]),
+            )?;
+        }
+        if let Some(tokens) = &opts.tokens {
+            reject_nul(
+                MEMBER,
+                tokens
+                    .values
+                    .iter()
+                    .chain(&tokens.fields)
+                    .map(String::as_str),
+            )?;
+        }
+        let named: Option<HashSet<(&str, &str)>> = opts.members.as_ref().map(|members| {
+            members
+                .iter()
+                .map(|m| (m.source_id.as_str(), m.slug.as_str()))
+                .collect()
+        });
         if opts.limit < 0 {
             return Err(StoreError::invalid(format!(
                 "{MEMBER}: LIMIT must not be negative"
@@ -212,6 +255,13 @@ impl Store {
                 || (page.source_id.as_str(), page.slug.as_str())
                     <= (after.0.as_str(), after.1.as_str())
                 || is_retired(&page)
+                || named
+                    .as_ref()
+                    .is_some_and(|n| !n.contains(&(page.source_id.as_str(), page.slug.as_str())))
+                || opts
+                    .tokens
+                    .as_ref()
+                    .is_some_and(|t| !page_matches_tokens(&page, t))
             {
                 continue;
             }
@@ -229,8 +279,7 @@ impl Store {
         }
         rows.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
         rows.truncate(usize::try_from(opts.limit).unwrap_or(usize::MAX));
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|p| {
                 let mut kept = Map::new();
                 for key in &wanted {
@@ -238,9 +287,15 @@ impl Store {
                         kept.insert(key.clone(), v.clone());
                     }
                 }
-                json!({ "source_id": p.source_id, "slug": p.slug, "title": p.title, "type": p.page_type, "keys": kept })
+                let identity = membership(&*read, &p)?.map_or(Value::Null, |x| {
+                    json!({ "entity_id": x.entity_id, "established_by": x.established_by })
+                });
+                Ok(json!({
+                    "source_id": p.source_id, "slug": p.slug, "title": p.title, "type": p.page_type, "keys": kept,
+                    "page_id": p.id, "generation": generation(&p), "created_at": iso(p.created_at_us), "identity": identity,
+                }))
             })
-            .collect())
+            .collect()
     }
 
     /// `listIdentityDecisions()`: `{ decisions, pending, revision }`. Decisions come in decision id
@@ -282,7 +337,7 @@ impl Store {
                     "decision_id": id, "verdict": r.verdict, "members": r.members, "group_id": r.group_id,
                     "entity_id": r.entity_id, "canonical": canonical, "decided_by": r.decided_by,
                     "decided_at": timestamptz_text(r.decided_at_us), "origin": r.origin,
-                    "home_source_id": r.home_source_id, "git_blob": r.git_blob,
+                    "home_source_id": r.home_source_id, "git_blob": r.git_blob, "evidence": r.evidence,
                 })
             })
             .collect();
@@ -386,9 +441,12 @@ impl Store {
                     origin: d.origin.clone(),
                     home_source_id: d.home_source_id.clone(),
                     git_blob: d.git_blob.clone(),
+                    evidence: d.evidence.clone().filter(|e| !e.is_empty()),
                 };
                 put_json(tx, &review_key(&d.decision_id), &rec)?;
             }
+            // The company sweep's automatic groups (identity_auto), before the confirmed rows.
+            let auto = self.apply_auto(tx, input.auto.as_ref(), now)?;
             // The live member pages of every "same" decision with a group: (decision id, entity, page).
             let mut confirmed: Vec<(String, String, PageRecord, bool)> = Vec::new();
             for (id, r) in all_reviews(tx)? {
@@ -468,8 +526,39 @@ impl Store {
                     put_json(tx, &row_key(page.id), &rec)?;
                 }
             }
-            Ok(json!({ "upserted": input.upsert.len(), "removed": removed, "linked": linked, "unlinked": unlinked }))
+            let mut out = json!({ "upserted": input.upsert.len(), "removed": removed, "linked": linked, "unlinked": unlinked });
+            if let Some((linked, unlinked, skipped)) = auto {
+                out["auto"] = json!({ "linked": linked, "unlinked": unlinked, "skipped": skipped });
+            }
+            Ok(out)
         })
+    }
+
+    /// The automatic groups of one apply: removes those `unlink` names, those a decision now
+    /// covers, writes the planned ones that still hold, then removes the broken ones. Returns
+    /// (linked, unlinked, skipped) when the input carried a plan.
+    fn apply_auto(
+        &self,
+        tx: &mut dyn KvWrite,
+        plan: Option<&AutoPlan>,
+        now: i64,
+    ) -> Result<Option<(usize, usize, usize)>> {
+        let (mut same, mut different): (Vec<Members>, Vec<Members>) = (Vec::new(), Vec::new());
+        for (_, r) in all_reviews(tx)? {
+            match r.verdict.as_str() {
+                "same" => same.push(r.member_refs()),
+                "different" => different.push(r.member_refs()),
+                _ => {}
+            }
+        }
+        let unlink = plan.map_or(&[][..], |p| p.unlink.as_slice());
+        let mut unlinked = unlink_covered(tx, unlink, &same, &different)?;
+        let (linked, skipped) = match plan {
+            Some(p) if !p.link.is_empty() => link_planned(tx, &p.link, now)?,
+            _ => (0, 0),
+        };
+        unlinked += unlink_broken(tx)?;
+        Ok(plan.map(|_| (linked, unlinked, skipped)))
     }
 }
 
@@ -500,6 +589,7 @@ mod tests {
             origin: "database".into(),
             home_source_id: None,
             git_blob: None,
+            evidence: None,
         };
         let rows = vec![
             ("a".to_string(), rec("same", Some("e"))),
