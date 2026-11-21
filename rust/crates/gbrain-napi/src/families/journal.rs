@@ -702,6 +702,24 @@ impl Brain {
         self.run(env, move |s| s.list_resumable_refreshes(&host_id))
     }
 
+    /// `compactReceipt(id, retained)`: `null`; marks the receipt compacted, keeping `retained` bytes.
+    #[napi]
+    pub fn compact_receipt<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        retained: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            if !retained.is_finite() || retained.fract() != 0.0 {
+                return Err(gbrain_store::error::StoreError::invalid(
+                    "retained is not an integer",
+                ));
+            }
+            s.compact_receipt(&id, retained as i64)
+        })
+    }
+
     #[napi]
     pub fn list_compactable_receipts<'env>(
         &self,

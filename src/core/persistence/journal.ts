@@ -1245,7 +1245,7 @@ export async function compactReceipt(engine: BrainEngine, row: Pick<WriteRequest
       FROM persistence_effects WHERE request_id=$1::uuid`, [row.id]);
     const retained = Math.min(Number(current.terminal_reservation), retainedReceiptBytes(current, { stage: 'compacted', effects: Number(effects.bytes) }));
     const freed = Number(current.terminal_reservation) - retained;
-    await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2 WHERE id=$1::uuid', [row.id, retained]);
+    await tx.compactReceipt(row.id, retained);
     await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes-LEAST($2::bigint,terminal_bytes) WHERE key=ANY($1::text[])', [keys, freed]);
     return { freed_bytes: freed };
   });

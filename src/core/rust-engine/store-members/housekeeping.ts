@@ -1,8 +1,8 @@
 /**
  * The housekeeping members the Rust store answers (engine-sql/persistence-housekeeping.ts): the host's housekeeping turn
  * (claimHousekeepingTurn, completeHousekeepingTurn), the receipt reads (readReceiptBudget, listCompactableReceipts,
- * listReservationsAfter, listTrueUpRequests), the true-up's write (trueUpReservations), the capacity forecast's reads
- * (readCapacityForecastInputs) and the projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs),
+ * listReservationsAfter, listTrueUpRequests), the true-up's write (trueUpReservations), the compaction's receipt write
+ * (compactReceipt), the capacity forecast's reads (readCapacityForecastInputs) and the projection queue reads (listPendingSegmentedProjections, selectProjectionWindowJobs),
  * the segmented projector's queue writes (claimSegmentedProjection, renewSegmentedProjectionClaim, releaseSegmentedProjectionClaim,
  * deleteProjectionJob, markProjectionRebuildFailed) and the writer-version reads (readWriterVersionCutoff, listWriterVersions,
  * recentWriterVersions).
@@ -52,6 +52,11 @@ export const listTrueUpRequests: StoreMember<[ids: readonly string[]], Record<st
 /** The true-up's compare-and-set and counter release in one store write; the freed bytes come back as text. */
 export const trueUpReservations: StoreMember<[rows: readonly TrueUpReservation[]], number> = async (brain, rows) =>
   rows.length ? Number(await storeCall({ member: 'trueUpReservations' }, () => brain.trueUpReservations(rows.map(r => ({ ...r }))))) : 0;
+
+/** The compaction's receipt write; the counter release stays the caller's next statement. */
+export const compactReceipt: StoreMember<[id: string, retained: number], void> = async (brain, id, retained) => {
+  await storeCall({ member: 'compactReceipt' }, () => brain.compactReceipt(id, retained));
+};
 
 /** Principal rows, then the topology-change rows; no relation size, so `tableBytes` is null. */
 export const readCapacityForecastInputs: StoreMember<[opts?: { light?: boolean }], CapacityForecastInputs> = (brain, opts) =>

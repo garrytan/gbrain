@@ -1038,6 +1038,51 @@ describe('engine parity: write-journal housekeeping', () => {
     return answers;
   });
 
+  parityTest('compactReceipt drops a receipt\'s intent and error message, marks it compacted and keeps the reservation it is given', {
+    methods: ['compactReceipt', 'listCompactableReceipts', 'readWriteRequestById', 'listTrueUpRequests', 'listReservationsAfter', 'transaction', 'declarePersistence',
+      'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
+  }, async (engine) => {
+    const committed = await completeDirect(engine, 'b0000000-0000-4000-8000-0000000000b1');
+    const failed = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b2');
+    await engine.stampWriteClaim(failed, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    await engine.completeWriteRow({
+      id: failed, state: 'failed', outcome: null, errorCode: 'storage_error', errorMessage: 'parity failure', consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: null, resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 800,
+      terminalReservation: 4096, probePurges: false,
+    });
+    const due = async () => (await engine.listCompactableReceipts<{ id: string }>(-1)).map(r => [committed, failed].indexOf(r.id));
+    const receipt = async (id: string) => {
+      const row = (await engine.readWriteRequestById(id))!;
+      return { state: row.state, intent: row.intent, errorCode: row.error_code ?? null, errorMessage: row.error_message ?? null, compacted: row.compacted,
+        terminalReservation: Number(row.terminal_reservation), outcome: row.outcome ?? null };
+    };
+    const before = { due: await due(), failed: await receipt(failed) };
+    await engine.transaction(async tx => {
+      await tx.declarePersistence();
+      await tx.compactReceipt(failed, 300);
+      await tx.compactReceipt('a0000000-0000-4000-8000-0000000000a9', 300);
+    });
+    const trueUp = await engine.listTrueUpRequests<{ id: string; terminal_reservation: string | number; compacted: boolean }>([failed]);
+    const reservations = await engine.listReservationsAfter('0', 10);
+    const answers = {
+      beforeDue: before.due, beforeIntentKept: before.failed.intent !== null, beforeErrorMessage: before.failed.errorMessage,
+      due: await due(), failed: await receipt(failed), committed: await receipt(committed),
+      trueUp: trueUp.map(r => ({ reservation: Number(r.terminal_reservation), compacted: r.compacted })),
+      reservations: reservations.map(r => ({ which: [committed, failed].indexOf(r.id), compacted: r.compacted })),
+    };
+    expect(answers).toEqual({
+      beforeDue: [0, 1], beforeIntentKept: true, beforeErrorMessage: 'parity failure',
+      due: [0],
+      failed: { state: 'failed', intent: null, errorCode: 'storage_error', errorMessage: null, compacted: true, terminalReservation: 300, outcome: null },
+      committed: { state: 'committed', intent: answers.committed.intent, errorCode: null, errorMessage: null, compacted: false, terminalReservation: 800,
+        outcome: { status: 'parity' } },
+      trueUp: [{ reservation: 300, compacted: true }],
+      reservations: [{ which: 0, compacted: false }, { which: 1, compacted: true }],
+    });
+    expect(answers.committed.intent).not.toBeNull();
+    return answers;
+  });
+
   parityTest('readCapacityForecastInputs buckets the window per writer and day, with the history and what compaction frees', {
     methods: ['readCapacityForecastInputs', 'readLedgerSource', 'insertTopologyChange', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
   }, async (engine) => {

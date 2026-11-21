@@ -105,7 +105,7 @@ an engine without a capability set (Postgres, PGLite, a transaction handle) pass
 | Step | Why it needs a transaction |
 | --- | --- |
 | `claimNextWrite` (journal.ts) | it selects the head under `FOR UPDATE SKIP LOCKED` and stamps the claim in one transaction |
-| `compactReceipt` (journal.ts) | it rechecks the receipt under its row lock and releases the counters in one transaction |
+| `compactReceipt` (journal.ts) | it rechecks the receipt under its row lock, then `compactReceipt` marks it compacted and the counters release the freed bytes, in one transaction |
 | `trueUpRequests` (receipt-true-up.ts) | it locks the counters, then `trueUpReservations` compare-and-sets the reservations and releases the freed bytes |
 
 A true-up with nothing to shrink returns `0` before the check.
@@ -139,6 +139,7 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listReservationsAfter(after, limit)` | `{ id, sequence, compacted }` past `after`, in sequence order | `listReservationsAfter` |
 | `brain.listTrueUpRequests(ids)` | the terminal requests among `ids`, in no set order, with `effect_bytes` (the request's effect rows summed as `EFFECT_BYTES_SQL` sums them, as text) and `unfinished` (an effect is `queued` or `running`) | `listTrueUpRequests` |
 | `brain.trueUpReservations(rows)` | the bytes given back, as text. Each `{ id, old, kept, effects }` whose request still reserves `old`, still has `effects` effect bytes and has no `queued` or `running` effect now reserves `kept`. The freed bytes, summed per counter (the brain and the request's principal), leave the counters that exist, clamped at zero; each clamped counter adds one to config `persistence.true_up.clamped`. A changed or unknown request changes nothing. `invalid` for a malformed id or effect byte count | `trueUpReservations` |
+| `brain.compactReceipt(id, retained)` | `null`. The request's intent and error message become null, it is marked compacted and it now reserves `retained`; its state, error code and outcome stay. An unknown id changes nothing; the counters are left to the caller | `compactReceipt` |
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |

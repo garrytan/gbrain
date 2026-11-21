@@ -159,6 +159,12 @@ export async function trueUpReservations(exec: SqlExecutor, rows: readonly TrueU
   return Number(freed?.freed ?? 0);
 }
 
+/** Marks one receipt compacted (`compactReceipt`, journal.ts): drops its intent and error message and keeps `retained` bytes reserved. */
+export const COMPACT_RECEIPT_SQL = 'UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2 WHERE id=$1::uuid';
+export async function compactReceipt(exec: SqlExecutor, id: string, retained: number): Promise<void> {
+  await exec.executeRaw(COMPACT_RECEIPT_SQL, [id, retained]);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The capacity forecast's reads (capacity-forecast.ts). The arithmetic stays in the forecast.
 

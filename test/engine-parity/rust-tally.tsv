@@ -99,7 +99,7 @@ test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	38	2
 test/engine-parity/persistence-declaration.test.ts	7	3
-test/engine-parity/persistence.test.ts	49	0
+test/engine-parity/persistence.test.ts	50	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/publication-retry-limit.test.ts	3	0
 test/engine-parity/raw-sql.test.ts	0	4

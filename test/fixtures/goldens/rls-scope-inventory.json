@@ -298,6 +298,17 @@
         ],
         "flagOnScopes": []
       },
+      "compactReceipt#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "completeEffectRow#default": {
         "flagOffLanes": [
           "pool"
@@ -6715,6 +6726,7 @@
         "closeOpenLoop": "none",
         "closedLoopWithActiveFact": "none",
         "codeChunksExist": "none",
+        "compactReceipt": "none",
         "completeEffectRow": "none",
         "completeHousekeepingTurn": "none",
         "completeJob": "none",

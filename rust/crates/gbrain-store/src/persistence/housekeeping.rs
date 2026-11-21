@@ -399,6 +399,23 @@ fn unresolved_caller_refusal(r: &RequestRecord, all: &[RequestRecord]) -> bool {
     !superseded
 }
 
+/// `compactReceipt(id, retained)`: the request drops its intent and error message, is marked
+/// compacted and keeps `retained` bytes reserved, as the Postgres `UPDATE` does. An unknown id
+/// changes nothing. The counters are the caller's next write.
+pub(crate) fn compact_receipt_in(tx: &mut dyn KvWrite, id: &str, retained: i64) -> Result<()> {
+    let id = uuid_param(id, "id")?;
+    let Some(mut record) = request_by_id(&*tx, &id)? else {
+        return Ok(());
+    };
+    record.intent = Value::Null;
+    record.error_message = None;
+    record.extra.insert("compacted".into(), json!(true));
+    record
+        .extra
+        .insert("terminal_reservation".into(), json!(retained));
+    write_request(tx, &record)
+}
+
 /// `listCompactableReceipts(retentionDays)`: compactable receipts completed more than
 /// `retentionDays` ago that are not an unresolved caller refusal, oldest first, at most 100.
 /// The open-sync-cursor and newest-sync-receipt exclusions never match here: this engine has no
@@ -579,6 +596,11 @@ impl Store {
     /// `trueUpReservations(rows)`: the bytes given back, as text.
     pub fn true_up_reservations(&self, rows: &[TrueUpReservation]) -> Result<String> {
         self.write(|tx| true_up_reservations_in(tx, rows))
+    }
+
+    /// `compactReceipt(id, retained)`.
+    pub fn compact_receipt(&self, id: &str, retained: i64) -> Result<()> {
+        self.write(|tx| compact_receipt_in(tx, id, retained))
     }
 
     /// `listCompactableReceipts(retentionDays)`.

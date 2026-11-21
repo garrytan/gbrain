@@ -783,6 +783,7 @@ export const RUST_ENGINE_MEMBERS = {
   listReservationsAfter: 'persistence_journal',
   listTrueUpRequests: 'persistence_journal',
   trueUpReservations: 'persistence_journal',
+  compactReceipt: 'persistence_journal',
   listGatedMirrorRequests: 'persistence_journal',
   listEffectRecoveries: 'persistence_journal',
   selectClaimableEffect: 'persistence_journal',

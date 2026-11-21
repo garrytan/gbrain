@@ -3956,6 +3956,8 @@ export interface BrainEngine {
   listTrueUpRequests<R = Record<string, unknown>>(ids: readonly string[]): Promise<R[]>;
   /** Inside the true-up's transaction, after its counter locks: shrinks each unchanged settled request to what its receipt keeps and releases the freed bytes from the counters; returns the bytes given back. */
   trueUpReservations(rows: readonly TrueUpReservation[]): Promise<number>;
+  /** Inside the compaction's transaction: marks receipt `id` compacted (no intent or error message) and keeps `retained` bytes reserved. */
+  compactReceipt(id: string, retained: number): Promise<void>;
   /** The capacity forecast's reads: counters, per-day principal and topology rows, history, reclaimable bytes and the table size. */
   readCapacityForecastInputs(opts?: { light?: boolean }): Promise<CapacityForecastInputs>;
   /** Pending segmented-page projection jobs ready to rebuild, oldest first. */

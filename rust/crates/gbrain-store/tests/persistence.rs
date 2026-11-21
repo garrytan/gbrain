@@ -827,6 +827,30 @@ fn compactable_receipts_are_terminal_receipts_past_the_retention() {
 }
 
 #[test]
+fn compacting_a_receipt_drops_its_intent_and_keeps_the_given_reservation() {
+    let dir = TempDir::new("persist-compact");
+    let store = open(&dir);
+    let done = committed(&store, REQ_1, "notes/a");
+    let id = done["id"].as_str().unwrap();
+    assert_ne!(
+        store.read_write_request_by_id(id).unwrap().unwrap()["intent"],
+        Value::Null
+    );
+    store.compact_receipt(id, 300).unwrap();
+    let row = store.read_write_request_by_id(id).unwrap().unwrap();
+    assert_eq!(row["intent"], Value::Null);
+    assert_eq!(row["error_message"], Value::Null);
+    assert_eq!(row["compacted"], true);
+    assert_eq!(row["terminal_reservation"], 300);
+    assert_eq!(row["state"], "committed");
+    assert!(store.list_compactable_receipts(0.0).unwrap().is_empty());
+    store
+        .compact_receipt("a0000000-0000-4000-8000-0000000000a9", 300)
+        .unwrap();
+    assert!(store.compact_receipt("not-a-uuid", 300).is_err());
+}
+
+#[test]
 fn the_capacity_inputs_bucket_the_window_by_principal_and_day() {
     let dir = TempDir::new("persist-capacity");
     let store = open(&dir);
