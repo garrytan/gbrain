@@ -119,6 +119,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
+import { refuseAborted } from './engine-sql/abort-aware.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
@@ -1141,9 +1142,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
-  private get writeMiscReads() { return unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'); }
+  private get writeMiscReads() { return refuseAborted(unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw')); }
   private writeMiscRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) {
-    return whenNotAborted(() => this.preparationRead(exec => fn(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'))));
+    return whenNotAborted(() => this.preparationRead(exec => fn(refuseAborted(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw')))));
   }
   readSourceState(sourceId: string, opts?: writeMiscImpl.SourceStateOptions) {
     return opts?.lock === 'share' ? whenNotAborted(() => writeMiscImpl.readSourceState(this.writeMiscReads, sourceId, opts)) : this.writeMiscRead(exec => writeMiscImpl.readSourceState(exec, sourceId, opts));
@@ -1160,14 +1161,14 @@ export class PostgresEngine implements BrainEngine {
   readOpCheckpointKeys(op: string, fingerprint: string) { return whenNotAborted(() => writeMiscImpl.readOpCheckpointKeys(this.writeMiscReads, op, fingerprint)); }
   readHealthMemoClock() { return whenNotAborted(() => writeMiscImpl.readHealthMemoClock(this.writeMiscReads)); }
   listSynopsisSourceIds() { return whenNotAborted(() => writeMiscImpl.listSynopsisSourceIds(this.writeMiscReads)); }
-  expireMemoryProposals(reason: string) { return whenNotAborted(() => writeMiscImpl.expireMemoryProposals(this.autocommitSql, reason)); }
+  expireMemoryProposals(reason: string) { return whenNotAborted(() => writeMiscImpl.expireMemoryProposals(refuseAborted(this.autocommitSql), reason)); }
   listAwaitingMemoryProposals(limit: number) { return whenNotAborted(() => writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit)); }
   readMemoryProposal(principalKind: string, principalId: string, requestId: string) { return whenNotAborted(() => writeMiscImpl.readMemoryProposal(this.writeMiscReads, principalKind, principalId, requestId)); }
-  purgeMemoryProposals(retentionDays: number) { return whenNotAborted(() => writeMiscImpl.purgeMemoryProposals(this.autocommitSql, retentionDays)); }
+  purgeMemoryProposals(retentionDays: number) { return whenNotAborted(() => writeMiscImpl.purgeMemoryProposals(refuseAborted(this.autocommitSql), retentionDays)); }
   readPendingProposalSummary() { return whenNotAborted(() => writeMiscImpl.readPendingProposalSummary(this.writeMiscReads)); }
   listMemoryProposalRows(query: writeMiscImpl.ProposalListQuery) { return whenNotAborted(() => writeMiscImpl.listMemoryProposalRows(this.writeMiscReads, query)); }
   listOwnerProposalRows(requestId: string) { return whenNotAborted(() => writeMiscImpl.listOwnerProposalRows(this.writeMiscReads, requestId)); }
-  attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return whenNotAborted(() => writeMiscImpl.attachSourcePath(this.autocommitSql, sourceId, localPath, opts)); }
+  attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return whenNotAborted(() => writeMiscImpl.attachSourcePath(refuseAborted(this.autocommitSql), sourceId, localPath, opts)); }
   // v0.37.0 — domain-bank engine methods (D14 + D5 + D10).
   //
   // `listPrefixSampledPages`: one page per prefix, tiebroken by inbound-link
@@ -1690,13 +1691,13 @@ export class PostgresEngine implements BrainEngine {
   async countOnboardSignal(signal: healthImpl.OnboardSignal, entityTypes: import('./schema-pack/entity-types.ts').EntityTypeFilter, opts?: { signal?: AbortSignal }) {
     return healthImpl.countOnboardSignal(this.searchRead, signal, entityTypes, opts);
   }
-  private get timelineRead() { return unscopedExecutor(this.engineSql, 'timeline reads: master engine.executeRaw, unscoped'); }
+  private get timelineRead() { return refuseAborted(unscopedExecutor(this.engineSql, 'timeline reads: master engine.executeRaw, unscoped')); }
   sampleEffectiveDates() { return whenNotAborted(() => timelineReadsImpl.sampleEffectiveDates(this.timelineRead)); }
   sampleEffectiveDateSources() { return whenNotAborted(() => timelineReadsImpl.sampleEffectiveDateSources(this.timelineRead)); }
-  private timelineBoundedRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) { return whenNotAborted(() => this.preparationRead(exec => fn(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped')))); }
+  private timelineBoundedRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) { return whenNotAborted(() => this.preparationRead(exec => fn(refuseAborted(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped'))))); }
   readMaxTimelineEntryId() { return this.timelineBoundedRead(exec => timelineReadsImpl.readMaxTimelineEntryId(exec)); }
-  listStoredTimelineRowsOrdered(pageId: number) { return whenNotAborted(() => this.preparationRead(exec => timelineReadsImpl.listStoredTimelineRowsOrdered(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped'), pageId))); }
-  deleteTimelineRows(pageId: number, deletions: readonly TimelineRowDeletion[]) { return whenNotAborted(() => timelineReadsImpl.deleteTimelineRows(this.autocommitSql, pageId, deletions)); }
+  listStoredTimelineRowsOrdered(pageId: number) { return whenNotAborted(() => this.preparationRead(exec => timelineReadsImpl.listStoredTimelineRowsOrdered(refuseAborted(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped')), pageId))); }
+  deleteTimelineRows(pageId: number, deletions: readonly TimelineRowDeletion[]) { return whenNotAborted(() => timelineReadsImpl.deleteTimelineRows(refuseAborted(this.autocommitSql), pageId, deletions)); }
   storedTimelineRowsByPageIds(pageIds: readonly number[]) { return this.timelineBoundedRead(exec => timelineReadsImpl.storedTimelineRowsByPageIds(exec, pageIds)); }
   countSegmentedTimelinePages(sourceIds: readonly string[], limit: number) { return this.timelineBoundedRead(exec => timelineReadsImpl.countSegmentedTimelinePages(exec, sourceIds, limit)); }
   countTimelineCommentMarkupRows(sourceIds: readonly string[]) { return whenNotAborted(() => timelineReadsImpl.countTimelineCommentMarkupRows(this.timelineRead, sourceIds)); }
@@ -3439,10 +3440,10 @@ export class PostgresEngine implements BrainEngine {
     return salienceImpl.findAnomalies(unscopedExecutor(this.engineSql, 'salience: unscoped on master (EO4 inventory)'), opts);
   }
   // Open loops (engine-sql/open-loops.ts). Writes keep executeRaw's read-only retry (#7183); reads run unscoped as before.
-  upsertOpenLoop(loop: OpenLoopUpsertInput) { return whenNotAborted(() => openLoopsImpl.upsertOpenLoop(this.autocommitSql, loop)); }
-  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return whenNotAborted(() => openLoopsImpl.closeOpenLoop(this.autocommitSql, sourceId, id, status, closedBy)); }
-  listOpenLoops(opts?: OpenLoopListOpts) { return whenNotAborted(() => openLoopsImpl.listOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped'), opts)); }
-  readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return whenNotAborted(() => openLoopsImpl.readEntityOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped'), slug, sourceId, limit)); }
+  upsertOpenLoop(loop: OpenLoopUpsertInput) { return whenNotAborted(() => openLoopsImpl.upsertOpenLoop(refuseAborted(this.autocommitSql), loop)); }
+  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return whenNotAborted(() => openLoopsImpl.closeOpenLoop(refuseAborted(this.autocommitSql), sourceId, id, status, closedBy)); }
+  listOpenLoops(opts?: OpenLoopListOpts) { return whenNotAborted(() => openLoopsImpl.listOpenLoops(refuseAborted(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped')), opts)); }
+  readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return whenNotAborted(() => openLoopsImpl.readEntityOpenLoops(refuseAborted(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped')), slug, sourceId, limit)); }
   // Decide proposals (group C; engine-sql/decide-proposals.ts).
   async insertDecideProposal(p: decideProposals.NewProposal) { return decideProposals.insertDecideProposal(this, p); }
   async getDecideProposal(id: number, lock?: boolean) { return decideProposals.getDecideProposal(this, id, lock); }

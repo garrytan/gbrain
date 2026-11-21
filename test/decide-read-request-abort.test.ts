@@ -130,3 +130,29 @@ for (const [member, call] of Object.entries(MOVED_CALLS)) {
     expect(fake.statements().length).toBe(0);
   });
 }
+
+/**
+ * A request that aborts while a member's first statement is running must not send the member's next statement.
+ * `executeRaw` refused every statement of an aborted request, so the two members that run a second statement
+ * (a count, then a sample; an upsert, then the row lookup) check before each one.
+ */
+test('countSegmentedTimelinePages sends no sample statement when the request aborts during the count', async () => {
+  const controller = new AbortController();
+  const fake = makeFakeSql(() => { controller.abort(new Error('client went away')); return [{ pages: 1, rows: 1 }]; });
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  const error = await withRequestSignal(controller.signal, () => (engine as unknown as BrainEngine).countSegmentedTimelinePages(['default'], 10)).then(() => null, (e: unknown) => e);
+  expect((error as Error | null)?.name).toBe('AbortError');
+  expect(fake.statements().length).toBe(1);
+});
+
+test('upsertOpenLoop sends no row lookup when the request aborts during the insert', async () => {
+  const controller = new AbortController();
+  const fake = makeFakeSql(() => { controller.abort(new Error('client went away')); return []; });
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  const loop = { sourceId: 'default', dedupKey: 'thread:a', loopType: 'unanswered_inbound', summary: 's', evidence: [], detector: 'deterministic_thread' } as never;
+  const error = await withRequestSignal(controller.signal, () => (engine as unknown as BrainEngine).upsertOpenLoop(loop)).then(() => null, (e: unknown) => e);
+  expect((error as Error | null)?.name).toBe('AbortError');
+  expect(fake.statements().length).toBe(1);
+});

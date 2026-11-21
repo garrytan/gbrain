@@ -6,7 +6,8 @@
  *
  * Times sent to the store: ISO text ending in `Z` with at most 6 fractional digits passes as written. An ISO time
  * with an offset (`+02:00`) and at most 3 fractional digits is rewritten through `Date#toISOString`, unless its date
- * names a day the calendar lacks (`02-30`): that goes as written and the store refuses it, as Postgres does. Any other
+ * names a day the calendar lacks (`02-30`): that goes as written and the store refuses it, as PGLite does (Postgres,
+ * through postgres.js, reads it as the next valid day: TODOS.md). Any other
  * spelling (a bare date, a time with no zone) refuses with `invalid_argument`, where Postgres would read it in the
  * session time zone (rust/docs/store/facts.md).
  */
