@@ -720,6 +720,17 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the rollup row of `token_name`. `false` when there
+/// is none.
+pub(crate) fn remove_rollup(tx: &mut dyn KvWrite, token_name: &str) -> Result<bool> {
+    let key = rollup_key(token_name);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

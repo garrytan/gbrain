@@ -37,6 +37,7 @@ mod stamp;
 
 mod eligibility;
 mod fingerprint;
+pub(crate) use fingerprint::fact_fingerprint_v1;
 pub mod proposals;
 pub mod tier_reads;
 pub mod valid_time;

@@ -267,6 +267,16 @@ pub(crate) fn delete_link(tx: &mut dyn KvWrite, record: &LinkRecord) -> Result<(
     Ok(())
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the link `id` from page `from` with its index
+/// keys. `false` when there is no such link.
+pub(crate) fn remove_link(tx: &mut dyn KvWrite, from: u64, id: u64) -> Result<bool> {
+    let Some(record) = read_link(&*tx, from, id)? else {
+        return Ok(false);
+    };
+    delete_link(tx, &record)?;
+    Ok(true)
+}
+
 fn corrupt(what: &str) -> StoreError {
     StoreError::new(
         crate::error::STORE_CORRUPT,

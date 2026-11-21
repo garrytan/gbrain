@@ -91,6 +91,12 @@ pub(crate) fn seed_page_signature(
     tx.put(&signature_key(page_id), signature.as_bytes())
 }
 
+/// The shadow follow (`seed/follow.rs`): removes a page's `embedding_signature` and nothing else:
+/// the vectors of its chunks are the chunks' own.
+pub(crate) fn clear_page_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&signature_key(page_id))
+}
+
 fn take_state_key(take_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, TAKE_STATE];
     key.extend_from_slice(&take_id.to_be_bytes());
