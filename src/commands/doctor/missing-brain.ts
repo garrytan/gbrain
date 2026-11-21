@@ -44,7 +44,10 @@ function missingState(brainId: string): MissingState | null {
     return mount && dir && connectWouldCreate(dir) ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
   }
   const state = probeStatus();
-  if (state && state.reason !== 'missing_brain') return null; // lock held, graduated, repair failed, no config: doctor's own diagnostics own those
+  // Graduated, repair failed, no config: doctor's own diagnostics own those, and none of them connects. A lock reported held
+  // still gets the folder test: an unreadable leftover lock reads as held while no process holds it, and the connect would
+  // take that lock and build an empty brain in a folder with no PG_VERSION.
+  if (state && state.reason !== 'missing_brain' && state.reason !== 'lock_held') return null;
   const cfg = loadConfig();
   const dir = cfg && localFolder(cfg.engine, cfg.database_path, gbrainPath('brain.pglite'));
   return dir && connectWouldCreate(dir) ? { config_path: configPath(), brain_path: dir } : null;
