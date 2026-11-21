@@ -239,6 +239,43 @@ describe('doctor links_link_source_check (#4613)', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('Could not check');
   });
+
+  test('PGLite prints the same whole check as before the catalog branch', async () => {
+    expect(await linkSourceCheckConstraintCheck(engine)).toEqual({
+      name: 'links_link_source_check', status: 'ok', message: 'links_link_source_check has the v114 kebab-case gate',
+    });
+  });
+
+  // An engine that answers catalog probes from its capabilities (no raw_sql: the Rust engine) and withholds `links`
+  // has a links store it cannot fully serve. The check reports the refusal as health unknown, never "no links table
+  // yet" ok, and runs no SQL.
+  test('a catalog engine without the links capability: health unknown (warn), never a no-table ok', async () => {
+    const calls: string[] = [];
+    const catalog = {
+      capabilities: new Set(['pages', 'schema']),
+      executeRaw: async (sql: string) => { calls.push(sql); return []; },
+    } as unknown as PGLiteEngine;
+    expect({ check: await linkSourceCheckConstraintCheck(catalog), calls }).toEqual({
+      check: {
+        name: 'links_link_source_check', status: 'warn',
+        message: "Health unknown: This brain's engine does not support links_link_source_check yet (it needs the links capability), so nothing ran.",
+        details: { health: 'unknown', reason: 'engine_capability_missing', capability: 'links' },
+      },
+      calls: [],
+    });
+  });
+
+  test('a catalog engine that reports links: the v114 gate answer, no SQL', async () => {
+    const calls: string[] = [];
+    const catalog = {
+      capabilities: new Set(['links']),
+      executeRaw: async (sql: string) => { calls.push(sql); return []; },
+    } as unknown as PGLiteEngine;
+    expect({ check: await linkSourceCheckConstraintCheck(catalog), calls }).toEqual({
+      check: { name: 'links_link_source_check', status: 'ok', message: 'links_link_source_check has the v114 kebab-case gate' },
+      calls: [],
+    });
+  });
 });
 
 describe('regex literal drift guard (#4613)', () => {

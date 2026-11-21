@@ -27,13 +27,16 @@
  *
  * Links table on Rust: the Rust engine answers a catalog probe for the links table from the `links` capability
  * (store-members/catalog.ts TABLE_CAPABILITY), and reports a capability only when every member of the family is served.
- * The edge-proposal members (rust-engine/main 0895649aab) still refuse, so `links` is not reported and
- * links_link_source_check prints "no links table yet" (status ok) on Rust, though the links store holds links and
- * refuses a non-kebab link_source on every write. The (a) case compares name, status and the written links on all arms
- * and pins the message per arm; when the family is served again the Rust message changes and the case names the pin.
+ * The edge-proposal members (rust-engine/main 0895649aab) still refuse, so `links` is not reported. A withheld
+ * capability is not a missing table, so links_link_source_check reports the capability refusal as health unknown (warn)
+ * on Rust, never "no links table yet" ok, though the links store holds links and refuses a non-kebab link_source on
+ * every write. The (a) case compares the check name and the written links on all arms and pins the whole check per arm;
+ * lane 10 serves the edge-proposal members, and when the family is reported again the Rust check changes and the case
+ * names the pin.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { Check } from '../../src/commands/doctor.ts';
 import { parityArms } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -57,12 +60,18 @@ const { parityTest } = parityArms(testBackends());
 const REPAIR_CORE_STOP_LIFTED = 'lane 10 rust-engine/repair-rust 8982a86c49 typed readOpCheckpointRecord/writeOpCheckpointRecord/readCounterRows: '
   + 'remove this pin and compare the printed output on 3 arms';
 
-/** Read when a links_link_source_check message changes on Rust: the links family is reported again, so drop the pin. */
-const LINKS_CAPABILITY_LIFTED = 'the Rust links capability is withheld while the edge-proposal members of rust-engine/main 0895649aab refuse: when they are served, the Rust message becomes the v114 one; remove linkSourceGateMessage and compare the whole check on 3 arms';
+/** Read when the links_link_source_check check changes on Rust: the links family is reported again, so drop the pin. */
+const LINKS_CAPABILITY_LIFTED = 'the Rust links capability is withheld while the edge-proposal members of rust-engine/main 0895649aab refuse (lane 10 serves them): when they are served, the Rust check becomes the v114 ok one; remove linkSourceGateCheck and compare the whole check on 3 arms';
 
-/** The links_link_source_check message each arm prints on a fresh brain (the Rust one: see "Links table on Rust" above). */
-function linkSourceGateMessage(backend: string): string {
-  return backend === 'rust' ? 'no links table yet' : 'links_link_source_check has the v114 kebab-case gate';
+/** The whole links_link_source_check check each arm prints on a fresh brain (the Rust one: see "Links table on Rust" above). */
+function linkSourceGateCheck(backend: string): Check {
+  return backend === 'rust'
+    ? {
+        name: 'links_link_source_check', status: 'warn',
+        message: "Health unknown: This brain's engine does not support links_link_source_check yet (it needs the links capability), so nothing ran.",
+        details: { health: 'unknown', reason: 'engine_capability_missing', capability: 'links' },
+      }
+    : { name: 'links_link_source_check', status: 'ok', message: 'links_link_source_check has the v114 kebab-case gate' };
 }
 
 const OTHER = 'other-source';
@@ -244,9 +253,9 @@ describe('doctor catalog checks', () => {
       await engine.addLink('concepts/from', 'notes/to', '', 'synthesized_from', 'concept-provenance');
       const links = (await engine.getLinks('concepts/from')).map(l => ({ to: l.to_slug, source: l.link_source }));
       const check = await linkSourceCheckConstraintCheck(engine);
-      expect({ backend, message: check.message, lifted: LINKS_CAPABILITY_LIFTED })
-        .toEqual({ backend, message: linkSourceGateMessage(backend), lifted: LINKS_CAPABILITY_LIFTED });
-      return { check: { name: check.name, status: check.status }, links };
+      expect({ backend, check, lifted: LINKS_CAPABILITY_LIFTED })
+        .toEqual({ backend, check: linkSourceGateCheck(backend), lifted: LINKS_CAPABILITY_LIFTED });
+      return { check: check.name, links };
     },
   );
 
@@ -261,7 +270,7 @@ describe('doctor catalog checks', () => {
         const refused = await engine.addLink('concepts/from', 'notes/to', '', 'cites', 'Not Kebab').then(() => null, (e: Error) => e.message);
         expect(refused).not.toBeNull();
         expect({ check: await linkSourceCheckConstraintCheck(engine), lifted: LINKS_CAPABILITY_LIFTED })
-          .toEqual({ check: { name: 'links_link_source_check', status: 'ok', message: linkSourceGateMessage(backend) }, lifted: LINKS_CAPABILITY_LIFTED });
+          .toEqual({ check: linkSourceGateCheck(backend), lifted: LINKS_CAPABILITY_LIFTED });
         return 'pinned';
       }
       const [row] = await engine.executeRaw<{ def: string }>(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = to_regclass('links') AND conname = 'links_link_source_check'`);

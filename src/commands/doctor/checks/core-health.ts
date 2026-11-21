@@ -19,6 +19,7 @@ import { checkError } from '../check-fix.ts';
 import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 import { answersFromCatalog, catalogSkipCheck, reportsCapability } from '../../../core/rust-engine/store-members/catalog.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { capabilityMissing } from '../../../core/rust-engine/errors.ts';
 
 /**
  * Doctor check: takes.weight grid integrity (v0.32 — EXP-2).
@@ -208,9 +209,17 @@ export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Chec
  * can't see it. Keyed off pg_constraint via checkLinkSourceCheck. Severity
  * follows what writes do: only a wrong definition rejects them (fail); an
  * absent gate or a NOT VALID one still accepts them (warn).
+ *
+ * An engine that answers catalog probes from its capabilities (the Rust engine) and does not report `links` has a
+ * links store it cannot fully serve, not a missing table: the check reports the capability refusal as health unknown
+ * (warn), never "no links table yet". PGLite and Postgres report a capability set with `raw_sql`, so they never take
+ * that branch.
  */
 export async function linkSourceCheckConstraintCheck(engine: BrainEngine): Promise<Check> {
   const name = 'links_link_source_check';
+  if (answersFromCatalog(engine) && !reportsCapability(engine, 'links')) {
+    return capabilityUnknownCheck(name, capabilityMissing('links', name));
+  }
   try {
     const s = await checkLinkSourceCheck(engine);
     if (!s.tablePresent || !s.needsRepair) {
