@@ -350,7 +350,7 @@ src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
 src/core/chronicle/ledger.ts	execute_raw	11	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
-src/core/chronicle/publish.ts	execute_raw	4
+src/core/chronicle/publish.ts	execute_raw	3
 src/core/chunkers/symbol-resolver.ts	execute_raw	8
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3

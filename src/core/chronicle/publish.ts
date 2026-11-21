@@ -51,7 +51,7 @@ import { assessTimelineForGate, type WriteGateAssessment } from '../write-gate.t
 import { recordWriteGateReceipt } from '../write-gate-store.ts';
 import type { InputState, ProposedItem } from '../generations/contract.ts';
 import { originGone, type EmptySourceProof } from '../generations/proofs.ts';
-import { pageIdentityHash, type PageIdentityInput } from '../generations/adapters/page.ts';
+import { pageIdentityHash, readPageRows } from '../generations/adapters/page.ts';
 import { publishGeneration, type PublishOutcome, type PublishRequest } from '../generations/publish.ts';
 import { planManagedGeneration, recordActivation, type ActivationIntent } from '../generations/managed.ts';
 import { CHRONICLE_EVENT_KIND, CHRONICLE_RETIRED_BY, chronicleEventAdapter, chronicleEventItem, chronicleOwnerKey, depthInputPin, depthPinBroken,
@@ -185,18 +185,15 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
  * The live content hash of each proposed event this attempt wrote (what the chronicle ledger records as the extractor's,
  * and so owns). An event whose live page no longer reads as the content proposed here is left out: an operator edited it
  * after this attempt wrote it (before a failed activation, say), and owning that edit's hash would let a later
- * generation overwrite it. One read gives both the content and its hash, so an edit between two reads is never owned.
+ * generation overwrite it. One read gives both the content and its hash, so an edit between two reads is never owned;
+ * a segmented page is never owned, because its body is not inline to compare.
  */
 async function writtenEvents(engine: BrainEngine, sourceId: string, items: readonly ProposedItem[]): Promise<Array<{ slug: string; hash: string }>> {
   if (!items.length) return [];
-  const rows = await engine.executeRaw<PageIdentityInput & { slug: string; content_hash: string | null; tags: string[] | null }>(
-    `SELECT p.slug, p.content_hash, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter,
-            COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-       FROM pages p WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL`, [sourceId, items.map(item => item.key)]);
-  const live = new Map(rows.map(row => [row.slug, row]));
+  const live = new Map((await readPageRows(engine, sourceId, 'p.deleted_at IS NULL AND p.slug = ANY($2::text[])', [items.map(item => item.key)])).map(row => [row.slug, row]));
   return items.flatMap(item => {
     const row = live.get(item.key);
-    return row?.content_hash && pageIdentityHash({ ...row, tags: row.tags ?? [] }) === item.identityHash ? [{ slug: item.key, hash: String(row.content_hash) }] : [];
+    return row && !row.segmented && row.content_hash && pageIdentityHash(row) === item.identityHash ? [{ slug: item.key, hash: String(row.content_hash) }] : [];
   });
 }
 
