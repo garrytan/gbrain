@@ -64,8 +64,9 @@ async function readsOf(engine: BrainEngine, slugs: string[], pageIds: number[]):
   }
   // Deleting a park or an owed-purge row that is not there removes nothing: a count above zero is a write that ran.
   out.parks = [await engine.deleteOriginHoldRows('derived-origin-park', pageIds), await engine.deleteOriginHoldRows('owed-page-purge', pageIds)];
-  out.journal = { ceiling: await engine.readJournalCeiling(SRC), counters: (await engine.readCounterRows(['brain'])).map(({ terminal_bytes: _compacted, ...row }) => row) };
-  // terminal_bytes is left out: the resident consumer compacts the finished setup requests in the background, which has nothing to do with the purge.
+  // Every counter, terminal_bytes included: each case stops the resident consumer before the first read, so nothing
+  // compacts in the background and any counter that moves is a write by the refused purge.
+  out.journal = { ceiling: await engine.readJournalCeiling(SRC), counters: await engine.readCounterRows(['brain']) };
   return out;
 }
 
@@ -91,6 +92,8 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     await engine.addLink('notes/keeper', 'notes/doomed', 'the keeper cites the doomed page', 'mentions');
     const slugs = ['notes/doomed', 'notes/doomed-digest', 'notes/keeper'];
     const ids = [Number((await engine.getPage('notes/doomed', { sourceId: SRC }) as unknown as R).id), Number((await engine.getPage('notes/doomed-digest', { sourceId: SRC }) as unknown as R).id)];
+    // Stop the resident consumer the setup writes started, so no background compaction moves a counter during the case.
+    await disposePersistenceConsumer(engine);
     const before = await readsOf(engine, slugs, ids);
     expect((before['notes/doomed'] as R).page).toMatchObject({ deleted: false });
     expect((before['notes/doomed'] as R).versions).toBe(1);
