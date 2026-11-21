@@ -442,6 +442,29 @@ for (const kind of testBackends()) {
       await expect(f.after.hasStoredVectors('pages' as never)).rejects.toThrow('is not an embedding store');
     });
 
+    // -------- the same four reads, where a row without a vector must not count and a vector in one store must count only for it
+    test('a store holds a vector only through a row that has one: null-vector rows count for no store', async () => {
+      const pair = await makePair(kind, closers);
+      const fx: Fixture = { before: pair[0]!, after: pair[1]!, backend: kind };
+      const vec = `[${['1', ...new Array(1535).fill('0')].join(',')}]`;
+      for (const e of pair) {
+        await e.putPage('notes/s1', { type: 'note', title: 'S1', compiled_truth: 'store probe' });
+        await e.upsertChunks('notes/s1', [chunk(0, 's zero')]);
+        await raw(e, `INSERT INTO facts (fact, source, source_id) VALUES ('f', 'fixture', 'default')`);
+        await raw(e, `INSERT INTO takes (page_id, row_num, claim, kind, holder) SELECT id, 1, 'c', 'take', 'h' FROM pages LIMIT 1`);
+        await raw(e, `INSERT INTO query_cache (id, query_text) VALUES ('q1', 'q')`);
+      }
+      const probe = async (): Promise<unknown> => await site(fx, ['src/commands/embeddings.ts:96', 'src/commands/init.ts:1072', 'src/commands/doctor/checks/embedding-plane.ts:25', 'src/commands/init-embedding-plane.ts:24'],
+        async e => { const out: Record<string, boolean> = {}; for (const t of PRIMARY_EMBEDDING_TABLES) out[t] = !!(await raw(e, M.storedVectorsSql(t)))[0]?.present; return out; },
+        async e => { const out: Record<string, boolean> = {}; for (const t of PRIMARY_EMBEDDING_TABLES) out[t] = await e.hasStoredVectors(t); return out; }, { nonEmpty: false });
+      expect(await probe()).toEqual({ content_chunks: false, facts: false, query_cache: false, takes: false });
+      for (const table of PRIMARY_EMBEDDING_TABLES) {
+        for (const e of pair) await raw(e, `UPDATE ${table} SET embedding = $1::vector`, [vec]);
+        expect(await probe()).toEqual(Object.fromEntries(PRIMARY_EMBEDDING_TABLES.map(t => [t, t === table])));
+        for (const e of pair) await raw(e, `UPDATE ${table} SET embedding = NULL`);
+      }
+    }, 120_000);
+
     // -------- data-integrity.ts:245
     test('chunks and multimodal vectors per source, every generation and every page counted', async () => {
       const coverage = await site(f, 'src/commands/doctor/checks/data-integrity.ts:245',
