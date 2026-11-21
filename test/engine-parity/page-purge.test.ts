@@ -48,18 +48,18 @@ afterEach(async () => {
 
 type R = Record<string, unknown>;
 
-/** What the Rust arm still cannot serve on the purge path, in the order the check names them: member or site, and owner. */
+/** What the Rust arm still cannot serve on the purge path, in the order the check names them: member or site, owner and due date. */
 const RUST_KNOWN_STOP = [
-  { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 14 (doctor-checks-3 8d4d809039)' },
-  { name: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: 'lane 10 (repair-rust b5945d814f)' },
-  { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 5 (bound-write-rust 075a30ef45)' },
-  { name: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: 'lane 4 (61b18fbbc)' },
-  { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)' },
-  { name: 'listFactContextsForPurgeProbe', owner: 'lane 4 (rust-5a 90e7bea933)' },
-  { name: 'listPageProseHits', owner: 'lane 4 (rust-5a 90e7bea933)' },
-  { name: 'readPurgeReceiptSourcePath', owner: 'lane 4 (rust-5a 90e7bea933)' },
-  { name: 'readDeletePageRequest', owner: 'lane 4 (rust-5a 90e7bea933)' },
-  { name: 'listPurgeEffects', owner: 'lane 4 (rust-5a 90e7bea933)' },
+  { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 14 (doctor-checks-3 8d4d809039)', due: '5 PM PST Nov 25' },
+  { name: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: 'lane 10 (repair-rust b5945d814f)', due: '5 PM PST Nov 25' },
+  { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 5 (bound-write-rust 075a30ef45)', due: '5 PM PST Nov 25' },
+  { name: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: 'lane 4 (61b18fbbc)', due: '5 PM PST Nov 25' },
+  { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)', due: '5 PM PST Nov 24' },
+  { name: 'listFactContextsForPurgeProbe', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 24' },
+  { name: 'listPageProseHits', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
+  { name: 'readPurgeReceiptSourcePath', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
+  { name: 'readDeletePageRequest', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
+  { name: 'listPurgeEffects', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
 ];
 
 /** `engine`, keeping every capability refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
@@ -84,11 +84,12 @@ function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine 
   });
 }
 
-/** The stop a purge refusal names: the entry and its owner, read off the refusal text. */
-function stopOf(error: unknown): { name: string; owner: string } | null {
+/** The stop a purge refusal names: the entry, read off the message, and its owner and due date, read off the detail. */
+function stopOf(error: unknown): { name: string; owner: string; due: string } | null {
   const e = error as { message?: string; detail?: string };
-  const found = /which needs (.+?) \(owner (.+?): /.exec(`${e.message ?? ''} ${e.detail ?? ''}`);
-  return found ? { name: found[1]!, owner: found[2]! } : null;
+  const name = /which needs (.+?): /.exec(e.message ?? '');
+  const meta = /owner="([^"]+)" due="([^"]+)"/.exec(e.detail ?? '');
+  return name && meta ? { name: name[1]!, owner: meta[1]!, due: meta[2]! } : null;
 }
 
 function localCtx(engine: BrainEngine): OperationContext {
@@ -147,7 +148,7 @@ describe('engine parity: page purge', () => {
     const r = backend === 'rust'
       ? await operationsByName.delete_page.handler(localCtx(keepingRefusals(engine, refusals)), purgeArgs).catch(async (error: unknown) => {
         // The pre-write check refuses once, naming the first stop: no engine call refused before it, and none after.
-        expect((await purgePathStops(engine)).map(stop => ({ name: stop.name, owner: stop.owner }))).toEqual(RUST_KNOWN_STOP);
+        expect((await purgePathStops(engine)).map(stop => ({ name: stop.name, owner: stop.owner, due: (stop as { due?: string }).due }))).toEqual(RUST_KNOWN_STOP);
         expect([...refusals, error].map(stopOf)).toEqual([RUST_KNOWN_STOP[0]!]);
         // Nothing was written: the page, its versions, aliases and links, the other page and the tombstones read as before.
         expect({ doomed: await rowsOf(engine, 'notes/doomed'), keeper: await rowsOf(engine, 'notes/keeper'), tombstones: await engine.countPagePurgeTombstones(SRC, 'notes/doomed') })

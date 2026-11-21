@@ -29,7 +29,7 @@ import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
-import { PURGE_PATH, purgeEntryName, purgePathStops, type PurgePathEntry } from '../src/core/persistence/purge-path-members.ts';
+import { PURGE_OWNERS, PURGE_PATH, purgeEntryName, purgePathStops, requirePurgePathServed, type PurgePathEntry } from '../src/core/persistence/purge-path-members.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { beliefBrain, beliefPage } from './helpers/belief-ledger.ts';
@@ -236,6 +236,14 @@ describe('the purge path calls only what the list names', () => {
       .filter(entry => entry.entry !== 'retention' && ('site' in entry ? entry.stop : entry.refuses || rustMemberCapability(entry.member) !== null))
       .map(purgeEntryName));
     expect((await purgePathStops({ kind: 'rust' }, 'retention')).length).toBeGreaterThan(stops.length);
+  });
+
+  test('every stop another lane owns names its due date, in the list and in the refusal detail', async () => {
+    const stops = (await purgePathStops({ kind: 'rust' })) as Array<{ name: string; owner: string; due?: string }>;
+    expect(stops.filter(stop => stop.owner !== PURGE_OWNERS.ours && !stop.due).map(stop => stop.name)).toEqual([]);
+    const error = await requirePurgePathServed({ kind: 'rust' }).then(() => null, (e: unknown) => e as { message: string; detail: string });
+    expect(error?.message).toContain(`which needs ${stops[0]!.name}: `);
+    expect(error?.detail).toContain(`owner="${stops[0]!.owner}" due="${stops[0]!.due}"`);
   });
 
   afterAll(() => { members.clear(); sites.clear(); });
