@@ -186,6 +186,7 @@ import * as pagePurgeImpl from './engine-sql/page-purge.ts';
 import * as pagePurgeSweepImpl from './engine-sql/page-purge-sweep.ts';
 import * as pagePurgeJournalImpl from './engine-sql/page-purge-journal.ts';
 import * as purgeStoresImpl from './engine-sql/purge-stores.ts';
+import * as purgeReceiptImpl from './engine-sql/purge-receipt.ts';
 import * as originHoldsImpl from './engine-sql/origin-holds.ts';
 import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import * as headBlockerImpl from './engine-sql/head-blocker.ts';
@@ -1794,6 +1795,8 @@ export class PGLiteEngine implements BrainEngine {
   deletePurgedFeedbackRows(sourceId: string, slugs: readonly string[]) { return purgeStoresImpl.deletePurgedFeedbackRows(this, sourceId, slugs); }
   deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]) { return purgeStoresImpl.deletePurgedNameStoreRows(this, sourceId, slugs); }
   clearQueryCache() { return purgeStoresImpl.clearQueryCache(this); }
+  relationExists(table: string) { return purgeReceiptImpl.relationExists(this, table); }
+  readDerivationPurgeState(requestId: string) { return purgeReceiptImpl.readDerivationPurgeState(this, requestId); }
   listPurgeOrigins(ids: readonly number[], recheckParked: boolean) { return originHoldsImpl.listPurgeOrigins(this, ids, recheckParked); }
   upsertDerivedOriginPark(pageId: number, park: DerivedOriginPark) { return originHoldsImpl.upsertDerivedOriginPark(this, pageId, park); }
   recordOwedPurgeRows(pageId: number, requestId: string) { return originHoldsImpl.recordOwedPurgeRows(this, pageId, requestId); }

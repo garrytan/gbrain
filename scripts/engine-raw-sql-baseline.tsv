@@ -498,7 +498,7 @@ src/core/page-body/body-tiling.ts	execute_raw	1
 src/core/page-body/ingest.ts	execute_raw	1
 src/core/page-body/projection.ts	execute_raw	3
 src/core/page-body/rechunk.ts	execute_raw	7
-src/core/page-body/segment-derive.ts	execute_raw	30
+src/core/page-body/segment-derive.ts	execute_raw	29
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	8
@@ -645,7 +645,7 @@ src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's
 src/core/persistence/purge-parks.ts	execute_raw	6
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
-src/core/persistence/rebuildable-cache.ts	execute_raw	2
+src/core/persistence/rebuildable-cache.ts	execute_raw	1
 src/core/persistence/reconcile-audit.ts	execute_raw	2
 src/core/persistence/reconcile-backup.ts	execute_raw	4
 src/core/persistence/reconcile-prepare.ts	execute_raw	1

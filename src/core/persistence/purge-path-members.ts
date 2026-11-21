@@ -128,7 +128,6 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // sweepPurgedPage: the generation-ledger scrub.
   { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, stop: 'the generation-ledger scrub runs through raw SQL' },
   // verifyPagePurge: the receipt.
-  { site: 'relationExists (persistence/rebuildable-cache.ts)', owner: receipts, stop: 'the receipt probes whether a rebuildable cache relation exists through raw SQL' },
   { member: 'countPurgeProbe', owner: receipts, refuses: 'the store refuses the receipt probes it does not serve (slug_key, page_rows, fact_refs, trust_proposals, page_requests)' },
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
@@ -137,7 +136,6 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   { member: 'readPurgeReceiptSourcePath', owner: receiptReads, stop: 'the receipt source path read is not served' },
   { member: 'readDeletePageRequest', owner: receiptReads, stop: 'the purge request read of the receipt is not served' },
   { member: 'listPurgeEffects', owner: receiptReads, stop: 'the purge effect read of the completion is not served' },
-  { site: 'derivationPurgeState (page-body/segment-derive.ts)', owner: receipts, stop: 'the derivation sweep state of the completion runs through raw SQL' },
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the purge itself
@@ -145,7 +143,7 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts',
     'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugStoreRows', 'deleteOriginHoldRows', 'insertPageFactPurges',
     'insertTakePurge', 'upsertPagePurges', 'countPageCascadeRows', 'countPageManifestRows', 'countPagePurgeTombstones', 'setPurgeProbeTimeout',
-    'bumpSourcePurgeEpoch', 'clearQueryCache', 'hasBeliefEvents',
+    'bumpSourcePurgeEpoch', 'clearQueryCache', 'hasBeliefEvents', 'relationExists', 'readDerivationPurgeState',
     // what the purge reads of the page
     'listDerivedRows', 'listPageChangeReasons', 'listPageGitEffectsForStrip', 'listPageMirrorFacts', 'listPageMirrorTakeHashes',
     'listPageSecretOccurrences', 'listPageSegmentShas', 'listPageTimelineReceipts', 'listPageVersionBodiesForPurge', 'listPageVersionSourcePaths',

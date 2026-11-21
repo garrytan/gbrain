@@ -73,6 +73,7 @@ import * as pagePurge from './page-purge.ts';
 import * as pagePurgeHolds from './page-purge-holds.ts';
 import * as pagePurgeJournal from './page-purge-journal.ts';
 import * as pagePurgeScrubs from './page-purge-scrubs.ts';
+import * as purgeReceipt from './purge-receipt.ts';
 import * as pagePurgeSweep from './page-purge-sweep.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as withdrawalCommit from './withdrawal-commit.ts';
@@ -158,6 +159,8 @@ export const STORE_MEMBERS = {
   // The journal statements of a page purge's sweep and intent redaction (rust/docs/store/persistence.md).
   ...pagePurgeJournal,
   ...pagePurgeScrubs,
+  // The reads a page purge's receipt and verification make on the brain's own tables (rust/docs/store/pages.md).
+  ...purgeReceipt,
   // The parks and owed-purge records of a derived-origin purge (rust/docs/store/label_door.md).
   ...pagePurgeHolds,
   ...memoryMutationReads,

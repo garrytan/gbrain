@@ -442,11 +442,9 @@ export type DerivationPendingReason = 'scope_lock_busy';
 export type DerivationStallReason = 'statement_timeout' | 'paid_row_unreadable';
 
 /** The state of a purge request's derivation sweep (with why it stalled, or why a pending one has not ended), or null once it is verified and its record is gone. */
-export async function derivationPurgeState(engine: Pick<BrainEngine, 'executeRaw'>, requestId: string):
+export function derivationPurgeState(engine: Pick<BrainEngine, 'readDerivationPurgeState'>, requestId: string):
   Promise<{ state: DerivationSweepState; reason: DerivationStallReason | DerivationPendingReason | null } | null> {
-  const [row] = await engine.executeRaw<{ stalled: boolean; reason: DerivationStallReason | null; pending: DerivationPendingReason | null }>(
-    'SELECT stalled_at IS NOT NULL AS stalled, stalled_reason AS reason, pending_reason AS pending FROM page_segment_derivation_purges WHERE request_id=$1::uuid', [requestId]);
-  return row ? { state: row.stalled ? 'stalled' : 'pending', reason: row.stalled ? row.reason ?? 'statement_timeout' : row.pending ?? null } : null;
+  return engine.readDerivationPurgeState(requestId);
 }
 
 /**

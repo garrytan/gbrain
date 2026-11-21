@@ -130,7 +130,7 @@ test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/publication-source-lock.test.ts	4	0
 test/engine-parity/purge-dry-run.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	13	0
-test/engine-parity/purge-receipt-members.test.ts	0	2
+test/engine-parity/purge-receipt-members.test.ts	3	0
 test/engine-parity/purge-slug-stores.test.ts	0	2
 test/engine-parity/purge-verify.test.ts	0	3
 test/engine-parity/raw-sql.test.ts	0	4

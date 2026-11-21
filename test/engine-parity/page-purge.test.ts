@@ -20,7 +20,7 @@
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
  *      listPageProseHits, readPurgeReceiptSourcePath,
  *      readDeletePageRequest, listPurgeEffects       lane 4, rust-engine/rust-5a 90e7bea933
- *      the receipt probes and sweep state            lane 13 step 3 (its commit lifts them)
+ *      the receipt probes                            lane 13 step 3 (its commit lifts them)
  *      the receipt's recorded-value probe            lane 3, rust-engine/rust-belief-purge e211982aba (once merged)
  *      the receipt's fact-context probe              lane 4
  *  - Why existing coverage misses it: delete-page.test.ts pins only the refusal on Rust; the page purge suites
@@ -55,7 +55,6 @@ const RUST_KNOWN_STOP = [
   { name: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: 'lane 10 (repair-rust b5945d814f)' },
   { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 5 (bound-write-rust 075a30ef45)' },
   { name: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: 'lane 4 (61b18fbbc)' },
-  { name: 'relationExists (persistence/rebuildable-cache.ts)', owner: 'lane 13 step 3' },
   { name: 'countPurgeProbe', owner: 'lane 13 step 3' },
   { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)' },
   { name: 'listFactContextsForPurgeProbe', owner: 'lane 4' },
@@ -63,7 +62,6 @@ const RUST_KNOWN_STOP = [
   { name: 'readPurgeReceiptSourcePath', owner: 'lane 4 (rust-5a 90e7bea933)' },
   { name: 'readDeletePageRequest', owner: 'lane 4 (rust-5a 90e7bea933)' },
   { name: 'listPurgeEffects', owner: 'lane 4 (rust-5a 90e7bea933)' },
-  { name: 'derivationPurgeState (page-body/segment-derive.ts)', owner: 'lane 13 step 3' },
 ];
 
 /** `engine`, keeping every capability refusal a call on it (or on a transaction handle it opens) raised, caught or not. */

@@ -627,6 +627,9 @@ export const RUST_ENGINE_MEMBERS = {
   deletePurgedFeedbackRows: 'eval_capture',
   deletePurgedNameStoreRows: 'pages',
   clearQueryCache: 'pages',
+  // The reads a page purge's receipt and verification make on the brain's own tables (engine-sql/purge-receipt.ts).
+  relationExists: 'pages',
+  readDerivationPurgeState: 'pages',
   // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).
   listPurgeOrigins: 'pages',
   upsertDerivedOriginPark: 'persistence_journal',

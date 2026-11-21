@@ -30,7 +30,7 @@ const NO_REQUEST = '00000000-0000-4000-8000-000000000000';
 
 describe('engine parity: the receipt reads of a page purge', () => {
   parityTest('relationExists answers true for the brain\'s tables and views, false for a name it has none of, and reads the schema-qualified and capitalised spellings the same', {
-    methods: ['executeRaw'],
+    methods: ['relationExists'],
   }, async (engine) => {
     const names = ['query_cache', 'pages', 'page_links', 'persistence_requests', 'public.pages', 'PAGES', 'no_such_table', 'public.no_such_table', ''];
     const answers: Record<string, boolean> = {};
@@ -41,10 +41,26 @@ describe('engine parity: the receipt reads of a page purge', () => {
   });
 
   parityTest('derivationPurgeState answers null for a request with no recorded sweep', {
-    methods: ['executeRaw'],
+    methods: ['readDerivationPurgeState'],
   }, async (engine) => {
     const none = await derivationPurgeState(engine, NO_REQUEST);
     expect(none).toBeNull();
     return { none };
+  });
+
+  parityTest('the members answer directly: relationExists for a table, a view and an unknown name, readDerivationPurgeState for an unknown request', {
+    methods: ['relationExists', 'readDerivationPurgeState'],
+  }, async (engine) => {
+    const answers = {
+      table: await engine.relationExists('pages'),
+      view: await engine.relationExists('page_links'),
+      cache: await engine.relationExists('query_cache'),
+      unknown: await engine.relationExists('no_such_table'),
+      schema: await engine.relationExists('no_such_schema.pages'),
+      sweep: await engine.readDerivationPurgeState(NO_REQUEST),
+    };
+    expect(answers.table).toBe(true);
+    expect(answers.unknown).toBe(false);
+    return answers;
   });
 });

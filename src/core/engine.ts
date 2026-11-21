@@ -108,6 +108,7 @@ import type * as PagePurgeSql from './engine-sql/page-purge.ts';
 import type * as PagePurgeSweepSql from './engine-sql/page-purge-sweep.ts';
 import type * as PagePurgeJournalSql from './engine-sql/page-purge-journal.ts';
 import type * as PurgeStoresSql from './engine-sql/purge-stores.ts';
+import type * as PurgeReceiptSql from './engine-sql/purge-receipt.ts';
 import type * as OriginHoldsSql from './engine-sql/origin-holds.ts';
 import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
@@ -4138,6 +4139,11 @@ export interface BrainEngine {
   deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]): Promise<PurgeStoresSql.PurgedNameStoreRows>;
   /** Empties the query cache; the rows removed, or null when the brain has no such table. Writes query_cache; run it in the purge transaction. */
   clearQueryCache(): Promise<number | null>;
+  // The reads a page purge's receipt and verification make on the brain's own tables (engine-sql/purge-receipt.ts).
+  /** Whether `table` resolves as a relation on the connection's search path (to_regclass). Reads the catalog. */
+  relationExists(table: string): Promise<boolean>;
+  /** The state of a purge request's derivation sweep, null once its record is gone. Reads page_segment_derivation_purges. */
+  readDerivationPurgeState(requestId: string): Promise<PurgeReceiptSql.DerivationPurgeState | null>;
   // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).
   /** The pages among `ids` that are privacy origins (an atom, or a page the privacy rules hide), by id; unless `recheckParked`, the ones an origin park holds are left out. Read the alias-honoring setting first (readHonorAliases). Reads pages and op_checkpoints. */
   listPurgeOrigins(ids: readonly number[], recheckParked: boolean): Promise<OriginRefInput[]>;
