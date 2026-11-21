@@ -50,8 +50,9 @@ export function validDate(value: unknown): string | null {
   const zone = m[8] ? (m[8] === '-' ? -1 : 1) * (Number(m[9]) * 60 + Number(m[10] ?? 0)) * 60_000 : 0;
   const instant = Date.UTC(y, mo - 1, d, h, mi, sec, ms) - zone;
   if (instant % DAY_MS !== 0) return null;
-  const date = new Date(instant).toISOString().slice(0, 10);
-  return Number(date.slice(0, 4)) >= 1000 ? date : null;
+  // A rollover out of the four-digit years (9999-12-31T24:00:00Z) is no date, as the SQL twin refuses it.
+  const year = new Date(instant).getUTCFullYear();
+  return year >= 1000 && year <= 9999 ? new Date(instant).toISOString().slice(0, 10) : null;
 }
 
 /**
@@ -76,7 +77,7 @@ export function validDateSql(textExpr: string): string {
   const { y, m, d } = day(STAMP_FORM);
   const stamp = `(make_date(${y}, ${m}, ${d}) + (${seconds} / 86400))`;
   const stampDate = `CASE WHEN ${ms} = 0 AND ${seconds} % 86400 = 0 THEN
-      CASE WHEN extract(year from ${stamp}) >= 1000 THEN to_char(${stamp}, 'YYYY-MM-DD') END END`;
+      CASE WHEN extract(year from ${stamp}) BETWEEN 1000 AND 9999 THEN to_char(${stamp}, 'YYYY-MM-DD') END END`;
   return `(CASE WHEN ${textExpr} ~ '${DAY_FORM}' THEN ${inCalendar(DAY_FORM, textExpr)}
     WHEN ${textExpr} ~ '${STAMP_FORM}' THEN ${inCalendar(STAMP_FORM, stampDate)}
     END)`;

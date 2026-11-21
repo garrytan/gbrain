@@ -85,6 +85,8 @@ describe('engine parity: versions', () => {
         ['2024-03-01T00:00:00.000000Z', '2024-03-01'], ['2024-3-1T00:00:00Z', '2024-03-01'], ['1000-01-01T01:00:00+01:00', '1000-01-01'],
         ['2024-03-01T12:00:00Z', null], ['2024-03-01T00:00:01Z', null], ['2024-03-01T00:00:00.5Z', null], ['2024-03-01T00:00:00+01:00', null],
         ['2024-02-30T00:00:00Z', null], ['2024-13-01', null], ['0999-12-31', null], ['2024-03', null], ['2024-03-01T00:60:00Z', null], ['nope', null],
+        // An instant that rolls past year 9999 is no four-digit date on any engine.
+        ['9999-12-31T24:00:00Z', null], ['9999-12-31T23:00:00-01:00', null],
       ];
       const read: Record<string, unknown> = {}, want: Record<string, unknown> = {};
       for (const [i, [value, day]] of forms.entries()) {
