@@ -61,7 +61,7 @@ src/core/persistence/page-advisories.ts	1
 src/core/persistence/params.ts	1
 src/core/persistence/reconcile.ts	1
 src/core/persistence/types.ts	1
-src/core/pg-access-classify.ts	18
+src/core/pg-access-classify.ts	19
 src/core/schema-pack/lint-rules.ts	16
 src/core/search/projection-readiness.ts	2
 src/core/shared-skills/adapter.ts	1
