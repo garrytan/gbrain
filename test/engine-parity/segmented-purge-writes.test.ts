@@ -20,6 +20,7 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { PurgeVersionBodyRow } from '../../src/core/engine-sql/segmented-purge-writes.ts';
 import type { PreparedSegmentedBody } from '../../src/core/page-body/ingest.ts';
 import type { SegmentTextInput } from '../../src/core/page-body/types.ts';
 import { applySegmentedBody } from '../../src/core/persistence/segmented-apply.ts';
@@ -63,7 +64,7 @@ const chunkTexts = async (engine: BrainEngine, slug: string) => (await engine.ge
 describe('engine parity: segmented purge writes', () => {
   parityTest('applySegmentedBody publishes a replace and drops the chunk rows staged under the new generation that its preparation did not stage', {
     methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows',
-      'stageSegmentChunks', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'lockPageKeys', 'getChunks'],
+      'stageSegmentChunks', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'lockPageKeys', 'getChunks', 'deleteUnstagedSegmentChunks'],
   }, async (engine) => {
     const slug = 'notes/seg-apply';
     const first = await publishSegmentedPage(engine, slug, [ONE, TWO], { chunkTexts: true });
@@ -73,13 +74,15 @@ describe('engine parity: segmented purge writes', () => {
     await engine.stageSegmentChunks(first.pageId, 2, [chunk(second.occurrences[0]!, 1, 'stale chunk of a dead preparation')]);
     const applied = await apply(engine, slug, first.pageId, prepared({ stagingId: second.stagingId, expected: 1, texts: [ONE_B, TWO],
       close: first.occurrences, staged: kept }));
+    // Run again on the published generation, the delete keeps the staged rows and finds nothing else.
+    await engine.transaction(tx => tx.deleteUnstagedSegmentChunks(first.pageId, 2, kept));
     return { samePage: applied.pageId === first.pageId, complete: applied.complete, retireDeferred: applied.retireDeferred,
       chunks: await chunkTexts(engine, slug) };
   });
 
   parityTest('applySegmentedBody creates a page from a live staging and refuses a staging a purge aborted', {
     methods: ['allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'setBodyStagingState', 'transaction', 'lockPageKeys',
-      'createSegmentedPageShell', 'stageManifestRows', 'flipBodyGeneration', 'getPage'],
+      'createSegmentedPageShell', 'stageManifestRows', 'flipBodyGeneration', 'getPage', 'lockBodyStagingState'],
   }, async (engine) => {
     const create = async (slug: string, abort: boolean) => {
       const staging = stagingInput({ slug, sourceId: SRC, mode: 'create' });
@@ -103,12 +106,14 @@ describe('engine parity: segmented purge writes', () => {
         return { refused: (error as { code?: string }).code ?? String(error) };
       }
     };
-    return { live: await create('notes/seg-create', false), aborted: await create('notes/seg-aborted', true) };
+    const missing = await engine.transaction(tx => tx.lockBodyStagingState('00000000-0000-4000-8000-000000000000'));
+    return { live: await create('notes/seg-create', false), aborted: await create('notes/seg-aborted', true), missing };
   });
 
   parityTest('deleteRewrittenDerivations deletes the rows of the touched runs, the links rows in reach and the rows no live occurrence backs', {
     methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows',
-      'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'upsertSegmentDerivations', 'readSegmentDerivations'],
+      'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'upsertSegmentDerivations', 'readSegmentDerivations',
+      'deleteRewrittenSegmentDerivations'],
   }, async (engine) => {
     const texts = [ONE, TWO, THREE, ONE_B];
     const page = await publishSegmentedPage(engine, 'notes/seg-derive', texts);
@@ -127,7 +132,10 @@ describe('engine parity: segmented purge writes', () => {
     const deleted = await engine.transaction(tx => deleteRewrittenDerivations(tx, page.pageId, rows, [{ from: 1, to: 1 }]));
     const label = (o: number) => o === orphan ? 'orphan' : `occ${occ.indexOf(o)}`;
     const left = (await engine.readSegmentDerivations(page.pageId)).map(r => `${r.kind}:${label(r.occurrenceId)}`).sort();
-    return { deleted, left };
+    // The same delete again finds nothing left to delete.
+    const again = await engine.transaction(tx => tx.deleteRewrittenSegmentDerivations({ pageId: page.pageId, touchedOccurrenceIds: [occ[1]!],
+      linkReachOccurrenceIds: [occ[0]!, occ[2]!, occ[3]!], pipelines: ['links', 'mentions', 'timeline', 'fences'], liveOccurrenceIds: occ }));
+    return { deleted, left, again };
   });
 
   parityTest('createVersion with the purge preimage of an inline page saves the page as read, not as it stands', {
@@ -170,7 +178,7 @@ describe('engine parity: segmented purge writes', () => {
   });
 
   parityTest('listPurgeVersionBodies reads the inline versions of the source that the purge redacts, in id order after the keyset', {
-    methods: ['putPage', 'createVersion', 'getPage'],
+    methods: ['putPage', 'createVersion', 'getPage', 'listPurgeVersionBodies'],
   }, async (engine) => {
     const put = (slug: string, title: string, body: string, frontmatter: Record<string, unknown> = {}, timeline = '') =>
       engine.putPage(slug, { type: 'note', title, compiled_truth: body, timeline, frontmatter }, { sourceId: SRC });
@@ -185,10 +193,9 @@ describe('engine parity: segmented purge writes', () => {
     }
     const rewritten = await engine.getPage('notes/rewritten', { sourceId: SRC });
     const [needle, escaped] = claimNeedles('Alice said "tea"');
-    const read = (after: number) => (engine as unknown as { listPurgeVersionBodies(spec: object): Promise<Array<Record<string, unknown>>> })
-      .listPurgeVersionBodies({ sourceId: SRC, pageIds: [Number(rewritten!.id)], after, needle, escaped });
+    const read = (after: number) => engine.listPurgeVersionBodies({ sourceId: SRC, pageIds: [Number(rewritten!.id)], after, needle, escaped });
     const all = await read(0);
-    const view = (rows: Array<Record<string, unknown>>) => rows.map(r => ({ slug: r.slug, compiled_truth: r.compiled_truth, timeline: r.timeline,
+    const view = (rows: PurgeVersionBodyRow[]) => rows.map(r => ({ slug: r.slug, compiled_truth: r.compiled_truth, timeline: r.timeline,
       metadata: r.metadata }));
     const ids = all.map(r => Number(r.id));
     return { all: view(all), ascending: ids.every((id, i) => i === 0 || id > ids[i - 1]!), afterFirst: view(await read(ids[0]!)),

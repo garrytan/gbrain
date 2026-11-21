@@ -92,4 +92,19 @@ impl Brain {
             s.stamp_version_change_reason(&a)
         })
     }
+
+    /// `listPurgeVersionBodies({ sourceId, pageIds, after, needle, escaped })`: one batch of the
+    /// inline versions a fact purge redacts, in id order.
+    #[napi]
+    pub fn list_purge_version_bodies<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::purge_version_bodies::PurgeVersionBodyQuery =
+                required(query, "listPurgeVersionBodies query")?;
+            s.list_purge_version_bodies(&q)
+        })
+    }
 }

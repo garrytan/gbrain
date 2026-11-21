@@ -220,6 +220,7 @@ src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segment
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
+src/core/engine-sql/segmented-purge-writes.ts	PURGE_VERSION_BODY_SQL	sql	SEGW	the purge's read moved from facts/purge.ts rewriteVersionBodies unchanged: it reads inline versions only (body_storage='inline')
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
 src/core/engine-sql/withdrawal-discovery.ts	INLINE_FENCE_PAGES_SQL	sql	STREAM	moved from discoverWithdrawalTargets: the inline page scan reads inline bodies (NULL never matches); segmented pages are found by SEGMENT_FENCE_ROWS_SQL and SPLIT_FENCE_SLOTS_SQL from their facts slots
@@ -641,6 +642,7 @@ src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LE
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first
 src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
 src/core/rust-engine/store-members/pages.ts	putPage	call:putPage	INLINE	forwards the caller's page to the Rust store, which keeps every body inline; it reads no stored body
+src/core/rust-engine/store-members/versions.ts	preimageFields	field	INLINE	read only when isSegmentedPage is false; a segmented preimage sends no body (its version references the live generation)
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
 src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not the page body: historical
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger

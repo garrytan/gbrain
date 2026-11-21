@@ -1841,6 +1841,7 @@ impl Store {
                 source_id: source_id.map(str::to_owned),
                 reason: reason.map(str::to_owned),
                 history_gap: None,
+                preimage: None,
             },
         )
     }
@@ -1865,6 +1866,13 @@ impl Store {
             if options.history_gap == Some(true) {
                 crate::version_prune::record_history_gap(tx, &*self.env, page.id)?;
             }
+            let page = match &options.preimage {
+                Some(preimage) => {
+                    let segmented = crate::page_body::segmented_reference(&*tx, page.id)?.is_some();
+                    preimage.applied(&page, segmented)
+                }
+                None => page,
+            };
             let mut row = snapshot_in(tx, &*self.env, &page)?;
             // A segmented prune can delete the snapshot it follows; a reason never brings it back.
             let key = keys::version(page.id, row.id);
@@ -2035,6 +2043,51 @@ pub struct CreateVersionOptions {
     pub reason: Option<String>,
     /// Record that the page lost history (`version_history_gap_at`) before the snapshot.
     pub history_gap: Option<bool>,
+    /// The caller's own read of the page (`createPageVersion`'s `preimage`), versioned as read.
+    pub preimage: Option<VersionPreimage>,
+}
+
+/// The fields of a page read (`PageSnapshot`) that `createPageVersion` versions instead of the
+/// stored page: a fact purge reads the page, then versions it after its generation flip. A
+/// segmented page keeps the stored body reference (its live generation, bytes and hash), as
+/// `insertSegmentedVersion` reads them from the page row; an inline page takes the read body too.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct VersionPreimage {
+    pub revision: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
+    pub frontmatter: Map<String, Value>,
+    pub tags: Vec<String>,
+    pub compiled_truth: Option<String>,
+    pub timeline: Option<String>,
+    pub source_path: Option<String>,
+    pub deleted: bool,
+}
+
+impl VersionPreimage {
+    /// `page` as the preimage read it; the body columns only when the page is not segmented.
+    fn applied(&self, page: &PageRecord, segmented: bool) -> PageRecord {
+        let mut out = page.clone();
+        out.title = self.title.clone();
+        out.page_type = self.page_type.clone();
+        out.frontmatter = self.frontmatter.clone();
+        out.tags = self.tags.clone();
+        out.source_path = self.source_path.clone();
+        out.knowledge_revision = self.revision.clone();
+        out.deleted_at_us = match (self.deleted, page.deleted_at_us) {
+            (false, _) => None,
+            (true, Some(at)) => Some(at),
+            (true, None) => Some(0),
+        };
+        if !segmented {
+            out.compiled_truth = PageText(self.compiled_truth.clone());
+            out.timeline = PageText(self.timeline.clone());
+        }
+        out
+    }
 }
 
 /// `stampVersionChangeReason`'s argument.

@@ -27,7 +27,7 @@
  * change no row, so resending such a read repeats nothing. The reads that only take locks, as the scan finds them, are
  * LOCK_ONLY_READS below and this test checks the list is complete, so the header stays true:
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
- * listPageGitEffectsForStrip, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget, readLiveStoredBody,
+ * listPageGitEffectsForStrip, lockBodyStagingState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget, readLiveStoredBody,
  * readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget, readSourceMembership,
  * readSourceState, selectClaimableEffect, selectClaimableWrite.
  *
@@ -46,7 +46,7 @@ const ROOT = join(import.meta.dir, '..');
 /** Reads that only take row or advisory locks, found by the scan; the header names them too. */
 const LOCK_ONLY_READS: readonly string[] = [
   'getTrustProposal', 'listFenceFactRows', 'listGitEffectsCarryingReason', 'listGuardedTakeRows', 'listHeldRows',
-  'listPageGitEffectsForStrip', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget', 'readLiveStoredBody',
+  'listPageGitEffectsForStrip', 'lockBodyStagingState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget', 'readLiveStoredBody',
   'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget', 'readSourceMembership',
   'readSourceState', 'selectClaimableEffect', 'selectClaimableWrite',
 ];

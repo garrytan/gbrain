@@ -218,6 +218,9 @@ export const RUST_ENGINE_MEMBERS = {
   readSegmentDerivations: 'page_body',
   upsertSegmentDerivations: 'page_body',
   retireSegmentDerivations: 'page_body',
+  lockBodyStagingState: 'page_body',
+  deleteUnstagedSegmentChunks: 'page_body',
+  deleteRewrittenSegmentDerivations: 'page_body',
   // tags
   pruneFrontmatterTags: 'tags',
   addPageTagsById: 'tags',
@@ -546,6 +549,7 @@ export const RUST_ENGINE_MEMBERS = {
   listPagesForPurgeRewrite: 'facts',
   updatePageBodyForPurge: 'facts',
   setPurgeVersionBody: 'facts',
+  listPurgeVersionBodies: 'facts',
   redactVersionChangeReasons: 'facts',
   listSegmentedVersionsForPurge: 'facts',
   abortPurgedStagings: 'facts',

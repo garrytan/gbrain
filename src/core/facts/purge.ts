@@ -50,7 +50,6 @@ import { carriesClaimSql, claimNeedles, purgeCompletion, reasonNeedle, verifyFac
 import { noteBelief, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { appendPurgeCommitted, appendPurgeIntent } from '../belief/purge-mirror.ts';
-import { createPageVersion } from '../page-state/versions.ts';
 import { clearRebuildableCache } from '../persistence/rebuildable-cache.ts';
 import { recordReasonTombstones, redactGitEffectReasons, scanPurgeTrailers } from './purge-reasons.ts';
 import { clearReasonScanCache } from '../reason-trailers.ts';
@@ -245,7 +244,7 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
       if (!done) continue;
       // The version of the revision the flip moved off references the new generation: that is the revision's body as a
       // reader sees it under this purge's tombstone, as the inline preimage is read, so no generation holding the claim stays pinned.
-      if (preimage) await createPageVersion(tx, slug, sourceId, preimage);
+      if (preimage) await tx.createVersion(slug, { sourceId, preimage });
       out.rewritten.push(slug);
       out.replaced.push(...done.replaced);
       out.derivations += done.derivations;
@@ -257,7 +256,7 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
     const timeline = await dropPurgedFenceRows(tx, sourceId, page.timeline ?? '', page.slug);
     if (compiled === page.compiled_truth && timeline === (page.timeline ?? '')) continue;
     const preimage = await tx.readPageSnapshot(page.slug, { sourceId, includeDeleted: true });
-    if (preimage) await createPageVersion(tx, page.slug, sourceId, preimage);
+    if (preimage) await tx.createVersion(page.slug, { sourceId, preimage });
     const hash = contentHash({ ...page, compiled_truth: compiled, timeline, tags: row.purge_tags as string[] });
     // #5575 ENG-1: dropping a fence row is a gbrain-managed fence edit, not authorship: the page keeps its tier and origin.
     await withPageTierKept(tx, { sourceId, slug: page.slug }, () => tx.updatePageBodyForPurge(sourceId, page.id, compiled, timeline, hash));
@@ -268,6 +267,11 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
 
 const VERSION_REDACTION_BATCH = 5000;
 
+type VersionBodyRow<X> = X & { id: number; slug: string; compiled_truth: string; timeline: string | null };
+/** The versions to edit: a raw-SQL `where` over source $1, or a typed engine read of one batch after a version id (VERSION_REDACTION_BATCH rows). */
+type VersionBodyQuery<X> = { keepNullTimeline?: boolean } & ({ columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean }
+  | { read: (after: number) => Promise<Array<VersionBodyRow<X>>> });
+
 /**
  * The one reader and rewriter of inline saved-version bodies, for purge's redaction and the held-fact move
  * (fence-fact-append.ts heldRowsInVersions): the inline versions of source $1 matching `where` in keyset batches by id,
@@ -276,11 +280,12 @@ const VERSION_REDACTION_BATCH = 5000;
  * NULL. Segmented versions are each caller's own pass.
  */
 export async function rewriteVersionBodies<X extends object>(tx: BrainEngine,
-  query: { columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean; keepNullTimeline?: boolean },
+  query: VersionBodyQuery<X>,
   edit: (text: string, slug: string) => Promise<string> | string,
   visit: (v: X & { id: number; slug: string }, edited: [string, string], changed: boolean) => void, write = true): Promise<void> {
   for (let after = 0; ;) {
-    const rows = await tx.executeRaw<X & { id: number; slug: string; compiled_truth: string; timeline: string | null }>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline${query.columns ? `,${query.columns}` : ''}
+    const rows = 'read' in query ? await query.read(after)
+      : await tx.executeRaw<VersionBodyRow<X>>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline${query.columns ? `,${query.columns}` : ''}
       FROM page_versions v JOIN pages p ON p.id=v.page_id
       WHERE p.source_id=$1 AND v.body_storage='inline' AND ${query.where}
       ORDER BY v.id LIMIT ${VERSION_REDACTION_BATCH}${query.lock ? ' FOR UPDATE OF v' : ''}`, query.params(after));
@@ -307,9 +312,7 @@ export async function redactPageVersions(tx: BrainEngine, sourceId: string, clai
   let redacted = reasons.size;
   const prose: Array<{ slug: string; version_id: number }> = [];
   await rewriteVersionBodies<{ metadata: boolean }>(tx, {
-    columns: `
-        (strpos(lower(COALESCE(v.title,'')),$4)>0 OR strpos(lower(COALESCE(v.frontmatter::text,'')),$5)>0) AS metadata`,
-    where: `v.id>$3 AND (v.page_id=ANY($2::int[]) OR ${carriesClaimSql('v', 4)})`, params: after => [sourceId, pageIds, after, needle, escaped],
+    read: after => tx.listPurgeVersionBodies({ sourceId, pageIds, after, needle, escaped }),
   }, (text, slug) => dropPurgedFenceRows(tx, sourceId, text, slug), (v, [compiled, timeline], changed) => {
     if (changed && !reasons.has(Number(v.id))) redacted++;
     if (v.metadata || compiled.toLowerCase().includes(needle) || timeline.toLowerCase().includes(needle)) prose.push({ slug: v.slug, version_id: Number(v.id) });

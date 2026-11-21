@@ -415,6 +415,17 @@ pub struct DerivationRetireOptions {
     pub kind: Option<String>,
 }
 
+/// `deleteRewrittenSegmentDerivations`' argument (engine-sql/segmented-purge-writes.ts).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RewrittenDerivationsDelete {
+    pub page_id: i64,
+    pub touched_occurrence_ids: Vec<i64>,
+    pub link_reach_occurrence_ids: Vec<i64>,
+    pub pipelines: Vec<String>,
+    pub live_occurrence_ids: Vec<i64>,
+}
+
 /// `SegmentSweepOptions`; `now` as an ISO string.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -2104,6 +2115,79 @@ impl Store {
                         .as_deref()
                         .is_none_or(|want| want.as_bytes() == kind);
                     if kind_matches && occurrence.is_some_and(|o| !live.contains(&o)) {
+                        doomed.push(k.to_vec());
+                    }
+                }
+                true
+            })?;
+            for key in &doomed {
+                tx.delete(key)?;
+            }
+            Ok(doomed.len() as u64)
+        })
+    }
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `None` when no staging has that
+    /// id (PGLite's `SELECT state ... FOR UPDATE`; a store write already holds the brain). A value
+    /// that is not a uuid is refused, as the `::uuid` cast refuses it.
+    pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
+        let id = staging_id_arg(staging_id)?;
+        let read = self.read()?;
+        let record: Option<StagingRecord> = get_json(&*read, &staging_key(&id))?;
+        Ok(record.map(|r| r.state))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: deletes the page's
+    /// chunk rows at `generation` whose chunk index is not kept (the rows a dead preparation
+    /// staged), with their postings and the rows that hang off them.
+    pub fn delete_unstaged_segment_chunks(
+        &self,
+        page_id: i64,
+        generation: i64,
+        keep_chunk_indexes: &[i64],
+    ) -> Result<()> {
+        let (Some(page), Ok(generation)) = (page_u64(page_id), u64::try_from(generation)) else {
+            return Ok(());
+        };
+        let keep: HashSet<i64> = keep_chunk_indexes.iter().copied().collect();
+        self.write(|tx| {
+            crate::chunks::delete_chunks_matching(tx, page, &|c| {
+                c.segment
+                    .is_some_and(|place| place.body_generation == generation)
+                    && !keep.contains(&i64::from(c.chunk_index))
+            })?;
+            Ok(())
+        })
+    }
+
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: deletes the page's rows of a touched occurrence, its
+    /// `links` rows of an occurrence in reach, and its rows of a listed pipeline whose occurrence
+    /// is not live; returns how many.
+    pub fn delete_rewritten_segment_derivations(
+        &self,
+        spec: &RewrittenDerivationsDelete,
+    ) -> Result<u64> {
+        let Some(page) = page_u64(spec.page_id) else {
+            return Ok(0);
+        };
+        let touched: HashSet<i64> = spec.touched_occurrence_ids.iter().copied().collect();
+        let reach: HashSet<i64> = spec.link_reach_occurrence_ids.iter().copied().collect();
+        let live: HashSet<i64> = spec.live_occurrence_ids.iter().copied().collect();
+        self.write(|tx| {
+            let prefix = derivation_prefix(page);
+            let mut doomed = Vec::new();
+            scan_prefix(&*tx, &prefix, false, &mut |k, _| {
+                let rest = &k[prefix.len()..];
+                if let Some(split) = rest.iter().position(|b| *b == 0) {
+                    let kind = &rest[..split];
+                    if let Some(o) =
+                        keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64)
+                        && (touched.contains(&o)
+                            || (kind == b"links" && reach.contains(&o))
+                            || (spec.pipelines.iter().any(|p| p.as_bytes() == kind)
+                                && !live.contains(&o)))
+                    {
                         doomed.push(k.to_vec());
                     }
                 }
