@@ -6,7 +6,8 @@
  * queued (the count ran under a join the planner could not skip). On a large
  * brain whose only pending pages are such images, that one read cost about
  * 1.5 s per search. The rebuild now counts as running only while an activation
- * row waits on a text page in scope, and that check reads only the queue.
+ * row waits on a text page in scope, and the page count never starts otherwise:
+ * the plan's scan of pages for it is never executed.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -20,7 +21,7 @@ for (const kind of testBackends()) {
   describe('rebuild progress reads (' + kind + ')', () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
-    const statements: string[] = [];
+    let last: { sql: string; params?: unknown[] } | null = null;
 
     async function page(slug: string, type: string, text: string) {
       await engine.putPage(slug, { type, title: slug, compiled_truth: text, frontmatter: {} } as never);
@@ -34,9 +35,19 @@ for (const kind of testBackends()) {
         ON CONFLICT (source_incarnation, slug) DO UPDATE SET reason = EXCLUDED.reason`, [slug]);
     }
     async function progress() {
-      statements.length = 0;
+      last = null;
       return countProjectionRebuild(engine, {});
     }
+    /** Scans of pages the statement's plan never started, from EXPLAIN ANALYZE of the statement just run. */
+    async function pagesScansNeverRun(): Promise<number> {
+      const [row] = await run('EXPLAIN (ANALYZE, FORMAT JSON) ' + last!.sql, last!.params) as Array<Record<string, unknown>>;
+      const raw = Object.values(row!)[0];
+      const plan = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: PlanNode }>;
+      const walk = (n: PlanNode): number => (n['Relation Name'] === 'pages' && n['Actual Loops'] === 0 ? 1 : 0) + (n.Plans ?? []).reduce((a, c) => a + walk(c), 0);
+      return walk(plan[0]!.Plan);
+    }
+    type PlanNode = { 'Relation Name'?: string; 'Actual Loops'?: number; Plans?: PlanNode[] };
+    let run: BrainEngine['executeRaw'];
 
     beforeAll(async () => {
       if (kind === 'postgres') {
@@ -52,8 +63,8 @@ for (const kind of testBackends()) {
       await page('notes/beta-example', 'note', 'Beta example note.');
       await page('media/frame-example', 'image', 'Frame example');
       await engine.executeRaw("DELETE FROM page_projection_jobs");
-      const run = engine.executeRaw.bind(engine);
-      engine.executeRaw = (async (sql: string, params?: unknown[]) => { statements.push(sql); return run(sql, params); }) as typeof engine.executeRaw;
+      run = engine.executeRaw.bind(engine);
+      engine.executeRaw = (async (sql: string, params?: unknown[]) => { last = { sql, params }; return run(sql, params); }) as typeof engine.executeRaw;
     }, 120_000);
 
     afterAll(async () => {
@@ -62,13 +73,13 @@ for (const kind of testBackends()) {
 
     test('nothing queued: no rebuild, and the pages are never counted', async () => {
       expect(await progress()).toBeNull();
-      expect(statements.some(sql => /count\(p\.id\)/.test(sql))).toBe(false);
+      expect(await pagesScansNeverRun()).toBeGreaterThan(0);
     });
 
     test('an activation row left on an image waits for an operator, not for a rebuild, and the pages are never counted', async () => {
       await queueActivation('media/frame-example', true);
       expect(await progress()).toBeNull();
-      expect(statements.some(sql => /count\(p\.id\)/.test(sql))).toBe(false);
+      expect(await pagesScansNeverRun()).toBeGreaterThan(0);
     });
 
     test('an activation row on a text page is a running rebuild, counted over the pages in scope', async () => {

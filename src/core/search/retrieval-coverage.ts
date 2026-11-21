@@ -164,24 +164,23 @@ export function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw'>, scop
  * The rebuild runs while an activation row waits on a `text` page in scope: the resident drain rebuilds only those.
  * Rows left on images (`sealable`, `reimport`) wait for an operator, whom the pending-images notice already names,
  * so they never make a rebuild look like it runs for good. That check reads only the queue, and the count of every
- * page in scope, a read of the whole pages table, runs only while the rebuild runs, never on every search.
+ * page in scope, a read of the whole pages table, sits behind it (a filter on the outer row alone, so Postgres never
+ * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search.
  */
 export async function countProjectionRebuild(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   const params: unknown[] = [];
-  const filters = coverageScopeFilters(scope, params);
+  const filters = coverageScopeFilters(scope, params).join(' AND ');
   try {
-    const [started] = await engine.executeRaw<{ seconds: number | null }>(
-      `SELECT EXTRACT(EPOCH FROM now() - min(j.updated_at))::float8 AS seconds
-      FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation JOIN pages p ON p.source_id = s.id AND p.slug = j.slug
-      WHERE j.reason = 'protocol_activation' AND p.deleted_at IS NULL AND ${textClassSql('p', 's')} AND ${filters.join(' AND ')}`, params);
-    if (started?.seconds === null || started?.seconds === undefined) return null;
-    const [row] = await engine.executeRaw<{ total: number; done: number }>(
-      `SELECT count(p.id)::int AS total,
-        count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
-      FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NULL AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived') AND ${filters.join(' AND ')}`, params);
-    const done = Number(row?.done), total = Number(row?.total), seconds = Number(started.seconds);
-    if (!Number.isFinite(done) || !Number.isFinite(total)) return null;
+    const [row] = await engine.executeRaw<{ seconds: number | null; total: number; done: number }>(
+      `WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(j.updated_at))::float8 AS seconds
+        FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation JOIN pages p ON p.source_id = s.id AND p.slug = j.slug
+        WHERE j.reason = 'protocol_activation' AND p.deleted_at IS NULL AND ${textClassSql('p', 's')} AND ${filters})
+      SELECT started.seconds, c.total, c.done FROM started, LATERAL (SELECT count(p.id)::int AS total,
+          count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
+        FROM pages p JOIN sources s ON s.id = p.source_id
+        WHERE started.seconds IS NOT NULL AND p.deleted_at IS NULL AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived') AND ${filters}) c`, params);
+    if (row?.seconds === null || row?.seconds === undefined) return null;
+    const done = Number(row.done), total = Number(row.total), seconds = Number(row.seconds);
     return { done, total, pages_per_second: seconds > 0 && done > 0 ? done / seconds : null };
   } catch {
     return null;
