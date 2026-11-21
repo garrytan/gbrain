@@ -108,6 +108,11 @@ export interface WriteGateHoldInput {
  */
 export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): Promise<{ holdId: number; receiptId: number | null }> {
   const a = input.assessment;
+  const contentKey = holdFingerprint(input.kind, input.texts);
+  const fingerprint = input.kind === 'fact' && input.payload.replacement_speaker && Number.isSafeInteger(input.payload.replaces)
+    ? createHash('sha256').update(JSON.stringify(['dated-restatement', contentKey, input.payload.replaces, input.payload.replacement_speaker])).digest('hex') : contentKey;
+  // A hold is reviewed per predecessor, while fence projections look it up by its content.
+  const payload = fingerprint === contentKey ? input.payload : { ...input.payload, restatement_content_hash: contentKey };
   const rows = await tx.executeRaw<{ id: string }>(
     `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8::text[], $9, $10::text::jsonb, $11::text::jsonb, $12)
@@ -116,10 +121,9 @@ export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): 
            tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
            write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
      RETURNING id::text AS id`,
-    [input.kind, input.sourceId, input.slug ?? '', holdFingerprint(input.kind, input.texts), a.detectorVersion, a.tier, a.families, reasonList(a),
-      a.detectorError, JSON.stringify(input.payload), input.origin ? JSON.stringify(input.origin) : null, input.requestId ?? null]);
+    [input.kind, input.sourceId, input.slug ?? '', fingerprint, a.detectorVersion, a.tier, a.families, reasonList(a),
+      a.detectorError, JSON.stringify(payload), input.origin ? JSON.stringify(input.origin) : null, input.requestId ?? null]);
   const holdId = Number(rows[0]!.id);
-  const fingerprint = holdFingerprint(input.kind, input.texts);
   noteBelief({ kind: 'held', holdKind: input.kind, fingerprint, holdId, slug: input.slug ?? '', tier: a.tier, valueHash: fingerprint });
   const receiptId = await recordWriteGateReceipt(tx, { targetTable: 'write_gate_holds', targetId: holdId, sourceId: input.sourceId, assessment: { ...a, verdict: 'quarantine' }, requestId: input.requestId });
   return { holdId, receiptId };
