@@ -19,30 +19,26 @@
  */
 import type { ChronicleEventProposal } from './extract-events.ts';
 import type { BuiltChronicleEvent } from './publish.ts';
-import { parseDateLoose } from '../effective-date.ts';
+import { keptInstant } from '../effective-date.ts';
+import { isYamlTimestampText } from '../data-frontmatter.ts';
 
 const CHRONICLE_INVITE_CAPTURED_VIA = 'life-chronicle:invite';
 const SCHEDULED_PREFIX = 'Scheduled: ';
 const INVITE_SLUG_PREFIXES = ['calendar/', 'cal/'];
-
-/** pages-03: frontmatter keeps a timestamp as its text, read the way the YAML parser read it (an offset-less time as UTC). */
-function instant(value: unknown): Date | null {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value !== 'string' || !value.trim()) return null;
-  return parseDateLoose(value);
-}
 
 /** The one event an ended invite projects to; null when the page is not a structured, ended invite. */
 export function endedInviteProposal(page: { slug: string; type: string; title: string; frontmatter?: Record<string, unknown> | null },
   attendees: string[], now: Date): ChronicleEventProposal | null {
   const fm = page.frontmatter ?? {};
   const invite = page.type === 'calendar-event' || INVITE_SLUG_PREFIXES.some((p) => page.slug.startsWith(p));
-  const start = instant(fm.start);
-  const end = instant(fm.end);
+  const start = keptInstant(fm.start);
+  const end = keptInstant(fm.end);
   const title = (page.title ?? '').trim();
   if (!invite || !start || !end || !title || end.getTime() > now.getTime()) return null;
   const location = typeof fm.location === 'string' && fm.location.trim() ? fm.location.trim() : null;
-  return { when: typeof fm.start === 'string' ? fm.start.trim() : start.toISOString(), who: attendees,
+  // pages-03: a YAML timestamp was a Date before values were kept as written; it projects as that instant's ISO text.
+  const when = typeof fm.start === 'string' && !isYamlTimestampText(fm.start) ? fm.start.trim() : start.toISOString();
+  return { when, who: attendees,
     what: `${SCHEDULED_PREFIX}${title}`, where: location, kind: 'meeting' };
 }
 

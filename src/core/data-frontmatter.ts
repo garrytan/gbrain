@@ -63,6 +63,11 @@ export function keptNumberText(value: unknown): number | null {
   return null;
 }
 
+/** Whether `value` is text YAML reads as a timestamp (the old parser typed it as a Date). */
+export function isYamlTimestampText(value: string): boolean {
+  return (types.timestamp as ScalarType).resolve(value.trim());
+}
+
 /**
  * The typing gbrain applied before pages-03 (js-yaml's default schema, a calendar-invalid timestamp kept as text).
  * Pages stored before then hold its values (a date as its UTC ISO timestamp, `02134` as 2134), so file-versus-database

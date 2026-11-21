@@ -182,6 +182,17 @@ function zonedWallTime(wall: Date, timeZone: string): Date {
  * (`2024-02-30`) is rejected rather than rolled over. Other strings fall back
  * to Date.parse.
  */
+/**
+ * pages-03: a frontmatter value as an instant, read the way the YAML parser read it before values were kept as written
+ * (an offset-less time as UTC). A number, or text the old parser typed as a number (`1.10`, `1e308`), is no instant.
+ */
+export function keptInstant(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  if (typeof value !== 'string' || !value.trim() || keptNumberText(value) !== null) return null;
+  const date = parseDateLoose(value);
+  return date && Number.isFinite(date.getTime()) ? date : null;
+}
+
 export function parseDateLoose(value: unknown, timeZone?: string): Date | null {
   if (value == null) return null;
   const zone = timeZone && timeZone !== 'UTC' ? timeZone : null;
