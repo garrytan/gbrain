@@ -64,7 +64,7 @@ impl Brain {
     }
 
     /// `replaceRelationRows(seedId, relation, generation, keys, rows, digests)`: resolves
-    /// `{ upserted, deleted, skipped_older, dropped, unmapped_columns, losses }`.
+    /// `{ upserted, deleted, skipped_older, displaced, dropped, unmapped_columns, losses }`.
     #[napi]
     #[allow(clippy::too_many_arguments)]
     pub fn replace_relation_rows<'env>(

@@ -11,10 +11,13 @@
 //! - [`Store::replace_interval`]: one sort interval made equal to the rows the caller read.
 //! - [`Store::relation_digest`]: the digest of an interval, for the comparison with the primary's.
 //!
-//! An entry written at a generation above the call's is never overwritten or deleted: an older read
-//! does not undo a newer one. See rust/docs/store/seed.md.
+//! A key the store holds at a generation above the call's (a live entry, a tombstone of a delete or
+//! an interval fence, see `fences.rs`) is never overwritten or deleted: an older read does not undo a
+//! newer one. Rows that trade a unique natural key are released before they are stored, and a stale
+//! row in the way is displaced. See rust/docs/store/seed.md.
 
 mod allocators;
+mod fences;
 mod fingerprints;
 mod remove_core;
 mod remove_history;
@@ -25,12 +28,13 @@ mod tests;
 pub use allocators::AllocatorCheck;
 pub use fingerprints::{FactFingerprints, fact_fingerprints};
 
+use self::fences::Fences;
 use super::decode::Row;
 use super::{
     ImportResult, Importer, Losses, MANIFEST, Outcome, Relation, SeedManifest, SeedRow,
     note_unmapped, relation_spec, seed_trust,
 };
-use crate::error::{INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
 use crate::kv::{KvRead, KvWrite, prefix_end};
 use crate::{Store, get_json, keys};
 use serde::{Deserialize, Serialize};
@@ -65,15 +69,36 @@ pub(super) enum Replace {
     ByRemove,
     /// The importer overwrites a different stored value itself.
     Import,
-    /// The relation's own replace, given the relation's importer.
-    Custom(fn(&mut dyn KvWrite, &Row, &mut Losses, Importer) -> Result<Outcome>),
+    /// The relation's own replace, in two steps.
+    Custom(Custom),
 }
+
+/// A relation's own replace: `release` removes the old version of the row (all rows of a call go
+/// first, so rows can trade a natural key) and returns what `store` must put back; `store` imports
+/// the new version with the relation's importer.
+#[derive(Clone, Copy)]
+pub(super) struct Custom {
+    pub release: fn(&mut dyn KvWrite, &Row) -> Result<Option<serde_json::Value>>,
+    pub store: CustomStore,
+}
+
+/// Stores the new version of a row, given the importer and what `release` carried.
+pub(super) type CustomStore = fn(
+    &mut dyn KvWrite,
+    &Row,
+    &mut Losses,
+    Importer,
+    Option<&serde_json::Value>,
+) -> Result<Outcome>;
 
 /// What the follow calls know of one relation.
 pub(super) struct Follow {
     /// The columns a digest entry keeps of a row, in addition to nothing else: the primary key and
     /// what the remover needs.
     pub identity: &'static [&'static str],
+    /// The unique natural keys of the relation besides its primary key, each a set of `identity`
+    /// columns. Two rows holding the same values in every column of a set collide in the store.
+    pub unique: &'static [&'static [&'static str]],
     /// `None`: the relation cannot be removed safely (`removable: false` in the plan).
     pub remove: Option<Remover>,
     pub replace: Replace,
@@ -310,6 +335,10 @@ pub struct FollowResult {
     pub deleted: u64,
     /// Keys left alone because the store holds a newer generation of them.
     pub skipped_older: u64,
+    /// Stored rows removed because a row of the call took a unique natural key they held. Their
+    /// digest entries are gone too: the relation differs from the primary until a reconcile
+    /// restores them, so the caller marks it dirty when this is above zero.
+    pub displaced: u64,
     /// Rows the store cannot hold; `losses` names why. Their digest entries are stored.
     pub dropped: u64,
     pub unmapped_columns: Vec<String>,
@@ -368,6 +397,25 @@ struct Apply<'a> {
     unmapped: BTreeSet<String>,
     /// The rows removed in [`Mode::Delete`], for the digest entries of their dependents.
     deleted: Vec<Identity>,
+    /// The interval fences of the relation as the call found them.
+    fences: Fences,
+    /// The live entries as the call found them, loaded when a row first collides, for the rows that
+    /// hold the natural key a new row takes.
+    live: Option<Vec<(Vec<u8>, Entry)>>,
+}
+
+/// A row of the call that will be stored.
+struct Todo<'r> {
+    n: usize,
+    row: Row<'r>,
+    sort: &'r [u8],
+    digest: [u8; 32],
+    /// The identity the row's entry will keep.
+    fresh: Identity,
+    /// The identity of the entry the store holds for the sort key, if any.
+    old: Option<Identity>,
+    /// What the relation's own replace carried over from the old version.
+    carry: Option<serde_json::Value>,
 }
 
 impl<'a> Apply<'a> {
@@ -381,7 +429,16 @@ impl<'a> Apply<'a> {
             losses: Losses::default(),
             unmapped: BTreeSet::new(),
             deleted: Vec::new(),
+            fences: Fences::empty(relation),
+            live: None,
         })
+    }
+
+    /// Reads what the call needs of the store; first in the write transaction.
+    fn begin(&mut self, tx: &mut dyn KvWrite, seed_id: &str) -> Result<()> {
+        check_seed(&*tx, seed_id)?;
+        self.fences = Fences::load(&*tx, self.relation)?;
+        Ok(())
     }
 
     fn finish(mut self, tx: &mut dyn KvWrite) -> Result<FollowResult> {
@@ -393,14 +450,28 @@ impl<'a> Apply<'a> {
         Ok(self.result)
     }
 
+    /// Whether the store holds a newer generation of the sort key: a live entry, a tombstone or an
+    /// interval fence above the call's. An older call leaves such a key alone.
+    fn newer(&self, tx: &dyn KvRead, sort: &[u8], entry: Option<&Entry>) -> Result<bool> {
+        let held = entry.map_or(0, |e| e.generation);
+        let newest = held
+            .max(fences::tombstone(tx, self.relation, sort)?)
+            .max(self.fences.covering(sort));
+        Ok(newest > self.generation)
+    }
+
     /// The row a key names is gone from the primary: remove it and its entry, unless the store
-    /// holds a newer generation of it.
-    fn delete(&mut self, tx: &mut dyn KvWrite, sort: &[u8], key: &Identity) -> Result<()> {
+    /// holds a newer generation of it. `bury`: leave a tombstone at the call's generation, so an
+    /// older call does not bring the row back (an interval call leaves a fence instead).
+    fn delete(
+        &mut self,
+        tx: &mut dyn KvWrite,
+        sort: &[u8],
+        key: &Identity,
+        bury: bool,
+    ) -> Result<()> {
         let entry = read_entry(&*tx, self.relation, sort)?;
-        if entry
-            .as_ref()
-            .is_some_and(|e| e.generation > self.generation)
-        {
+        if self.newer(&*tx, sort, entry.as_ref())? {
             self.result.skipped_older += 1;
             return Ok(());
         }
@@ -414,6 +485,9 @@ impl<'a> Apply<'a> {
         };
         let removed = remove(tx, &identity, Mode::Delete)?;
         tx.delete(&digest_key(self.relation, sort))?;
+        if bury {
+            fences::bury(tx, self.relation, sort, self.generation)?;
+        }
         if removed {
             self.deleted.push(identity);
         }
@@ -423,58 +497,164 @@ impl<'a> Apply<'a> {
         Ok(())
     }
 
-    /// A row of the primary, new or changed: store it over its old version, with its entry.
-    fn upsert(
+    /// The rows of the primary, new or changed: store each over its old version, with its entry.
+    ///
+    /// Every row's old version goes first and the new versions come after, so rows that trade a
+    /// unique natural key (two chunks swapping their index) never meet the other's old version. A
+    /// new version that still collides with a stored row the call does not name displaces that row.
+    fn upsert_all(
         &mut self,
         tx: &mut dyn KvWrite,
-        n: usize,
-        row: &SeedRow,
-        digest: &RowDigest,
+        rows: &[SeedRow],
+        digests: &[RowDigest],
     ) -> Result<()> {
-        let old = read_entry(&*tx, self.relation, &digest.sort)?;
-        if old.as_ref().is_some_and(|e| e.generation > self.generation) {
-            self.result.skipped_older += 1;
-            return Ok(());
-        }
         let relation = self.relation;
-        let row = Row { relation, row };
-        note_unmapped(self.spec, &row, &mut self.unmapped);
-        let fresh = identity_of(self.follow, &row);
-        let old_identity = old.map_or_else(|| fresh.clone(), |e| e.identity);
-        let outcome = self
-            .store(tx, &row, &old_identity)
-            .map_err(|e| StoreError::new(e.code, format!("{relation} row {n}: {}", e.message)))?;
-        match outcome {
-            Outcome::Imported | Outcome::Skipped => self.result.upserted += 1,
-            Outcome::Dropped(reason) => {
-                self.result.dropped += 1;
-                self.losses.add(reason);
+        let mut todo = Vec::new();
+        for (n, (row, digest)) in rows.iter().zip(digests).enumerate() {
+            let old = read_entry(&*tx, relation, &digest.sort)?;
+            if self.newer(&*tx, &digest.sort, old.as_ref())? {
+                self.result.skipped_older += 1;
+                continue;
             }
+            let row = Row { relation, row };
+            note_unmapped(self.spec, &row, &mut self.unmapped);
+            todo.push(Todo {
+                n,
+                fresh: identity_of(self.follow, &row),
+                old: old.map(|e| e.identity),
+                carry: None,
+                row,
+                sort: &digest.sort,
+                digest: digest.digest,
+            });
         }
-        let entry = Entry {
-            digest: digest.digest,
-            generation: self.generation,
-            identity: fresh,
+        let wrap = |n: usize, e: StoreError| {
+            StoreError::new(e.code, format!("{relation} row {n}: {}", e.message))
         };
-        write_entry(tx, relation, &digest.sort, &entry)
+        for t in &mut todo {
+            self.release(tx, t).map_err(|e| wrap(t.n, e))?;
+        }
+        let sorts: BTreeSet<&[u8]> = todo.iter().map(|t| t.sort).collect();
+        for t in &todo {
+            let outcome = self.store(tx, t, &sorts).map_err(|e| wrap(t.n, e))?;
+            match outcome {
+                Outcome::Imported | Outcome::Skipped => self.result.upserted += 1,
+                Outcome::Dropped(reason) => {
+                    self.result.dropped += 1;
+                    self.losses.add(reason);
+                }
+            }
+            let entry = Entry {
+                digest: t.digest,
+                generation: self.generation,
+                identity: t.fresh.clone(),
+            };
+            write_entry(tx, relation, t.sort, &entry)?;
+            fences::lift(tx, relation, t.sort, self.generation)?;
+        }
+        Ok(())
     }
 
-    fn store(&mut self, tx: &mut dyn KvWrite, row: &Row, old: &Identity) -> Result<Outcome> {
-        match (self.follow.replace, self.follow.remove) {
-            (Replace::Custom(replace), _) => replace(tx, row, &mut self.losses, self.spec.import),
-            (Replace::Import, _) => (self.spec.import)(tx, row, &mut self.losses),
-            (Replace::ByRemove, Some(remove)) => {
+    /// Removes the old version of a row, keeping what hangs off it.
+    fn release(&mut self, tx: &mut dyn KvWrite, todo: &mut Todo) -> Result<()> {
+        match (self.follow.replace, self.follow.remove, &todo.old) {
+            (Replace::Custom(custom), _, _) => {
+                todo.carry = (custom.release)(tx, &todo.row)?;
+            }
+            (Replace::ByRemove, Some(remove), Some(old)) => {
                 remove(tx, old, Mode::Replace)?;
-                (self.spec.import)(tx, row, &mut self.losses)
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Stores the new version of a row. A collision with a stored row that holds a natural key the
+    /// row takes displaces that row and tries once more.
+    fn store(
+        &mut self,
+        tx: &mut dyn KvWrite,
+        todo: &Todo,
+        sorts: &BTreeSet<&[u8]>,
+    ) -> Result<Outcome> {
+        let first = self.import(tx, todo);
+        if !collided(&first) {
+            return first;
+        }
+        if self.displace(tx, todo, sorts)? {
+            return self.import(tx, todo);
+        }
+        // A row with no entry of its own may be a stored version the store has no entry for (the
+        // rows `importRelation` stored without digests): replace it by what the row names.
+        if todo.old.is_none()
+            && let (Replace::ByRemove, Some(remove)) = (self.follow.replace, self.follow.remove)
+            && remove(tx, &todo.fresh, Mode::Replace)?
+        {
+            return self.import(tx, todo);
+        }
+        first
+    }
+
+    fn import(&mut self, tx: &mut dyn KvWrite, todo: &Todo) -> Result<Outcome> {
+        match (self.follow.replace, self.follow.remove) {
+            (Replace::Custom(custom), _) => (custom.store)(
+                tx,
+                &todo.row,
+                &mut self.losses,
+                self.spec.import,
+                todo.carry.as_ref(),
+            ),
+            (Replace::Import, _) | (Replace::ByRemove, Some(_)) => {
+                (self.spec.import)(tx, &todo.row, &mut self.losses)
             }
             (Replace::ByRemove, None) => {
-                let outcome = (self.spec.import)(tx, row, &mut self.losses)?;
+                let outcome = (self.spec.import)(tx, &todo.row, &mut self.losses)?;
                 if matches!(outcome, Outcome::Skipped) {
                     return Err(self.unsupported("replace"));
                 }
                 Ok(outcome)
             }
         }
+    }
+
+    /// Removes the stored rows, other than the call's own, that hold a unique natural key of
+    /// `todo`'s row, with their digest entries (no tombstone: a reconcile restores them). `false`
+    /// when there are none.
+    fn displace(
+        &mut self,
+        tx: &mut dyn KvWrite,
+        todo: &Todo,
+        sorts: &BTreeSet<&[u8]>,
+    ) -> Result<bool> {
+        let Some(remove) = self.follow.remove else {
+            return Ok(false);
+        };
+        if self.follow.unique.is_empty() {
+            return Ok(false);
+        }
+        if self.live.is_none() {
+            self.live = Some(entries_in(&*tx, self.relation, None, None, None)?);
+        }
+        let holds = |entry: &Entry| {
+            self.follow.unique.iter().any(|set| {
+                set.iter().any(|col| todo.fresh.contains_key(*col))
+                    && set
+                        .iter()
+                        .all(|col| entry.identity.get(*col) == todo.fresh.get(*col))
+            })
+        };
+        let live = self.live.take().unwrap_or_default();
+        let (holders, rest): (Vec<_>, Vec<_>) = live
+            .into_iter()
+            .partition(|(sort, entry)| !sorts.contains(sort.as_slice()) && holds(entry));
+        self.live = Some(rest);
+        for (sort, entry) in &holders {
+            if remove(tx, &entry.identity, Mode::Replace)? {
+                self.result.displaced += 1;
+            }
+            tx.delete(&digest_key(self.relation, sort))?;
+        }
+        Ok(!holders.is_empty())
     }
 
     fn unsupported(&self, what: &str) -> StoreError {
@@ -485,6 +665,15 @@ impl<'a> Apply<'a> {
                 self.relation
             ),
         )
+    }
+}
+
+/// Whether an import met a stored row holding the natural key it takes: the importers refuse
+/// (`constraint_violation`), or skip silently, then.
+fn collided(outcome: &Result<Outcome>) -> bool {
+    match outcome {
+        Ok(outcome) => matches!(outcome, Outcome::Skipped),
+        Err(e) => e.code == CONSTRAINT_VIOLATION,
     }
 }
 
@@ -539,15 +728,13 @@ impl Store {
         }
         let with_row: BTreeSet<&Vec<u8>> = digests.iter().map(|d| &d.sort).collect();
         self.write_as(seed_trust(), |tx| {
-            check_seed(&*tx, seed_id)?;
+            apply.begin(tx, seed_id)?;
             for (sort, key) in &sorts {
                 if !with_row.contains(sort) {
-                    apply.delete(tx, sort, key)?;
+                    apply.delete(tx, sort, key, true)?;
                 }
             }
-            for (n, (row, digest)) in rows.iter().zip(&digests).enumerate() {
-                apply.upsert(tx, n, row, digest)?;
-            }
+            apply.upsert_all(tx, rows, &digests)?;
             apply.finish(tx)
         })
     }
@@ -582,15 +769,18 @@ impl Store {
         }
         let given: BTreeSet<&Vec<u8>> = digests.iter().map(|d| &d.sort).collect();
         self.write_as(seed_trust(), |tx| {
-            check_seed(&*tx, seed_id)?;
+            apply.begin(tx, seed_id)?;
             for (sort, _) in entries_in(&*tx, relation, lo.as_deref(), hi.as_deref(), None)? {
                 if !given.contains(&sort) {
-                    apply.delete(tx, &sort, &Identity::new())?;
+                    apply.delete(tx, &sort, &Identity::new(), false)?;
                 }
             }
-            for (n, (row, digest)) in rows.iter().zip(&digests).enumerate() {
-                apply.upsert(tx, n, row, digest)?;
-            }
+            apply.upsert_all(tx, rows, &digests)?;
+            // The fence of this read stands in for the tombstones inside the interval.
+            fences::lift_in(tx, relation, lo.as_deref(), hi.as_deref(), generation)?;
+            apply
+                .fences
+                .raise(tx, lo.as_deref(), hi.as_deref(), generation)?;
             apply.finish(tx)
         })
     }

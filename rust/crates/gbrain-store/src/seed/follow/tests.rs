@@ -10,6 +10,9 @@ use crate::test_support::store;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+mod fences;
+mod swaps;
+
 const SEED: &str = "seed-1";
 const REV: &str = "11111111-1111-4111-8111-111111111111";
 const INCARNATION: &str = "22222222-2222-4222-8222-222222222222";

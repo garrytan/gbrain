@@ -6,8 +6,18 @@ use crate::error::Result;
 use crate::kv::KvWrite;
 
 const fn follow(identity: &'static [&'static str], remove: super::Remover) -> Follow {
+    keyed(identity, &[], remove)
+}
+
+/// A relation with unique natural keys besides its primary key: `unique` names the column sets.
+const fn keyed(
+    identity: &'static [&'static str],
+    unique: &'static [&'static [&'static str]],
+    remove: super::Remover,
+) -> Follow {
     Follow {
         identity,
+        unique,
         remove: Some(remove),
         replace: Replace::ByRemove,
     }
@@ -23,14 +33,35 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     ("decide_spend", follow(&["request_id"], remove_decide_spend)),
     ("decide_calibrations", follow(&["id"], remove_calibration)),
     ("decision_receipts", follow(&["id"], remove_receipt)),
-    ("decide_proposals", follow(&["id"], remove_proposal)),
+    (
+        "decide_proposals",
+        keyed(
+            &[
+                "id",
+                "sweep_id",
+                "pair_index",
+                "source_id",
+                "new_fact_id",
+                "old_fact_id",
+            ],
+            &[
+                &["sweep_id", "pair_index"],
+                &["source_id", "new_fact_id", "old_fact_id"],
+            ],
+            remove_proposal,
+        ),
+    ),
     (
         "decide_sweep_deferred",
         follow(&["slot", "source_id", "fact_id"], remove_deferred),
     ),
     (
         "decide_review_proposals",
-        follow(&["id"], remove_review_proposal),
+        keyed(
+            &["id", "kind", "source_id", "a_ref", "b_ref", "subject"],
+            &[&["kind", "source_id", "a_ref", "b_ref", "subject"]],
+            remove_review_proposal,
+        ),
     ),
     (
         "decide_review_queue",
@@ -43,7 +74,14 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     ),
     ("wake_crons", follow(&["name"], remove_cron)),
     ("wake_cron_runs", follow(&["id", "name"], remove_cron_run)),
-    ("wake_forgets", follow(&["id"], remove_forget)),
+    (
+        "wake_forgets",
+        keyed(
+            &["id", "wake_user", "state"],
+            &[&["wake_user", "state"]],
+            remove_forget,
+        ),
+    ),
     (
         "wake_terms_acceptances",
         follow(&["principal_key", "terms_version"], remove_terms),

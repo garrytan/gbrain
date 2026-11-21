@@ -104,6 +104,12 @@ export interface SeedFollowResult {
   deleted: number;
   /** Entries left as they were: written at a later generation than the call's. */
   skipped_older: number;
+  /**
+   * Stored rows removed because a row of the call took a unique natural key they held (two chunks trading
+   * `chunk_index`). Their digest entries are gone too, so the relation differs from the primary until a reconcile
+   * restores them: mark it dirty when this is above zero.
+   */
+  displaced: number;
   dropped: number;
   unmapped_columns: string[];
   losses: Record<string, number>;

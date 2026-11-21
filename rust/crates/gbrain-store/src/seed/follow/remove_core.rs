@@ -1,6 +1,6 @@
 //! The follow spec of the core and privacy relations.
 
-use super::{Follow, Identity, Mode, Replace, number, text};
+use super::{Custom, Follow, Identity, Mode, Replace, number, text};
 use crate::error::Result;
 use crate::kv::KvWrite;
 use crate::pages::{read_page_by_id, write_page};
@@ -24,8 +24,18 @@ macro_rules! need {
 pub(super) use need;
 
 const fn follow(identity: &'static [&'static str], remove: super::Remover) -> Follow {
+    keyed(identity, &[], remove)
+}
+
+/// A relation with unique natural keys besides its primary key: `unique` names the column sets.
+const fn keyed(
+    identity: &'static [&'static str],
+    unique: &'static [&'static [&'static str]],
+    remove: super::Remover,
+) -> Follow {
     Follow {
         identity,
+        unique,
         remove: Some(remove),
         replace: Replace::ByRemove,
     }
@@ -37,6 +47,7 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
         "sources",
         Follow {
             identity: &["id"],
+            unique: &[],
             remove: None,
             replace: Replace::Import,
         },
@@ -45,19 +56,51 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     (
         "pages",
         Follow {
-            identity: &["id"],
+            identity: &["id", "source_id", "slug"],
+            unique: &[&["source_id", "slug"]],
             remove: Some(remove_page),
-            replace: Replace::Custom(replace_page),
+            replace: Replace::Custom(Custom {
+                release: release_page,
+                store: store_page,
+            }),
         },
     ),
-    ("tags", follow(&["id", "page_id", "tag"], remove_tag)),
+    (
+        "tags",
+        keyed(
+            &["id", "page_id", "tag"],
+            &[&["page_id", "tag"]],
+            remove_tag,
+        ),
+    ),
     (
         "content_chunks",
-        follow(&["id", "page_id", "chunk_index"], remove_chunk),
+        keyed(
+            &["id", "page_id", "chunk_index"],
+            &[&["page_id", "chunk_index"]],
+            remove_chunk,
+        ),
     ),
     (
         "links",
-        follow(&["id", "from_page_id", "to_page_id"], remove_link),
+        keyed(
+            &[
+                "id",
+                "from_page_id",
+                "to_page_id",
+                "link_type",
+                "link_source",
+                "origin_page_id",
+            ],
+            &[&[
+                "from_page_id",
+                "to_page_id",
+                "link_type",
+                "link_source",
+                "origin_page_id",
+            ]],
+            remove_link,
+        ),
     ),
     (
         "timeline_entries",
@@ -65,17 +108,55 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     ),
     (
         "slug_aliases",
-        follow(&["id", "source_id", "alias_slug"], remove_slug_alias),
+        keyed(
+            &["id", "source_id", "alias_slug"],
+            &[&["source_id", "alias_slug"]],
+            remove_slug_alias,
+        ),
     ),
     (
         "page_aliases",
-        follow(
+        keyed(
             &["id", "source_id", "alias_norm", "slug", "origin"],
+            &[&["source_id", "alias_norm", "slug", "origin"]],
             remove_page_alias,
         ),
     ),
-    ("facts", follow(&["id"], remove_fact)),
-    ("takes", follow(&["id", "page_id", "row_num"], remove_take)),
+    (
+        "facts",
+        keyed(
+            &[
+                "id",
+                "source_id",
+                "source_markdown_slug",
+                "row_num",
+                "entity_slug",
+                "dimension",
+                "value_hash",
+                "valid_from",
+            ],
+            &[
+                &["source_id", "source_markdown_slug", "row_num"],
+                &[
+                    "source_id",
+                    "entity_slug",
+                    "dimension",
+                    "value_hash",
+                    "source_markdown_slug",
+                    "valid_from",
+                ],
+            ],
+            remove_fact,
+        ),
+    ),
+    (
+        "takes",
+        keyed(
+            &["id", "page_id", "row_num"],
+            &[&["page_id", "row_num"]],
+            remove_take,
+        ),
+    ),
     (
         "owner_only_marks",
         follow(&["row_table", "row_id"], remove_mark),
@@ -125,23 +206,28 @@ fn remove_page(tx: &mut dyn KvWrite, id: &Identity, mode: Mode) -> Result<bool> 
 }
 
 /// A changed page keeps what hangs off it: its chunks, links, timeline entries, tags and the rest.
-/// Its own records are removed and stored again from the row, and its tags, which ride in the page
-/// record but are rows of their own, are put back.
-fn replace_page(
+/// Its own records are removed first; the new row is stored after, and its tags, which ride in the
+/// page record but are rows of their own, are put back.
+fn release_page(tx: &mut dyn KvWrite, row: &Row) -> Result<Option<serde_json::Value>> {
+    let Some(old) = read_page_by_id(&*tx, row.req_id("id")?)? else {
+        return Ok(None);
+    };
+    crate::pages::remove_page_own_state(tx, &old)?;
+    Ok(Some(serde_json::to_value((&old.tags, &old.tag_sources))?))
+}
+
+fn store_page(
     tx: &mut dyn KvWrite,
     row: &Row,
     losses: &mut Losses,
     import: Importer,
+    carry: Option<&serde_json::Value>,
 ) -> Result<Outcome> {
-    let id = row.req_id("id")?;
-    let Some(old) = read_page_by_id(&*tx, id)? else {
-        return import(tx, row, losses);
-    };
-    crate::pages::remove_page_own_state(tx, &old)?;
     let outcome = import(tx, row, losses)?;
-    if let Some(mut page) = read_page_by_id(&*tx, id)? {
-        page.tags = old.tags;
-        page.tag_sources = old.tag_sources;
+    if let Some(carry) = carry
+        && let Some(mut page) = read_page_by_id(&*tx, row.req_id("id")?)?
+    {
+        (page.tags, page.tag_sources) = serde_json::from_value(carry.clone())?;
         write_page(tx, &page)?;
     }
     Ok(outcome)
