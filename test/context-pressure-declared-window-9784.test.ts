@@ -12,6 +12,12 @@ describe('context window for a bare Claude model id (#9784)', () => {
     expect(resolveContextWindow({ configured: null, model: 'some-other-model', maxSeen: 0 })).toBe(200_000);
   });
 
+  test('a 4.x model the recipe lists at 1M keeps the 200k default until the fill passes it', () => {
+    expect(resolveContextWindow({ configured: null, model: 'claude-opus-4-6', maxSeen: 150_000 })).toBe(200_000);
+    expect(resolveContextWindow({ configured: null, model: 'anthropic:claude-opus-4-8', maxSeen: 0 })).toBe(200_000);
+    expect(resolveContextWindow({ configured: null, model: 'claude-opus-4-6', maxSeen: 250_000 })).toBe(1_000_000);
+  });
+
   test('explicit config still wins over the declared window', () => {
     expect(resolveContextWindow({ configured: 150_000, model: 'claude-opus-5-5', maxSeen: 0 })).toBe(150_000);
   });
