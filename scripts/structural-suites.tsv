@@ -453,6 +453,7 @@ test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression 
 test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
+test/sync-code-history-9771.test.ts	(file-level)	1	readFileSync
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper
 test/sync-failures.test.ts	Bug 9 — doctor surfaces sync failures	2	doctor-source-helper
 test/sync-failures.test.ts	Bug 9 — sync.ts CLI flag wiring	6	bun-file,doctor-source-helper,source-surface-helper

@@ -440,7 +440,7 @@ async function recordSliceCursor(tx: BrainEngine, row: WriteRequest, p: { syncOp
 /** The code-file branch of `prepareManagedSyncMutation`: `importCodeFile` with `prepare`, text embedding deferred to `embed --stale` (the image branch is `sync-image.ts`). */
 async function prepareManagedSyncCode(engine: BrainEngine, row: WriteRequest, p: { content: string; sourcePath: string; rawHash: string | null; lineEndingOnly?: boolean; companyApproval: boolean },
   ctx: { snapshot: Snapshot | null; validate: (tx: BrainEngine) => Promise<void>; releaseHold: (tx: BrainEngine) => Promise<void>; recordProvenance: (tx: BrainEngine) => Promise<void>; clock?: ClaimPhaseClock;
-    history?: VersionHistory; refuse: (code: RegistryCode, message: string, cause: string) => OperationError; contentRefusal: (refusal: ContentRefusal) => OperationError }): Promise<PreparedMutation> {
+    history?: VersionHistory; refuse: (code: RegistryCode, message: string, cause: string) => OperationError; contentRefusal: (refusal: ContentRefusal) => OperationError }): Promise<SyncPreparedMutation> {
   const { snapshot, validate, releaseHold, clock, refuse } = ctx;
   if (p.companyApproval) throw refuse('profile_incompatible', 'Company source approval permits only committed Markdown content.',
     `A company-brain source imports only committed Markdown, and ${row.slug} is a code file; remove it from the approved revision.`);
@@ -459,7 +459,10 @@ async function prepareManagedSyncCode(engine: BrainEngine, row: WriteRequest, p:
   const ready = prepared;
   if (ready.observedRevision !== (snapshot?.revision ?? null)) throw refuse('revision_conflict', 'The code page changed during preparation.',
     `Page ${row.slug} changed while this sync was being prepared.`);
-  return { observedRevision: ready.observedRevision, trust: await ownerImportTrust(engine, row, null, p.sourcePath),
+  // A code hash includes chunker/grammar versions, and an unsealed projection also needs work even when
+  // the canonical page still holds this historical file. Neither is evidence of a database-only edit.
+  return { observedRevision: ready.observedRevision, pageUnchanged: sameCanonicalImport(snapshot, ready.parsedPage),
+    trust: await ownerImportTrust(engine, row, null, p.sourcePath),
     validate: async tx => { await validate(tx); await ready.validate(tx); },
     noop: ready.noop, deferEmbedding: true, apply: async tx => {
     await ready.apply(tx);
