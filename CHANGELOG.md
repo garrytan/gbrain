@@ -10,6 +10,72 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.757.0] - 2026-11-21
+
+**gbrain installs and connects to Hermes without changing Hermes's security settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**
+
+<!-- behavior-change: setup_hermes_registers_mcp_gst2714 -->
+
+### Fixed
+- `gbrain setup hermes` registers gbrain's MCP server itself, through `hermes mcp add` (Hermes validates the entry, connects to it and writes its own `config.yaml`), then checks it with `hermes mcp test gbrain`. It used to print a step to follow by hand, and agents inside Hermes tried to edit `config.yaml` directly, which Hermes refuses ("Agent cannot modify security-sensitive configuration"). Setup finds `hermes` on PATH or where Hermes's installer puts it, leaves an `mcp_servers.gbrain` entry it did not write alone, keeps its marked hook block through Hermes's rewrite of `config.yaml`, and prints the one command to run when no `hermes` command is found. A rerun updates gbrain's own entry and keeps its member binding and connect timeout, but leaves an entry carrying other settings or environment variables alone (no stored value goes on a command line). If an update fails, setup puts the previous entry back and exits 1. `--remove` runs `hermes mcp remove gbrain`; `--instructions-only` still leaves MCP alone.
+
+### Changed
+- `INSTALL_FOR_AGENTS.md` adds a release-binary install route (`#release-binary`) for harnesses whose command scanner refuses the Bun installer or `bun install -g`, such as Hermes in single-query mode: download the stable `gbrain-linux-x64` (or `gbrain-darwin-arm64`) release file to `~/.local/bin/gbrain`, then `~/.local/bin/gbrain init --pglite --no-embedding` and `~/.local/bin/gbrain setup hermes`. Every command in it passes Hermes v2026.9.24's command checks with Tirith 0.4.2 and 0.5.0, online or offline.
+- The README has a Hermes section with that route, and `docs/mcp/HERMES.md` and the "If you are Hermes" step lead with `gbrain setup hermes`, keeping the `hermes mcp add` command as the by-hand fallback.
+
+**A self-registered connector such as claude.ai gets the wider access the owner gives it with `gbrain auth rescope` the next time it connects.**
+
+### Fixed
+- A browser connector that registered itself asking only for `read` stayed read-only after the owner widened it with `gbrain auth rescope --client <id> --scopes read,write`: it asks for `read` again every time it connects, and the owner's approval granted only what it asked for. Now the owner's approval of a self-registered connector grants its whole current scope, shown on the approval page, whenever the request names any scope it holds. The scope the owner set stays the ceiling, a connector asking for more gets no more, and a request naming nothing it holds still gets nothing. Tokens already issued and their refreshes keep the scope approved for them, and narrowing a connector still takes effect at once on its existing tokens. Clients the operator registered are unchanged. Reported and first fixed by Devin McNulty (overtonxyz/gbrain#2770).
+
+<!-- behavior-change: dcr_connector_takes_widened_grant_gst3334 -->
+
+**A misspelled `readable_by` frontmatter key now refuses the write instead of opening the page to every member.**
+
+<!-- behavior-change: readers_key_misspelled_refused -->
+
+### Fixed
+- A page whose frontmatter names its readers with `Readable_By`, `readable-by`, `READABLE_BY`, `readable by` or `readableBy` used to save without complaint and then be readable by every member, because page access reads only the exact `readable_by` key. `put_page`, `edit_page` and `capture` now refuse it with `readers_noncanonical` and store nothing; `ingest_capture`, `brainstorm --save` and `sources reconcile` refuse it the same way. Git sync and `gbrain import` hold such a file with the same code, the rest of the source still syncs, and an existing page keeps its last imported version. A page that also carries the exact `readable_by` key is refused too.
+- Write the key as `readable_by` (lowercase, with an underscore) on its own frontmatter line, then save, sync or import again. Pages already stored with a misspelled key are not rewritten.
+
+**The Rust engine's design docs under `rust/docs/` are now left out of /ship's code review, the same as `docs/`; nothing changes for users.**
+
+### Changed
+- `.gstack/ship-policy.json` now lists `rust/docs/**` next to `docs/**` in `review_exclude_paths`, so a large Rust change stays under the review pass's 2,000,000-byte limit. Rust code, tests and config are still reviewed in full, and the documentation audit and the privacy and secret-scan checks still read those docs.
+
+## [0.60.756.0] - 2026-11-21
+
+**Purging deleted pages with an age that is not a number, negative or infinite is now refused on every engine, so a bad age can no longer permanently erase every deleted page.**
+
+### Fixed
+- `gbrain pages purge-deleted`, the purge job and the maintenance cycle refuse an age that is NaN, negative, +Infinity or -Infinity with a clear `invalid_argument` error before they preview, carry or delete anything. Before, a negative age counted as 0 hours, so the purge removed every soft-deleted page, including the tombstones the belief ledger records, and on the Rust engine an age that was not a number did the same. Zero and positive ages work as before.
+- On a Rust brain, a claim the ledger says was withdrawn no longer shows in the lead of a large page.
+- The keyword-scale measurement tool refuses a brain that another process has open, instead of writing into it, and it builds on Windows again.
+
+<!-- behavior-change: purge_age_refused_9823 -->
+
+**The experimental Rust engine's owner socket now bounds what a second process can make the owner hold, checks who connects, and hands the brain over cleanly when its owner exits; nothing selects the Rust engine yet, so PGLite and Postgres brains are unchanged.**
+
+### Changed
+- The owner of a Rust brain refuses a malformed or oversized frame, and a client that sends one cannot make the owner run a call. It caps its call queue, the bytes of call frames it holds and its open connections, and answers a call over a cap with `owner_busy` (retryable), which runs nothing. A peer that is refused for being over the connection cap and never closes its side is cut off after one second.
+- The owner accepts only connections from its own user, and says so with `owner_ipc_peer_refused` when another user, or a peer whose user it cannot read, connects.
+- A call that carries a far deadline keeps it. A deadline weeks away no longer ends the call at once.
+- A write from a remote caller is refused on the client side and is never sent to the owner, which would have run it with the owner's wider access.
+- When the owner exits, the next call from a client takes the brain over, or reaches the process that did. A call that was cancelled, or past its deadline, while that happens ends as cancelled or as a timeout that never ran, and no longer runs in this process. If the takeover cannot open the store, the call that started it fails with the store's own error.
+- A call made while `disconnect` runs no longer starts a takeover that holds the brain lock after `disconnect` returned.
+- The owner keeps the brain lock until a store open that is still pending settles.
+- A page stored in segments no longer breaks a second process that reads it through the owner: its metadata crosses the socket and its body fields refuse with `page_body_segmented`, as they do in the owner, and one such page no longer fails the whole list.
+- Errors from the owner keep their type across the socket, so link and revision recovery that checks the error type also works from a second process.
+- A call that was already sent to the owner and then is cancelled, passes its deadline or loses its owner ends `owner_unavailable` with reason `outcome_unknown`, since the owner may still commit it. A deadline after the send used to end `timeout`. Its advice names the read that shows whether that write committed, and it is retryable only for a call that only reads. The owner now answers that read only after the earlier call has ended, so a read that finds nothing means the write did not commit; a read that cannot wait that long ends `owner_unavailable` with reason `earlier_call_running` and tells nothing.
+- A call cancelled or past its deadline while a takeover still opens the store now ends at once, instead of when the open ends.
+- A whole operation whose takeover cannot open the store now fails with the store's own error, which is not retryable, instead of a retryable `owner_unavailable`.
+- A takeover that a remote job's call starts no longer gives that job's authority to the new owner, so later local calls such as a managed import are not refused.
+- Owner sockets speak protocol version 2. A client and an owner of different versions refuse each other, so restart every gbrain process on a Rust brain after the upgrade.
+- An error shown over HTTP now hides a process id written as `owner_pid=` too.
+
+### Added
+- Three error codes, `owner_busy`, `owner_ipc_peer_refused` and `owner_ipc_protocol`, in the error guide and the public surface, each with `gbrain doctor --json` as its fix.
+
 ## [0.60.755.0] - 2026-11-21
 
 **`gbrain delete <slug> --purge=0` no longer hard-deletes: an inline boolean flag such as `--purge=0`, `--include-deleted=no` or `--dry-run=off` is refused instead of being read as on.**
