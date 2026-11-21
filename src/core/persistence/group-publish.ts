@@ -337,9 +337,11 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       const members = [...recorded.values()].map(member => member.row);
       const keys = rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug, incarnation: row.source_incarnation },
         ...(prepared[i]!.additionalPageKeys ?? []).map(key => key.sourceId === row.source_id ? { ...key, incarnation: row.source_incarnation } : key)]);
+      // Opened before the pipeline, so guardOwnership sends its worktree lock ahead of lockPageKeys' source locks.
+      const journal = await tx.publicationJournalStore();
       const ready = pipelined(tx, [
         () => declarePublication(tx, opened),
-        () => guardOwnership(tx, head, hostId),
+        () => guardOwnership(tx, journal, head, hostId),
         // A published file needs recovery even if this transaction rolls back; claims are verified first.
         () => members.length ? tx.executeRaw(`UPDATE persistence_requests r SET publication_started=true FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token)
           WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' RETURNING r.id`, [members.map(row => row.id), members.map(row => row.execution_token)]) : Promise.resolve([]),
