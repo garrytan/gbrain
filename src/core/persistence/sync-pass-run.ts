@@ -36,7 +36,7 @@ import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
 import { pathBlobHistories, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
-import { syncPassKind } from './sync-classify.ts';
+import { DRIFT_HISTORY_DEPTH, DRIFT_HISTORY_VERSIONS, syncPassKind } from './sync-classify.ts';
 import { passBanked } from './sync-pass-status.ts';
 import { PASS_BATCH_KEY_PREFIX, readConvergedWatermark, SyncAdmissionPaused, type PassEntry } from './sync-pass-batch.ts';
 import { assertDrainLease, currentDrainLease } from './sync-lease.ts';
@@ -64,6 +64,7 @@ import { passResumeArgs } from './sync-pass-readers.ts';
 import { applyPassRound, sweepLegacy, finishPassApply, holdPassIdentities, newPassApplyState, passApplyCounts, remoteReconcile } from './sync-pass-apply.ts';
 import { passClosureMemo, passCostDecision, type passEpisodeClosure, readReservedUsd, registerPassCost, unregisterPassCost } from './sync-pass-episode.ts';
 import { currentEmbeddingPricePerMTok } from '../embedding.ts';
+import { unbornHead } from '../hardened-git.ts';
 import { SIZE_STATE_SAMPLE, type SyncSizeStates } from '../page-embedding-budget.ts';
 import { massReconcileAllowed } from '../sync-reconcile.ts';
 import { keepDbHeadroom } from '../repair/keep-db-policy.ts';
@@ -76,8 +77,6 @@ export const PASS_BATCH_MAX = 10_000;
 const IN_FLIGHT_WAITS = 4;
 /** #7355: how often a long level read writes the open pass row, so a follower and `sync status` see it working. */
 const PASS_HEARTBEAT_MS = 30_000;
-/** #7199: how far back (first-parent commits) an older side-`unknown` hold's re-screen looks, and how many earlier versions it compares. */
-const DRIFT_HISTORY_DEPTH = 50, DRIFT_HISTORY_VERSIONS = 3;
 
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
@@ -227,8 +226,9 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   // #7338: a page with no import record (imported by an older gbrain) has its file at the incarnation's baseline commit as its baseline.
   const driftBaseline = (entry: ShadowPath) => entry.pageId === null ? undefined : entry.result.side === 'both' ? baselineRecords.get(entry.pageId)?.disk_blob_oid ?? undefined
     : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
-  // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
-  // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
+  // #7199 / GST-3328: a side-`unknown` screen also compares the page with the file's last few committed versions before the
+  // baseline (or before HEAD when the last synced commit does not resolve): a page one commit or more behind its file, or held
+  // by a screen that compared the baseline alone, imports when it holds one of them.
   // GST-2843: those versions are read per batch, just before the batch drains (readDriftHistories), so a pass over tens of
   // thousands of such holds commits each batch's holds before it reads the next batch's history.
   const historyOwed = new Map<PassEntry, ShadowPath>();
@@ -242,7 +242,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...recheckOf(entry), ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
     if (entry.state.page) {
       const built: PassEntry = { ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision };
-      if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) historyOwed.set(built, entry);
+      if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null) historyOwed.set(built, entry);
       entries.push(built); continue;
     }
     const slug = slugOf.get(entry.path);
@@ -420,7 +420,15 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   if (handover.hostRequired) return { ended: empty('blocked_by_failures', 'reconcile_host_required') };
   const [prior, admission, configuredWorking, patterns, loadedPack, tail, retry, sourceHolds, rowProbe, failed, idleFacts] = await pin;
   assertActive();
-  const [headLine, refLine] = syncGit(context.gitRoot, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']).split('\n');
+  let headRef: string;
+  try {
+    headRef = syncGit(context.gitRoot, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']);
+  } catch (error) {
+    // GBRA-706: a branch with no commit yet (a fresh `init --git`) has nothing committed to sync; the pass ends up to date.
+    if (unbornHead(context.gitRoot)) return { ended: empty('up_to_date') };
+    throw error;
+  }
+  const [headLine, refLine] = headRef.split('\n');
   const head = headLine!.trim();
   const detached = refLine?.trim() === 'HEAD';
   // G3: a strict source's pass reads its commit alone, a detached HEAD's too (sync-pass.ts).

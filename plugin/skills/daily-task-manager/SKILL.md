@@ -45,7 +45,7 @@ For `review`, return the grouped active-task list instead of a single task_id. W
 
 ## Tool Interface
 
-Use ONLY the declared tools. `get_page("ops/tasks")` to read, `put_page("ops/tasks", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks` / `gbrain put ops/tasks` — equivalents only, not the skill's interface.)
+Use ONLY the declared tools. `get_page("ops/tasks")` to read, `put_page("ops/tasks", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks` / `gbrain put ops/tasks` — equivalents only, not the skill's interface. Put it back to the source the `get` read it from: add `--source-id <that source>`, or the put is refused when `ops/tasks` lives in another source.)
 
 ## Action Routing
 

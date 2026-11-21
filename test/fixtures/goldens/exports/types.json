@@ -10103,6 +10103,7 @@
           "isCallable?: ((opName: string, args?: Record<string, unknown>) => boolean) | undefined",
           "jobId?: number | undefined",
           "localFederatedSourceIds?: string[] | undefined",
+          "localSourceFromCheckout?: boolean | undefined",
           "localSourceImplicit?: boolean | undefined",
           "logger: Logger",
           "mcpCaller?: { client?: string; userAgent?: string; meta?: Record<string, unknown>; } | undefined",
