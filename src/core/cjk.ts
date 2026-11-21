@@ -246,5 +246,26 @@ export function stripKoreanParticle(term: string): string {
  * the chunk search all read this, so a count never disagrees with the rows.
  */
 export function cjkMatchTerms(query: string): string[] {
-  return Array.from(new Set(splitCJKQueryTerms(query).map(stripKoreanParticle)));
+  return Array.from(new Set(splitCJKQueryTerms(query).flatMap(splitHanRuns).map(stripKoreanParticle)));
+}
+
+/** A Han run this long is a spaceless phrase, not a word: no chunk need contain it verbatim. */
+const LONG_HAN_RUN = /[一-鿿]{5,}/;
+
+/**
+ * Chinese has no word spaces, so a spaceless question is one whitespace token
+ * that no chunk contains verbatim. A token holding a Han run of 5+ chars is
+ * split into its overlapping character bigrams (letters/digits around it are
+ * kept, punctuation dropped); every other token is returned unchanged.
+ */
+function splitHanRuns(token: string): string[] {
+  if (!LONG_HAN_RUN.test(token)) return [token];
+  const out: string[] = [];
+  for (const piece of token.match(/[一-鿿]+|[^一-鿿]+/g) ?? []) {
+    if (/^[一-鿿]+$/.test(piece)) {
+      if (piece.length < 5) out.push(piece);
+      else for (let i = 0; i + 2 <= piece.length; i++) out.push(piece.slice(i, i + 2));
+    } else if (/[\p{L}\p{N}]/u.test(piece)) out.push(piece);
+  }
+  return out;
 }
