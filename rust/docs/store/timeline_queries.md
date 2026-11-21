@@ -134,6 +134,22 @@ A live page is one that is not soft-deleted. A segmented page has NULL `compiled
   rows, by id, at most `limit`. `body_storage` is `segmented` for a segmented page, else `inline`; `revision` is the
   knowledge revision.
 
+## The repair reads
+
+`timeline_queries/repair_reads.rs` serves the scans of `gbrain repair timeline`, `timeline-comments`,
+`timeline-order` and `connector-fences` and the retraction check's version reads
+(`src/core/engine-sql/timeline-repair-reads.ts`). Pinned by `rust/crates/gbrain-store/tests/timeline_repair_reads.rs`
+and `test/engine-parity/repair-takes-timeline.test.ts`.
+
+- `listTimelineHistoryPages`: live inline pages of the sources, by id, either past `afterId` holding own rows (at most
+  `limit`) or among `ids`.
+- `listTimelineVersionWitnesses` / `readTimelineVersionBody`: the stored versions of a page, newest first, and one
+  version's body with the md5 of its truth and timeline.
+- `listTimelineMarkupRows` / `rewriteTimelineRow`: own rows whose summary, source or detail holds `<!--` or `-->`, by
+  page then id, and the rewrite of one row's source, summary and detail.
+- `listMaterializedMarkerPages`, `listDateBulletPages` and `listConnectorFencePages`: the page scans of the
+  `timeline-comments`, `timeline-order` and `connector-fences` previews, by id.
+
 The members refuse with `engine_capability_missing` a value the SQL engines would fail to bind: a page or row id
 that is not a 32-bit integer, a page id or `afterId` that is not an integer, and a limit that is negative or not an
 integer.

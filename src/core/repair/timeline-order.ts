@@ -24,7 +24,9 @@
  * from `--all`, the remediation plan, the maintenance cycle or an upgrade.
  * Segmented pages are counted, not rewritten.
  */
+import { lacksRawSql } from '../engine-capabilities.ts';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { OperationError } from '../ops/contract.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
@@ -109,12 +111,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
   const listing: RepairListing[] = [];
   const residuals: Record<string, number> = { pages_to_reorder: 0, duplicates_to_merge: 0, sections_to_join: 0, needs_human: 0, near_duplicates: 0 };
   for (let cursor = 0; ;) {
-    const batch = await engine.executeRaw<{ id: number; source_id: string; slug: string; compiled_truth: string; timeline: string | null }>(
-      `SELECT id, source_id, slug, compiled_truth, timeline FROM pages
-        WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND body_storage='inline' AND id>$2
-          AND (timeline LIKE '%- **____-__-__**%' OR compiled_truth LIKE '%- **____-__-__**%')
-          AND (cardinality($3::text[])=0 OR slug=ANY($3::text[]))
-        ORDER BY id LIMIT ${BATCH}`, [scope.source_ids, cursor, selection.slugs]);
+    const batch = await engine.listDateBulletPages(scope.source_ids, cursor, selection.slugs, BATCH);
     for (const row of batch) {
       cursor = Number(row.id);
       const quick = orderTimeline(row);
@@ -170,9 +167,8 @@ export const timelineOrderRepair: RepairHandler = {
       emptyHash: () => hashOf(engine, scope, selection, []) })).items;
     if (approved.some(page => digest(page.selection) !== digest(selection))) throw previewChangedError(expect, command);
     const pages = approved.map(({ selection: _selection, ...page }) => page);
-    const published = new Set((await engine.executeRaw<{ request_id: string }>(
-      "SELECT request_id::text AS request_id FROM persistence_requests WHERE request_id=ANY($1::uuid[]) AND state='committed'",
-      [pages.map(page => requestIdOf(expect, page))])).map(row => row.request_id));
+    const published = new Set((await engine.listWriteRequestsByRequestIds(pages.map(page => requestIdOf(expect, page))))
+      .filter(row => row.state === 'committed').map(row => String(row.request_id)));
     // Every page not yet published under this hash still has the revision the user saw, or nothing is written.
     for (const page of pages) {
       if (published.has(requestIdOf(expect, page))) continue;
@@ -186,13 +182,14 @@ export const timelineOrderRepair: RepairHandler = {
     const { page, hash, last } = entry as OrderItem;
     return retireAfterLastItem(ctx.engine, 'timeline-order', hash, last, async () => {
       const requestId = requestIdOf(hash, page);
-      const [done] = await ctx.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+      const done = (await ctx.engine.listWriteRequestsByRequestIds([requestId])).some(row => row.state === 'committed');
       const detail = { moved: page.moved, duplicates: page.duplicates, sections_joined: page.sections_joined };
-      if (done?.state === 'committed') return { applied: true, outcome: 'reordered', detail };
+      if (done) return { applied: true, outcome: 'reordered', detail };
       const snapshot = await ctx.engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
       if (!snapshot || snapshot.revision !== page.revision) return { applied: false, outcome: 'changed_since_preview', reason: 'the page changed since the preview' };
       const verdict = await plannedChange(ctx.engine, snapshot);
       if (!verdict || 'hold' in verdict) return { applied: false, outcome: 'changed_since_preview', reason: verdict ? verdict.hold : 'the timeline is already in order' };
+      if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair timeline-order page write');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: verdict.content,
         expected_revision: snapshot.revision, request_id: requestId } });
       return { applied: true, outcome: 'reordered', detail };

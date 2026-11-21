@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1397/1404
+# covered: 1411/1418
 # lifecycle: 9/9
 # pages: 61/61
 # search: 7/7
@@ -19,10 +19,10 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 20/20
+# timeline: 28/28
 # ontology: 9/9
 # raw_files: 25/25
-# takes: 28/28
+# takes: 31/31
 # dream: 37/37
 # contradictions: 22/22
 # facts: 15/15
@@ -48,7 +48,7 @@
 # facts_cycle: 12/12
 # facts_cycle_sites: 34/34
 # facts_purge: 87/87
-# facts_repair: 37/37
+# facts_repair: 40/40
 # facts_trust: 48/48
 # facts_recall: 7/7
 # facts_conversation: 30/30
@@ -101,7 +101,7 @@ getPage	pages	yes	143	yes	yes	yes	serves
 readPageSnapshot	pages	yes	39	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	675	yes	yes	yes	serves
+putPage	pages	yes	686	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	24	yes	yes	yes	serves
@@ -137,7 +137,7 @@ listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
 lockSourceRow	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
-insertSource	pages	yes	7	no	yes	yes	serves
+insertSource	pages	yes	9	no	yes	yes	serves
 deleteSourceRecord	pages	yes	6	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
@@ -294,13 +294,21 @@ getTags	tags	yes	6	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
-listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	serves
+listStoredTimelineRowsOrdered	timeline	yes	4	no	yes	yes	serves
 deleteTimelineRows	timeline	yes	2	no	yes	yes	serves
 storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	47	yes	yes	yes	serves
+listTimelineHistoryPages	timeline	yes	2	no	yes	yes	serves
+listTimelineVersionWitnesses	timeline	yes	1	no	yes	yes	serves
+readTimelineVersionBody	timeline	yes	1	no	yes	yes	serves
+listTimelineMarkupRows	timeline	yes	3	no	yes	yes	serves
+listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
+rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
+listDateBulletPages	timeline	yes	2	no	yes	yes	serves
+listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
+addTimelineEntry	timeline	yes	50	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
 getTimeline	timeline	yes	19	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
@@ -308,7 +316,7 @@ getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
 getLastSeen	timeline	yes	5	no	yes	yes	serves
 upsertEventProjection	timeline	yes	19	no	yes	yes	serves
-removeTimelineRows	timeline	yes	2	no	yes	yes	serves
+removeTimelineRows	timeline	yes	3	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	serves
 mergeOntologyFact	ontology	yes	13	no	yes	yes	serves
@@ -345,9 +353,9 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	53	yes	yes	yes	serves
+addTakesBatch	takes	yes	56	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	27	no	yes	yes	serves
+listTakes	takes	yes	28	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
 searchTakesVector	takes	yes	2	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -372,7 +380,10 @@ listTakePreimages	takes	yes	1	no	yes	yes	serves
 deleteTakesByIds	takes	yes	1	no	yes	yes	serves
 findTakeId	takes	yes	1	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	4	no	yes	yes	serves
-listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
+listTakeSupersessionCandidates	takes	yes	3	no	yes	yes	serves
+listTakePointers	takes	yes	3	no	yes	yes	serves
+listTakeSupersedeReceipts	takes	yes	2	no	yes	yes	serves
+setTakeSupersededBy	takes	yes	2	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
@@ -433,7 +444,7 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	100	yes	yes	yes	serves
-insertFacts	facts	yes	159	no	yes	yes	serves
+insertFacts	facts	yes	162	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	63	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
@@ -878,7 +889,7 @@ pageHasTimelineEntries	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 maxFenceRowNumOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listRootPageSlugsAfter	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listOwnLinkIds	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-listActiveFactIdsOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
+listActiveFactIdsOfPage	facts_cycle_sites	yes	2	no	yes	yes	refuses:facts
 listFactIdsStillOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listLinkIdsOnPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 readPageFileOrigin	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
@@ -992,10 +1003,13 @@ listPurgedPageRevisions	facts_purge	yes	1	no	yes	yes	refuses:facts
 insertPurgeEffects	facts_purge	yes	1	no	yes	yes	refuses:facts
 loopFactDrift	facts_repair	yes	3	no	yes	yes	serves
 closedLoopWithActiveFact	facts_repair	yes	3	no	yes	yes	serves
-listSessionFactsForClassification	facts_repair	yes	1	no	yes	yes	serves
+listSessionFactsForClassification	facts_repair	yes	2	no	yes	yes	serves
 listSessionFactTwins	facts_repair	yes	1	no	yes	yes	serves
 listCapturedFactsForClassification	facts_repair	yes	3	no	yes	yes	serves
 countLabelFacts	facts_repair	yes	2	no	yes	yes	serves
+listLabelFactCandidates	facts_repair	yes	2	no	yes	yes	serves
+listSegmentedLabelPages	facts_repair	yes	2	no	yes	yes	serves
+hasActiveAuditMarker	facts_repair	yes	2	no	yes	yes	serves
 listExtractorFactsForClassification	facts_repair	yes	3	no	yes	yes	serves
 listClosedConsolidationTies	facts_repair	yes	2	no	yes	yes	serves
 listPagelessEntityFacts	facts_repair	yes	3	no	yes	yes	serves
@@ -1016,7 +1030,7 @@ listUnwithdrawnFacts	facts_repair	yes	3	no	yes	yes	serves
 listWorldFactsFromPrivateSources	facts_repair	yes	4	no	yes	yes	serves
 listActiveSourceIds	facts_repair	yes	1	no	yes	yes	refuses:facts
 readRepairBrainId	facts_repair	yes	1	no	yes	yes	refuses:facts
-listAgentSessionTakeCandidates	facts_repair	yes	1	no	yes	yes	refuses:facts
+listAgentSessionTakeCandidates	facts_repair	yes	2	no	yes	yes	refuses:facts
 listSettledSessionFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 reattributeSessionFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 retireSessionTakes	facts_repair	yes	1	no	yes	yes	refuses:facts

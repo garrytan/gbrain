@@ -32,6 +32,8 @@ import * as stats from './stats.ts';
 import * as rawFiles from './raw-files.ts';
 import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
+import * as timelineRepairReads from './timeline-repair-reads.ts';
+import * as labelRepairReads from './label-repair-reads.ts';
 import * as keyword from './keyword.ts';
 import * as chunkQueries from './chunk-queries.ts';
 import * as vectors from './vectors.ts';
@@ -128,7 +130,7 @@ export const STORE_MEMBERS = {
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
-  ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
+  ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...timelineRepairReads, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
@@ -141,7 +143,7 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...labelRepairReads, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,

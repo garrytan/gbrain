@@ -94,12 +94,19 @@ fn live_in(page: &PageRecord, sources: &BTreeSet<&str>) -> bool {
 }
 
 fn page_ref(page: &PageRecord) -> RepairPageRef {
-    RepairPageRef { id: page.id, source_id: page.source_id.clone(), slug: page.slug.clone() }
+    RepairPageRef {
+        id: page.id,
+        source_id: page.source_id.clone(),
+        slug: page.slug.clone(),
+    }
 }
 
 /// `CASE WHEN jsonb_typeof(frontmatter->'contacts')='array' THEN jsonb_array_length(...) ELSE 0 END`.
 fn contact_rows(page: &PageRecord) -> usize {
-    page.frontmatter.get("contacts").and_then(Value::as_array).map_or(0, Vec::len)
+    page.frontmatter
+        .get("contacts")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len)
 }
 
 fn has(text: Option<&str>, needle: &str) -> bool {
@@ -109,7 +116,8 @@ fn has(text: Option<&str>, needle: &str) -> bool {
 /// `protected_regions @> '[{"kind":"facts"}]'`: an element of the array names the facts kind.
 fn protects_facts(regions: &Value) -> bool {
     regions.as_array().is_some_and(|rows| {
-        rows.iter().any(|row| row.get("kind").and_then(Value::as_str) == Some("facts"))
+        rows.iter()
+            .any(|row| row.get("kind").and_then(Value::as_str) == Some("facts"))
     })
 }
 
@@ -118,7 +126,10 @@ fn segmented_split(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
     let mut truth = false;
     let mut timeline = false;
     for (_, row) in manifest_rows(read, page.id)? {
-        if row.gen_to.is_some() || row.staging_id.is_some() || !protects_facts(&row.protected_regions) {
+        if row.gen_to.is_some()
+            || row.staging_id.is_some()
+            || !protects_facts(&row.protected_regions)
+        {
             continue;
         }
         match row.region.as_str() {
@@ -133,11 +144,15 @@ fn segmented_split(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 /// `concat_ws(E'\n', title, compiled_truth, frontmatter->>'source_quote')`: the present parts.
 fn atom_text(page: &PageRecord) -> String {
     let quote = fm_text(&page.frontmatter, "source_quote");
-    [Some(page.title.as_str()), page.compiled_truth.as_deref(), quote.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n")
+    [
+        Some(page.title.as_str()),
+        page.compiled_truth.as_deref(),
+        quote.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn take(limit: u64) -> usize {
@@ -175,16 +190,26 @@ impl Store {
     pub fn list_split_facts_pages(&self, source_ids: &[String]) -> Result<SplitFactsPages> {
         let read = self.read()?;
         let sources: BTreeSet<&str> = source_ids.iter().map(String::as_str).collect();
-        let mut pages: Vec<PageRecord> =
-            all_pages(&*read)?.into_iter().filter(|p| live_in(p, &sources)).collect();
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| live_in(p, &sources))
+            .collect();
         pages.sort_by_key(|p| p.id);
-        let mut out = SplitFactsPages { inline: Vec::new(), segmented: Vec::new() };
+        let mut out = SplitFactsPages {
+            inline: Vec::new(),
+            segmented: Vec::new(),
+        };
         for page in &pages {
-            if has(page.compiled_truth.as_deref(), FACTS_BEGIN) && has(page.timeline.as_deref(), FACTS_BEGIN) {
+            if has(page.compiled_truth.as_deref(), FACTS_BEGIN)
+                && has(page.timeline.as_deref(), FACTS_BEGIN)
+            {
                 out.inline.push(page_ref(page));
             }
             if segmented(page) && segmented_split(&*read, page)? {
-                out.segmented.push(SegmentedPageRef { source_id: page.source_id.clone(), slug: page.slug.clone() });
+                out.segmented.push(SegmentedPageRef {
+                    source_id: page.source_id.clone(),
+                    slug: page.slug.clone(),
+                });
             }
         }
         Ok(out)
@@ -215,8 +240,12 @@ impl Store {
             {
                 continue;
             }
-            let Some(origin_slug) = fm_text(&atom.frontmatter, "source_slug") else { continue };
-            let Some(origin) = live.get(&(atom.source_id.as_str(), origin_slug.as_str())) else { continue };
+            let Some(origin_slug) = fm_text(&atom.frontmatter, "source_slug") else {
+                continue;
+            };
+            let Some(origin) = live.get(&(atom.source_id.as_str(), origin_slug.as_str())) else {
+                continue;
+            };
             let body = origin.compiled_truth.as_deref();
             if !(body.is_none() || has(body, FACTS_BEGIN) || has(body, TAKES_BEGIN)) {
                 continue;
@@ -245,7 +274,10 @@ impl Store {
         let mut out: Vec<PageTruth> = all_pages(&*read)?
             .into_iter()
             .filter(|p| wanted.contains(&p.id))
-            .map(|p| PageTruth { id: p.id, body: p.compiled_truth.as_deref().map(str::to_string) })
+            .map(|p| PageTruth {
+                id: p.id,
+                body: p.compiled_truth.as_deref().map(str::to_string),
+            })
             .collect();
         out.sort_by_key(|t| t.id);
         Ok(out)

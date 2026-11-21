@@ -57,3 +57,14 @@ The `preimage` object has the keys of `TAKE_PREIMAGE_SQL`; `resolved_at` is prin
 a `timestamptz`. The TypeScript members refuse an id that is not an integer. Pinned by
 `rust/crates/gbrain-store/tests/takes_extract.rs`, `test/engine-parity/extract-takes-reads.test.ts` and, for the
 Postgres text, `test/extract-takes-sql-pin.test.ts`.
+
+## The take-supersession repair
+
+| Member | Answer | Caller |
+|---|---|---|
+| `brain.listTakePointers(pageId)` | each take's row number and stored `superseded_by` | the reprojection check |
+| `brain.listTakeSupersedeReceipts(sourceId, pageId, slug)` | the old and new row of each `takes_supersede` receipt of the page | the preview |
+| `brain.setTakeSupersededBy(pageId, rowNum, target)` | sets or clears one take's pointer and nothing else | the reprojection |
+
+The fence rewrite goes through the page write, which the Rust engine refuses by name. Pinned by
+`rust/crates/gbrain-store/tests/takes_supersession_repair.rs` and `test/engine-parity/repair-takes-timeline.test.ts`.

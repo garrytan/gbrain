@@ -141,7 +141,7 @@ fn posix_space(c: char) -> bool {
 /// `text ~* '(^|\n)\*\*(labels)[[:space:]]*:\*\*'`: a line opens with `**`, one of the labels
 /// (ASCII case folding: `~*` matches an ASCII letter of the pattern only in its two ASCII cases),
 /// any run of `[[:space:]]`, then `:**`.
-fn has_label_line(text: &str, labels: &[String]) -> bool {
+pub(super) fn has_label_line(text: &str, labels: &[String]) -> bool {
     let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1));
     starts.into_iter().any(|at| {
         let Some(rest) = text[at..].strip_prefix("**") else {
@@ -159,7 +159,7 @@ fn has_label_line(text: &str, labels: &[String]) -> bool {
 
 /// `context ~ 'extractor_version=[0-9]+$'`: the text ends with `extractor_version=` and one or
 /// more ASCII digits.
-fn version_stamped(context: &str) -> bool {
+pub(super) fn version_stamped(context: &str) -> bool {
     let head = context.trim_end_matches(|c: char| c.is_ascii_digit());
     head.len() < context.len() && head.ends_with("extractor_version=")
 }

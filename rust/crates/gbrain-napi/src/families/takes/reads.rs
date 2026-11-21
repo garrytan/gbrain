@@ -72,6 +72,49 @@ impl Brain {
         })
     }
 
+    /// `listTakePointers(pageId)`: `[{ row_num, superseded_by }]`.
+    #[napi]
+    pub fn list_take_pointers<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.list_take_pointers(page),
+            Err(_) => Ok(Vec::new()),
+        })
+    }
+
+    /// `listTakeSupersedeReceipts(sourceId, pageId, slug)`: `[{ old_row, new_row }]`.
+    #[napi]
+    pub fn list_take_supersede_receipts<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: i64,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.list_take_supersede_receipts(&source_id, page, &slug),
+            Err(_) => Ok(Vec::new()),
+        })
+    }
+
+    /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: resolves when the row is written.
+    #[napi]
+    pub fn set_take_superseded_by<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        row_num: i32,
+        superseded_by: Option<i32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.set_take_superseded_by(page, row_num, superseded_by),
+            Err(_) => Ok(()),
+        })
+    }
+
     /// `readLivePageIdBySlug(slug, sourceId)`: the id, or null.
     #[napi]
     pub fn read_live_page_id_by_slug<'env>(

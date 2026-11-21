@@ -47,6 +47,24 @@ export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number>
 export const listTakeSupersessionCandidates: StoreMember<[sourceIds: readonly string[]], Array<{ id: number; source_id: string; slug: string }>> =
   (brain, sourceIds) => storeCall({ member: 'listTakeSupersessionCandidates' }, () => brain.listTakeSupersessionCandidates([...sourceIds]));
 
+export const listTakePointers: StoreMember<[pageId: number], Array<{ row_num: number; superseded_by: number | null }>> = (brain, pageId) => {
+  if (!Number.isSafeInteger(pageId)) refuseMember('listTakePointers', 'a page id that is not an integer');
+  return storeCall({ member: 'listTakePointers' }, () => brain.listTakePointers(pageId));
+};
+
+export const listTakeSupersedeReceipts: StoreMember<[sourceId: string, pageId: number, slug: string], Array<{ old_row: string | null; new_row: string | null }>> =
+  (brain, sourceId, pageId, slug) => {
+    if (!Number.isSafeInteger(pageId)) refuseMember('listTakeSupersedeReceipts', 'a page id that is not an integer');
+    return storeCall({ member: 'listTakeSupersedeReceipts' }, () => brain.listTakeSupersedeReceipts(sourceId, pageId, slug));
+  };
+
+export const setTakeSupersededBy: StoreMember<[pageId: number, rowNum: number, supersededBy: number | null], void> = (brain, pageId, rowNum, supersededBy) => {
+  if (!Number.isSafeInteger(pageId) || !Number.isSafeInteger(rowNum) || (supersededBy !== null && !Number.isSafeInteger(supersededBy))) {
+    refuseMember('setTakeSupersededBy', 'a page id or row number that is not an integer');
+  }
+  return storeCall({ member: 'setTakeSupersededBy' }, () => brain.setTakeSupersededBy(pageId, rowNum, supersededBy));
+};
+
 export const countZeroWeightWithTakes: StoreMember<[], { zero_weight_with_takes: number; nonzero_weight: number }> = (brain) =>
   storeCall({ member: 'countZeroWeightWithTakes' }, () => brain.countZeroWeightWithTakes());
 

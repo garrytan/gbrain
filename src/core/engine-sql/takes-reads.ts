@@ -226,3 +226,25 @@ export async function findTakeId(tx: Raw, pageId: number, rowNum: number): Promi
   const [take] = await tx.executeRaw<{ id: number | string }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [pageId, rowNum]);
   return take ? Number(take.id) : null;
 }
+
+/** The row number and stored `superseded_by` of every take on page `pageId` (the take supersession repair's stored pointers). */
+export async function listTakePointers(tx: Raw, pageId: number): Promise<Array<{ row_num: number; superseded_by: number | null }>> {
+  return tx.executeRaw<{ row_num: number; superseded_by: number | null }>(
+    'SELECT row_num, superseded_by FROM takes WHERE page_id = $1', [pageId]);
+}
+
+/**
+ * The `old_row` / `new_row` outcome text of the committed `takes_supersede` requests of page `pageId` (or, for a request
+ * that recorded no page, of `slug`) in source `sourceId`: the journal evidence of the take supersession repair.
+ */
+export async function listTakeSupersedeReceipts(tx: Raw, sourceId: string, pageId: number, slug: string): Promise<Array<{ old_row: string | null; new_row: string | null }>> {
+  return tx.executeRaw<{ old_row: string | null; new_row: string | null }>(
+    `SELECT outcome->>'old_row' AS old_row, outcome->>'new_row' AS new_row FROM persistence_requests
+      WHERE operation = 'takes_supersede' AND state = 'committed' AND source_id = $1
+        AND (page_id = $2 OR (page_id IS NULL AND slug = $3))`, [sourceId, pageId, slug]);
+}
+
+/** Sets the stored `superseded_by` of page `pageId`'s take at `rowNum` (null clears it); nothing else on the row moves. */
+export async function setTakeSupersededBy(tx: Raw, pageId: number, rowNum: number, supersededBy: number | null): Promise<void> {
+  await tx.executeRaw('UPDATE takes SET superseded_by = $3 WHERE page_id = $1 AND row_num = $2', [pageId, rowNum, supersededBy]);
+}

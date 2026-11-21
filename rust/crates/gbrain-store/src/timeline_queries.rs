@@ -50,7 +50,12 @@ use crate::timeline::{
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+mod repair_reads;
 mod site_reads;
+pub use repair_reads::{
+    ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
+    TimelineRowRewrite,
+};
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
 };

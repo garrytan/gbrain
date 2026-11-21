@@ -28,6 +28,7 @@ import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
+import type * as LabelRepairSql from './engine-sql/label-repair-reads.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
@@ -154,6 +155,7 @@ import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContex
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
+import type { ConnectorFencePage, TimelineHistoryQuery, TimelineMarkupQuery, TimelineMarkupRow, TimelineRepairPage, TimelineRowRewrite, TimelineVersionBody, TimelineVersionWitness } from './engine-sql/timeline-repair-reads.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, SlugAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
 import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
@@ -1988,6 +1990,15 @@ export interface BrainEngine {
   countSegmentedTimelinePages(sourceIds: readonly string[], limit: number): Promise<SegmentedTimelinePages>;
   countTimelineCommentMarkupRows(sourceIds: readonly string[]): Promise<number>;
   listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }): Promise<TimelineOrphanPage[]>;
+  /** The page and row scans of repair timeline, timeline-comments, timeline-order and connector-fences, the retraction check's version reads and the comment-row rewrite (SQL and contracts in engine-sql/timeline-repair-reads.ts). */
+  listTimelineHistoryPages(sourceIds: readonly string[], q: TimelineHistoryQuery): Promise<TimelineRepairPage[]>;
+  listTimelineVersionWitnesses(sourceId: string, slug: string): Promise<TimelineVersionWitness[]>;
+  readTimelineVersionBody(pageId: number, versionId: number): Promise<TimelineVersionBody | null>;
+  listTimelineMarkupRows(q: TimelineMarkupQuery): Promise<TimelineMarkupRow[]>;
+  listMaterializedMarkerPages(sourceIds: readonly string[], afterId: number): Promise<TimelineRepairPage[]>;
+  rewriteTimelineRow(pageId: number, row: TimelineRowRewrite): Promise<void>;
+  listDateBulletPages(sourceIds: readonly string[], afterId: number, slugs: readonly string[], limit: number): Promise<TimelineRepairPage[]>;
+  listConnectorFencePages(sourceIds: readonly string[], kinds: readonly string[], segmented: boolean): Promise<ConnectorFencePage[]>;
   /** The search telemetry flush and window read, the MCP usage read and its pruned-window probe (SQL and contracts in engine-sql/telemetry.ts). */
   recordSearchTelemetry(bucket: SearchTelemetryBucket): Promise<void>;
   readSearchStats(cutoffDate: string): Promise<SearchTelemetryRow[]>;
@@ -4245,6 +4256,12 @@ export interface BrainEngine {
   listCapturedFactsForClassification(sourceIds: string[], lanes: string[], ids: number[] | null): Promise<FactsRepairSql.CapturedFactRow[]>;
   /** The bounded count of the default (evidenced) set of label facts, capped at `cap`. Reads open_loops and fact_withdrawals. */
   countLabelFacts(sourceIds: string[], cap: number, args: FactsRepairSql.LabelFactCountArgs): Promise<{ count: number; capped: boolean }>;
+  /** Every active segment-extractor fact of these sources (or of page `slug`) on a live page with a label line, with its withdrawal, successor, open-loop and stamped-outcome evidence, in (source, page, id) order. Backs `gbrain repair conversation-labels`' preview. */
+  listLabelFactCandidates(sourceIds: string[], slug: string | null, args: LabelRepairSql.LabelFactArgs): Promise<LabelRepairSql.LabelFactCandidateRow[]>;
+  /** The segmented live pages of these sources with active segment-extractor facts no stamped audit row decided, and how many, in page id order. */
+  listSegmentedLabelPages(sourceIds: string[], args: Omit<LabelRepairSql.LabelFactArgs, 'labelLine'>): Promise<LabelRepairSql.SegmentedLabelPage[]>;
+  /** Whether page (`sourceId`, `slug`) holds an active fact of one of `sources`. */
+  hasActiveAuditMarker(sourceId: string, slug: string, sources: readonly string[]): Promise<boolean>;
   /** Expired fenceless extractor facts of these sources (or of one page `slug`) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. Reads persistence_requests and fact_withdrawals. */
   listExtractorFactsForClassification(sourceIds: string[], slug: string | null): Promise<FactsRepairSql.ExtractorFactRow[]>;
   /** Active typed facts consolidation closed at their own instant, with the facts of their take that state the same claim then, in (source, id) order. Backs `gbrain repair consolidate-ties`' preview. */
@@ -5464,6 +5481,12 @@ export interface BrainEngine {
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
   listTakeSupersessionCandidates(sourceIds: readonly string[]): Promise<Array<{ id: number; source_id: string; slug: string }>>;
+  /** The row number and stored `superseded_by` of every take on a page (engine-sql/takes-reads.ts). */
+  listTakePointers(pageId: number): Promise<Array<{ row_num: number; superseded_by: number | null }>>;
+  /** The `old_row` / `new_row` outcome text of a page's committed `takes_supersede` requests (engine-sql/takes-reads.ts). */
+  listTakeSupersedeReceipts(sourceId: string, pageId: number, slug: string): Promise<Array<{ old_row: string | null; new_row: string | null }>>;
+  /** Sets one take's stored `superseded_by` (null clears it), nothing else (engine-sql/takes-reads.ts). */
+  setTakeSupersededBy(pageId: number, rowNum: number, supersededBy: number | null): Promise<void>;
   /** Pages with an active take and no emotional weight yet, and pages with a weight. */
   countZeroWeightWithTakes(): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }>;
   /** Whether the source owns an unresolved (symbol-target) code edge. */

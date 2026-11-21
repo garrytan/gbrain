@@ -43,9 +43,12 @@
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { Page } from '../types.ts';
+import type { LabelFactCandidateRow } from '../engine-sql/label-repair-reads.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { digest } from '../persistence/digest.ts';
 import { isTerminal } from '../persistence/model.ts';
@@ -74,7 +77,8 @@ const SEGMENT_SOURCE = 'cli:extract-conversation-facts';
 /** The default context the pre-fix extractor wrote for an undated page's segment. */
 export const EPOCH_SEGMENT_MARKER = 'segment 1970-01-01';
 /** A bold metadata label line, as the pre-fix bold-name-no-time pattern read it (POSIX, case-insensitive). */
-const LABEL_LINE_SQL = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+/** The metadata label line the label-fact reads match (`~*`), exported for the engine parity test. */
+export const LABEL_LINE_SQL = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
 const HANDOFF_SLUGS_PER_COMMAND = 50;
 const previewFix = (sourceId: string) => readFix('Previews the conversation-labels repair without changing anything; it makes no model calls.',
   { argv: ['gbrain', 'repair', 'conversation-labels', '--source', sourceId, '--json'] });
@@ -109,29 +113,10 @@ export interface LabelPage {
 
 interface BatchItem extends RepairItem { pages: LabelPage[]; request_id: string; hash: string; last: boolean }
 
-interface CandidateRow {
-  id: number | string; source_id: string; slug: string; fact: string; context: string | null; entity_slug: string | null; visibility: string;
-  superseded: boolean; withdrawn: boolean; referenced: boolean; open_loop: boolean; outcome_stamped: boolean;
-}
-
 /** Every candidate of these sources (or of one page), classified, in (source, page, id) order. Read-only. */
 export async function classifyLabelFacts(db: BrainEngine, sourceIds: string[], opts: { slug?: string } = {}): Promise<LabelFactCandidate[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.context, f.entity_slug, f.visibility,
-           f.superseded_by IS NOT NULL AS superseded,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
-             AND (w.subject='*' OR w.subject=f.entity_slug)) AS withdrawn,
-           EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id) AS referenced,
-           EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) AS open_loop,
-           EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
-             AND o.source IN ($3, $4) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$') AS outcome_stamped
-      FROM facts f JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
-     WHERE f.source_id=ANY($1::text[]) AND f.source=$5 AND f.expired_at IS NULL
-       AND ($2::text IS NULL OR f.source_markdown_slug=$2::text)
-       AND (p.compiled_truth ~* $6 OR COALESCE(p.timeline,'') ~* $6)
-     ORDER BY f.source_id, f.source_markdown_slug, f.id`,
-  [sourceIds, opts.slug ?? null, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, SEGMENT_SOURCE, LABEL_LINE_SQL]);
+  const rows = await db.listLabelFactCandidates(sourceIds, opts.slug ?? null, { segmentSource: SEGMENT_SOURCE, labelLine: LABEL_LINE_SQL,
+    terminalSource: TERMINAL_AUDIT_SOURCE, nonExtractableSource: NON_EXTRACTABLE_AUDIT_SOURCE });
   return rows.map(row => {
     const [klass, reason] = classify(row);
     return { id: Number(row.id), source_id: row.source_id, slug: row.slug, class: klass, reason,
@@ -139,7 +124,7 @@ export async function classifyLabelFacts(db: BrainEngine, sourceIds: string[], o
   });
 }
 
-function classify(row: CandidateRow): [LabelFactClass, string] {
+function classify(row: LabelFactCandidateRow): [LabelFactClass, string] {
   if (row.outcome_stamped) return ['excluded', 'current_extractor'];
   if (row.withdrawn) return ['excluded', 'withdrawn'];
   if (row.superseded) return ['excluded', 'superseded'];
@@ -171,9 +156,7 @@ async function currentOutcome(db: BrainEngine, page: Page): Promise<{ reason: st
 }
 
 async function activeMarker(db: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
-  const rows = await db.executeRaw('SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source IN ($3,$4) AND expired_at IS NULL LIMIT 1',
-    [sourceId, slug, TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
-  return rows.length > 0;
+  return db.hasActiveAuditMarker(sourceId, slug, [TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
 }
 
 function requestIdFor(hash: string, pages: Array<Pick<LabelPage, 'source_id' | 'slug'>>, attempt: number): string {
@@ -220,8 +203,8 @@ function batchItems(pages: LabelPage[], hash: string): BatchItem[] {
 /** Batches of an approved set whose retirement already committed (or whose facts are all expired already). */
 async function finishedBatches(engine: BrainEngine, items: BatchItem[]): Promise<Set<string>> {
   if (!items.length) return new Set();
-  const committed = new Set((await engine.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests
-    WHERE state='committed' AND operation='submit_job' AND request_id=ANY($1::uuid[])`, [items.map(item => item.request_id)])).map(row => row.request_id));
+  const committed = new Set((await engine.listWriteRequestsByRequestIds(items.map(item => item.request_id)))
+    .filter(row => row.state === 'committed' && row.operation === 'submit_job').map(row => row.request_id));
   const active = new Set((await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE id=ANY($1::bigint[]) AND expired_at IS NULL',
     [items.flatMap(item => item.pages.flatMap(p => p.facts.map(f => f.id)))])).map(row => Number(row.id)));
   return new Set(items.filter(item => committed.has(item.request_id) || item.pages.every(p => p.facts.every(f => !active.has(f.id)))).map(item => item.request_id));
@@ -247,6 +230,9 @@ export const conversationLabelsRepair: RepairHandler = {
         throw previewChangedError(opts.expect, command);
       }
       const all = batchItems(approved.items, opts.expect);
+      // The retirement expires facts and inserts the outcome rows in one transaction (retireBatch); no typed engine
+      // member serves those writes, so an engine without raw SQL stops here, before the first write.
+      if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair conversation-labels fact retirement');
       const done = await finishedBatches(engine, all);
       const items = all.filter(item => afterCursor(item.cursor, after) && !done.has(item.request_id));
       if (!items.length) await clearApprovedSet(engine, { command: 'conversation-labels', hash: opts.expect });
@@ -254,12 +240,8 @@ export const conversationLabelsRepair: RepairHandler = {
         details: { handoff: handoffCommands(approved.items) } };
     }
     const facts = await classifyLabelFacts(engine, scope.source_ids);
-    const segmented = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(`SELECT p.source_id, p.slug, count(*)::int AS n
-        FROM facts f JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
-       WHERE f.source_id=ANY($1::text[]) AND f.source=$2 AND f.expired_at IS NULL AND p.body_storage='segmented'
-         AND NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
-           AND o.source IN ($3, $4) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$')
-       GROUP BY p.id, p.source_id, p.slug ORDER BY p.id`, [scope.source_ids, SEGMENT_SOURCE, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
+    const segmented = await engine.listSegmentedLabelPages(scope.source_ids, { segmentSource: SEGMENT_SOURCE,
+      terminalSource: TERMINAL_AUDIT_SOURCE, nonExtractableSource: NON_EXTRACTABLE_AUDIT_SOURCE });
     const selected = facts.filter(fact => fact.class === 'evidenced' || fact.class === 'ambiguous' && includeAmbiguous);
     const pages = new Map<string, LabelPage>();
     for (const fact of selected) {

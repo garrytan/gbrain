@@ -59,6 +59,7 @@ mod facts;
 mod facts_cycle;
 mod facts_doctor;
 mod facts_holding_purges;
+mod facts_labels;
 mod facts_loops;
 mod facts_purge;
 mod facts_repair;

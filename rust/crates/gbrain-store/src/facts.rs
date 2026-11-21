@@ -46,12 +46,15 @@ pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+/// Postgres `md5(text)`, for the timeline retraction check's version digests.
+pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
 pub mod generations;
 mod held_cells;
 pub mod holding_purges;
+pub mod label_repair;
 pub mod loops;
 mod page_purges;
 mod privacy;
