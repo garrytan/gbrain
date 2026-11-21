@@ -2,7 +2,8 @@
 //! of a derived row (`src/core/facts/derivation-inputs.ts`).
 //!
 //! Members: recordDerivationInputs (`engine-sql/facts-purge.ts`), and the store side of
-//! listDerivedRows (`facts/purge.rs`), the walk hop of `derivedRowsFrom`.
+//! listDerivedRows (`facts/purge.rs`), the walk hop of `derivedRowsFrom`. `listFactsFromQuotedPages`
+//! (`facts/quoted.rs`) reads a fact's inputs.
 //!
 //! Keys, under `keys::DERIVED_GENERATION` (`h`) with the generation rows (store format 6,
 //! rust/docs/store/format.md):
@@ -100,6 +101,11 @@ fn pairs_under(
         .iter()
         .map(|(k, _)| tail_pair(k, prefix.len()))
         .collect()
+}
+
+/// The inputs recorded for one derived row, in byte order.
+pub(crate) fn inputs_of(read: &dyn KvRead, table: &str, id: &str) -> Result<Vec<(String, String)>> {
+    pairs_under(read, BY_DERIVED_HEAD, table, id)
 }
 
 /// One hop of the derivation walk: the distinct rows derived from a frontier row, in byte order

@@ -3,9 +3,9 @@
 //!
 //! - `listFactsFromQuotedPages`: of `ids`, the facts taken from a page of one of `pageTypes`: the page that holds the
 //!   fact (`source_markdown_slug`, deleted or not), or the page a backstop fact's `source_session` names (the first
-//!   `(source, prefix)` pair whose source is the fact's and whose prefix starts the session). The SQL also follows
-//!   `derivation_inputs` edges to a page; the store keeps no derivation inputs (that table is written only through raw
-//!   SQL, which a Rust brain refuses), so that clause finds nothing here.
+//!   `(source, prefix)` pair whose source is the fact's and whose prefix starts the session), or a page a
+//!   `derivation_inputs` edge of the fact names ([`derivation_page_id`]: input table `pages`, an id of 1 to 18 digits),
+//!   in any source, deleted or not, as the SQL join on `p.id` does.
 //! - `listFactIdsAtTrustFloor`: of `ids`, the facts whose stored tier ranks at or above `floor` (`trustRankSql`: a
 //!   tier name the store does not know ranks 0).
 //! - `readPageTypesByIds`: each page id's stored type, deleted or not; an id with no page is absent.
@@ -23,6 +23,7 @@ use super::read_fact;
 use crate::Store;
 use crate::chunk_queries::{ChunkReadScope, PageReadPolicy};
 use crate::error::{Result, StoreError};
+use crate::generations::inputs_of;
 use crate::links::no_nul;
 use crate::pages::{read_page, read_page_by_id};
 use crate::trust::TrustTier;
@@ -62,6 +63,16 @@ fn distinct_ids(ids: &[i64]) -> BTreeSet<u64> {
         .collect()
 }
 
+/// The page id a `derivation_inputs` edge names, as the SQL reads it: input table `pages` and an `input_id` that
+/// matches `^[0-9]{1,18}$`, cast to `bigint` (leading zeros allowed). Any other edge names no page.
+fn derivation_page_id(table: &str, id: &str) -> Option<u64> {
+    let digits = (1..=18).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
+    if table != "pages" || !digits {
+        return None;
+    }
+    id.parse().ok()
+}
+
 /// `trustRankSql`: the rank of a stored tier name, 0 for a name that is no tier. An empty name (a record written before
 /// the store kept the column) is the `unknown` its Postgres row holds.
 fn stored_rank(name: &str) -> u8 {
@@ -90,6 +101,20 @@ impl Store {
             if let Some(slug) = fact.source_markdown_slug.as_deref()
                 && typed(&fact.source_id, slug)?
             {
+                out.push(id);
+                continue;
+            }
+            let mut from_input = false;
+            for (table, input) in inputs_of(&*read, "facts", &id.to_string())? {
+                if let Some(page_id) = derivation_page_id(&table, &input)
+                    && read_page_by_id(&*read, page_id)?
+                        .is_some_and(|p| q.page_types.contains(&p.page_type))
+                {
+                    from_input = true;
+                    break;
+                }
+            }
+            if from_input {
                 out.push(id);
                 continue;
             }

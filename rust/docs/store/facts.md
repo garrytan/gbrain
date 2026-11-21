@@ -570,7 +570,7 @@ and the bare-name page lookup of a slot-history question (`search/slot-history.t
 
 | Member | What the store does |
 | --- | --- |
-| `listFactsFromQuotedPages(ids, pageTypes, backstopSessions)` | Of `ids`, the facts taken from a page of one of `pageTypes` in the fact's own source: the page `source_markdown_slug` names, or the page a backstop fact's `source_session` names (the first `(source, prefix)` pair whose source is the fact's and whose prefix starts the session; the slug is the rest). A soft-deleted page counts. Ascending ids. The SQL also follows `derivation_inputs` edges to a page; the store keeps no derivation inputs (`recordDerivationEdges` is refused), so that clause finds nothing. |
+| `listFactsFromQuotedPages(ids, pageTypes, backstopSessions)` | Of `ids`, the facts taken from a page of one of `pageTypes` in the fact's own source: the page `source_markdown_slug` names, or the page a backstop fact's `source_session` names (the first `(source, prefix)` pair whose source is the fact's and whose prefix starts the session; the slug is the rest). A soft-deleted page counts. Or the page a `derivation_inputs` edge of the fact names (input table `pages`, an id of 1 to 18 digits, leading zeros allowed), in any source, soft-deleted or not, as the SQL joins `pages.id`. Ascending ids. |
 | `listFactIdsAtTrustFloor(ids, floor)` | Of `ids`, the facts whose stored tier ranks at or above `floor` (`trustRankSql`: a name that is no tier ranks 0; an empty name, a record from before the store kept the column, is `unknown`). A floor that names no tier is refused. |
 | `readPageTypesByIds(ids)` | `{ id, type }` of each page id, soft-deleted pages included; an id with no page is absent. |
 | `listReadablePageSlugs(sourceId, slugs, scope, limit)` | Of `slugs` in `sourceId`, the pages `pageReadFilter(.., live = true)` admits under `scope` (the chunk reads' page policy: privacy, trust floor and flag suppression, not soft-deleted, not quarantined, a live source), at most `limit`. The scope's own `sourceId` / `sourceIds` do not narrow the read. The SQL has no `ORDER BY`; the store keeps the asked order. |
@@ -1274,8 +1274,9 @@ index: the distinct derived rows of the frontier, in byte order of (derived_tabl
 in a table or id is `invalid_argument`, as is a negative limit. The SQL is in `src/core/engine-sql/facts-trust.ts`.
 
 This line ports lane 7's `derivation_inputs.rs` (rust-engine/derivation-trust, `02492fa7e6`) without the owner-only
-lineage walk: `inputs_of`, `lineage_reaches`, `lineage_owner_only` and `timeline_entry_page` are cut, so the owner-only
-`fn` test does not read these edges yet (page-visibility.md). The derivation-trust branch lands first; at the merge,
+lineage walk: `lineage_reaches`, `lineage_owner_only` and `timeline_entry_page` are cut, so the owner-only `fn` test
+does not read these edges yet (page-visibility.md). `inputs_of` (a derived row's inputs, in byte order) is kept with
+lane 7's signature, because `listFactsFromQuotedPages` reads it. The derivation-trust branch lands first; at the merge,
 the trunk takes its file, which holds everything here.
 
 ## Not modeled

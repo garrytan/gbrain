@@ -76,7 +76,7 @@ pub use chronicle_events::{
     RetiredItemKeysSpec,
 };
 pub use derivation_inputs::DerivationInputsArgs;
-pub(crate) use derivation_inputs::{derived_from, hop_limit};
+pub(crate) use derivation_inputs::{derived_from, hop_limit, inputs_of};
 pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 

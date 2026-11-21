@@ -12,7 +12,7 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines.
  *  - Seam: none; every fact, page, source and tier is seeded through the typed members (`insertFacts`, `insertFact`,
- *    `putPage`, `softDeletePage`, `transaction`, `applyTransactionSettings`) and `createSource`. Generated ids are
+ *    `putPage`, `softDeletePage`, `recordDerivationEdges`, `transaction`, `applyTransactionSettings`) and `createSource`. Generated ids are
  *    compared by name, never by value.
  */
 import { describe, expect } from 'bun:test';
@@ -75,15 +75,38 @@ describe('engine parity: quote and slot-history reads', () => {
     return answers;
   });
 
+  // The derivation clause joins the edge's input id to pages.id: any source, deleted pages included, and only an
+  // input table of `pages` with an id of 1 to 18 digits (leading zeros allowed) names a page.
   parityTest('listFactsFromQuotedPages follows a derivation input edge to a quoted page', {
-    methods: ['listFactsFromQuotedPages', 'recordDerivationEdges', 'insertFacts', 'putPage', 'getPage'],
-  }, async (engine) => {
+    methods: ['listFactsFromQuotedPages', 'recordDerivationEdges', 'insertFacts', 'putPage', 'getPage', 'softDeletePage'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
     await engine.putPage('chats/a', page('chat'));
-    const chat = Number((await engine.getPage('chats/a'))!.id);
-    const ids = await facts(engine, { derived: {}, plain: {} });
-    await engine.recordDerivationEdges({ table: 'facts', id: String(ids.get('derived')) }, SRC, [{ table: 'pages', id: String(chat) }]);
+    await engine.putPage('chats/gone', page('transcript'));
+    await engine.putPage('chats/x', page('chat'), { sourceId: 'other' });
+    await engine.putPage('notes/n', page('note'));
+    const id = async (slug: string, sourceId = SRC) => String((await engine.getPage(slug, { sourceId }))!.id);
+    const chat = await id('chats/a');
+    const gone = await id('chats/gone');
+    const elsewhere = await id('chats/x', 'other');
+    const note = await id('notes/n');
+    await engine.softDeletePage('chats/gone');
+    const inputs: Record<string, { table: string; id: string }> = {
+      derived: { table: 'pages', id: chat },
+      fromDeleted: { table: 'pages', id: gone },
+      fromOtherSource: { table: 'pages', id: elsewhere },
+      padded: { table: 'pages', id: `00${chat}` },
+      fromNote: { table: 'pages', id: note },
+      notAPage: { table: 'facts', id: chat },
+      notDigits: { table: 'pages', id: `${chat}a` },
+      tooLong: { table: 'pages', id: chat.padStart(19, '0') },
+    };
+    const ids = await facts(engine, { ...Object.fromEntries(Object.keys(inputs).map((n) => [n, {}])), plain: {} });
+    for (const [n, input] of Object.entries(inputs)) {
+      await engine.recordDerivationEdges({ table: 'facts', id: String(ids.get(n)) }, SRC, [input]);
+    }
     const answers = named(ids, await engine.listFactsFromQuotedPages([...ids.values()], QUOTED, BACKSTOP));
-    expect(answers).toEqual(['derived']);
+    expect(answers).toEqual(['derived', 'fromDeleted', 'fromOtherSource', 'padded']);
     return answers;
   });
 
