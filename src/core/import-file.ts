@@ -14,7 +14,7 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
-import { carryHashKeyedPageState, legacyHashToCarry, provenLegacyCarry } from './frontmatter-legacy.ts';
+import { carryHashKeyedPageState, legacyHashToCarry, legacyUnchangedAs, provenLegacyCarry } from './frontmatter-legacy.ts';
 import { hasCapability } from './engine-capabilities.ts';
 import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
@@ -488,8 +488,7 @@ export async function importFromContent(
       tags: parsed.tags,
     });
 
-    const carryHashFrom = await provenLegacyCarry(engine, sourceId ?? 'default', existing?.id, // pages-03
-      legacyHashToCarry(existing, parsed, content, hash, (frontmatter, title) => contentHash({ ...parsed, frontmatter, title })), opts.renamedFrom);
+    const carryHashFrom = await provenLegacyCarry(engine, sourceId ?? 'default', existing?.id, legacyHashToCarry(existing, parsed, content, hash, (frontmatter, title) => contentHash({ ...parsed, frontmatter, title })), opts.renamedFrom); // pages-03
     const parsedPage: ParsedPage = {
       type: parsed.type,
       title: parsed.title,
@@ -531,12 +530,13 @@ export async function importFromContent(
         timeline: parsed.timeline,
         frontmatter: parsed.frontmatter,
       });
-    const unchangedAs = async (page: ParsedPage) => !!existing && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged
-      && !trustMarkerChanged(existing.frontmatter, page.frontmatter) && (existing.content_hash === hash
+    const unchangedAs = async (page: ParsedPage, pageHash = hash) => !!existing && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged
+      && !trustMarkerChanged(existing.frontmatter, page.frontmatter) && (existing.content_hash === pageHash
         ? !opts.prepare || sameCanonicalImport(existingSnapshot, page)
         : !legacyHashMatch && await sameContentAnyKeyOrder(engine, existing, existingSnapshot?.tags ?? null, page, sourceId ?? 'default'));
     const unchanged = await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
       && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) }));
+    const legacyUnchanged = !!opts.prepare && !!existing && !unchanged && await legacyUnchangedAs(parsedPage, content, existing, view => contentHash({ ...parsed, ...view }), unchangedAs); // pages-03
     if (existing && unchanged) {
       // #5050: unchanged content chunked before the safe-chunk fence is re-sealed
       // projection-only; the canonical write stays a no-op.
@@ -858,7 +858,7 @@ export async function importFromContent(
     };
     if (opts.prepare) return opts.prepare({
       slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
-      noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: segmented ? segmented.prepared.rows.chunks : chunks.length, parsedPage,
+      noop: false, contentHash: hash, ...(legacyUnchanged ? { legacyUnchanged: true as const } : {}), result: { slug, status: 'imported', chunks: segmented ? segmented.prepared.rows.chunks : chunks.length, parsedPage,
         ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fenceFields },
       validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
       apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }

@@ -24,6 +24,8 @@ export interface PreparedContentImport {
   noop: boolean;
   /** The imported content hash, when apply writes the page (`coordinated` callers verify their read-back against it). */
   contentHash?: string;
+  /** pages-03: the page holds what this content imported under the old typing (legacyHashToCarry), though the import now stores the file's text. */
+  legacyUnchanged?: true;
   result: ImportResult;
   validate(tx: BrainEngine): Promise<void>;
   /** `preimage` (#5984): the publisher's guarded read of this page at the observed revision (see PreparedMutation.apply). */

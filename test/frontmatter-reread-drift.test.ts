@@ -18,6 +18,7 @@ import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { onlyDerivedKeysAdded } from '../src/core/persistence/sync-screen.ts';
+import { contentHash } from '../src/core/utils.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
 
@@ -35,11 +36,18 @@ const setup = ({ root }: { root: string }) => {
 };
 const snapshotOf = async (engine: BrainEngine, slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
 
-/** What an older gbrain left: the old typing of the typed page's values, its import record naming the older parser at the page's revision, and an older parser fingerprint. */
-async function seedOlderRelease(engine: BrainEngine): Promise<void> {
+/**
+ * What an older gbrain left: the old typing of the typed page's values, its import record naming the older parser at the
+ * page's revision, and an older parser fingerprint. `oldHash` also stores the content hash the older release computed
+ * over that typing (a real older brain); without it the row keeps today's hash, as Minder's repro seeds it.
+ */
+async function seedOlderRelease(engine: BrainEngine, oldHash = false): Promise<void> {
   await withManagedFixtureWrite(engine, ['default'], async tx => {
-    const [row] = await tx.executeRaw<{ frontmatter: Record<string, unknown> }>('SELECT frontmatter FROM pages WHERE slug=$1', [TYPED]);
-    await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug=$2', [JSON.stringify({ ...row!.frontmatter, ...legacyTypedFrontmatter(typed(TYPED)) }), TYPED]);
+    const [row] = await tx.executeRaw<{ frontmatter: Record<string, unknown>; type: string; title: string; compiled_truth: string; timeline: string | null }>(
+      'SELECT frontmatter, type, title, compiled_truth, timeline FROM pages WHERE slug=$1', [TYPED]);
+    const frontmatter = { ...row!.frontmatter, ...legacyTypedFrontmatter(typed(TYPED)) };
+    const hash = contentHash({ title: row!.title, type: row!.type as never, compiled_truth: row!.compiled_truth, timeline: row!.timeline ?? '', frontmatter, tags: [] });
+    await tx.executeRaw(`UPDATE pages SET frontmatter=$1::text::jsonb${oldHash ? ', content_hash=$3' : ''} WHERE slug=$2`, [JSON.stringify(frontmatter), TYPED, ...(oldHash ? [hash] : [])]);
   });
   const snapshot = await snapshotOf(engine, TYPED);
   await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
@@ -69,6 +77,31 @@ describe('pages-03: a git edit to an older page with typed frontmatter is not he
       for (const slug of [PLAIN, TYPED]) await tx.addTag(slug, 'gamma', { sourceId: 'default' });
     });
     await editsImportCleanly(engine, root);
+  }, { setup }), 240_000);
+
+  test('after a database-only change, with the content hash the older release stored (drift both)', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    await seedOlderRelease(engine, true);
+    await withManagedFixtureWrite(engine, ['default'], async tx => {
+      for (const slug of [PLAIN, TYPED]) await tx.addTag(slug, 'gamma', { sourceId: 'default' });
+    });
+    await editsImportCleanly(engine, root);
+  }, { setup }), 240_000);
+
+  test('a real database change to a value the file also holds is still held as file drift', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    await seedOlderRelease(engine);
+    await withManagedFixtureWrite(engine, ['default'], async tx => {
+      const [row] = await tx.executeRaw<{ frontmatter: Record<string, unknown> }>('SELECT frontmatter FROM pages WHERE slug=$1', [TYPED]);
+      await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug=$2', [JSON.stringify({ ...row!.frontmatter, born: '1990-06-01T00:00:00.000Z' }), TYPED]);
+      await tx.addTag(TYPED, 'gamma', { sourceId: 'default' });
+    });
+    writeFileSync(join(root, `${TYPED}.md`), `${typed(TYPED)}\nAn added line.\n`);
+    commit(root, 'edit');
+    await performManagedSync(engine, { sourceId: 'default', noPull: true });
+    const holds = (await readGitSourceHolds(engine, { sourceIds: ['default'] })).flatMap(entry => entry.holds.map(hold => `${hold.path}: ${hold.code}`));
+    expect(holds).toEqual([`${TYPED}.md: file_drift`]);
+    expect((await engine.getPage(TYPED))!.frontmatter).toMatchObject({ born: '1990-06-01T00:00:00.000Z' });
   }, { setup }), 240_000);
 
   test('with no import record (drift unknown)', () => managedBrain(async ({ engine, root }) => {

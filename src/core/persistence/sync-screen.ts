@@ -22,6 +22,7 @@ import { loadImportSanityConfig, screenNormalized, type ContentRefusal, type Imp
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
 import { parseMarkdown, RECOVERY_VERSION, RESERVED_FRONTMATTER_KEYS, type IntendedRefusal } from '../markdown.ts';
+import { alignLegacyTyped } from '../frontmatter-legacy.ts';
 import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons.ts';
 import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
 import { QUOTE_SCREEN_VERSION } from '../fence-repair/quote-markers.ts';
@@ -131,7 +132,9 @@ export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'dr
  * difference (a protected key, a label) is not treated as unchanged since that file.
  */
 export function onlyDerivedKeysAdded(content: string, stored: Record<string, unknown> | null | undefined): boolean {
-  const { frontmatter: file, type } = parseMarkdown(content, 'derived-keys.md');
+  const parsed = parseMarkdown(content, 'derived-keys.md');
+  alignLegacyTyped(parsed, stored); // pages-03: a value the old parser typed reads as stored
+  const { frontmatter: file, type } = parsed;
   const page = stored ?? {};
   const retyped = typeof page.legacy_type === 'string' && page.legacy_type === type && !Object.hasOwn(file, 'legacy_type');
   return [...new Set([...Object.keys(file), ...Object.keys(page)])].every(key => digest(file[key] ?? null) === digest(page[key] ?? null)

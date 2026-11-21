@@ -176,10 +176,34 @@ export function legacyHashToCarry(existing: { content_hash?: string | null; dele
   parsed: { frontmatter: Record<string, unknown>; title: string }, fileText: string, hash: string,
   hashWith: (frontmatter: Record<string, unknown>, title: string) => string | null): string | null {
   if (!existing?.content_hash || existing.content_hash === hash || existing.deleted_at) return null;
-  const storedMeaning = legacyStoredFrontmatter(parsed.frontmatter, fileText, comparableFrontmatter(existing.frontmatter as Record<string, unknown> | null | undefined));
-  const storedTitle = legacyStoredTitle(parsed.title, fileText, existing.title);
-  if (!storedMeaning && storedTitle === null) return null;
-  return hashWith(storedMeaning ?? parsed.frontmatter, storedTitle ?? parsed.title) === existing.content_hash ? existing.content_hash : null;
+  const view = legacyStoredView(parsed, fileText, existing);
+  return view && hashWith(view.frontmatter, view.title) === existing.content_hash ? existing.content_hash : null;
+}
+
+/**
+ * A file parse read as a page stored under the old typing holds it: each frontmatter value and the title the old parser
+ * typed read as stored (legacyStoredFrontmatter, legacyStoredTitle). Null when nothing differs only by that typing.
+ */
+export function legacyStoredView(parsed: { frontmatter: Record<string, unknown>; title: string }, fileText: string,
+  existing: { frontmatter?: unknown; title?: string | null }): { frontmatter: Record<string, unknown>; title: string } | null {
+  const frontmatter = legacyStoredFrontmatter(parsed.frontmatter, fileText, comparableFrontmatter(existing.frontmatter as Record<string, unknown> | null | undefined));
+  const title = legacyStoredTitle(parsed.title, fileText, existing.title);
+  return frontmatter || title !== null ? { frontmatter: frontmatter ?? parsed.frontmatter, title: title ?? parsed.title } : null;
+}
+
+/**
+ * Whether a page stored under the old typing still holds what this file imported, though an import now stores the file's
+ * text (the drift baseline check, sync-run.ts): `unchangedAs` (the import's own no-op test) asks it of the parse read as
+ * stored (legacyStoredView), under the hash the older release stored over that reading or, for a row an earlier re-read
+ * restamped, under today's hash.
+ */
+export async function legacyUnchangedAs<P extends { frontmatter: Record<string, unknown>; title: string }>(parsed: P, fileText: string,
+  existing: { frontmatter?: unknown; title?: string | null }, hashOf: (view: { frontmatter: Record<string, unknown>; title: string }) => string,
+  unchangedAs: (page: P, pageHash?: string) => Promise<boolean>): Promise<boolean> {
+  const view = legacyStoredView(parsed, fileText, existing);
+  if (!view) return false;
+  const page = { ...parsed, ...view };
+  return await unchangedAs(page, hashOf(view)) || await unchangedAs(page);
 }
 
 /**
