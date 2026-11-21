@@ -1,24 +1,30 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { opError, OperationError } from '../ops/contract.ts';
 import { DEFAULT_INVENTORY_LIMITS, inventoryLimitKey, type InventoryLimits } from './inventory-limits.ts';
 
 export const setupHash = (content: string | Uint8Array): string => createHash('sha256').update(content).digest('hex');
 
-export function checkedContentRoot(path: string): string {
+/**
+ * `osRoot` is the filesystem root. A top-level symlink to a directory directly under it
+ * (macOS /var, /tmp, /etc -> /private/...) is OS-owned and allowed; symlinks anywhere
+ * deeper in the path are still refused.
+ */
+export function checkedContentRoot(path: string, osRoot = '/'): string {
   const root = resolve(path);
   let current = root;
   while (true) {
     if (existsSync(current)) {
       const stat = lstatSync(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      const osLink = stat.isSymbolicLink() && dirname(current) === osRoot && statSync(current).isDirectory();
+      if (!osLink && (stat.isSymbolicLink() || !stat.isDirectory())) {
         throw opError('local_conflict', 'A content-root component is not a real directory.',
           `${current} is a symlink or a file, so ${root} cannot be a content root. Choose a path whose every parent is a real directory.`);
       }
     }
     const parent = dirname(current);
-    if (parent === current) break;
+    if (parent === current || current === osRoot) break;
     current = parent;
   }
   return root;
