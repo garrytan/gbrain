@@ -40,7 +40,8 @@ test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-insert-guard.test.ts	2	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
 test/engine-parity/fact-purge-ledger.test.ts	3	0
-test/engine-parity/fact-purge-sites.test.ts	0	14
+test/engine-parity/fact-purge-members.test.ts	10	1
+test/engine-parity/fact-purge-sites.test.ts	2	12
 test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0

@@ -67,6 +67,7 @@ import * as factsPurgeJournal from './facts-purge-journal.ts';
 import * as factsConversation from './facts-conversation.ts';
 import * as factsPurgeProbe from './facts-purge-probe.ts';
 import * as factsPurgeReceipt from './facts-purge-receipt.ts';
+import * as factsPurgeTx from './facts-purge-tx.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as ontologyRepair from './ontology-repair.ts';
 import * as factsTrust from './facts-trust.ts';
@@ -143,7 +144,7 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsCycleFence, ...factsPhantom, ...factsPurge, ...factsPurgeReceipt, ...factsPurgeJournal, ...factsPurgeProbe, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsQuoted, ...factsWritePath, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsCycleFence, ...factsPhantom, ...factsPurge, ...factsPurgeReceipt, ...factsPurgeTx, ...factsPurgeJournal, ...factsPurgeProbe, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsQuoted, ...factsWritePath, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites, ...factsConversation,
   // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
   ...schemaDetect,

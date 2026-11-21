@@ -24,6 +24,7 @@ use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 const RECEIPT: u8 = 0x02;
 const RECEIPT_TARGET: u8 = 0x03;
@@ -355,6 +356,69 @@ fn delete_receipt(tx: &mut dyn KvWrite, record: &ReceiptRecord) -> Result<()> {
         ],
     ))?;
     tx.delete(&by_id(RECEIPT, record.id))
+}
+
+/// `deletePurgeWriteGateReceipts(factIds, takeIds, holdIds)`: deletes the receipts whose target is one of the facts,
+/// takes or held writes (ids as text); how many.
+pub(crate) fn delete_receipts_naming(
+    tx: &mut dyn KvWrite,
+    fact_ids: &BTreeSet<String>,
+    take_ids: &BTreeSet<String>,
+    hold_ids: &BTreeSet<String>,
+) -> Result<u64> {
+    let mut deleted = 0;
+    for record in all_receipts(tx)? {
+        let ids = match record.target_table.as_str() {
+            "facts" => fact_ids,
+            "takes" => take_ids,
+            "write_gate_holds" => hold_ids,
+            _ => continue,
+        };
+        if ids.contains(&record.target_id) {
+            delete_receipt(tx, &record)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `payload->>field`: NULL when absent or JSON null.
+fn payload_text(payload: &Value, field: &str) -> Option<String> {
+    payload.get(field).and_then(jsonb_field_text)
+}
+
+/// `deletePurgeWriteGateHolds(sourceId, factHash)`: deletes the source's held writes whose
+/// `gbrain_fact_fingerprint(COALESCE(payload->>'fact', payload->>'claim', ''))` is `fact_hash`; their ids as text, in id
+/// order.
+pub(crate) fn delete_holds_with_fingerprint(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_hash: &str,
+) -> Result<Vec<String>> {
+    let mut deleted = Vec::new();
+    for hold in all_holds(tx)? {
+        if hold.source_id != source_id {
+            continue;
+        }
+        let text = payload_text(&hold.payload, "fact")
+            .or_else(|| payload_text(&hold.payload, "claim"))
+            .unwrap_or_default();
+        if crate::facts::fact_fingerprint(&text) != fact_hash {
+            continue;
+        }
+        let version = hold.detector_version.to_string();
+        let index = tagged(
+            HOLD_DEDUPE,
+            &[&hold.source_id, &hold.slug, &hold.fingerprint, &version],
+        );
+        if read_id(tx, &index)? == Some(hold.id) {
+            tx.delete(&index)?;
+        }
+        tx.delete(&by_id(HOLD, hold.id))?;
+        deleted.push(hold.id);
+    }
+    deleted.sort_unstable();
+    Ok(deleted.into_iter().map(|id| id.to_string()).collect())
 }
 
 fn all_receipts(read: &dyn KvRead) -> Result<Vec<ReceiptRecord>> {

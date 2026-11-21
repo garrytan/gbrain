@@ -31,7 +31,7 @@ use crate::trust::TrustTable;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
@@ -291,6 +291,44 @@ fn json_no_nul(op: &str, name: &str, value: &Value) -> Result<()> {
 
 fn put_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
     put_json(tx, &by_id(record.id), record)
+}
+
+/// Deletes one proposal and its index entries.
+fn delete_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, id, record.id))?;
+    }
+    tx.delete(&by_id(record.id))
+}
+
+/// `deletePurgeTrustProposals(sourceId, factIds, takeIds)`: deletes the source's proposals whose target or related row
+/// is one of the facts or takes; how many.
+pub(crate) fn delete_proposals_naming(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &BTreeSet<i64>,
+    take_ids: &BTreeSet<i64>,
+) -> Result<u64> {
+    let mut deleted = 0;
+    for record in all_records(tx)? {
+        if record.source_id != source_id {
+            continue;
+        }
+        let named =
+            |table: &str, ids: &BTreeSet<i64>| ids.iter().any(|&id| record.names(table, id));
+        if named("facts", fact_ids) || named("takes", take_ids) {
+            delete_record(tx, &record)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
 
 /// Removes every proposal of a deleted source and its index entries (`ON DELETE CASCADE`).

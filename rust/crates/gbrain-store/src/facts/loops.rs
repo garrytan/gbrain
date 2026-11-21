@@ -204,6 +204,23 @@ fn read_row(read: &dyn KvRead, id: u64) -> Result<Option<LoopRecord>> {
     get_json::<LoopRecord>(read, &row_key(id))
 }
 
+/// `deletePurgeOpenLoops(sourceId, factIds)`: deletes the source's loops on one of the facts; how many.
+pub(crate) fn delete_loops_on_facts(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::BTreeSet<i64>,
+) -> Result<u64> {
+    let mut deleted = 0;
+    for (id, row) in all_rows(tx, "deletePurgeOpenLoops")? {
+        if row.source_id == source_id && row.fact_id.is_some_and(|f| fact_ids.contains(&f)) {
+            tx.delete(&dedup_key(&row.source_id, &row.dedup_key))?;
+            tx.delete(&row_key(id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 /// Removes every loop of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();

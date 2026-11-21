@@ -72,6 +72,7 @@ mod facts_purge;
 mod facts_purge_journal;
 mod facts_purge_probe;
 mod facts_purge_receipt;
+mod facts_purge_tx;
 mod facts_quoted;
 mod facts_recall;
 mod facts_remember;

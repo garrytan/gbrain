@@ -124,6 +124,15 @@ pub struct PurgeEffectsQuery {
     pub request_id: String,
 }
 
+/// `findPurgeBlockedPublication({ sourceId, slugs, ownRequest })`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BlockedPublicationQuery {
+    pub source_id: String,
+    pub slugs: Vec<String>,
+    pub own_request: String,
+}
+
 fn tombstone_key(parts: &[&str]) -> Vec<u8> {
     let mut key = vec![keys::FACT, REASON_TOMBSTONE];
     for part in parts {
@@ -380,6 +389,65 @@ impl Store {
         Ok(newest.map_or(Value::Null, |r| {
             json!({ "id": r.id, "request_id": r.request_id.to_lowercase(), "state": r.state, "source_id": r.source_id, "outcome": r.outcome })
         }))
+    }
+
+    /// `findPurgeBlockedPublication(sourceId, slugs, ownRequest)`: one unfinished write request (queued, deferred,
+    /// running or recovering, or carrying a recovery) of the source on one of the slugs, else one unfinished
+    /// `withdrawal-mirror` effect of the source whose `data.targets` name one of the slugs, neither of the request
+    /// `ownRequest`; null for none. The SQL takes the first row of its `UNION ALL` with no `ORDER BY`: here the request
+    /// arm wins, each arm in key order.
+    pub fn find_purge_blocked_publication(&self, q: &BlockedPublicationQuery) -> Result<Value> {
+        let op = "findPurgeBlockedPublication";
+        let own = uuid_arg(op, "ownRequest", &q.own_request)?;
+        let slugs: BTreeSet<&str> = q.slugs.iter().map(String::as_str).collect();
+        let read = self.read()?;
+        let requests = all_requests(&*read)?;
+        for r in &requests {
+            let unfinished = matches!(
+                r.state.as_str(),
+                "queued" | "deferred" | "running" | "recovering"
+            ) || r.extra.get("recovery").is_some_and(|v| !v.is_null());
+            if r.source_id == q.source_id
+                && r.id.to_lowercase() != own
+                && slugs.contains(r.slug.as_str())
+                && unfinished
+            {
+                return Ok(
+                    json!({ "request_id": r.request_id.to_lowercase(), "slug": r.slug, "state": r.state }),
+                );
+            }
+        }
+        for e in all_effects(&*read)? {
+            if e.kind != "withdrawal-mirror"
+                || e.source_id.as_deref() != Some(q.source_id.as_str())
+                || e.request_id.to_lowercase() == own
+            {
+                continue;
+            }
+            if e.state == "committed" && e.recovery.as_ref().is_none_or(Value::is_null) {
+                continue;
+            }
+            let Some(request) = requests
+                .iter()
+                .find(|r| r.id.eq_ignore_ascii_case(&e.request_id))
+            else {
+                continue;
+            };
+            let targets = field(&e.data, "targets")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for t in targets {
+                if let Some(slug) = field(&t, "slug").and_then(jsonb_field_text)
+                    && slugs.contains(slug.as_str())
+                {
+                    return Ok(
+                        json!({ "request_id": request.request_id.to_lowercase(), "slug": slug, "state": e.state }),
+                    );
+                }
+            }
+        }
+        Ok(Value::Null)
     }
 
     /// `listPurgeEffects(requestId)`. A `parked` value that is not an array refuses, as

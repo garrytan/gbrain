@@ -592,7 +592,7 @@ fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
 }
 
 /// Deletes a take with its evidence rows.
-fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+pub(crate) fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let mut synths = Vec::new();
     scan_prefix(
         &*tx,
